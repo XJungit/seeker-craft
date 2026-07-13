@@ -414,7 +414,7 @@ impl MinecraftAdapter {
         eprintln!("[vlm-detect] VLM 原始回复:\n{reply}");
 
         let mut targets = Vec::new();
-        let re = regex::Regex::new(r"([a-z][\w\s]*?):\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)")
+        let re = regex::Regex::new(r"(\S+?):\s*.*?\((\d+),\s*(\d+)\)")
             .context("编译 VLM 检测正则失败")?;
         let (screen_cx, screen_cy) = (screen_w as f32 / 2.0, screen_h as f32 / 2.0);
 
