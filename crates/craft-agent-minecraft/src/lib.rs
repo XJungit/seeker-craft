@@ -11,6 +11,10 @@
 #[cfg(feature = "real")]
 pub mod adapter;
 
+/// P2 3D 目标检测（YOLO-World + CLIP 文本嵌入，仅 real 特性）
+#[cfg(feature = "real")]
+pub mod detect;
+
 /// 点击/移动目标与窗口边缘的安全间距（像素）。MC 光标移出窗口会自暂停，所有坐标必须内缩。
 pub const WINDOW_MARGIN: i32 = 20;
 

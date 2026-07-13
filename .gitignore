@@ -8,6 +8,16 @@ config/.env
 
 # 临时文件
 *.tmp
+*.png
+*.pt
+
+# 大模型文件（超过 10MB，用 git-lfs 或不进库）
+models/*.onnx
+models/*.npy
+
+# Python 缓存
+__pycache__/
+*.pyc
 
 # 本地 agent 记忆（机器相关，非源码）
 .workbuddy/

@@ -1,0 +1,19 @@
+tree
+oak tree
+stone
+coal ore
+iron ore
+diamond ore
+cow
+sheep
+pig
+zombie
+creeper
+grass
+dirt
+water
+wood
+log
+leaves
+flower
+crafting table
