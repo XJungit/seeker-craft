@@ -171,6 +171,17 @@ flowchart TD
   解决"VLM 说得出有什么，说不准在哪个像素"。分两种场景：
   - **2D 界面**（背包 / 合成 / 菜单）：**OmniParser** 解析出所有可交互元素 → 画框 + 编号①②③（Set-of-Mark）叠加回截图 → LLM 只需说"点击③"，系统查表拿③精确坐标。
   - **3D 世界**（砍树 / 挖矿）：**目标检测**（GroundingDINO / YOLO 识别树、矿石）给出目标边界框 → 算目标中心相对屏幕准星的偏移 → 转成鼠标相对移动量对准。
+  - **P1.2 落地（2026-07-13）— MC 固定 UI 无需检测模型**：MC 的快捷栏(9 槽)/HUD 位置在给定分辨率下是确定的，直接由屏幕几何算出元素框，省去 OmniParser 这类检测模型（也契合"Rust 只跑轻量检测"的取舍）。新增 `crates/craft-agent-model/src/som.rs`：
+    ```rust
+    pub fn parse_mark_id(resp: &str) -> Option<u32>        // 先解析带圈数字①②③，再回退阿拉伯数字
+    pub fn select_mark_id(client: &dyn VisionClient, marked: &Screenshot, instr: &str) -> Result<u32>
+    pub fn mc_hotbar_marks(w, h) -> Vec<Element>            // 9 槽，底部居中
+    pub fn mc_hud_marks(w, h)    -> Vec<Element>            // 1 区，左下
+    #[cfg(feature = "real")] mod render { render_marks(png, elems) -> Vec<u8> } // 青框+橙点+白编号
+    ```
+    渲染：`imageproc` 画半透明青框 + 橙点 + `ab_glyph` 白编号（带圈数字 ①..⑳）。
+    闭环：`mc_hotbar_marks` 算布局 → `render_marks` 叠加编号 → VLM 看编号图说"选 ③" → `select_mark_id` 解析。
+    **实测**：`som_demo --select` 真机跑通，MiniCPM-V 选中编号=3（期望 3）。3D 目标检测对准（支路 B 第二项）留待 P2。
 - **输出契约（Rust）**：
   ```rust
   struct WorldState {
