@@ -11,6 +11,7 @@
 
 use crate::core::adapter::GameAdapter;
 use crate::core::message::{Message, system_chatml};
+use crate::core::prompt::PromptBuilder;
 use crate::core::tool::ToolRegistry;
 use crate::core::types::{Action, ExecResult, WorldState};
 use anyhow::Result;
@@ -22,8 +23,8 @@ pub type DecideFn = dyn Fn(&[Value], &[Value]) -> Result<Vec<(String, String)>>;
 /// Agent 配置
 #[derive(Debug, Clone)]
 pub struct AgentConfig {
-    /// 系统提示词
-    pub system_prompt: String,
+    /// 五层 prompt 组装器 (酒馆风格)
+    pub prompt: PromptBuilder,
     /// 最大总轮次
     pub max_turns: u32,
 }
@@ -70,8 +71,9 @@ impl<A: GameAdapter> Agent<A> {
         let mut log: Vec<String> = Vec::new();
 
         for turn in 1..=self.config.max_turns {
-            // 1. 组装上下文 (系统 prompt + 消息历史) 并调用 LLM
-            let system = system_chatml(&self.config.system_prompt);
+            // 1. 组装 system prompt (五层) 并调用 LLM
+            let system_prompt = self.config.prompt.build();
+            let system = system_chatml(&system_prompt);
             let mut chatml: Vec<Value> = vec![system];
             chatml.extend(self.messages.iter().map(Message::to_chatml));
 
@@ -106,6 +108,16 @@ impl<A: GameAdapter> Agent<A> {
                         let state = self.adapter.perceive()?;
                         let is_empty = state.detected_targets.is_empty();
                         let list: Vec<_> = state.detected_targets.iter().map(|t| t.label.clone()).collect();
+                        // 更新动态场景层 (酒馆 World Info 模式)
+                        let targets_desc = if is_empty {
+                            "未检测到3D物体。应 look 或 move_forward 探索。".to_string()
+                        } else {
+                            let details: Vec<_> = state.detected_targets.iter()
+                                .map(|t| format!("{}(偏移{},{})", t.label, t.offset_from_crosshair.0, t.offset_from_crosshair.1))
+                                .collect();
+                            format!("检测到: {}。选一个 aim_and_mine。", details.join(", "))
+                        };
+                        self.config.prompt.set_scenario(targets_desc);
                         self.last_state = Some(state);
                         if is_empty {
                             "观察了周围。VLM未检测到3D物体。应look或move_forward。".into()
@@ -173,7 +185,7 @@ mod tests {
     #[test]
     fn agent_runs_basic_loop() {
         let config = AgentConfig {
-            system_prompt: "test".into(),
+            prompt: PromptBuilder::new().identity("test"),
             max_turns: 1,
         };
         let mut agent = Agent::new(FakeGameAdapter, config, ToolRegistry::new());

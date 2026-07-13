@@ -10,6 +10,7 @@
 #[cfg(feature = "real")]
 fn main() -> anyhow::Result<()> {
     use craft_agent::agent::{Agent, AgentConfig};
+    use craft_agent::core::prompt::PromptBuilder;
     use craft_agent::core::tool::ToolRegistry;
     use craft_agent_minecraft::adapter::MinecraftAdapter;
     use craft_agent_model::config::AgentConfig as ModelAgentConfig;
@@ -44,7 +45,7 @@ fn main() -> anyhow::Result<()> {
         MinecraftAdapter::new(vision)?
     };
     let mut agent = Agent::new(adapter, AgentConfig {
-        system_prompt: "Click/Look/Move/AimAndMine".into(),
+        prompt: PromptBuilder::new().identity("Minecraft agent"),
         max_turns: 1,
     }, ToolRegistry::new());
 

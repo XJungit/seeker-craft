@@ -1,4 +1,4 @@
-//! P2 Agent — Pi 风格: Agent::run() + ToolRegistry。
+//! P2 Agent — Pi 风格: Agent::run() + ToolRegistry + PromptBuilder 五层 prompt
 //!
 //! 用法:
 //!   cargo run -p craft-agent-minecraft --example agent_multi_step --features real -- --steps=10
@@ -6,6 +6,7 @@
 #[cfg(feature = "real")]
 fn main() -> anyhow::Result<()> {
     use craft_agent::agent::{Agent, AgentConfig, DecideFn};
+    use craft_agent::core::prompt::PromptBuilder;
     use craft_agent::core::tool::ToolRegistry;
     use craft_agent_minecraft::adapter::MinecraftAdapter;
     use craft_agent_minecraft::tools::create_mc_tools;
@@ -32,30 +33,22 @@ fn main() -> anyhow::Result<()> {
     let llm = Arc::new(OpenAiLlmClient::from_config(llm_backend)?);
     let adapter = MinecraftAdapter::new(vision)?;
 
-    // 工具注册 (pi 风格: for tool in enabled { registry.register(tool) })
+    // 工具注册
     let mut registry = ToolRegistry::new();
     for tool in create_mc_tools() {
         registry.register(tool);
     }
 
-    // Agent 配置 (短 prompt, 不含工具定义 — 工具定义从 registry 生成)
+    // Agent 配置 (酒馆风格: 五层 prompt)
     let agent_cfg = AgentConfig {
-        system_prompt: "\
-你是 Minecraft AI 玩家。你在一个 while 循环中运行:
-  while True:
-    1. perceive() -- 拍照看周围
-    2. 决定: aim_and_mine(挖掘) / move_forward(探索) / look(观察)
-    3. 观察结果, 继续
-
-目标: 收集木材和石头。看到树挖树, 看到石头挖石头。没目标就前进。
-
-示例思维:
-- perceive 看到树 -> aim_and_mine tree
-- 挖完后 perceive -> 树消失, 前方是平原 -> move_forward
-- perceive -> 没看到目标 -> look dx=300 右转
-- perceive -> 左前方有石头 -> aim_and_mine stone
-
-不要停滞。不要问问题。直接行动。".into(),
+        prompt: PromptBuilder::new()
+            .identity("你是 Minecraft AI 玩家。while 循环: perceive -> 决策 -> act -> 继续。")
+            .role_desc("擅长采集资源。优先级: 树 > 石头 > 矿石。看到目标立刻挖掘, 没目标就前进。")
+            .add_example("perceive 看到 tree -> aim_and_mine tree")
+            .add_example("挖完后 perceive -> 树消失, 前方是平原 -> move_forward")
+            .add_example("perceive -> 没看到目标 -> look dx=300 右转")
+            .add_example("perceive -> 左前方有 stone -> aim_and_mine stone")
+            .jailbreak("不要问问题。不要在同位置停滞超过2轮。直接行动。"),
         max_turns,
     };
 
