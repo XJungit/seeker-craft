@@ -256,13 +256,12 @@ impl GameAdapter for MinecraftAdapter {
             .collect::<Vec<_>>()
             .join("  ");
 
-        // 合并场景描述 + 目标检测为一次 VLM 调用（省 API 并发）
+        // 合并场景描述 + 目标检测为一次 VLM 调用
         let combined_prompt = format!(
-            "做两件事：\n\
-             1. 描述这张 Minecraft 截图：界面、物体、玩家状态（中文，分点）。\n\
-             2. 列出**3D世界物体**的像素坐标（树/石头/水/动物/矿石等，**不包括hotbar/HUD/UI**）。\n\
-             格式: label: (x, y)。示例: tree: (400, 300)\n\
-             标注元素: {marked_text}\n截图 {ww}x{wh}，原点左上"
+            "只输出这Minecraft截图中3D世界物体的坐标。每行: label: (x,y)\n\
+             可识别的物体: tree stone water animal ore grass dirt。\n\
+             不要UI/HUD/hotbar。不要解释。\n\
+             截图{ww}x{wh}"
         );
         let reply = self.vision.chat(&png, &combined_prompt)
             .context("VLM 场景描述失败")?;
@@ -425,20 +424,26 @@ fn parse_vlm_targets(reply: &str, screen_w: u32, screen_h: u32) -> Result<Vec<Ta
     let (screen_cx, screen_cy) = (screen_w as f32 / 2.0, screen_h as f32 / 2.0);
 
     for cap in re.captures_iter(reply) {
-        let label = cap[1].trim()
+        let raw_label = cap[1].trim().to_string();
+        let label = raw_label
             .trim_matches('*')
             .trim_matches('#')
             .to_lowercase();
-        // 过滤 UI 元素和无效标签
+        let cx: i32 = cap[2].parse().unwrap_or(0);
+        let cy: i32 = cap[3].parse().unwrap_or(0);
+        // debug: 打印所有匹配
+        eprintln!("[parse] raw={raw_label:?} → label={label:?} ({cx},{cy})");
+        // 过滤 UI 元素
+        let cy: i32 = cap[3].parse().unwrap_or(0);
+        // 过滤 UI 元素
         if label.starts_with("hotbar") || label.starts_with("hud")
             || label.is_empty() || label.len() > 30
         {
+            eprintln!("[parse] ^ 过滤(UI)");
             continue;
         }
-        let cx: i32 = cap[2].parse().unwrap_or(0);
-        let cy: i32 = cap[3].parse().unwrap_or(0);
-        let cy: i32 = cap[3].parse().unwrap_or(0);
         if (cx == 0 && cy == 0) || cx < 0 || cy < 0 || cx > screen_w as i32 || cy > screen_h as i32 {
+            eprintln!("[parse] ^ 过滤(越界)");
             continue;
         }
         let half = 20i32;
