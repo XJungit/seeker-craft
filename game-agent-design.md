@@ -55,7 +55,7 @@
 - **ONNX 本地推理**：`ort` 走 **DirectML** 在 RTX 3050 上可用，**无需 CUDA 工具链/cuDNN**；合成小检测骨干（1×3×640×640）单帧 **DML 1.52ms / CPU 2.97ms**（DML 快 1.9×）。结论：检测推理不会成为瓶颈。
 - **enigo 实际版本**：cargo 解析到的最新稳定版是 **0.6.1**（0.7 尚未发布）。实测 API（脚手架 `enigo_mc_test` 已编译通过）：构造 `Enigo::new(&Settings::default())`；鼠标 trait 改名 `MouseControllable`→**`Mouse`**；方法 `mouse_move_relative`→**`move_mouse(x,y,Coordinate::Rel)`**，`mouse_click(b)`→**`button(b, Direction::Click)`**；`Coordinate` 变体为 **`Rel`/`Abs`**（非 `Relative`）。
 - **Phase 0 真机验证（2026-07-12，三项全绿）**：脚手架 `phase0_verify/enigo_mc_test/` 已实测通过，通过标准见 `MC_VERIFY_CHECKLIST.md`。
-  - **① enigo 视角旋转** ✅：`move_mouse(dx,0,Coordinate::Rel)` 能驱动 MC 视角转动（无需退回 SendInput）。
+  - **① enigo 视角旋转** ✅：`move_mouse(dx,0,Coordinate::Rel)` 能驱动 MC 视角转动（前提是 MC 为前台窗口——已从终端 `cargo run` 时程序化 `focus_minecraft()` 抢回前台，见 §5.3.1）。
   - **② xcap 截图完整性** ✅：**方法 A（`w.capture_image()` 窗口直捕）为主力**——抓的是窗口自身帧缓冲，**即使被其他应用遮挡也能拿完整界面**（对 VLM 输入至关重要）。`set_dpi_awareness()` 后从 629×658（裁断）→ 1091×724（覆盖率 99%）。方法 C（Monitor 全屏+裁切）仅作兜底（窗口被挡则挡的部分去不掉）。
   - **③ 输入坐标一致性** ✅：`move_mouse(x,y,Coordinate::Abs)` 绝对定位，偏差人眼不可辨（< 几像素），够 VLM 点击用。
   - **两个硬结论（Phase 1 必用）**：
@@ -236,7 +236,7 @@ flowchart TD
   - `Move/Look/Place` → 对应 WASD 按键 / `move_mouse(dx,dy,Coordinate::Rel)` / `button(Button::Right, Direction::Click)`
   - 注：`Enigo::new(&Settings::default())` 需传 `&Settings`；鼠标方法来自 `Mouse` trait（旧名 `MouseControllable` 在 0.6 已改名）。详见 `phase0_verify/enigo_mc_test/src/main.rs`（已编译通过）。
 - **关键工程坑（Minecraft 专属，Phase 0 已实测钉死）**：
-  1. **Raw input**：MC 视角用 raw mouse input，`enigo` 的相对移动 `move_mouse(dx,dy,Coordinate::Rel)` **已验证可驱动**（无需 SendInput 兜底）。
+  1. **Raw input**：MC 视角用 raw mouse input，`enigo` 的相对移动 `move_mouse(dx,dy,Coordinate::Rel)` **可驱动，但前提是 MC 为前台窗口**（已从终端 `cargo run` 时程序化抢前台，见 §5.3.1；无需退回 SendInput）。
   2. **视角是相对移动**：MC 游戏内准星锁屏幕中心，靠"相对移动量"转视角，不是绝对坐标。对准 = 目标偏移量 → 相对移动。
   3. **坐标空间统一（高 DPI 必读）**：调用 `enigo::set_dpi_awareness()`（PROCESS_PER_MONITOR_DPI_AWARE）后——
      - xcap `Window` 坐标访问器（`x()`/`y()`/`width()`/`height()`）返回**物理像素**（与显示器物理分辨率 2560×1600 同空间，窗口 `pos=(1375,196)` 能完整落在屏内即证）；
@@ -336,9 +336,9 @@ trait WorldModel {
   - `execute`：`Click`(绝对定位+坐标钳制/WINDOW_MARGIN)、`Look`(相对移动转视角)、`Move`(按键保持)、`AimAndMine`(长按挖矿)。**明确不发送 ESC**（ESC 开暂停菜单，属保留约束）；坐标不乘 scale_factor（DPI aware 已对齐物理像素）。
 - **真机验证（2026-07-13 下午）**：
   - 感知半环（capture→perceive）**双后端验证通过**：Agnes 与 MiniCPM 均成功截 MC 窗口 + VLM 出真实场景描述（10 个标记齐全）。其间 MiniCPM 的 `api.modelbest.co` 一度持续 502（服务端故障，已恢复），临时用 `--env`(Agnes) 兜底。
-  - 执行半环发现关键拦路虎：**MC 窗口化仅在自己是前台窗口且鼠标被捕获时才读输入**；后台/失焦时收不到 enigo 合成移动 → `Look(50,0)` 视角不转。用 `mouse_probe` 示例验证 **enigo 本身能移动光标（Δx=50）**，故问题在 MC 焦点/指针捕获，非代码/库。
-  - **结论/方案**：端到端闭环（P1.5）直接上 **MC 全屏**（始终前台、不暂停、指针被独占捕获，raw input 视角转动 OK），adapter 已加 `new_fullscreen` + 方法 C 捕获，`mc_step --fullscreen [--act]` 可用。窗口化仅作临时验证，需 `F3+P` 关暂停并保持前台。
-- **诚实边界**：P1.4 仅覆盖 2D 固定 UI + 视角/移动/挖矿原语；3D 目标检测对准（§5.3 第 2 级、ort 检测）仍留 P2；`detected_targets` 当前恒为空。
+  - 执行半环发现关键拦路虎：**enigo 的 `SendInput` 只投【前台窗口】的消息队列**；从终端 `cargo run` 时终端是前台，MC（哪怕独占全屏）被系统挂起/收不到输入 → `Look(50,0)` 视角不转。用 `mouse_probe` 示例验证 **enigo 本身能移动光标（Δx=50）**，故问题在「MC 不是前台」而非代码/库。**单纯切全屏不够**——终端仍抢前台，MC 依旧后台挂起。
+  - **真因修复**：新增 `focus_minecraft()`（windows-sys `EnumWindows` 找 MC + `AttachThreadInput` 挂前台线程 + `SetForegroundWindow`/`SetFocus` 绕过 Windows 前台锁；独占全屏被挂起时 `ShowWindow(SW_RESTORE)` 唤醒），在 `execute` 发输入前、及 `perceive` 全屏模式下各调用一次。修复后 `--fullscreen --act` 视角应可转动（待用户真机确认）。
+  - **结论/方案**：端到端闭环（P1.5）走 **MC 全屏 + 程序化抢前台**；adapter 已加 `new_fullscreen` + 方法 C 捕获 + `focus_minecraft`，`mc_step --fullscreen [--act]` 可用。窗口化仅作临时验证，需 `F3+P` 关暂停且保持前台。
 - **诚实边界**：P1.4 仅覆盖 2D 固定 UI + 视角/移动/挖矿原语；3D 目标检测对准（§5.3 第 2 级、ort 检测）仍留 P2；`detected_targets` 当前恒为空。
 
 ---
@@ -381,7 +381,7 @@ gantt
 |---|---|---|
 | **VLM 定位不准** | 点/挖偏，闭环断 | OmniParser 标编号 + 目标检测框，不让 VLM 直接报坐标 |
 | **延迟高、调用贵** | 实时性差、烧钱 | 抽象动作 + 技能缓存降调用；实时段用脚本兜底 |
-| **enigo 控不了 MC 视角** | 视角操作失灵 | ~~退回 `windows` crate SendInput~~ **已实测 `move_mouse(Rel)` 可驱动，风险解除**（Phase 0 ①通过） |
+| **enigo 控不了 MC 视角** | 视角操作失灵 | ~~退回 `windows` crate SendInput~~ **`move_mouse(Rel)` 可驱动，但需 MC 为前台窗口**——已加 `focus_minecraft()` 程序化抢前台（见 §5.3.1），风险解除 |
 | **实时性跟不上（MC 3D）** | 怪物/掉落追不上 | 先做静态/慢节奏子任务（5.3 阶梯）；暂停/慢速验证 |
 | **LLM 幻觉乱点** | 误操作 | Critic 执行前校验 + 前后帧对比兜底 + 错误案例库 |
 | **跨游戏迁移失败** | 通用性证伪 | Phase 2 用简单游戏先验证抽象 |
