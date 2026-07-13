@@ -18,7 +18,6 @@ fn main() -> anyhow::Result<()> {
     use craft_agent_minecraft::adapter::MinecraftAdapter;
     use craft_agent_model::config::AgentConfig;
     use craft_agent_model::vision::real::OpenAiVisionClient;
-    use std::fs;
 
     let args: Vec<String> = std::env::args().collect();
     let act = args.iter().any(|a| a == "--act");
@@ -34,7 +33,9 @@ fn main() -> anyhow::Result<()> {
     } else {
         let p = cfg_path.unwrap_or_else(|| "config/agent.toml".to_string());
         println!("[mc_step] 构造 VLM 客户端（config={p} 的 active 后端）...");
-        let cfg = AgentConfig::load(fs::read_to_string(&p)?)?;
+        // 注意：AgentConfig::load 自己按路径读文件，不要先 fs::read_to_string 再传字符串，
+        // 否则会把整份配置内容当成文件名去 open → Windows os error 123。
+        let cfg = AgentConfig::load(&p)?;
         let backend = cfg.vlm.active_backend()?;
         OpenAiVisionClient::from_config(backend)?
     };
