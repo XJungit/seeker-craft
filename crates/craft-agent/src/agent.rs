@@ -1,117 +1,180 @@
-//! Agent 主循环骨架（与 game-agent-design.md §3 闭环对齐）
+//! Agent 主循环 — Pi 风格：Agent 拥有循环、工具定义、消息历史。
 //!
-//! 完整版含 记忆 / 规划 / 决策 / Critic / 反思，此处先串起
-//! `感知 → 决策(占位) → 执行` 的最小闭环，便于离线验证类型与主循环。
+//! 参考 Pi Coding Agent: while tool_calls -> execute -> observe -> continue
+//! 参考 SillyTavern: 多层 prompt 组装 + 丰富的 tool result 文本
 //!
-//! P2 新增：`step_with_tools` — LLM 自主决定何时调用 VLM 感知、何时执行动作。
+//! 设计原则:
+//! - Agent 不感知具体游戏 (Minecraft/StarCraft)
+//! - 工具执行通过闭包注入，Agent 只负责编排
+//! - 系统 prompt 从 config 加载，不在代码里硬编码
+//! - 消息历史完整积累，LLM 知道之前所有行动的后果
 
 use crate::core::adapter::GameAdapter;
 use crate::core::types::{Action, ExecResult, WorldState};
 use anyhow::Result;
 
-/// LLM 可用的工具枚举
-#[derive(Debug, Clone)]
-pub enum AgentTool {
-    /// 执行拍照 + VLM 感知，返回 WorldState
-    Perceive,
-    /// 直接执行动作
-    Act(Action),
-    /// 等待/思考（空转）
-    Think(String),
+/// Agent 可用工具的 JSON Schema 定义 (OpenAI function calling 格式)
+pub type ToolDef = serde_json::Value;
+
+/// Agent 维护的对话消息
+pub type ChatMessage = serde_json::Value;
+
+/// LLM 决策回调: 接收消息历史和工具定义，返回 (tool_name, arguments_json)
+pub type DecideFn = dyn Fn(&[ChatMessage], &[ToolDef]) -> Result<Vec<(String, String)>>;
+
+/// Agent 配置 (从 agent.toml 的 [agent] 段加载)
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct AgentConfig {
+    /// 系统提示词 (必填, 短)
+    pub system_prompt: String,
+    /// 工具定义 JSON (OpenAI function calling 格式数组, 必填)
+    pub tools: Vec<ToolDef>,
+    /// 最大总轮次
+    #[serde(default = "default_max_turns")]
+    pub max_turns: u32,
 }
 
-/// 通用 Agent：持有某个 GameAdapter，驱动单步闭环
+fn default_max_turns() -> u32 { 20 }
+
+/// 通用 Agent: 拥有循环、消息历史、game adapter
+///
+/// Pi 风格: agent.run() 是主入口, 不需要外部编排。
 pub struct Agent<A: GameAdapter> {
     pub adapter: A,
-    /// 最近一次 perceive 的世界状态（LLM 工具调用后可复用）
+    pub config: AgentConfig,
+    /// 会话消息历史 (system prompt + assistant tool_calls + tool results)
+    pub messages: Vec<ChatMessage>,
+    /// 最近一次 perceive 的世界状态
     pub last_state: Option<WorldState>,
 }
 
 impl<A: GameAdapter> Agent<A> {
-    pub fn new(adapter: A) -> Self {
-        Self {
+    pub fn new(adapter: A, config: AgentConfig) -> Self {
+        let mut agent = Self {
             adapter,
+            config,
+            messages: Vec::new(),
             last_state: None,
+        };
+        agent.reset_messages();
+        agent
+    }
+
+    /// 重置消息历史 (每次新 run 调用)
+    pub fn reset_messages(&mut self) {
+        self.messages = vec![serde_json::json!({
+            "role": "system",
+            "content": self.config.system_prompt
+        })];
+    }
+
+    /// 🏃 运行 Agent 主循环 (Pi 风格: 工具在 Agent 内部执行)
+    ///
+    /// `decide` — 调用 LLM 返回 tool_calls
+    ///
+    /// 循环: LLM决定 -> Agent内部执行 -> 结果注入 -> LLM再次决定 -> ... -> 结束
+    pub fn run(
+        &mut self,
+        decide: &DecideFn,
+    ) -> Result<Vec<String>> {
+        let mut log: Vec<String> = Vec::new();
+
+        for turn in 1..=self.config.max_turns {
+            // 1. LLM 决策
+            let calls = match decide(&self.messages, &self.config.tools) {
+                Ok(c) => c,
+                Err(e) => {
+                    let msg = format!("[turn{turn}] LLM error: {e}");
+                    log.push(msg);
+                    break;
+                }
+            };
+            if calls.is_empty() { break; }
+
+            // 取第一个 tool call (Pi 支持并行，我们目前单步)
+            let (name, args_json) = &calls[0];
+            let call_id = format!("call_{turn}");
+
+            // 2. 记录 assistant 的 tool_call
+            self.messages.push(serde_json::json!({
+                "role": "assistant",
+                "content": null,
+                "tool_calls": [{
+                    "id": call_id,
+                    "type": "function",
+                    "function": {"name": name, "arguments": args_json}
+                }]
+            }));
+
+            // 3. Agent 内部执行工具
+            let result = match name.as_str() {
+                "perceive" => {
+                    let state = self.adapter.perceive()?;
+                    let is_empty = state.detected_targets.is_empty();
+                    let list: Vec<_> = state.detected_targets.iter().map(|t| t.label.clone()).collect();
+                    self.last_state = Some(state);
+                    if is_empty {
+                        "观察了周围。VLM未检测到3D物体。应look或move_forward。".into()
+                    } else {
+                        format!("观察了周围。检测到: {}。选一个aim_and_mine挖掘。", list.join("、"))
+                    }
+                }
+                "aim_and_mine" => {
+                    let args: serde_json::Value = serde_json::from_str(args_json).unwrap_or_default();
+                    let target = args["target"].as_str().unwrap_or("?").to_string();
+                    let r = self.adapter.execute(Action::AimAndMine { target })?;
+                    format!("转动视角对准目标并挖掘2秒。{}", r.detail)
+                }
+                "move_forward" => {
+                    let args: serde_json::Value = serde_json::from_str(args_json).unwrap_or_default();
+                    let ticks = args["ticks"].as_u64().unwrap_or(80) as u32;
+                    self.adapter.execute(Action::Move { dir: crate::core::types::Direction::Forward, ticks })?;
+                    format!("向前移动{:.1}秒。场景已变化。", ticks as f32 * 0.05)
+                }
+                "look" => {
+                    let args: serde_json::Value = serde_json::from_str(args_json).unwrap_or_default();
+                    let dx = args["dx"].as_i64().unwrap_or(200) as i32;
+                    let dy = args["dy"].as_i64().unwrap_or(0) as i32;
+                    self.adapter.execute(Action::Look { dx, dy })?;
+                    let dir = if dx > 0 { "右" } else if dx < 0 { "左" } else { "前" };
+                    format!("向{dir}转动视角(dx={dx},dy={dy})。")
+                }
+                _ => format!("未知工具: {name}")
+            };
+
+            // 4. 工具结果注入消息历史 (SillyTavern 风格: 人类可读文本)
+            self.messages.push(serde_json::json!({
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": result
+            }));
+
+            log.push(format!("[turn{turn}] {}({})", name, args_json));
         }
+
+        Ok(log)
     }
 
-    /// 单步：感知 → 决策（占位）→ 执行
-    pub fn step(&mut self) -> Result<ExecResult> {
-        let state: WorldState = self.adapter.perceive()?;
-        // TODO(Phase 1): 记忆检索 + 层次规划 + LLM 决策 + Critic 自验证
-        let action: Action = self.decide(&state);
-        self.adapter.execute(action)
-    }
+    // ── 以下为兼容旧 API 的辅助方法 ──
 
-    /// 单步（外部决策函数）：感知 → 外部决策 → 执行
-    pub fn step_with<F>(&mut self, decide: F) -> Result<ExecResult>
-    where
-        F: FnOnce(&WorldState) -> Result<Action>,
-    {
+    /// 执行 perceive：VLM 拍照 → 更新 last_state
+    pub fn perceive(&mut self) -> Result<&WorldState> {
         let state = self.adapter.perceive()?;
-        let action = decide(&state)?;
+        self.last_state = Some(state);
+        Ok(self.last_state.as_ref().unwrap())
+    }
+
+    /// 执行游戏动作
+    pub fn execute(&mut self, action: Action) -> Result<ExecResult> {
         self.adapter.execute(action)
     }
 
-    /// **LLM 动态工具调用**：LLM 返回 AgentTool 而非 Action
-    /// - `Perceive` → 调用 VLM，更新 last_state，不执行动作
-    /// - `Act(action)` → 执行动作
-    /// - `Think(reason)` → 仅记录思考，不行动
-    pub fn step_tools<F>(&mut self, decide: F) -> Result<ToolStepResult>
-    where
-        F: FnOnce(Option<&WorldState>) -> Result<AgentTool>,
-    {
-        let tool = decide(self.last_state.as_ref())?;
-        match tool {
-            AgentTool::Perceive => {
-                let state = self.adapter.perceive()?;
-                let detail = format!(
-                    "perceive: {} targets, {} elements, scene={:.60}...",
-                    state.detected_targets.len(),
-                    state.marked_elements.len(),
-                    truncate_str(&state.scene_desc, 60)
-                );
-                self.last_state = Some(state);
-                Ok(ToolStepResult {
-                    action_taken: false,
-                    detail,
-                })
-            }
-            AgentTool::Act(action) => {
-                let result = self.adapter.execute(action)?;
-                Ok(ToolStepResult {
-                    action_taken: true,
-                    detail: result.detail,
-                })
-            }
-            AgentTool::Think(reason) => Ok(ToolStepResult {
-                action_taken: false,
-                detail: format!("think: {reason}"),
-            }),
-        }
+    /// 单步 (兼容旧 API)
+    pub fn step(&mut self) -> Result<ExecResult> {
+        let _state = self.adapter.perceive()?;
+        let action = Action::Look { dx: 0, dy: 0 };
+        self.adapter.execute(action)
     }
-
-    /// 占位决策：先返回"空转视角"——真实实现由 LLM/规划层产出 Action
-    fn decide(&self, _state: &WorldState) -> Action {
-        Action::Look { dx: 0, dy: 0 }
-    }
-}
-
-/// 工具调用步骤的结果
-pub struct ToolStepResult {
-    /// 是否执行了真实动作（反之只是感知或思考）
-    pub action_taken: bool,
-    pub detail: String,
-}
-
-/// 安全截断 UTF-8 字符串，不会在多字节字符中间切开
-fn truncate_str(s: &str, max_bytes: usize) -> &str {
-    if s.len() <= max_bytes { return s; }
-    let mut end = max_bytes;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    &s[..end]
 }
 
 #[cfg(test)]
@@ -120,9 +183,17 @@ mod tests {
     use crate::adapters::fake::FakeGameAdapter;
 
     #[test]
-    fn fake_agent_runs_one_step() {
-        let mut agent = Agent::new(FakeGameAdapter);
-        let res = agent.step().expect("step 不应失败");
-        assert!(res.ok, "fake 执行应成功: {:?}", res.detail);
+    fn agent_runs_basic_loop() {
+        let config = AgentConfig {
+            system_prompt: "test".into(),
+            tools: vec![],
+            max_turns: 1,
+        };
+        let mut agent = Agent::new(FakeGameAdapter, config);
+        let log = agent.run(
+            &|_msgs, _tools| Ok(vec![]), // 不调用任何工具
+            &|_name, _args| Ok("ok".into()),
+        ).unwrap();
+        assert!(log.is_empty()); // 空 calls → 立即退出
     }
 }

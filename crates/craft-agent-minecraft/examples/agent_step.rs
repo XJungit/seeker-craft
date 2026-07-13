@@ -9,9 +9,9 @@
 
 #[cfg(feature = "real")]
 fn main() -> anyhow::Result<()> {
-    use craft_agent::agent::Agent;
+    use craft_agent::agent::{Agent, AgentConfig};
     use craft_agent_minecraft::adapter::MinecraftAdapter;
-    use craft_agent_model::config::AgentConfig;
+    use craft_agent_model::config::AgentConfig as ModelAgentConfig;
     use craft_agent_model::decision::DecisionClient;
     use craft_agent_model::decision::real::OpenAiLlmClient;
     use craft_agent_model::vision::VisionClient;
@@ -25,7 +25,7 @@ fn main() -> anyhow::Result<()> {
     let fullscreen = args.iter().any(|a| a == "--fullscreen");
 
     // 从配置读取 VLM 和 LLM 后端
-    let cfg = AgentConfig::load("config/agent.toml")?;
+    let cfg = ModelAgentConfig::load("config/agent.toml")?;
     let vlm_backend = cfg.vlm.active_backend()?;
     let llm_group = cfg
         .llm
@@ -43,7 +43,11 @@ fn main() -> anyhow::Result<()> {
         println!("[agent_step] 窗口化模式：capture 方法 A（MC 窗口帧缓冲，遮挡免疫）");
         MinecraftAdapter::new(vision)?
     };
-    let mut agent = Agent::new(adapter);
+    let mut agent = Agent::new(adapter, AgentConfig {
+        system_prompt: "Click/Look/Move/AimAndMine".into(),
+        tools: vec![],
+        max_turns: 1,
+    });
 
     // 技能提示：告诉 LLM 当前 Minecraft 版本可执行的动作
     let skills_hint = "\
@@ -66,7 +70,7 @@ fn main() -> anyhow::Result<()> {
     let t0 = Instant::now();
 
     // 单步：capture → perceive(VLM) → decide(LLM) → execute(enigo)
-    let result = agent.step_with(|state| llm.decide(state, skills_hint))?;
+    let result = agent.step()?;
 
     let elapsed = t0.elapsed();
     println!("  执行结果: {} (ok={})", result.detail, result.ok);

@@ -245,7 +245,7 @@ impl GameAdapter for MinecraftAdapter {
 
         // 叠加编号渲染 → 编号图喂给 VLM（让 VLM 说"点③"而非模糊方位）
         let _marked_png = render_marks(&png, &elements).context("SoM 渲染编号失败（需系统字体）")?;
-        let elements_str: String = elements
+        let _elements_str: String = elements
             .iter()
             .map(|e| {
                 format!(

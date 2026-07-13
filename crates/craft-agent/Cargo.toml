@@ -7,6 +7,7 @@ edition.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 # 后续模块按需加入（避免首轮重编译）：
 #   ort        — ONNX 检测推理（DirectML 后端）
 #   xcap       — 截图（真机实测 0.9.6，依赖 image 0.25；见 workspace.dependencies）
