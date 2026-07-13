@@ -243,7 +243,7 @@ impl GameAdapter for MinecraftAdapter {
         elements.extend(mc_hud_marks(ww, wh));
 
         // 叠加编号渲染 → 编号图喂给 VLM（让 VLM 说"点③"而非模糊方位）
-        let marked_png = render_marks(&png, &elements).context("SoM 渲染编号失败（需系统字体）")?;
+        let _marked_png = render_marks(&png, &elements).context("SoM 渲染编号失败（需系统字体）")?;
         let marked_text: String = elements
             .iter()
             .map(|e| {
@@ -256,16 +256,21 @@ impl GameAdapter for MinecraftAdapter {
             .collect::<Vec<_>>()
             .join("  ");
 
-        let scene_desc = self
-            .vision
-            .describe(&marked_png, &marked_text)
+        // 合并场景描述 + 目标检测为一次 VLM 调用（省 API 并发）
+        let combined_prompt = format!(
+            "做两件事：\n\
+             1. 描述这张 Minecraft 截图：界面、物体、玩家状态（中文，分点）。\n\
+             2. 列出**3D世界物体**的像素坐标（树/石头/水/动物/矿石等，**不包括hotbar/HUD/UI**）。\n\
+             格式: label: (x, y)。示例: tree: (400, 300)\n\
+             标注元素: {marked_text}\n截图 {ww}x{wh}，原点左上"
+        );
+        let reply = self.vision.chat(&png, &combined_prompt)
             .context("VLM 场景描述失败")?;
 
-        // 3D 目标检测：VLM 通用方案（同一张截图，不叠加编号以免干扰检测）
-        let targets = self.vlm_detect(&png, ww, wh).unwrap_or_else(|e| {
-            eprintln!("[warn] VLM 目标检测失败: {e}");
-            vec![]
-        });
+        // 从回复中提取场景描述（坐标部分之前的内容）
+        let scene_desc = reply.clone();
+        // 解析目标检测坐标
+        let targets = parse_vlm_targets(&reply, ww, wh).unwrap_or_default();
 
         self.elements.replace(elements.clone());
         self.targets.replace(targets.clone());
@@ -401,45 +406,49 @@ impl GameAdapter for MinecraftAdapter {
 impl MinecraftAdapter {
     /// 截图 → VLM → 解析坐标 → Vec<Target>
     fn vlm_detect(&self, png: &Screenshot, screen_w: u32, screen_h: u32) -> Result<Vec<Target>> {
-        let (cx, cy) = (screen_w / 2, screen_h / 2);
         let prompt = format!(
-            "图片尺寸 {screen_w}x{screen_h}，中心在 ({cx}, {cy})，左上角 (0,0)。\n\
-             列出你能看到的 3D 世界物体（树/石/水/动物等，不含 UI）。\n\
-             对每个物体估算其在图片中的像素位置。\n\
-             每行格式：label: (x, y)\n\
-             示例：tree: (800, 200) 表示树在中上偏右。\n\
-             不要用 (0,0)，给出合理估算。只输出列表。"
+            "图片尺寸 {screen_w}x{screen_h}，中心在 ({}, {})。列出3D世界物体的像素坐标。\n\
+             格式: label: (x, y)。只输出列表，不要解释。",
+            screen_w / 2, screen_h / 2
         );
         let reply = self.vision.chat(png, &prompt)?;
-        eprintln!("[vlm-detect] VLM 原始回复:\n{reply}");
-
-        let mut targets = Vec::new();
-        let re = regex::Regex::new(r"(\S+?):\s*.*?\((\d+),\s*(\d+)\)")
-            .context("编译 VLM 检测正则失败")?;
-        let (screen_cx, screen_cy) = (screen_w as f32 / 2.0, screen_h as f32 / 2.0);
-
-        for cap in re.captures_iter(&reply) {
-            let label = cap[1].trim().to_lowercase();
-            let cx: i32 = cap[2].parse().unwrap_or(0);
-            let cy: i32 = cap[3].parse().unwrap_or(0);
-            // 过滤不合理的坐标
-            if (cx == 0 && cy == 0)
-                || cx < 0
-                || cy < 0
-                || cx > screen_w as i32
-                || cy > screen_h as i32
-            {
-                continue;
-            }
-            let half = 20i32;
-            targets.push(Target {
-                label,
-                bbox: [cx - half, cy - half, half * 2, half * 2],
-                offset_from_crosshair: (cx - screen_cx as i32, cy - screen_cy as i32),
-            });
-        }
-        Ok(targets)
+        eprintln!("[vlm-detect] {reply}");
+        parse_vlm_targets(&reply, screen_w, screen_h)
     }
+}
+
+/// 从 VLM 回复中解析目标坐标
+fn parse_vlm_targets(reply: &str, screen_w: u32, screen_h: u32) -> Result<Vec<Target>> {
+    let mut targets = Vec::new();
+    let re = regex::Regex::new(r"(\S+?):\s*.*?\((\d+),\s*(\d+)\)")
+        .context("编译 VLM 检测正则失败")?;
+    let (screen_cx, screen_cy) = (screen_w as f32 / 2.0, screen_h as f32 / 2.0);
+
+    for cap in re.captures_iter(reply) {
+        let label = cap[1].trim()
+            .trim_matches('*')
+            .trim_matches('#')
+            .to_lowercase();
+        // 过滤 UI 元素和无效标签
+        if label.starts_with("hotbar") || label.starts_with("hud")
+            || label.is_empty() || label.len() > 30
+        {
+            continue;
+        }
+        let cx: i32 = cap[2].parse().unwrap_or(0);
+        let cy: i32 = cap[3].parse().unwrap_or(0);
+        let cy: i32 = cap[3].parse().unwrap_or(0);
+        if (cx == 0 && cy == 0) || cx < 0 || cy < 0 || cx > screen_w as i32 || cy > screen_h as i32 {
+            continue;
+        }
+        let half = 20i32;
+        targets.push(Target {
+            label,
+            bbox: [cx - half, cy - half, half * 2, half * 2],
+            offset_from_crosshair: (cx - screen_cx as i32, cy - screen_cy as i32),
+        });
+    }
+    Ok(targets)
 }
 
 /// 移动方向 → enigo 按键。

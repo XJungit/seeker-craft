@@ -46,7 +46,7 @@ fn main() -> anyhow::Result<()> {
 
     let mut messages: Vec<Value> = vec![serde_json::json!({
         "role": "system",
-        "content": "Minecraft Agent。规则：1) perceive看到目标→立刻aim_and_mine 2) 没目标→look探索 3) 不连续perceive。看到stone,tree,water任一个就挖。"
+        "content": "Minecraft Agent。规则：1) perceive看到目标→立刻aim_and_mine 2) 没目标→move_forward前进探索 3) 不连续perceive。看到stone,tree,water,dirt任一个就挖。"
     })];
 
     println!("\n=== LongCat Agent ===");
