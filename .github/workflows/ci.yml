@@ -1,0 +1,43 @@
+name: CI
+
+# 本框架目标平台为 Windows（enigo / winreg / xcap 驱动 Minecraft），
+# 故 CI 直接在 windows-latest 上跑，保证真机依赖可编译。
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  quality:
+    name: fmt + clippy + structure
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install rust toolchain (1.95.0 + rustfmt + clippy)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.95.0"
+          components: rustfmt, clippy
+      - name: cargo fmt (check)
+        run: cargo fmt --all -- --check
+      - name: structure check
+        run: bash scripts/check_structure.sh
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    name: test (real feature)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install rust toolchain (1.95.0)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.95.0"
+      - name: cargo test (real)
+        # real feature 内的测试均为离线单测（JSON 解析 / 缩放纯函数），不触网
+        run: cargo test --workspace --features real

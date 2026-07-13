@@ -1,0 +1,11 @@
+[package]
+name = "enigo_mc_test"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+enigo.workspace = true
+xcap.workspace = true
+winreg.workspace = true
+image.workspace = true

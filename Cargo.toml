@@ -1,0 +1,40 @@
+# Craft-Agent 工作区（通用游戏 Agent 框架 · Rust 主框架）
+#
+# 单一 workspace 的收益（对齐 2026-07-13 结构复审）：
+#   - 单一 Cargo.lock：所有成员共享依赖版本，杜绝跨 crate 版本漂移
+#   - 单一 target/：xcap/enigo/reqwest 等重依赖只编译一次，成员间复用
+#   - [workspace.dependencies]：公共依赖版本单点声明，成员用 `dep.workspace = true`
+[workspace]
+resolver = "3"
+members = [
+    "crates/craft-agent",         # 核心：通用抽象（types / GameAdapter / Agent 主循环）
+    "crates/craft-agent-model",   # 模型客户端层：VLM(vision) + LLM(decision)，OpenAI 兼容多后端
+    "phase0_verify/enigo_mc_test", # Phase 0 真机验证脚手架（截图/键鼠）
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+
+# ===== 公共依赖版本单点声明（成员用 `<dep>.workspace = true` 引用）=====
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# 后端配置（TOML）解析：多 OpenAI 兼容后端，一键切 active
+toml = "0.8"
+# 阻塞式 HTTP 客户端，便于离线单测；后续主循环接 tokio 时可换异步
+reqwest = { version = "0.12", features = ["json", "blocking"] }
+# 截图 PNG → base64 data URI（内联进 chat/completions，免第三方图床）
+base64 = "0.22"
+# 键鼠控制（真机实测 0.6.1，API 与 0.7 不同）
+enigo = "0.6.1"
+# 截图（真机实测 0.9.6：Window 直捕遮挡免疫，set_dpi_awareness 后坐标=物理像素）
+xcap = "0.9.6"
+# 注册表读 DPI（AppliedDPI 交叉验证）
+winreg = "0.55"
+# 图像处理：仅 png 特性，避免 image/default 拉入 ravif/rav1e(AV1 巨量编译)
+image = { version = "0.25", default-features = false, features = ["png"] }
+# 内部 crate：核心抽象，供 model 层依赖
+craft-agent = { path = "crates/craft-agent" }

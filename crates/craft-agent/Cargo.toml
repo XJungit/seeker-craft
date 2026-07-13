@@ -1,0 +1,18 @@
+[package]
+name = "craft-agent"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+serde.workspace = true
+# 后续模块按需加入（避免首轮重编译）：
+#   ort        — ONNX 检测推理（DirectML 后端）
+#   xcap       — 截图（真机实测 0.9.6，依赖 image 0.25；见 workspace.dependencies）
+#   image      — 图像处理（png 特性，避免 rav1e）
+#   imageproc  — 画标记框
+#   enigo      — 键鼠控制（0.6.1）
+#   qdrant     — 向量记忆
+#   craft-agent-model — VLM/LLM 客户端（P1.4 集成 MinecraftAdapter 时加入）
+#   tokio      — 异步主循环

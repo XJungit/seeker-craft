@@ -1,0 +1,13 @@
+# 强制所有文本文件以 LF 行尾存储/检出，保证跨平台（Win/Linux/macOS）一致，
+# 避免 rustfmt / clippy 因 CRLF 误判 "not formatted"。
+* text=auto eol=lf
+
+# 二进制资源不转换行尾
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.exe binary
+*.dll binary
+*.bin binary

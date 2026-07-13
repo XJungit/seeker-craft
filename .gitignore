@@ -1,0 +1,13 @@
+# Rust 构建产物
+/target
+
+# 密钥 / 本地配置（切勿提交）
+.env
+config/.env
+*.env
+
+# 临时文件
+*.tmp
+
+# 本地 agent 记忆（机器相关，非源码）
+.workbuddy/

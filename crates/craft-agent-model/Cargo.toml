@@ -1,0 +1,22 @@
+[package]
+# 模型客户端层：VLM(vision) + LLM(decision)，均为 OpenAI 兼容端点客户端。
+# 原名 craft-agent-vlm，因 decision.rs(LLM) 加入后名不副实，2026-07-13 改名。
+name = "craft-agent-model"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+craft-agent.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+toml.workspace = true
+reqwest.workspace = true
+base64.workspace = true
+# 图像预处理（VLM 输入缩放）只在 real 路径需要，故设为可选、由 real feature 拉起。
+image = { workspace = true, optional = true }
+
+[features]
+# 开启后编译真实 VLM/LLM HTTP 客户端（agnes / minicpm 等）；
+# 默认只编译 mock，便于离线单测。real 需要 image 做输入缩放。
+real = ["dep:image"]
