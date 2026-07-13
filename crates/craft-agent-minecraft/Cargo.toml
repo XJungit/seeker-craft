@@ -1,0 +1,20 @@
+[package]
+name = "craft-agent-minecraft"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+# 核心抽象（types / GameAdapter / Action / WorldState）—— 单向依赖，core 不反向依赖本 crate
+craft-agent.workspace = true
+# 模型层（VisionClient / SoM）—— 仅在 real 路径需要；避免默认构建拉入 reqwest/imageproc
+craft-agent-model = { workspace = true, optional = true }
+anyhow.workspace = true
+# P1.4 真机依赖（仅 real 特性编译，保持默认构建轻量、无显示亦可编译）
+xcap = { workspace = true, optional = true }
+enigo = { workspace = true, optional = true }
+image = { workspace = true, optional = true }
+
+[features]
+# 开启后接入真实 Minecraft：VLM/SoM 渲染(craft-agent-model/real) + xcap 截图 + enigo 键鼠。
+# 默认不开启 → 只编译纯函数（如 to_screen_coords），供离线单测与轻量 CI。
+real = ["dep:craft-agent-model", "craft-agent-model/real", "dep:xcap", "dep:enigo", "dep:image"]

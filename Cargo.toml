@@ -9,6 +9,7 @@ resolver = "3"
 members = [
     "crates/craft-agent",         # 核心：通用抽象（types / GameAdapter / Agent 主循环）
     "crates/craft-agent-model",   # 模型客户端层：VLM(vision) + LLM(decision)，OpenAI 兼容多后端
+    "crates/craft-agent-minecraft", # P1.4 游戏适配器：xcap 截图 + VLM 感知 + enigo 键鼠（real 门控）
     "phase0_verify/enigo_mc_test", # Phase 0 真机验证脚手架（截图/键鼠）
 ]
 
@@ -42,3 +43,5 @@ imageproc = "0.25"
 ab_glyph = "0.2"
 # 内部 crate：核心抽象，供 model 层依赖
 craft-agent = { path = "crates/craft-agent" }
+# 内部 crate：模型客户端层（VLM/LLM），供 adapter 层依赖
+craft-agent-model = { path = "crates/craft-agent-model" }

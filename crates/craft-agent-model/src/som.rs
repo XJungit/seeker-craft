@@ -35,6 +35,16 @@ pub fn parse_mark_id(resp: &str) -> Option<u32> {
     digits.parse::<u32>().ok()
 }
 
+/// 把元素编号(1..=20)映射为带圈数字字符，用于拼 `marked_text` 喂给 VLM
+/// （与编号图上画的 ①..⑳ 一致）。超出范围用阿拉伯数字兜底。
+pub fn element_mark_char(id: u32) -> char {
+    if (1..=CIRCLED.len() as u32).contains(&id) {
+        CIRCLED[(id - 1) as usize]
+    } else {
+        std::char::from_digit(id, 10).unwrap_or('?')
+    }
+}
+
 /// 用 VLM 选号：把编号图 + 指令发给 VLM，解析返回的元素编号。
 ///
 /// 不依赖具体后端（接受 `&dyn VisionClient`），单测可注入 [`MockVisionClient`]。

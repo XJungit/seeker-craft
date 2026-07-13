@@ -255,7 +255,7 @@ flowchart TD
       fn execute(&mut self, action: Action) -> Result<ExecResult>; // 键鼠执行
   }
   ```
-  - **MinecraftAdapter**：xcap 截图 + ort 检测 + VLM API + enigo。
+  - **MinecraftAdapter**（`crates/craft-agent-minecraft`，P1.4 落地）：xcap 截图 + VLM/SoM + enigo；ort 3D 检测留 P2。
   - **BrowserAdapter**：headless 截图 + DOM（网页游戏，后续）。
   - **DesktopAdapter**：xcap + enigo（其他桌面游戏）。
 
@@ -325,6 +325,17 @@ trait WorldModel {
 4. **全链路长程任务**（最难）：串起来跑通"砍树→木镐"。
 
 每级过了再上下一级，避免一上来就撞最难的全链路。
+
+#### 5.3.1 P1.4 实施记录（2026-07-13）
+
+- **落地 crate：`crates/craft-agent-minecraft`**（独立 crate，非塞进核心）。
+  **架构修正**：最初设想把适配器放进核心 crate 并依赖 `craft-agent-model`，但模型层已反向依赖核心（共用 `WorldState`/`Screenshot` 类型）→ 会形成**循环依赖，Cargo 直接拒绝编译**。故改为独立 adapter crate，单向依赖 `craft-agent`（核心抽象）+ `craft-agent-model`（VLM/SoM），契合"换游戏 = 换 Adapter crate"的通用框架定位。真机依赖（xcap/enigo/image/model-real）全部 gated 在 `real` 特性，默认构建轻量、CI 无显示亦可编译。
+- **`MinecraftAdapter` 三方法**：
+  - `capture`：xcap 直捕 MC 窗口（方法 A，遮挡免疫）→ 编码 PNG（供 VLM/SoM 消费）。
+  - `perceive`：hotbar(9)+hud(1) 规则布局 → `som::render_marks` 编号渲染 → `VisionClient::describe` 场景描述 → 产出 `WorldState{marked_elements, ...}`。
+  - `execute`：`Click`(绝对定位+坐标钳制/WINDOW_MARGIN)、`Look`(相对移动转视角)、`Move`(按键保持)、`AimAndMine`(长按挖矿)。**明确不发送 ESC**（ESC 开暂停菜单，属保留约束）；坐标不乘 scale_factor（DPI aware 已对齐物理像素）。
+- **验证状态**：4 道门禁全绿（fmt/结构/clippy×3/real 测试 18+1）；`to_screen_coords` 钳制单测通过。`mc_step` 示例（只读 + `--act`）待真机（开 MC）验证 capture/perceive/execute。
+- **诚实边界**：P1.4 仅覆盖 2D 固定 UI + 视角/移动/挖矿原语；3D 目标检测对准（§5.3 第 2 级、ort 检测）仍留 P2；`detected_targets` 当前恒为空。
 
 ---
 

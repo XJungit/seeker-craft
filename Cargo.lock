@@ -562,6 +562,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "craft-agent-minecraft"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "craft-agent",
+ "craft-agent-model",
+ "enigo",
+ "image",
+ "xcap",
+]
+
+[[package]]
 name = "craft-agent-model"
 version = "0.1.0"
 dependencies = [
