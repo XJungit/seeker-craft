@@ -25,6 +25,20 @@ impl<A: GameAdapter> Agent<A> {
         self.adapter.execute(action)
     }
 
+    /// 单步（外部决策函数）：感知 → 外部决策 → 执行
+    ///
+    /// 允许调用方注入真实 LLM 决策逻辑（如 [`OpenAiLlmClient::decide`]），
+    /// 而不必在核心 crate 中加入对 model crate 的依赖。
+    /// 典型用法：`agent.step_with(|state| llm.decide(state, skills_hint))`
+    pub fn step_with<F>(&mut self, decide: F) -> Result<ExecResult>
+    where
+        F: FnOnce(&WorldState) -> Result<Action>,
+    {
+        let state = self.adapter.perceive()?;
+        let action = decide(&state)?;
+        self.adapter.execute(action)
+    }
+
     /// 占位决策：先返回"空转视角"——真实实现由 LLM/规划层产出 Action
     fn decide(&self, _state: &WorldState) -> Action {
         Action::Look { dx: 0, dy: 0 }
