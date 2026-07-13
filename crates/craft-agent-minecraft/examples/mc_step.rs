@@ -9,7 +9,8 @@
 //!   cargo run -p craft-agent-minecraft --example mc_step --features real -- --env
 //!       → 强制从环境变量读取（AGNES_API_KEY / AGNES_API_BASE / AGNES_MODEL）。
 //!   cargo run -p craft-agent-minecraft --example mc_step --features real -- --act
-//!       → 在只读基础上，额外执行一次 Look(50,0) 演示视角转动（请人眼观察准星）。
+//!       → 在只读基础上，额外执行一次 Look(400,0) 演示视角转动（请人眼观察准星）。
+//!         发输入前程序会自动把 MC 置为前台（绕过 Windows 前台锁），确保收到 enigo 合成输入。
 //!   cargo run -p craft-agent-minecraft --example mc_step --features real -- --fullscreen
 //!       → MC 全屏模式：capture 改用方法 C（主显示器整屏），消除窗口化焦点/暂停纠缠。
 //!         端到端闭环推荐；配合 --act 验证全屏下 Look 视角转动。
@@ -77,8 +78,10 @@ fn main() -> anyhow::Result<()> {
     }
 
     if act {
-        println!("[mc_step] --act：演示 Look(50,0)（请观察 MC 准星/视角是否转动）...");
-        let r = adapter.execute(Action::Look { dx: 50, dy: 0 })?;
+        println!(
+            "[mc_step] --act：演示 Look(400,0)（程序会先把 MC 置前台，请观察视角是否转动）..."
+        );
+        let r = adapter.execute(Action::Look { dx: 400, dy: 0 })?;
         println!("  → {}", r.detail);
     } else {
         println!("[mc_step] 只读模式：未执行任何鼠标/键盘动作。加 --act 才执行一次 Look。");

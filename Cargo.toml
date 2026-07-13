@@ -47,3 +47,12 @@ dotenvy = "0.15"
 craft-agent = { path = "crates/craft-agent" }
 # 内部 crate：模型客户端层（VLM/LLM），供 adapter 层依赖
 craft-agent-model = { path = "crates/craft-agent-model" }
+# Windows 前台窗口接管（AttachThreadInput + SetForegroundWindow）：确保 MC 收到 enigo 合成输入。
+# 仅 Windows 编译使用（craft-agent-minecraft 的 [target.'cfg(windows)'.dependencies] 用 .workspace 引用）。
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_System_Threading",
+    "Win32_System_Kernel",
+] }

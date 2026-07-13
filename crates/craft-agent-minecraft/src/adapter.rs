@@ -107,6 +107,66 @@ impl MinecraftAdapter {
     }
 }
 
+/// 尝试把 Minecraft 窗口抢回【前台】，使 enigo 的 SendInput 能投到 MC 消息队列。
+///
+/// 根因：从终端 `cargo run` 时终端是前台窗口，MC（即便独占全屏）被系统挂起 / 收不到输入；
+/// enigo 合成的鼠标键盘事件只投到【前台窗口】，故 MC 视角/按键无响应。
+/// 绕过 Windows 前台锁的标准做法：`AttachThreadInput` 挂到当前前台线程后 `SetForegroundWindow`
+/// + `SetFocus`（独占全屏被挂起时先 `ShowWindow(SW_RESTORE)` 唤醒）。
+#[cfg(windows)]
+fn focus_minecraft() -> Result<()> {
+    use windows_sys::Win32::Foundation::{HWND, LPARAM};
+    use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus;
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        EnumWindows, GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW,
+        GetWindowThreadProcessId, IsIconic, SW_RESTORE, SetForegroundWindow, ShowWindow,
+    };
+    use windows_sys::core::BOOL;
+
+    unsafe extern "system" fn enum_cb(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        unsafe {
+            let found = &mut *(lparam as *mut HWND);
+            let len = GetWindowTextLengthW(hwnd);
+            if len > 0 {
+                let mut buf = vec![0u16; (len + 1) as usize];
+                let n = GetWindowTextW(hwnd, buf.as_mut_ptr(), len + 1);
+                if n > 0 {
+                    let title = String::from_utf16_lossy(&buf[..n as usize]).to_lowercase();
+                    if title.contains("minecraft") {
+                        *found = hwnd;
+                        return 0i32; // 找到即停止枚举（非零继续）
+                    }
+                }
+            }
+            1i32
+        }
+    }
+
+    unsafe {
+        let mut found: HWND = std::ptr::null_mut();
+        EnumWindows(Some(enum_cb), &mut found as *mut _ as LPARAM);
+        if found.is_null() {
+            return Err(anyhow!("未找到标题含 'minecraft' 的窗口，无法置前台"));
+        }
+        let fg = GetForegroundWindow();
+        let mut fg_pid = 0u32;
+        let fg_thread = GetWindowThreadProcessId(fg, &mut fg_pid);
+        let mut _mc_pid = 0u32;
+        let _mc_thread = GetWindowThreadProcessId(found, &mut _mc_pid);
+        let my_thread = GetCurrentThreadId();
+        // 挂到当前前台线程，绕过 Windows 前台锁；失败也不致命（仅置前台可能无效）。
+        let _ = AttachThreadInput(my_thread, fg_thread, 1i32);
+        if IsIconic(found) != 0 {
+            ShowWindow(found, SW_RESTORE);
+        }
+        SetForegroundWindow(found);
+        SetFocus(found);
+        let _ = AttachThreadInput(my_thread, fg_thread, 0i32);
+        Ok(())
+    }
+}
+
 impl GameAdapter for MinecraftAdapter {
     fn capture(&self) -> Result<Screenshot> {
         let _ = enigo::set_dpi_awareness();
@@ -128,6 +188,14 @@ impl GameAdapter for MinecraftAdapter {
     }
 
     fn perceive(&self) -> Result<WorldState> {
+        // 全屏模式：独占全屏后台会被系统挂起 → 截图可能是黑帧/旧帧；先抢回前台拿实时画面。
+        // 窗口化 MC 后台仍正常渲染，无需抢焦点（避免只读测试时无故夺走终端前台）。
+        #[cfg(windows)]
+        if self.fullscreen
+            && let Err(e) = focus_minecraft()
+        {
+            eprintln!("[warn] 置 MC 前台失败：{e}（截图可能非实时）");
+        }
         let png = self.capture()?;
         let (_wx, _wy, ww, wh) = self
             .rect
@@ -168,6 +236,15 @@ impl GameAdapter for MinecraftAdapter {
     }
 
     fn execute(&mut self, action: Action) -> Result<ExecResult> {
+        // 关键：发输入前把 MC 抢回前台。否则（终端前台的背景下）enigo 的 SendInput 投不到 MC，
+        // 视角/按键全无响应。独占全屏被挂起时 focus_minecraft 内部会 ShowWindow(SW_RESTORE) 唤醒。
+        #[cfg(windows)]
+        if let Err(e) = focus_minecraft() {
+            eprintln!("[warn] 置 MC 前台失败：{e}（enigo 输入可能不生效）");
+        }
+        // 给 MC 一点时间接管网消息泵（尤其从挂起唤醒后），再发输入。
+        #[cfg(windows)]
+        thread::sleep(Duration::from_millis(60));
         let (wx, wy, ww, wh) = self
             .rect
             .borrow()

@@ -20,3 +20,8 @@ image = { workspace = true, optional = true }
 # 开启后接入真实 Minecraft：VLM/SoM 渲染(craft-agent-model/real) + xcap 截图 + enigo 键鼠。
 # 默认不开启 → 只编译纯函数（如 to_screen_coords），供离线单测与轻量 CI。
 real = ["dep:craft-agent-model", "craft-agent-model/real", "dep:xcap", "dep:enigo", "dep:image"]
+
+# 仅 Windows 编译：前台窗口接管（AttachThreadInput + SetForegroundWindow），
+# 确保 MC 在独占全屏/后台时收得到 enigo 合成输入（SendInput 只投前台窗口队列）。
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
