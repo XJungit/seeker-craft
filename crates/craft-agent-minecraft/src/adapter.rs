@@ -300,9 +300,22 @@ impl GameAdapter for MinecraftAdapter {
                 })
             }
             Action::Look { dx, dy } => {
-                // 全屏下 MC 独占 raw input，enigo move_mouse(Rel) 内部转绝对→视角不转。
-                // Windows 上直调 SendInput + MOUSEEVENTF_MOVE（无 ABSOLUTE flag），
-                // 这才是 AutoHotkey / Java Robot 能转 MC 视角的真正路径。
+                // 窗口化 MC：必须先在窗口内点击激活鼠标捕获，然后 raw delta 才被解释为视角旋转。
+                // 独占全屏自带 raw input 捕获，无需此步骤。
+                if !self.fullscreen {
+                    let cx = wx + (ww / 2) as i32;
+                    let cy = wy + (wh / 2) as i32;
+                    self.enigo
+                        .move_mouse(cx, cy, Coordinate::Abs)
+                        .context("Look: 移鼠标至窗口中心失败")?;
+                    thread::sleep(Duration::from_millis(30));
+                    self.enigo
+                        .button(Button::Left, Direction::Click)
+                        .context("Look: 左键激活鼠标捕获失败")?;
+                    thread::sleep(Duration::from_millis(50));
+                }
+                // 直调 SendInput + MOUSEEVENTF_MOVE（无 ABSOLUTE flag），触发 MC raw input 视角旋转。
+                // 不用 enigo move_mouse(Rel)——它在 Windows 内部转绝对坐标，全屏 raw input 不认。
                 #[cfg(windows)]
                 raw_mouse_rel(dx, dy)?;
                 // 非 Windows 回退 enigo 的相对移动（如 Linux XTest/macOS CGEvent）
