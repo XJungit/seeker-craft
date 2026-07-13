@@ -568,6 +568,7 @@ dependencies = [
  "anyhow",
  "craft-agent",
  "craft-agent-model",
+ "dotenvy",
  "enigo",
  "image",
  "xcap",
@@ -660,6 +661,12 @@ checksum = "ab8ecd87370524b461f8557c119c405552c396ed91fc0a8eec68679eab26f94a"
 dependencies = [
  "libloading",
 ]
+
+[[package]]
+name = "dotenvy"
+version = "0.15.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
 
 [[package]]
 name = "downcast-rs"

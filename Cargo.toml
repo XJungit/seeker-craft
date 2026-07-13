@@ -41,6 +41,8 @@ image = { version = "0.25", default-features = false, features = ["png"] }
 imageproc = "0.25"
 # SoM 渲染字体（ab_glyph FontVec 加载系统字体）
 ab_glyph = "0.2"
+# 项目根 .env 自动加载（密钥放 .env，已被 gitignore；与 setx 持久化互补）
+dotenvy = "0.15"
 # 内部 crate：核心抽象，供 model 层依赖
 craft-agent = { path = "crates/craft-agent" }
 # 内部 crate：模型客户端层（VLM/LLM），供 adapter 层依赖

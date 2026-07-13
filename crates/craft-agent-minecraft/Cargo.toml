@@ -9,6 +9,8 @@ craft-agent.workspace = true
 # 模型层（VisionClient / SoM）—— 仅在 real 路径需要；避免默认构建拉入 reqwest/imageproc
 craft-agent-model = { workspace = true, optional = true }
 anyhow.workspace = true
+# 项目根 .env 自动加载（示例里用它把 MINICPM_API_KEY 等注入环境，与 setx 持久化互补）
+dotenvy.workspace = true
 # P1.4 真机依赖（仅 real 特性编译，保持默认构建轻量、无显示亦可编译）
 xcap = { workspace = true, optional = true }
 enigo = { workspace = true, optional = true }

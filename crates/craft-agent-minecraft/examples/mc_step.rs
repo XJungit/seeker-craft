@@ -19,6 +19,10 @@ fn main() -> anyhow::Result<()> {
     use craft_agent_model::config::AgentConfig;
     use craft_agent_model::vision::real::OpenAiVisionClient;
 
+    // 加载项目根 .env（含 MINICPM_API_KEY 等密钥；已被 gitignore 不会进版本库）。
+    // dotenvy 只补充「未设置」的环境变量，不覆盖已存在的（如 setx 持久化的同名变量）。
+    let _ = dotenvy::dotenv();
+
     let args: Vec<String> = std::env::args().collect();
     let act = args.iter().any(|a| a == "--act");
     let use_env = args.iter().any(|a| a == "--env");
