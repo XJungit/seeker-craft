@@ -41,6 +41,8 @@ pub struct MinecraftAdapter {
     rect: RefCell<Option<(i32, i32, u32, u32)>>,
     /// 最近一次 perceive 得到的标记元素表（execute 的 Click 据此查坐标）。
     elements: RefCell<Vec<Element>>,
+    /// 最近一次 perceive 检测到的 3D 目标（execute 的 AimAndMine 据此对准）。
+    targets: RefCell<Vec<Target>>,
 }
 
 impl MinecraftAdapter {
@@ -58,6 +60,7 @@ impl MinecraftAdapter {
             fullscreen: false,
             rect: RefCell::new(None),
             elements: RefCell::new(Vec::new()),
+            targets: RefCell::new(Vec::new()),
         })
     }
 
@@ -265,6 +268,7 @@ impl GameAdapter for MinecraftAdapter {
         });
 
         self.elements.replace(elements.clone());
+        self.targets.replace(targets.clone());
         Ok(WorldState {
             scene_desc,
             marked_elements: elements,
@@ -345,15 +349,45 @@ impl GameAdapter for MinecraftAdapter {
                 })
             }
             Action::AimAndMine { target } => {
-                // P1.4：3D 目标检测未接入，准星指向即挖；detected_targets 有匹配时将来先 Look 对准。
-                // 明确不发送 ESC（ESC 会开暂停菜单，属保留约束）。挖矿时长用固定值（本动作无 ticks 字段）。
-                self.enigo.button(Button::Left, Direction::Press)?;
-                thread::sleep(Duration::from_millis(MINE_MS * 10));
-                self.enigo.button(Button::Left, Direction::Release)?;
-                Ok(ExecResult {
-                    ok: true,
-                    detail: format!("mine '{target}' (3D aim in P2)"),
-                })
+                // 在缓存的目标列表中查找匹配项（部分匹配，忽略大小写）
+                let t = self
+                    .targets
+                    .borrow()
+                    .iter()
+                    .find(|t| t.label.to_lowercase().contains(&target.to_lowercase()))
+                    .cloned();
+                match t {
+                    Some(t) => {
+                        let (dx, dy) = t.offset_from_crosshair;
+                        // Look: 用相对鼠标移动转动视角，朝向目标
+                        // 比例因子 ≈ 1（后续可按 MC 鼠标灵敏度调参）
+                        if dx != 0 || dy != 0 {
+                            self.enigo.move_mouse(dx, dy, Coordinate::Rel)?;
+                            thread::sleep(Duration::from_millis(100)); // 等视角稳定
+                        }
+                        // 挖矿
+                        self.enigo.button(Button::Left, Direction::Press)?;
+                        thread::sleep(Duration::from_millis(MINE_MS * 10));
+                        self.enigo.button(Button::Left, Direction::Release)?;
+                        Ok(ExecResult {
+                            ok: true,
+                            detail: format!(
+                                "aim {} offset=({},{}) → mine 2s",
+                                t.label, dx, dy
+                            ),
+                        })
+                    }
+                    None => {
+                        // 没找到目标，原地挖
+                        self.enigo.button(Button::Left, Direction::Press)?;
+                        thread::sleep(Duration::from_millis(MINE_MS * 10));
+                        self.enigo.button(Button::Left, Direction::Release)?;
+                        Ok(ExecResult {
+                            ok: true,
+                            detail: format!("mine (no target '{target}' found, blind)"),
+                        })
+                    }
+                }
             }
         }
     }
