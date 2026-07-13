@@ -245,7 +245,7 @@ impl GameAdapter for MinecraftAdapter {
 
         // 叠加编号渲染 → 编号图喂给 VLM（让 VLM 说"点③"而非模糊方位）
         let _marked_png = render_marks(&png, &elements).context("SoM 渲染编号失败（需系统字体）")?;
-        let marked_text: String = elements
+        let elements_str: String = elements
             .iter()
             .map(|e| {
                 format!(
@@ -376,11 +376,15 @@ impl GameAdapter for MinecraftAdapter {
                 match t {
                     Some(t) => {
                         let (dx, dy) = t.offset_from_crosshair;
-                        // Look: 用相对鼠标移动转动视角，朝向目标
-                        // 比例因子 ≈ 1（后续可按 MC 鼠标灵敏度调参）
                         if dx != 0 || dy != 0 {
+                            // ⚠️ 必须用 raw_mouse_rel（SendInput 裸 MOUSEEVENTF_MOVE），
+                            // 不是 enigo.move_mouse(Rel)。后者走绝对坐标转换，MC raw input 不认。
+                            eprintln!("[aim] raw_mouse_rel({}, {}) → 瞄准 {}", dx, dy, t.label);
+                            #[cfg(windows)]
+                            raw_mouse_rel(dx, dy)?;
+                            #[cfg(not(windows))]
                             self.enigo.move_mouse(dx, dy, Coordinate::Rel)?;
-                            thread::sleep(Duration::from_millis(100)); // 等视角稳定
+                            thread::sleep(Duration::from_millis(150));
                         }
                         // 挖矿
                         self.enigo.button(Button::Left, Direction::Press)?;
@@ -389,7 +393,7 @@ impl GameAdapter for MinecraftAdapter {
                         Ok(ExecResult {
                             ok: true,
                             detail: format!(
-                                "aim {} offset=({},{}) → mine 2s",
+                                "瞄准 {} (offset={},{}) 并挖掘了2秒。目标方块可能已被破坏。",
                                 t.label, dx, dy
                             ),
                         })
@@ -406,21 +410,6 @@ impl GameAdapter for MinecraftAdapter {
                 }
             }
         }
-    }
-}
-
-// VLM 通用目标检测（跨游戏复用）
-impl MinecraftAdapter {
-    /// 截图 → VLM → 解析坐标 → Vec<Target>
-    fn vlm_detect(&self, png: &Screenshot, screen_w: u32, screen_h: u32) -> Result<Vec<Target>> {
-        let prompt = format!(
-            "图片尺寸 {screen_w}x{screen_h}，中心在 ({}, {})。列出3D世界物体的像素坐标。\n\
-             格式: label: (x, y)。只输出列表，不要解释。",
-            screen_w / 2, screen_h / 2
-        );
-        let reply = self.vision.chat(png, &prompt)?;
-        eprintln!("[vlm-detect] {reply}");
-        parse_vlm_targets(&reply, screen_w, screen_h)
     }
 }
 
@@ -446,8 +435,6 @@ fn parse_vlm_targets(reply: &str, screen_w: u32, screen_h: u32) -> Result<Vec<Ta
         let cy: i32 = cap[3].parse().unwrap_or(0);
         // debug: 打印所有匹配
         eprintln!("[parse] raw={raw_label:?} → label={label:?} ({cx},{cy})");
-        // 过滤 UI 元素
-        let cy: i32 = cap[3].parse().unwrap_or(0);
         // 过滤 UI 元素
         if label.starts_with("hotbar") || label.starts_with("hud")
             || label.is_empty() || label.len() > 30
