@@ -107,6 +107,39 @@ impl MinecraftAdapter {
     }
 }
 
+/// 绕过 enigo 的绝对定位转换，直接用 SendInput + MOUSEEVENTF_MOVE（无 ABSOLUTE flag）
+/// 发送真正的相对鼠标位移，触发 MC 独占全屏下的 raw input 视角旋转。
+///
+/// 根因：MC 独占全屏时鼠标被锁定在画面中心，enigo 的 `move_mouse(dx, dy, Coordinate::Rel)`
+/// 内部把当前光标+deltas→算出绝对坐标→`SetCursorPos`/`MOUSEEVENTF_ABSOLUTE` 发送，
+/// 这只会把光标钉回中心、不产生视角差。而 SendInput 裸 `MOUSEEVENTF_MOVE`（无 ABSOLUTE）
+/// 触发 MC raw input 的路由，这才是 AutoHotkey / Java Robot 能在 MC 中转视角的机制。
+#[cfg(windows)]
+fn raw_mouse_rel(dx: i32, dy: i32) -> Result<()> {
+    use std::mem::size_of;
+    use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
+        INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_MOVE, MOUSEINPUT, SendInput,
+    };
+
+    let input = INPUT {
+        r#type: INPUT_MOUSE,
+        Anonymous: INPUT_0 {
+            mi: MOUSEINPUT {
+                dx,
+                dy,
+                mouseData: 0,
+                dwFlags: MOUSEEVENTF_MOVE,
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    };
+    unsafe {
+        SendInput(1, &input as *const INPUT, size_of::<INPUT>() as i32);
+    }
+    Ok(())
+}
+
 /// 尝试把 Minecraft 窗口抢回【前台】，使 enigo 的 SendInput 能投到 MC 消息队列。
 ///
 /// 根因：从终端 `cargo run` 时终端是前台窗口，MC（即便独占全屏）被系统挂起 / 收不到输入；
@@ -267,7 +300,13 @@ impl GameAdapter for MinecraftAdapter {
                 })
             }
             Action::Look { dx, dy } => {
-                // 相对鼠标移动转动 MC 视角（raw mouse input）
+                // 全屏下 MC 独占 raw input，enigo move_mouse(Rel) 内部转绝对→视角不转。
+                // Windows 上直调 SendInput + MOUSEEVENTF_MOVE（无 ABSOLUTE flag），
+                // 这才是 AutoHotkey / Java Robot 能转 MC 视角的真正路径。
+                #[cfg(windows)]
+                raw_mouse_rel(dx, dy)?;
+                // 非 Windows 回退 enigo 的相对移动（如 Linux XTest/macOS CGEvent）
+                #[cfg(not(windows))]
                 self.enigo.move_mouse(dx, dy, Coordinate::Rel)?;
                 Ok(ExecResult {
                     ok: true,
