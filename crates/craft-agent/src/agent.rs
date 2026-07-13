@@ -69,7 +69,7 @@ impl<A: GameAdapter> Agent<A> {
                     "perceive: {} targets, {} elements, scene={:.60}...",
                     state.detected_targets.len(),
                     state.marked_elements.len(),
-                    &state.scene_desc[..state.scene_desc.len().min(60)]
+                    truncate_str(&state.scene_desc, 60)
                 );
                 self.last_state = Some(state);
                 Ok(ToolStepResult {
@@ -102,6 +102,16 @@ pub struct ToolStepResult {
     /// 是否执行了真实动作（反之只是感知或思考）
     pub action_taken: bool,
     pub detail: String,
+}
+
+/// 安全截断 UTF-8 字符串，不会在多字节字符中间切开
+fn truncate_str(s: &str, max_bytes: usize) -> &str {
+    if s.len() <= max_bytes { return s; }
+    let mut end = max_bytes;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
 }
 
 #[cfg(test)]
