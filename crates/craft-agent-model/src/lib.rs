@@ -8,4 +8,5 @@
 
 pub mod config;
 pub mod decision;
+pub mod som;
 pub mod vision;

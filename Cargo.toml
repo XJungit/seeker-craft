@@ -36,5 +36,9 @@ xcap = "0.9.6"
 winreg = "0.55"
 # 图像处理：仅 png 特性，避免 image/default 拉入 ravif/rav1e(AV1 巨量编译)
 image = { version = "0.25", default-features = false, features = ["png"] }
+# SoM 渲染（画框/圆点/编号文字）
+imageproc = "0.25"
+# SoM 渲染字体（ab_glyph FontVec 加载系统字体）
+ab_glyph = "0.2"
 # 内部 crate：核心抽象，供 model 层依赖
 craft-agent = { path = "crates/craft-agent" }

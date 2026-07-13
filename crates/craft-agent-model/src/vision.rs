@@ -5,16 +5,33 @@ use craft_agent::core::types::Screenshot;
 
 /// 视觉理解客户端接口
 pub trait VisionClient {
-    /// 输入截图与"标记元素清单"文本，返回场景描述
-    fn describe(&self, screenshot: &Screenshot, marked_elements: &str) -> Result<String>;
+    /// 通用视觉问答：**PNG 编码截图** + 任意文本 prompt → 模型文本回复。
+    ///
+    /// 这是核心方法；[`describe`] 是其便捷封装（固定"场景描述"prompt）。
+    fn chat(&self, screenshot: &Screenshot, prompt: &str) -> Result<String>;
+
+    /// 便捷封装：用固定的"场景描述"prompt 调用 [`chat`]。
+    ///
+    /// `marked_elements` 为已标注元素清单文本（如 "① crafting_table ② furnace"），
+    /// 拼进 prompt 作为上下文。
+    fn describe(&self, screenshot: &Screenshot, marked_elements: &str) -> Result<String> {
+        let prompt = format!(
+            "这是一张 Minecraft 游戏截图。已标注的可点击元素编号如下：\n{marked_elements}\n\
+             请用简洁中文分点说明：1) 当前界面（游戏世界/暂停菜单/背包/合成台/主菜单）；\
+             2) 画面中的关键物体与可交互 UI 及大致位置；\
+             3) 玩家状态（血量/饥饿/快捷栏/准星指向）。"
+        );
+        self.chat(screenshot, &prompt)
+    }
 }
 
 /// 离线 mock：返回固定描述，便于无网络/无密钥时单测主循环
 pub struct MockVisionClient;
 
 impl VisionClient for MockVisionClient {
-    fn describe(&self, _screenshot: &Screenshot, marked_elements: &str) -> Result<String> {
-        Ok(format!("[mock-vision] 场景含标记元素：{}", marked_elements))
+    fn chat(&self, _screenshot: &Screenshot, _prompt: &str) -> Result<String> {
+        // 同时含 "crafting_table"（供 describe 测试）与 "2"（供 SoM 选号测试解析）
+        Ok("[mock-vision] 场景含 crafting_table；选中元素 2".to_string())
     }
 }
 
@@ -214,14 +231,8 @@ pub mod real {
 
     impl VisionClient for OpenAiVisionClient {
         /// `screenshot` 在此视为 **PNG 编码字节**（适配器已编码），非原始 RGBA。
-        fn describe(&self, screenshot: &Screenshot, marked_elements: &str) -> Result<String> {
-            let prompt = format!(
-                "这是一张 Minecraft 游戏截图。已标注的可点击元素编号如下：\n{marked_elements}\n\
-                 请用简洁中文分点说明：1) 当前界面（游戏世界/暂停菜单/背包/合成台/主菜单）；\
-                 2) 画面中的关键物体与可交互 UI 及大致位置；\
-                 3) 玩家状态（血量/饥饿/快捷栏/准星指向）。"
-            );
-            self.chat_image_png(screenshot, &prompt)
+        fn chat(&self, screenshot: &Screenshot, prompt: &str) -> Result<String> {
+            self.chat_image_png(screenshot, prompt)
         }
     }
 
