@@ -21,3 +21,4 @@ __pycache__/
 
 # 本地 agent 记忆（机器相关，非源码）
 .workbuddy/
+pi_agent_rust_study/

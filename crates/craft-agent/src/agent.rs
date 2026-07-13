@@ -10,17 +10,16 @@
 //! - 消息历史完整积累，LLM 知道之前所有行动的后果
 
 use crate::core::adapter::GameAdapter;
+use crate::core::message::{Message, system_chatml};
 use crate::core::types::{Action, ExecResult, WorldState};
 use anyhow::Result;
+use serde_json::Value;
 
 /// Agent 可用工具的 JSON Schema 定义 (OpenAI function calling 格式)
-pub type ToolDef = serde_json::Value;
+pub type ToolDef = Value;
 
-/// Agent 维护的对话消息
-pub type ChatMessage = serde_json::Value;
-
-/// LLM 决策回调: 接收消息历史和工具定义，返回 (tool_name, arguments_json)
-pub type DecideFn = dyn Fn(&[ChatMessage], &[ToolDef]) -> Result<Vec<(String, String)>>;
+/// LLM 决策回调: 接收 ChatML 消息数组 + 工具定义, 返回 (tool_name, arguments_json)
+pub type DecideFn = dyn Fn(&[Value], &[ToolDef]) -> Result<Vec<(String, String)>>;
 
 /// Agent 配置 (从 agent.toml 的 [agent] 段加载)
 #[derive(Debug, Clone, serde::Deserialize)]
@@ -42,8 +41,8 @@ fn default_max_turns() -> u32 { 20 }
 pub struct Agent<A: GameAdapter> {
     pub adapter: A,
     pub config: AgentConfig,
-    /// 会话消息历史 (system prompt + assistant tool_calls + tool results)
-    pub messages: Vec<ChatMessage>,
+    /// 会话消息历史 (system + assistant tool_calls + tool results)
+    pub messages: Vec<Message>,
     /// 最近一次 perceive 的世界状态
     pub last_state: Option<WorldState>,
 }
@@ -60,12 +59,9 @@ impl<A: GameAdapter> Agent<A> {
         agent
     }
 
-    /// 重置消息历史 (每次新 run 调用)
+    /// 重置消息历史
     pub fn reset_messages(&mut self) {
-        self.messages = vec![serde_json::json!({
-            "role": "system",
-            "content": self.config.system_prompt
-        })];
+        self.messages = Vec::new();
     }
 
     /// 🏃 运行 Agent 主循环 (Pi 风格: 工具在 Agent 内部执行)
@@ -80,8 +76,12 @@ impl<A: GameAdapter> Agent<A> {
         let mut log: Vec<String> = Vec::new();
 
         for turn in 1..=self.config.max_turns {
-            // 1. LLM 决策
-            let calls = match decide(&self.messages, &self.config.tools) {
+            // 1. 组装上下文 (系统 prompt + 消息历史) 并调用 LLM
+            let system = system_chatml(&self.config.system_prompt);
+            let mut chatml: Vec<Value> = vec![system];
+            chatml.extend(self.messages.iter().map(Message::to_chatml));
+
+            let calls = match decide(&chatml, &self.config.tools) {
                 Ok(c) => c,
                 Err(e) => {
                     let msg = format!("[turn{turn}] LLM error: {e}");
@@ -91,20 +91,15 @@ impl<A: GameAdapter> Agent<A> {
             };
             if calls.is_empty() { break; }
 
-            // 取第一个 tool call (Pi 支持并行，我们目前单步)
+            // 取第一个 tool call
             let (name, args_json) = &calls[0];
             let call_id = format!("call_{turn}");
 
-            // 2. 记录 assistant 的 tool_call
-            self.messages.push(serde_json::json!({
-                "role": "assistant",
-                "content": null,
-                "tool_calls": [{
-                    "id": call_id,
-                    "type": "function",
-                    "function": {"name": name, "arguments": args_json}
-                }]
-            }));
+            // 2. 记录 assistant 的 tool_call (类型化)
+            let args: Value = serde_json::from_str(args_json).unwrap_or_default();
+            self.messages.push(Message::assistant_tool_call(
+                &call_id, name, args.clone(),
+            ));
 
             // 3. Agent 内部执行工具
             let result = match name.as_str() {
@@ -142,12 +137,8 @@ impl<A: GameAdapter> Agent<A> {
                 _ => format!("未知工具: {name}")
             };
 
-            // 4. 工具结果注入消息历史 (SillyTavern 风格: 人类可读文本)
-            self.messages.push(serde_json::json!({
-                "role": "tool",
-                "tool_call_id": call_id,
-                "content": result
-            }));
+            // 4. 工具结果注入 (类型化)
+            self.messages.push(Message::tool_result(&call_id, name, &result));
 
             log.push(format!("[turn{turn}] {}({})", name, args_json));
         }
@@ -191,8 +182,7 @@ mod tests {
         };
         let mut agent = Agent::new(FakeGameAdapter, config);
         let log = agent.run(
-            &|_msgs, _tools| Ok(vec![]), // 不调用任何工具
-            &|_name, _args| Ok("ok".into()),
+            &|_msgs, _tools| Ok(vec![]),
         ).unwrap();
         assert!(log.is_empty()); // 空 calls → 立即退出
     }
