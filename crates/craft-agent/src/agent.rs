@@ -108,21 +108,12 @@ impl<A: GameAdapter> Agent<A> {
                         let state = self.adapter.perceive()?;
                         let is_empty = state.detected_targets.is_empty();
                         let list: Vec<_> = state.detected_targets.iter().map(|t| t.label.clone()).collect();
-                        // 更新动态场景层 (酒馆 World Info 模式)
-                        let targets_desc = if is_empty {
-                            "未检测到3D物体。应 look 或 move_forward 探索。".to_string()
-                        } else {
-                            let details: Vec<_> = state.detected_targets.iter()
-                                .map(|t| format!("{}(偏移{},{})", t.label, t.offset_from_crosshair.0, t.offset_from_crosshair.1))
-                                .collect();
-                            format!("检测到: {}。选一个 aim_and_mine。", details.join(", "))
-                        };
-                        self.config.prompt.set_scenario(targets_desc);
+                        let raw = state.scene_desc.clone();
                         self.last_state = Some(state);
                         if is_empty {
-                            "观察了周围。VLM未检测到3D物体。应look或move_forward。".into()
+                            format!("VLM原文:\n{raw}\n\n目标: 无。应look或move_forward。")
                         } else {
-                            format!("观察了周围。检测到: {}。选一个aim_and_mine挖掘。", list.join("、"))
+                            format!("VLM原文:\n{raw}\n\n解析目标: {}。选一个aim_and_mine。", list.join("、"))
                         }
                     }
                     "aim_and_mine" => {

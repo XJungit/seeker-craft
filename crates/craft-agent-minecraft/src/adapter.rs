@@ -377,7 +377,7 @@ impl GameAdapter for MinecraftAdapter {
                     Some(t) => {
                         let (dx, dy) = t.offset_from_crosshair;
                         if dx != 0 || dy != 0 {
-                            // 窗口化 MC: 先点击窗口中心激活鼠标捕获 (和 Look 一样)
+                            // 窗口化 MC: 先点击窗口中心激活鼠标捕获
                             if !self.fullscreen {
                                 let rect = self.rect.borrow();
                                 if let Some((wx, wy, ww, wh)) = *rect {
@@ -389,9 +389,13 @@ impl GameAdapter for MinecraftAdapter {
                                     thread::sleep(Duration::from_millis(50));
                                 }
                             }
-                            eprintln!("[aim] raw_mouse_rel({}, {}) → 瞄准 {}", dx, dy, t.label);
+                            // 灵敏度缩放: 像素偏移 ≠ 鼠标delta, 1px ≈ 0.15° in MC
+                            // 缩到 0.5 避免过度转动
+                            let sdx = (dx as f32 * 0.5) as i32;
+                            let sdy = (dy as f32 * 0.5) as i32;
+                            eprintln!("[aim] raw_mouse_rel({sdx}, {sdy}) ← 原始({dx},{dy}) → 瞄准 {}", t.label);
                             #[cfg(windows)]
-                            raw_mouse_rel(dx, dy)?;
+                            raw_mouse_rel(sdx, sdy)?;
                             #[cfg(not(windows))]
                             self.enigo.move_mouse(dx, dy, Coordinate::Rel)?;
                             thread::sleep(Duration::from_millis(150));
