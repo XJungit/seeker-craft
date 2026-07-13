@@ -18,6 +18,8 @@ image = { workspace = true, optional = true }
 # P2 3D 目标检测：ONNX Runtime DirectML
 ort = { workspace = true, optional = true }
 ndarray = { workspace = true, optional = true }
+# VLM 检测坐标解析
+regex = "1"
 
 [features]
 # 开启后接入真实 Minecraft：VLM/SoM 渲染(craft-agent-model/real) + xcap 截图 + enigo 键鼠。

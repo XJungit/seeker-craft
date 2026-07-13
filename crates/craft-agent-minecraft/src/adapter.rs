@@ -16,7 +16,7 @@ use crate::WINDOW_MARGIN;
 use crate::to_screen_coords;
 use anyhow::{Context, Result, anyhow};
 use craft_agent::core::adapter::GameAdapter;
-use craft_agent::core::types::{Action, Element, ExecResult, Screenshot, WorldState};
+use craft_agent::core::types::{Action, Element, ExecResult, Screenshot, Target, WorldState};
 use craft_agent_model::som::render::render_marks;
 use craft_agent_model::som::{mc_hotbar_marks, mc_hud_marks};
 use craft_agent_model::vision::VisionClient;
@@ -258,11 +258,17 @@ impl GameAdapter for MinecraftAdapter {
             .describe(&marked_png, &marked_text)
             .context("VLM 场景描述失败")?;
 
+        // 3D 目标检测：VLM 通用方案（同一张截图，不叠加编号以免干扰检测）
+        let targets = self.vlm_detect(&png, ww, wh).unwrap_or_else(|e| {
+            eprintln!("[warn] VLM 目标检测失败: {e}");
+            vec![]
+        });
+
         self.elements.replace(elements.clone());
         Ok(WorldState {
             scene_desc,
             marked_elements: elements,
-            detected_targets: vec![], // 3D 目标检测留待 P2
+            detected_targets: targets,
             self_hint: String::new(),
             screenshot: png,
         })
@@ -350,6 +356,52 @@ impl GameAdapter for MinecraftAdapter {
                 })
             }
         }
+    }
+}
+
+// VLM 通用目标检测（跨游戏复用）
+impl MinecraftAdapter {
+    /// 截图 → VLM → 解析坐标 → Vec<Target>
+    fn vlm_detect(&self, png: &Screenshot, screen_w: u32, screen_h: u32) -> Result<Vec<Target>> {
+        let prompt = format!(
+            "这张 Minecraft 截图尺寸为 {screen_w}x{screen_h} 像素，原点(0,0)在左上角。\
+             列出画面中所有你能识别的**3D 世界物体**（树木、石头、水、动物、怪物、矿石等，不包含 UI/HUD 元素）。\
+             对每个物体给出像素坐标。严格按此格式输出，每行一个：\n\n\
+             label: (cx, cy)\n\n\
+             示例：\n\
+             tree: (400, 300)\n\
+             stone: (200, 500)\
+             \n\n只输出物体列表，不要解释。"
+        );
+        let reply = self.vision.chat(png, &prompt)?;
+        eprintln!("[vlm-detect] VLM 原始回复:\n{reply}");
+
+        let mut targets = Vec::new();
+        let re = regex::Regex::new(r"([a-z][\w\s]*?):\s*\(\s*(\d+)\s*,\s*(\d+)\s*\)")
+            .context("编译 VLM 检测正则失败")?;
+        let (screen_cx, screen_cy) = (screen_w as f32 / 2.0, screen_h as f32 / 2.0);
+
+        for cap in re.captures_iter(&reply) {
+            let label = cap[1].trim().to_lowercase();
+            let cx: i32 = cap[2].parse().unwrap_or(0);
+            let cy: i32 = cap[3].parse().unwrap_or(0);
+            // 过滤不合理的坐标
+            if (cx == 0 && cy == 0)
+                || cx < 0
+                || cy < 0
+                || cx > screen_w as i32
+                || cy > screen_h as i32
+            {
+                continue;
+            }
+            let half = 20i32;
+            targets.push(Target {
+                label,
+                bbox: [cx - half, cy - half, half * 2, half * 2],
+                offset_from_crosshair: (cx - screen_cx as i32, cy - screen_cy as i32),
+            });
+        }
+        Ok(targets)
     }
 }
 

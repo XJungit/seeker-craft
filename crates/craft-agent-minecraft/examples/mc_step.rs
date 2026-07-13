@@ -76,6 +76,13 @@ fn main() -> anyhow::Result<()> {
             e.id, e.label, e.bbox, e.center
         );
     }
+    println!("  detected_targets: {}", ws.detected_targets.len());
+    for t in &ws.detected_targets {
+        println!(
+            "    {}  bbox={:?}  offset={:?}",
+            t.label, t.bbox, t.offset_from_crosshair
+        );
+    }
 
     if act {
         println!(

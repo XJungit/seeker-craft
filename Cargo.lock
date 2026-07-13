@@ -585,6 +585,7 @@ dependencies = [
  "image",
  "ndarray 0.16.1",
  "ort",
+ "regex",
  "windows-sys 0.61.2",
  "xcap",
 ]
