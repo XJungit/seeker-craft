@@ -14,7 +14,6 @@ fn main() -> anyhow::Result<()> {
     use craft_agent::agent::{Agent, AgentTool};
     use craft_agent_minecraft::adapter::MinecraftAdapter;
     use craft_agent_model::config::AgentConfig;
-    use craft_agent_model::decision::DecisionClient;
     use craft_agent_model::decision::real::OpenAiLlmClient;
     use craft_agent_model::vision::VisionClient;
     use craft_agent_model::vision::real::OpenAiVisionClient;
@@ -48,31 +47,16 @@ fn main() -> anyhow::Result<()> {
     };
     let mut agent = Agent::new(adapter);
 
-    let tool_hint = "\
-你是一个 Minecraft Agent。你可以使用以下工具：
-- **perceive**：拍照并用 VLM 识别画面中的物体（树/石/水/动物等）
-- **动作**：Look/Move/AimAndMine/Click
-
-规则：
-1. 如果你的 WorldState 为空或已过时，先调用 perceive。
-2. 如果检测到树/石头/矿石，用 AimAndMine 对准挖掘。
-3. 如果周围没有明显目标，Look 左右观察或 Move 前进探索。
-4. 不要连续两次 perceive，看到东西后要行动。";
-
-    // 用工具调用格式构建 LLM prompt
     fn build_tool_prompt(state: Option<&craft_agent::core::types::WorldState>) -> String {
         if let Some(s) = state {
             format!(
                 "[当前状态]\n\
                  场景: {}\n\
                  检测目标({}): {}\n\
-                 可交互 UI({}): {}\n\
+                 可交互: {} 个元素\n\
                  自身: {}\n\n\
-                 [请决策] 立刻给出一个 JSON 动作，不要解释：\n\
-                 格式: {{\"action\":\"AimAndMine\",\"target\":\"tree\"}} 或\n\
-                       {{\"action\":\"Look\",\"dx\":200,\"dy\":0}} 或\n\
-                       {{\"tool\":\"perceive\"}}\n\
-                 不要输出其他内容。",
+                 [请决策] 立刻给出一个 JSON，不要解释。\n\
+                 可选: {{\"tool\":\"perceive\"}} 观察世界 | {{\"action\":\"AimAndMine\",\"target\":\"tree\"}} | {{\"action\":\"Look\",\"dx\":200,\"dy\":0}}",
                 s.scene_desc,
                 s.detected_targets.len(),
                 s.detected_targets.iter().map(|t| format!("{} offset=({},{})", t.label, t.offset_from_crosshair.0, t.offset_from_crosshair.1)).collect::<Vec<_>>().join(", "),
@@ -101,11 +85,15 @@ fn main() -> anyhow::Result<()> {
                 eprintln!("[llm] {}", reply.trim().chars().take(120).collect::<String>());
                 if json.get("tool").and_then(|v| v.as_str()) == Some("perceive") {
                     AgentTool::Perceive
-                } else if let Some(action) = craft_agent_model::decision::value_to_action(&json).ok() {
-                    AgentTool::Act(action)
                 } else {
-                    // 解析失败 → 先观察
-                    AgentTool::Perceive
+                    // 尝试直接按标准 action 格式解析
+                    if let Ok(action) = craft_agent_model::decision::value_to_action(&json) {
+                        AgentTool::Act(action)
+                    } else {
+                        // LLM 倾向于输出 {"tool":"Look","dx":200} 这种格式
+                        // 无法解析时默认先 perceive
+                        AgentTool::Perceive
+                    }
                 }
             }
             Err(e) => {

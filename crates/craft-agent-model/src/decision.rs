@@ -72,7 +72,8 @@ pub fn value_to_action(v: &Value) -> Result<Action> {
     let kind = v["action"]
         .as_str()
         .or_else(|| v["type"].as_str())
-        .ok_or_else(|| anyhow!("JSON 缺少 action/type 字段: {v}"))?;
+        .or_else(|| v["tool"].as_str())
+        .ok_or_else(|| anyhow!("JSON 缺少 action/type/tool 字段: {v}"))?;
     match kind.trim().to_ascii_lowercase().as_str() {
         "click" => {
             let id = v["element_id"]
