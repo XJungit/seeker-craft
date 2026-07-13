@@ -11,29 +11,22 @@
 
 use crate::core::adapter::GameAdapter;
 use crate::core::message::{Message, system_chatml};
+use crate::core::tool::ToolRegistry;
 use crate::core::types::{Action, ExecResult, WorldState};
 use anyhow::Result;
 use serde_json::Value;
 
-/// Agent 可用工具的 JSON Schema 定义 (OpenAI function calling 格式)
-pub type ToolDef = Value;
-
 /// LLM 决策回调: 接收 ChatML 消息数组 + 工具定义, 返回 (tool_name, arguments_json)
-pub type DecideFn = dyn Fn(&[Value], &[ToolDef]) -> Result<Vec<(String, String)>>;
+pub type DecideFn = dyn Fn(&[Value], &[Value]) -> Result<Vec<(String, String)>>;
 
-/// Agent 配置 (从 agent.toml 的 [agent] 段加载)
-#[derive(Debug, Clone, serde::Deserialize)]
+/// Agent 配置
+#[derive(Debug, Clone)]
 pub struct AgentConfig {
-    /// 系统提示词 (必填, 短)
+    /// 系统提示词
     pub system_prompt: String,
-    /// 工具定义 JSON (OpenAI function calling 格式数组, 必填)
-    pub tools: Vec<ToolDef>,
     /// 最大总轮次
-    #[serde(default = "default_max_turns")]
     pub max_turns: u32,
 }
-
-fn default_max_turns() -> u32 { 20 }
 
 /// 通用 Agent: 拥有循环、消息历史、game adapter
 ///
@@ -41,22 +34,23 @@ fn default_max_turns() -> u32 { 20 }
 pub struct Agent<A: GameAdapter> {
     pub adapter: A,
     pub config: AgentConfig,
-    /// 会话消息历史 (system + assistant tool_calls + tool results)
+    /// 工具注册表 (pi 风格: Vec<Box<dyn GameTool>>)
+    pub tools: ToolRegistry,
+    /// 会话消息历史
     pub messages: Vec<Message>,
     /// 最近一次 perceive 的世界状态
     pub last_state: Option<WorldState>,
 }
 
 impl<A: GameAdapter> Agent<A> {
-    pub fn new(adapter: A, config: AgentConfig) -> Self {
-        let mut agent = Self {
+    pub fn new(adapter: A, config: AgentConfig, tools: ToolRegistry) -> Self {
+        Self {
             adapter,
             config,
+            tools,
             messages: Vec::new(),
             last_state: None,
-        };
-        agent.reset_messages();
-        agent
+        }
     }
 
     /// 重置消息历史
@@ -81,7 +75,8 @@ impl<A: GameAdapter> Agent<A> {
             let mut chatml: Vec<Value> = vec![system];
             chatml.extend(self.messages.iter().map(Message::to_chatml));
 
-            let calls = match decide(&chatml, &self.config.tools) {
+            let tool_defs = self.tools.to_openai_defs();
+            let calls = match decide(&chatml, &tool_defs) {
                 Ok(c) => c,
                 Err(e) => {
                     let msg = format!("[turn{turn}] LLM error: {e}");
@@ -101,40 +96,42 @@ impl<A: GameAdapter> Agent<A> {
                 &call_id, name, args.clone(),
             ));
 
-            // 3. Agent 内部执行工具
-            let result = match name.as_str() {
-                "perceive" => {
-                    let state = self.adapter.perceive()?;
-                    let is_empty = state.detected_targets.is_empty();
-                    let list: Vec<_> = state.detected_targets.iter().map(|t| t.label.clone()).collect();
-                    self.last_state = Some(state);
-                    if is_empty {
-                        "观察了周围。VLM未检测到3D物体。应look或move_forward。".into()
-                    } else {
-                        format!("观察了周围。检测到: {}。选一个aim_and_mine挖掘。", list.join("、"))
+            // 3. Agent 内部执行工具 (pi 风格: 先查 registry 验证工具存在)
+            let result = if self.tools.get(name).is_none() {
+                format!("未知工具: {name}")
+            } else {
+                let args: Value = serde_json::from_str(args_json).unwrap_or_default();
+                match name.as_str() {
+                    "perceive" => {
+                        let state = self.adapter.perceive()?;
+                        let is_empty = state.detected_targets.is_empty();
+                        let list: Vec<_> = state.detected_targets.iter().map(|t| t.label.clone()).collect();
+                        self.last_state = Some(state);
+                        if is_empty {
+                            "观察了周围。VLM未检测到3D物体。应look或move_forward。".into()
+                        } else {
+                            format!("观察了周围。检测到: {}。选一个aim_and_mine挖掘。", list.join("、"))
+                        }
                     }
+                    "aim_and_mine" => {
+                        let target = args["target"].as_str().unwrap_or("?").to_string();
+                        let r = self.adapter.execute(Action::AimAndMine { target })?;
+                        format!("转动视角对准目标并挖掘2秒。{}", r.detail)
+                    }
+                    "move_forward" => {
+                        let ticks = args["ticks"].as_u64().unwrap_or(80) as u32;
+                        self.adapter.execute(Action::Move { dir: crate::core::types::Direction::Forward, ticks })?;
+                        format!("向前移动{:.1}秒。场景已变化。", ticks as f32 * 0.05)
+                    }
+                    "look" => {
+                        let dx = args["dx"].as_i64().unwrap_or(200) as i32;
+                        let dy = args["dy"].as_i64().unwrap_or(0) as i32;
+                        self.adapter.execute(Action::Look { dx, dy })?;
+                        let dir = if dx > 0 { "右" } else if dx < 0 { "左" } else { "前" };
+                        format!("向{dir}转动视角(dx={dx},dy={dy})。")
+                    }
+                    _ => format!("未实现的工具: {name}")
                 }
-                "aim_and_mine" => {
-                    let args: serde_json::Value = serde_json::from_str(args_json).unwrap_or_default();
-                    let target = args["target"].as_str().unwrap_or("?").to_string();
-                    let r = self.adapter.execute(Action::AimAndMine { target })?;
-                    format!("转动视角对准目标并挖掘2秒。{}", r.detail)
-                }
-                "move_forward" => {
-                    let args: serde_json::Value = serde_json::from_str(args_json).unwrap_or_default();
-                    let ticks = args["ticks"].as_u64().unwrap_or(80) as u32;
-                    self.adapter.execute(Action::Move { dir: crate::core::types::Direction::Forward, ticks })?;
-                    format!("向前移动{:.1}秒。场景已变化。", ticks as f32 * 0.05)
-                }
-                "look" => {
-                    let args: serde_json::Value = serde_json::from_str(args_json).unwrap_or_default();
-                    let dx = args["dx"].as_i64().unwrap_or(200) as i32;
-                    let dy = args["dy"].as_i64().unwrap_or(0) as i32;
-                    self.adapter.execute(Action::Look { dx, dy })?;
-                    let dir = if dx > 0 { "右" } else if dx < 0 { "左" } else { "前" };
-                    format!("向{dir}转动视角(dx={dx},dy={dy})。")
-                }
-                _ => format!("未知工具: {name}")
             };
 
             // 4. 工具结果注入 (类型化)
@@ -177,13 +174,12 @@ mod tests {
     fn agent_runs_basic_loop() {
         let config = AgentConfig {
             system_prompt: "test".into(),
-            tools: vec![],
             max_turns: 1,
         };
-        let mut agent = Agent::new(FakeGameAdapter, config);
+        let mut agent = Agent::new(FakeGameAdapter, config, ToolRegistry::new());
         let log = agent.run(
             &|_msgs, _tools| Ok(vec![]),
         ).unwrap();
-        assert!(log.is_empty()); // 空 calls → 立即退出
+        assert!(log.is_empty());
     }
 }

@@ -10,9 +10,9 @@
 #[cfg(feature = "real")]
 fn main() -> anyhow::Result<()> {
     use craft_agent::agent::{Agent, AgentConfig};
+    use craft_agent::core::tool::ToolRegistry;
     use craft_agent_minecraft::adapter::MinecraftAdapter;
     use craft_agent_model::config::AgentConfig as ModelAgentConfig;
-    use craft_agent_model::decision::DecisionClient;
     use craft_agent_model::decision::real::OpenAiLlmClient;
     use craft_agent_model::vision::VisionClient;
     use craft_agent_model::vision::real::OpenAiVisionClient;
@@ -45,9 +45,8 @@ fn main() -> anyhow::Result<()> {
     };
     let mut agent = Agent::new(adapter, AgentConfig {
         system_prompt: "Click/Look/Move/AimAndMine".into(),
-        tools: vec![],
         max_turns: 1,
-    });
+    }, ToolRegistry::new());
 
     // 技能提示：告诉 LLM 当前 Minecraft 版本可执行的动作
     let skills_hint = "\

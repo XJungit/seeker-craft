@@ -10,6 +10,8 @@
 
 #[cfg(feature = "real")]
 pub mod adapter;
+#[cfg(feature = "real")]
+pub mod tools;
 
 /// 点击/移动目标与窗口边缘的安全间距（像素）。MC 光标移出窗口会自暂停，所有坐标必须内缩。
 pub const WINDOW_MARGIN: i32 = 20;

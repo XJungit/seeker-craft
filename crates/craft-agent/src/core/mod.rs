@@ -1,4 +1,5 @@
 pub mod adapter;
 pub mod message;
+pub mod tool;
 pub mod types;
 pub mod world_model;

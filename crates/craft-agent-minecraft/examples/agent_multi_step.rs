@@ -1,4 +1,4 @@
-//! P2 Agent — Pi 风格: Agent::run() 内部执行所有工具。
+//! P2 Agent — Pi 风格: Agent::run() + ToolRegistry。
 //!
 //! 用法:
 //!   cargo run -p craft-agent-minecraft --example agent_multi_step --features real -- --steps=10
@@ -6,7 +6,9 @@
 #[cfg(feature = "real")]
 fn main() -> anyhow::Result<()> {
     use craft_agent::agent::{Agent, AgentConfig, DecideFn};
+    use craft_agent::core::tool::ToolRegistry;
     use craft_agent_minecraft::adapter::MinecraftAdapter;
+    use craft_agent_minecraft::tools::create_mc_tools;
     use craft_agent_model::decision::real::OpenAiLlmClient;
     use craft_agent_model::vision::VisionClient;
     use craft_agent_model::vision::real::OpenAiVisionClient;
@@ -26,7 +28,17 @@ fn main() -> anyhow::Result<()> {
         .ok_or_else(|| anyhow::anyhow!("缺少 [llm]"))?;
     let llm_backend = llm_group.active_backend()?;
 
-    // Agent 配置 (Pi 风格: 短提示词 + 工具定义)
+    let vision: Box<dyn VisionClient> = Box::new(OpenAiVisionClient::from_config(vlm_backend)?);
+    let llm = Arc::new(OpenAiLlmClient::from_config(llm_backend)?);
+    let adapter = MinecraftAdapter::new(vision)?;
+
+    // 工具注册 (pi 风格: for tool in enabled { registry.register(tool) })
+    let mut registry = ToolRegistry::new();
+    for tool in create_mc_tools() {
+        registry.register(tool);
+    }
+
+    // Agent 配置 (短 prompt, 不含工具定义 — 工具定义从 registry 生成)
     let agent_cfg = AgentConfig {
         system_prompt: "\
 你是 Minecraft AI 玩家。你在一个 while 循环中运行:
@@ -44,33 +56,12 @@ fn main() -> anyhow::Result<()> {
 - perceive -> 左前方有石头 -> aim_and_mine stone
 
 不要停滞。不要问问题。直接行动。".into(),
-
-        tools: vec![
-            serde_json::json!({"type":"function","function":{
-                "name":"perceive","description":"拍照识别3D物体(树/石头/水等),返回物体列表。"
-            }}),
-            serde_json::json!({"type":"function","function":{
-                "name":"aim_and_mine","description":"转动视角对准目标并挖掘2秒。",
-                "parameters":{"type":"object","properties":{"target":{"type":"string"}},"required":["target"]}
-            }}),
-            serde_json::json!({"type":"function","function":{
-                "name":"move_forward","description":"按住W向前移动探索。",
-                "parameters":{"type":"object","properties":{"ticks":{"type":"integer","description":"80≈4秒","default":80}}}
-            }}),
-            serde_json::json!({"type":"function","function":{
-                "name":"look","description":"转动视角。dx>0右转,dy>0下看。",
-                "parameters":{"type":"object","properties":{"dx":{"type":"integer"},"dy":{"type":"integer"}},"required":["dx","dy"]}
-            }}),
-        ],
         max_turns,
     };
 
-    let vision: Box<dyn VisionClient> = Box::new(OpenAiVisionClient::from_config(vlm_backend)?);
-    let llm = Arc::new(OpenAiLlmClient::from_config(llm_backend)?);
-    let adapter = MinecraftAdapter::new(vision)?;
-    let mut agent = Agent::new(adapter, agent_cfg);
+    let mut agent = Agent::new(adapter, agent_cfg, registry);
 
-    // LLM 决策闭包 (唯一需要注入的外部依赖)
+    // LLM 决策闭包
     let decide: Box<DecideFn> = Box::new(move |messages, tool_defs| {
         let m = Value::Array(messages.to_vec());
         let t = Value::Array(tool_defs.to_vec());
