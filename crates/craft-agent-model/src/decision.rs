@@ -84,8 +84,9 @@ pub fn value_to_action(v: &Value) -> Result<Action> {
         "aimandmine" | "aim_and_mine" | "mine" => {
             let target = v["target"]
                 .as_str()
-                .ok_or_else(|| anyhow!("AimAndMine 缺少 target: {v}"))?
-                .to_string();
+                .or_else(|| v["name"].as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| "unknown".to_string());
             Ok(Action::AimAndMine { target })
         }
         "move" => {
