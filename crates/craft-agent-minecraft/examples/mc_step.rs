@@ -31,6 +31,10 @@ fn main() -> anyhow::Result<()> {
     let act = args.iter().any(|a| a == "--act");
     let use_env = args.iter().any(|a| a == "--env");
     let fullscreen = args.iter().any(|a| a == "--fullscreen");
+    let aim_target = args
+        .iter()
+        .find(|a| a.starts_with("--aim="))
+        .map(|s| s.trim_start_matches("--aim=").to_string());
     let cfg_path = args
         .iter()
         .find(|a| a.starts_with("--config="))
@@ -84,14 +88,18 @@ fn main() -> anyhow::Result<()> {
         );
     }
 
-    if act {
+    if let Some(target) = aim_target {
+        println!("[mc_step] --aim：VLM 检测 → 对准 '{target}' → 挖矿...");
+        let r = adapter.execute(Action::AimAndMine { target })?;
+        println!("  → {}", r.detail);
+    } else if act {
         println!(
             "[mc_step] --act：演示 Look(400,0)（程序会先把 MC 置前台，请观察视角是否转动）..."
         );
         let r = adapter.execute(Action::Look { dx: 400, dy: 0 })?;
         println!("  → {}", r.detail);
     } else {
-        println!("[mc_step] 只读模式：未执行任何鼠标/键盘动作。加 --act 才执行一次 Look。");
+        println!("[mc_step] 只读模式：未执行任何鼠标/键盘动作。加 --aim <target> 测试对准挖矿，--act 测试 Look。");
     }
     Ok(())
 }

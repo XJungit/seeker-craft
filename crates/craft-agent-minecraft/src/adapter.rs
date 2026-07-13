@@ -397,15 +397,14 @@ impl GameAdapter for MinecraftAdapter {
 impl MinecraftAdapter {
     /// 截图 → VLM → 解析坐标 → Vec<Target>
     fn vlm_detect(&self, png: &Screenshot, screen_w: u32, screen_h: u32) -> Result<Vec<Target>> {
+        let (cx, cy) = (screen_w / 2, screen_h / 2);
         let prompt = format!(
-            "这张 Minecraft 截图尺寸为 {screen_w}x{screen_h} 像素，原点(0,0)在左上角。\
-             列出画面中所有你能识别的**3D 世界物体**（树木、石头、水、动物、怪物、矿石等，不包含 UI/HUD 元素）。\
-             对每个物体给出像素坐标。严格按此格式输出，每行一个：\n\n\
-             label: (cx, cy)\n\n\
-             示例：\n\
-             tree: (400, 300)\n\
-             stone: (200, 500)\
-             \n\n只输出物体列表，不要解释。"
+            "图片尺寸 {screen_w}x{screen_h}，中心在 ({cx}, {cy})，左上角 (0,0)。\n\
+             列出你能看到的 3D 世界物体（树/石/水/动物等，不含 UI）。\n\
+             对每个物体估算其在图片中的像素位置。\n\
+             每行格式：label: (x, y)\n\
+             示例：tree: (800, 200) 表示树在中上偏右。\n\
+             不要用 (0,0)，给出合理估算。只输出列表。"
         );
         let reply = self.vision.chat(png, &prompt)?;
         eprintln!("[vlm-detect] VLM 原始回复:\n{reply}");
