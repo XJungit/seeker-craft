@@ -199,6 +199,7 @@ fn focus_minecraft() -> Result<()> {
         SetForegroundWindow(found);
         SetFocus(found);
         let _ = AttachThreadInput(my_thread, fg_thread, 0i32);
+        eprintln!("[focus] MC窗口已置前台");
         Ok(())
     }
 }
@@ -341,7 +342,14 @@ impl GameAdapter for MinecraftAdapter {
                 })
             }
             Action::Move { dir, ticks } => {
+                // 发键前务必让 MC 获得焦点
+                #[cfg(windows)]
+                if let Err(e) = focus_minecraft() {
+                    eprintln!("[warn] Move前 focus_minecraft 失败: {e}");
+                }
+                thread::sleep(Duration::from_millis(100));
                 let key = dir_to_key(dir);
+                eprintln!("[move] 按下 {:?} {}ms", key, (ticks as u64).saturating_mul(STEP_MS));
                 self.enigo.key(key, Direction::Press)?;
                 thread::sleep(Duration::from_millis(
                     (ticks as u64).saturating_mul(STEP_MS),

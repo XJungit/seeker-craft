@@ -46,7 +46,7 @@ fn main() -> anyhow::Result<()> {
         {"type":"function","function":{
             "name":"move_forward",
             "description":"向前移动探索新区域。在当前位置没有价值目标时使用。",
-            "parameters":{"type":"object","properties":{"ticks":{"type":"integer","description":"移动时长，30≈1.5秒，60≈3秒","default":40}}}
+            "parameters":{"type":"object","properties":{"ticks":{"type":"integer","description":"移动时长，80≈4秒","default":80}}}
         }},
         {"type":"function","function":{
             "name":"look",
@@ -63,7 +63,7 @@ perceive观察 → aim_and_mine挖掘资源 → 目标耗尽后move_forward探�
 ## 规则\n\
 1. perceive看到树/石头/水/矿石 → 立刻aim_and_mine\n\
 2. 同一目标挖2次后它可能已消失 → perceive重新观察\n\
-3. 连续perceive都看不到目标 → move_forward前进探索(ticks=40~60) + look环顾\n\
+3. 连续perceive都看不到目标 → move_forward前进探索(ticks=80,4秒) + look环顾\n\
 4. 不要在同一个位置停滞超过3轮\n\n\
 ## 策略\n\
 - 优先挖树(tree)获取木材\n\
@@ -84,7 +84,7 @@ perceive观察 → aim_and_mine挖掘资源 → 目标耗尽后move_forward探�
 
         // 硬规则：连续3轮没移动 → 强制前进探索
         if turns_since_move >= 3 {
-            let ticks = 50u32;
+            let ticks = 80u32;
             match agent.step_tools(|_| Ok(AgentTool::Act(types::Action::Move {
                 dir: types::Direction::Forward, ticks
             }))) {
@@ -164,7 +164,7 @@ perceive观察 → aim_and_mine挖掘资源 → 目标耗尽后move_forward探�
             }
             "move_forward" => {
                 turns_since_move = 0;
-                let ticks = args["ticks"].as_u64().unwrap_or(40) as u32;
+                let ticks = args["ticks"].as_u64().unwrap_or(80) as u32;
                 match agent.step_tools(|_| Ok(AgentTool::Act(types::Action::Move {
                     dir: types::Direction::Forward, ticks
                 }))) {
