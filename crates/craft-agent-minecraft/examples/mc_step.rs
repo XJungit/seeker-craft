@@ -10,6 +10,9 @@
 //!       → 强制从环境变量读取（AGNES_API_KEY / AGNES_API_BASE / AGNES_MODEL）。
 //!   cargo run -p craft-agent-minecraft --example mc_step --features real -- --act
 //!       → 在只读基础上，额外执行一次 Look(50,0) 演示视角转动（请人眼观察准星）。
+//!   cargo run -p craft-agent-minecraft --example mc_step --features real -- --fullscreen
+//!       → MC 全屏模式：capture 改用方法 C（主显示器整屏），消除窗口化焦点/暂停纠缠。
+//!         端到端闭环推荐；配合 --act 验证全屏下 Look 视角转动。
 
 #[cfg(feature = "real")]
 fn main() -> anyhow::Result<()> {
@@ -26,6 +29,7 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     let act = args.iter().any(|a| a == "--act");
     let use_env = args.iter().any(|a| a == "--env");
+    let fullscreen = args.iter().any(|a| a == "--fullscreen");
     let cfg_path = args
         .iter()
         .find(|a| a.starts_with("--config="))
@@ -43,9 +47,21 @@ fn main() -> anyhow::Result<()> {
         let backend = cfg.vlm.active_backend()?;
         OpenAiVisionClient::from_config(backend)?
     };
-    let mut adapter = MinecraftAdapter::new(Box::new(vision))?;
+    let mut adapter = if fullscreen {
+        println!("[mc_step] 全屏模式：capture 走方法 C（主显示器整屏）...");
+        MinecraftAdapter::new_fullscreen(Box::new(vision))?
+    } else {
+        MinecraftAdapter::new(Box::new(vision))?
+    };
 
-    println!("[mc_step] capture：截 MC 窗口（方法 A）...");
+    println!(
+        "[mc_step] capture：截 MC {}...",
+        if fullscreen {
+            "主显示器整屏（方法 C）"
+        } else {
+            "窗口（方法 A）"
+        }
+    );
     let png = adapter.capture()?;
     println!("  → 截图 {} 字节（PNG）", png.len());
 

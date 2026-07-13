@@ -331,10 +331,14 @@ trait WorldModel {
 - **落地 crate：`crates/craft-agent-minecraft`**（独立 crate，非塞进核心）。
   **架构修正**：最初设想把适配器放进核心 crate 并依赖 `craft-agent-model`，但模型层已反向依赖核心（共用 `WorldState`/`Screenshot` 类型）→ 会形成**循环依赖，Cargo 直接拒绝编译**。故改为独立 adapter crate，单向依赖 `craft-agent`（核心抽象）+ `craft-agent-model`（VLM/SoM），契合"换游戏 = 换 Adapter crate"的通用框架定位。真机依赖（xcap/enigo/image/model-real）全部 gated 在 `real` 特性，默认构建轻量、CI 无显示亦可编译。
 - **`MinecraftAdapter` 三方法**：
-  - `capture`：xcap 直捕 MC 窗口（方法 A，遮挡免疫）→ 编码 PNG（供 VLM/SoM 消费）。
+  - `capture`：默认 xcap 直捕 MC 窗口（方法 A，遮挡免疫）→ 编码 PNG（供 VLM/SoM 消费）；**全屏模式改用方法 C**（`Monitor::capture_image()` 主显示器整屏，独占全屏 D3D 下方法 A 会截黑帧）。全屏时 rect=(0,0,mw,mh)，局部坐标即屏幕坐标。
   - `perceive`：hotbar(9)+hud(1) 规则布局 → `som::render_marks` 编号渲染 → `VisionClient::describe` 场景描述 → 产出 `WorldState{marked_elements, ...}`。
   - `execute`：`Click`(绝对定位+坐标钳制/WINDOW_MARGIN)、`Look`(相对移动转视角)、`Move`(按键保持)、`AimAndMine`(长按挖矿)。**明确不发送 ESC**（ESC 开暂停菜单，属保留约束）；坐标不乘 scale_factor（DPI aware 已对齐物理像素）。
-- **验证状态**：4 道门禁全绿（fmt/结构/clippy×3/real 测试 18+1）；`to_screen_coords` 钳制单测通过。`mc_step` 示例（只读 + `--act`）待真机（开 MC）验证 capture/perceive/execute。
+- **真机验证（2026-07-13 下午）**：
+  - 感知半环（capture→perceive）**双后端验证通过**：Agnes 与 MiniCPM 均成功截 MC 窗口 + VLM 出真实场景描述（10 个标记齐全）。其间 MiniCPM 的 `api.modelbest.co` 一度持续 502（服务端故障，已恢复），临时用 `--env`(Agnes) 兜底。
+  - 执行半环发现关键拦路虎：**MC 窗口化仅在自己是前台窗口且鼠标被捕获时才读输入**；后台/失焦时收不到 enigo 合成移动 → `Look(50,0)` 视角不转。用 `mouse_probe` 示例验证 **enigo 本身能移动光标（Δx=50）**，故问题在 MC 焦点/指针捕获，非代码/库。
+  - **结论/方案**：端到端闭环（P1.5）直接上 **MC 全屏**（始终前台、不暂停、指针被独占捕获，raw input 视角转动 OK），adapter 已加 `new_fullscreen` + 方法 C 捕获，`mc_step --fullscreen [--act]` 可用。窗口化仅作临时验证，需 `F3+P` 关暂停并保持前台。
+- **诚实边界**：P1.4 仅覆盖 2D 固定 UI + 视角/移动/挖矿原语；3D 目标检测对准（§5.3 第 2 级、ort 检测）仍留 P2；`detected_targets` 当前恒为空。
 - **诚实边界**：P1.4 仅覆盖 2D 固定 UI + 视角/移动/挖矿原语；3D 目标检测对准（§5.3 第 2 级、ort 检测）仍留 P2；`detected_targets` 当前恒为空。
 
 ---
