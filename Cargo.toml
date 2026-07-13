@@ -43,10 +43,6 @@ imageproc = "0.25"
 ab_glyph = "0.2"
 # 项目根 .env 自动加载（密钥放 .env，已被 gitignore；与 setx 持久化互补）
 dotenvy = "0.15"
-# ONNX Runtime 推理（DirectML 后端，RTX 3050 可用，无需 CUDA 工具链）
-ort = { version = "2.0.0-rc.12", features = ["directml"] }
-# ndarray — ort 的输入/输出张量格式
-ndarray = "0.16"
 # 内部 crate：核心抽象，供 model 层依赖
 craft-agent = { path = "crates/craft-agent" }
 # 内部 crate：模型客户端层（VLM/LLM），供 adapter 层依赖
