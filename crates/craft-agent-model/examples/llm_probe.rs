@@ -16,6 +16,17 @@
 
 #[cfg(feature = "real")]
 fn main() -> anyhow::Result<()> {
+    // 手动加载项目根 .env（不依赖 dotenvy crate）
+    let _ = std::fs::read_to_string(".env").map(|s| {
+        for line in s.lines() {
+            if let Some((k, v)) = line.trim().split_once('=') {
+                let (k, v) = (k.trim(), v.trim());
+                if std::env::var(k).is_err() {
+                    unsafe { std::env::set_var(k, v); }
+                }
+            }
+        }
+    });
     use craft_agent::core::types::{Element, Target, WorldState};
     use craft_agent_model::config::AgentConfig;
     use craft_agent_model::decision::DecisionClient;
