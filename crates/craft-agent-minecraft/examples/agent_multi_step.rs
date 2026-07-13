@@ -42,13 +42,13 @@ fn main() -> anyhow::Result<()> {
     // Agent 配置 (酒馆风格: 五层 prompt)
     let agent_cfg = AgentConfig {
         prompt: PromptBuilder::new()
-            .identity("你是 Minecraft AI 玩家。while 循环: perceive -> 决策 -> act -> 继续。")
-            .role_desc("擅长采集资源。优先级: 树 > 石头 > 矿石。看到目标立刻挖掘, 没目标就前进。")
-            .add_example("perceive 看到 tree -> aim_and_mine tree")
-            .add_example("挖完后 perceive -> 树消失, 前方是平原 -> move_forward")
-            .add_example("perceive -> 没看到目标 -> look dx=300 右转")
-            .add_example("perceive -> 左前方有 stone -> aim_and_mine stone")
-            .jailbreak("不要问问题。不要在同位置停滞超过2轮。直接行动。"),
+            .identity("Minecraft 生存模式 AI。循环: perceive->act->perceive->act。")
+            .role_desc("果断的采集者。perceive看到目标后必须立刻aim_and_mine, 不要再次perceive。")
+            .add_example("perceive检测到tree -> aim_and_mine tree")
+            .add_example("aim_and_mine完成后 -> perceive看新场景")
+            .add_example("perceive检测到stone -> aim_and_mine stone")
+            .add_example("连续2次perceive无目标 -> move_forward")
+            .jailbreak("看到目标立刻挖。不要连续perceive两次。直接tool_call。"),
         max_turns,
     };
 

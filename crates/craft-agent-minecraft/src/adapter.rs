@@ -259,10 +259,10 @@ impl GameAdapter for MinecraftAdapter {
 
         // 合并场景描述 + 目标检测为一次 VLM 调用
         let combined_prompt = format!(
-            "只输出这Minecraft截图中3D世界物体的坐标。每行: label: (x,y)\n\
+            "列出3D物体坐标。每行: label: (x,y)。x范围0~{ww}, y范围0~{wh}。\n\
              可识别的物体: tree stone water animal ore grass dirt。\n\
-             不要UI/HUD/hotbar。不要解释。\n\
-             截图{ww}x{wh}"
+             不要UI/HUD/hotbar。不要解释。标注: {}",
+            _elements_str
         );
         let reply = self.vision.chat(&png, &combined_prompt)
             .context("VLM 场景描述失败")?;
@@ -377,8 +377,18 @@ impl GameAdapter for MinecraftAdapter {
                     Some(t) => {
                         let (dx, dy) = t.offset_from_crosshair;
                         if dx != 0 || dy != 0 {
-                            // ⚠️ 必须用 raw_mouse_rel（SendInput 裸 MOUSEEVENTF_MOVE），
-                            // 不是 enigo.move_mouse(Rel)。后者走绝对坐标转换，MC raw input 不认。
+                            // 窗口化 MC: 先点击窗口中心激活鼠标捕获 (和 Look 一样)
+                            if !self.fullscreen {
+                                let rect = self.rect.borrow();
+                                if let Some((wx, wy, ww, wh)) = *rect {
+                                    let cx = wx + (ww / 2) as i32;
+                                    let cy = wy + (wh / 2) as i32;
+                                    self.enigo.move_mouse(cx, cy, Coordinate::Abs)?;
+                                    thread::sleep(Duration::from_millis(30));
+                                    self.enigo.button(Button::Left, Direction::Click)?;
+                                    thread::sleep(Duration::from_millis(50));
+                                }
+                            }
                             eprintln!("[aim] raw_mouse_rel({}, {}) → 瞄准 {}", dx, dy, t.label);
                             #[cfg(windows)]
                             raw_mouse_rel(dx, dy)?;
@@ -433,6 +443,9 @@ fn parse_vlm_targets(reply: &str, screen_w: u32, screen_h: u32) -> Result<Vec<Ta
             .to_lowercase();
         let cx: i32 = cap[2].parse().unwrap_or(0);
         let cy: i32 = cap[3].parse().unwrap_or(0);
+        // 钳制到屏幕范围内（VLM 坐标估算不精确, 不浪费有效检测）
+        let cx = cx.max(0).min(screen_w as i32 - 1);
+        let cy = cy.max(0).min(screen_h as i32 - 1);
         // debug: 打印所有匹配
         eprintln!("[parse] raw={raw_label:?} → label={label:?} ({cx},{cy})");
         // 过滤 UI 元素
@@ -442,8 +455,8 @@ fn parse_vlm_targets(reply: &str, screen_w: u32, screen_h: u32) -> Result<Vec<Ta
             eprintln!("[parse] ^ 过滤(UI)");
             continue;
         }
-        if (cx == 0 && cy == 0) || cx < 0 || cy < 0 || cx > screen_w as i32 || cy > screen_h as i32 {
-            eprintln!("[parse] ^ 过滤(越界)");
+        if cx == 0 && cy == 0 {
+            eprintln!("[parse] ^ 过滤(0,0)");
             continue;
         }
         let half = 20i32;
