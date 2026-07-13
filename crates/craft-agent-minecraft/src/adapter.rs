@@ -425,7 +425,12 @@ fn parse_vlm_targets(reply: &str, screen_w: u32, screen_h: u32) -> Result<Vec<Ta
 
     for cap in re.captures_iter(reply) {
         let raw_label = cap[1].trim().to_string();
+        // 处理 "左侧大石头：stone" → 取英文部分，或全取
         let label = raw_label
+            .rsplit(&['：', ':'][..])
+            .next()
+            .unwrap_or(&raw_label)
+            .trim()
             .trim_matches('*')
             .trim_matches('#')
             .to_lowercase();

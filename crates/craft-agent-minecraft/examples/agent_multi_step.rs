@@ -19,7 +19,7 @@ fn main() -> anyhow::Result<()> {
     let _ = dotenvy::dotenv();
     let args: Vec<String> = std::env::args().collect();
     let max_turns: u32 = args.iter().find(|a| a.starts_with("--steps="))
-        .and_then(|s| s.trim_start_matches("--steps=").parse().ok()).unwrap_or(10);
+        .and_then(|s| s.trim_start_matches("--steps=").parse().ok()).unwrap_or(8);
 
     let cfg = AgentConfig::load("config/agent.toml")?;
     let vlm_backend = cfg.vlm.active_backend()?;
