@@ -349,12 +349,17 @@ impl GameAdapter for MinecraftAdapter {
                 })
             }
             Action::AimAndMine { target } => {
-                // 在缓存的目标列表中查找匹配项（部分匹配，忽略大小写）
+                // 模糊匹配：从 "water offset=(-328,-153)" 中提取 "water"
+                let clean_target = target
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or(&target)
+                    .to_lowercase();
                 let t = self
                     .targets
                     .borrow()
                     .iter()
-                    .find(|t| t.label.to_lowercase().contains(&target.to_lowercase()))
+                    .find(|t| t.label.to_lowercase().contains(&clean_target))
                     .cloned();
                 match t {
                     Some(t) => {
@@ -378,13 +383,12 @@ impl GameAdapter for MinecraftAdapter {
                         })
                     }
                     None => {
-                        // 没找到目标，原地挖
                         self.enigo.button(Button::Left, Direction::Press)?;
                         thread::sleep(Duration::from_millis(MINE_MS * 10));
                         self.enigo.button(Button::Left, Direction::Release)?;
                         Ok(ExecResult {
                             ok: true,
-                            detail: format!("mine (no target '{target}' found, blind)"),
+                            detail: format!("mine (no target '{clean_target}', blind)"),
                         })
                     }
                 }

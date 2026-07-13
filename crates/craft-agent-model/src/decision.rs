@@ -44,9 +44,14 @@ impl DecisionClient for MockDecisionClient {
 /// ③ 整段就是纯 JSON。策略：优先截取第一个 `{` 到最后一个 `}` 的子串再解析。
 pub fn extract_json(text: &str) -> Result<Value> {
     let t = text.trim();
-    if let (Some(s), Some(e)) = (t.find('{'), t.rfind('}'))
-        && e > s
-        && let Ok(v) = serde_json::from_str::<Value>(&t[s..=e])
+    // 优先：整段纯 JSON
+    if let Ok(v) = serde_json::from_str::<Value>(t) {
+        return Ok(v);
+    }
+    // 取第一个 { 到第一个 } 之间的内容（多个 JSON | 分隔时只取第一个）
+    if let Some(s) = t.find('{')
+        && let Some(e) = t[s..].find('}')
+        && let Ok(v) = serde_json::from_str::<Value>(&t[s..=s + e])
     {
         return Ok(v);
     }
@@ -247,15 +252,74 @@ pub mod real {
 
         /// 纯文本 chat：prompt → 模型文本回复（供决策/反思等复用）。
         pub fn chat_text(&self, prompt: &str) -> Result<String> {
+            self.chat_raw(&json!([{"role": "user", "content": prompt}]))
+        }
+
+        /// OpenAI 兼容 function calling：带工具定义的多轮对话。
+        /// 返回 tool_calls 列表，每个元素为 (name, arguments_json_string)。
+        pub fn chat_tools(
+            &self,
+            messages: &Value,
+            tools: &Value,
+        ) -> Result<Vec<(String, String)>> {
             let mut body = json!({
                 "model": self.model,
-                "messages": [{"role": "user", "content": prompt}],
+                "messages": messages,
+                "tools": tools,
                 "temperature": self.temperature,
                 "max_tokens": self.max_tokens,
             });
-            // 合并 extra_body 顶层键（如 chat_template_kwargs），实现私有参数透传
-            if let (Some(Value::Object(extra)), Value::Object(base)) = (&self.extra_body, &mut body)
-            {
+            if let (Some(Value::Object(extra)), Value::Object(base)) = (&self.extra_body, &mut body) {
+                for (k, v) in extra {
+                    base.insert(k.clone(), v.clone());
+                }
+            }
+            let resp = self
+                .client
+                .post(&self.endpoint)
+                .bearer_auth(&self.api_key)
+                .json(&body)
+                .send()?
+                .error_for_status()?
+                .json::<Value>()?;
+
+            let msg = &resp["choices"][0]["message"];
+            let tool_calls = msg["tool_calls"].as_array();
+
+            match tool_calls {
+                Some(calls) => {
+                    let mut result = Vec::new();
+                    for tc in calls {
+                        let name = tc["function"]["name"]
+                            .as_str()
+                            .unwrap_or("")
+                            .to_string();
+                        let args = tc["function"]["arguments"]
+                            .as_str()
+                            .unwrap_or("{}")
+                            .to_string();
+                        result.push((name, args));
+                    }
+                    Ok(result)
+                }
+                None => {
+                    // 无 tool_calls → 回退到 content 文本
+                    let content = msg["content"].as_str().filter(|s| !s.is_empty())
+                        .or_else(|| msg["reasoning_content"].as_str())
+                        .unwrap_or("");
+                    Ok(vec![("text".into(), content.to_string())])
+                }
+            }
+        }
+
+        fn chat_raw(&self, messages: &Value) -> Result<String> {
+            let mut body = json!({
+                "model": self.model,
+                "messages": messages,
+                "temperature": self.temperature,
+                "max_tokens": self.max_tokens,
+            });
+            if let (Some(Value::Object(extra)), Value::Object(base)) = (&self.extra_body, &mut body) {
                 for (k, v) in extra {
                     base.insert(k.clone(), v.clone());
                 }
@@ -272,7 +336,7 @@ pub mod real {
             let content = msg["content"].as_str().filter(|s| !s.is_empty());
             let content = content
                 .or_else(|| msg["reasoning_content"].as_str())
-                .ok_or_else(|| anyhow!("LLM 响应缺少 choices[0].message.content: {resp}"))?;
+                .ok_or_else(|| anyhow!("LLM 响应缺少 content: {resp}"))?;
             Ok(content.to_string())
         }
     }

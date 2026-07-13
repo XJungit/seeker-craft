@@ -17,6 +17,7 @@ enigo = { workspace = true, optional = true }
 image = { workspace = true, optional = true }
 # VLM 检测坐标解析
 regex = "1"
+serde_json = "1"
 
 [features]
 # 开启后接入真实 Minecraft：VLM/SoM 渲染(craft-agent-model/real) + xcap 截图 + enigo 键鼠。
