@@ -278,6 +278,13 @@ impl GameAdapter for MinecraftAdapter {
         })
     }
 
+    /// LLM 自定义 prompt → VLM 原文 (不处理坐标)
+    fn perceive_with_prompt(&self, prompt: &str) -> Result<String> {
+        let png = self.capture()?;
+        let reply = self.vision.chat(&png, prompt)?;
+        Ok(reply)
+    }
+
     fn execute(&mut self, action: Action) -> Result<ExecResult> {
         // 关键：发输入前把 MC 抢回前台。否则（终端前台的背景下）enigo 的 SendInput 投不到 MC，
         // 视角/按键全无响应。独占全屏被挂起时 focus_minecraft 内部会 ShowWindow(SW_RESTORE) 唤醒。
@@ -419,6 +426,26 @@ impl GameAdapter for MinecraftAdapter {
                         })
                     }
                 }
+            }
+            Action::Press { keys, ticks } => {
+                // 解析按键: "w" / "space" / "a+d"
+                for part in keys.split('+').map(|s| s.trim()) {
+                    let ch = part.chars().next().unwrap_or('w');
+                    eprintln!("[press] {part}");
+                    self.enigo.key(enigo::Key::Unicode(ch), enigo::Direction::Press)?;
+                }
+                thread::sleep(Duration::from_millis((ticks as u64).saturating_mul(STEP_MS)));
+                for part in keys.split('+').map(|s| s.trim()) {
+                    let ch = part.chars().next().unwrap_or('w');
+                    self.enigo.key(enigo::Key::Unicode(ch), enigo::Direction::Release)?;
+                }
+                Ok(ExecResult { ok: true, detail: format!("press {keys} x{ticks}") })
+            }
+            Action::Mine { ticks } => {
+                self.enigo.button(Button::Left, Direction::Press)?;
+                thread::sleep(Duration::from_millis((ticks as u64).saturating_mul(STEP_MS)));
+                self.enigo.button(Button::Left, Direction::Release)?;
+                Ok(ExecResult { ok: true, detail: format!("mine {}ms", (ticks as u64).saturating_mul(STEP_MS)) })
             }
         }
     }

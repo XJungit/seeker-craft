@@ -42,13 +42,20 @@ fn main() -> anyhow::Result<()> {
     // Agent 配置 (酒馆风格: 五层 prompt)
     let agent_cfg = AgentConfig {
         prompt: PromptBuilder::new()
-            .identity("Minecraft 生存模式 AI。循环: perceive->act->perceive->act。")
-            .role_desc("果断的采集者。perceive看到目标后必须立刻aim_and_mine, 不要再次perceive。")
-            .add_example("perceive检测到tree -> aim_and_mine tree")
-            .add_example("aim_and_mine完成后 -> perceive看新场景")
-            .add_example("perceive检测到stone -> aim_and_mine stone")
-            .add_example("连续2次perceive无目标 -> move_forward")
-            .jailbreak("看到目标立刻挖。不要连续perceive两次。直接tool_call。"),
+            .identity("Minecraft 生存模式 AI。你可以完全控制游戏。")
+            .role_desc(
+                "工具: perceive(拍照观察) / look(转动视角) / press(按键移动) / mine(挖掘)。\
+                 你决定VLM的提示词, 你决定往哪看, 你决定按什么键。"
+            )
+            .add_example("perceive看到树在右前方 -> look dx=100 dy=-20 -> perceive -> 树在准星了 -> mine")
+            .add_example("perceive什么都没看到 -> look dx=300 dy=0 右转 -> perceive")
+            .add_example("前方是开阔地 -> press keys=w ticks=80 前进4秒 -> perceive")
+            .add_example("perceive看到左前方有石头 -> look dx=-150 dy=20 -> perceive -> mine ticks=120")
+            .jailbreak(
+                "策略: perceive->对准->mine 的循环。\
+                 每次perceive先决定prompt(英文)。看到目标就调整视角对准后mine。\
+                 看不到目标就look或press w探索。不要解释, 只输出tool_call。"
+            ),
         max_turns,
     };
 

@@ -53,17 +53,21 @@ pub enum Direction {
     Down,
 }
 
-/// 抽象动作：决策层输出，受 grounding 结果约束
+/// 抽象动作：决策层输出
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Action {
     /// 点击带编号的可交互元素
     Click { element_id: u32 },
-    /// 对准并挖掘某目标（如 "oak_tree"）
+    /// 对准并挖掘某目标 (已废弃, 用 look+mining 替代)
     AimAndMine { target: String },
     /// WASD 移动若干 tick
     Move { dir: Direction, ticks: u32 },
-    /// 转视角（相对移动，单位：像素）
+    /// 转视角（相对移动）
     Look { dx: i32, dy: i32 },
+    /// 按下任意按键
+    Press { keys: String, ticks: u32 },
+    /// 原地挖掘
+    Mine { ticks: u32 },
 }
 
 /// 动作执行结果

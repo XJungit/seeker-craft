@@ -105,33 +105,29 @@ impl<A: GameAdapter> Agent<A> {
                 let args: Value = serde_json::from_str(args_json).unwrap_or_default();
                 match name.as_str() {
                     "perceive" => {
-                        let state = self.adapter.perceive()?;
-                        let is_empty = state.detected_targets.is_empty();
-                        let list: Vec<_> = state.detected_targets.iter().map(|t| t.label.clone()).collect();
-                        let raw = state.scene_desc.clone();
-                        self.last_state = Some(state);
-                        if is_empty {
-                            format!("VLM原文:\n{raw}\n\n目标: 无。应look或move_forward。")
-                        } else {
-                            format!("VLM原文:\n{raw}\n\n解析目标: {}。选一个aim_and_mine。", list.join("、"))
-                        }
+                        let prompt = args["prompt"].as_str()
+                            .unwrap_or("描述你看到的Minecraft场景, 列出可视物体");
+                        let reply = self.adapter.perceive_with_prompt(prompt)?;
+                        reply
                     }
-                    "aim_and_mine" => {
-                        let target = args["target"].as_str().unwrap_or("?").to_string();
-                        let r = self.adapter.execute(Action::AimAndMine { target })?;
-                        format!("转动视角对准目标并挖掘2秒。{}", r.detail)
-                    }
-                    "move_forward" => {
-                        let ticks = args["ticks"].as_u64().unwrap_or(80) as u32;
-                        self.adapter.execute(Action::Move { dir: crate::core::types::Direction::Forward, ticks })?;
-                        format!("向前移动{:.1}秒。场景已变化。", ticks as f32 * 0.05)
+                    "press" => {
+                        let keys = args["keys"].as_str().unwrap_or("w").to_string();
+                        let ticks = args["ticks"].as_u64().unwrap_or(40) as u32;
+                        let r = self.adapter.execute(Action::Press { keys, ticks })?;
+                        format!("按下 {} {}ms。{}", r.detail.split(' ').next().unwrap_or("?"), ticks as u64 * 50, r.detail)
                     }
                     "look" => {
                         let dx = args["dx"].as_i64().unwrap_or(200) as i32;
                         let dy = args["dy"].as_i64().unwrap_or(0) as i32;
                         self.adapter.execute(Action::Look { dx, dy })?;
-                        let dir = if dx > 0 { "右" } else if dx < 0 { "左" } else { "前" };
-                        format!("向{dir}转动视角(dx={dx},dy={dy})。")
+                        let dir = if dx > 0 { "右" } else if dx < 0 { "左" } else { "" };
+                        let up = if dy < 0 { "上" } else if dy > 0 { "下" } else { "" };
+                        format!("转动视角{dir}{up}(dx={dx},dy={dy})。")
+                    }
+                    "mine" => {
+                        let ticks = args["ticks"].as_u64().unwrap_or(60) as u32;
+                        let r = self.adapter.execute(Action::Mine { ticks })?;
+                        format!("挖掘{}ms。{}", ticks as u64 * 50, r.detail)
                     }
                     _ => format!("未实现的工具: {name}")
                 }

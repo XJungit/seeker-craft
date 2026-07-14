@@ -33,6 +33,10 @@ impl GameAdapter for FakeGameAdapter {
         })
     }
 
+    fn perceive_with_prompt(&self, prompt: &str) -> Result<String> {
+        Ok(format!("fake vlm reply for: {:.50}...", prompt))
+    }
+
     fn execute(&mut self, action: Action) -> Result<ExecResult> {
         Ok(ExecResult {
             ok: true,

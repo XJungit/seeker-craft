@@ -1,96 +1,77 @@
-//! Minecraft 工具定义 — 四个 struct 实现 GameTool trait
+//! Minecraft 工具 — LLM 完全控制版
 //!
-//! 参考 pi_agent_rust: 每个工具一个 struct, impl Tool trait。
-//! 差异: pi 工具操作文件系统 (独立), 游戏工具需要 Adapter 上下文,
-//! 因此 execute() 由 Agent::run() 接管, 工具 struct 只提供元数据。
+//! 设计: LLM 决定一切, 没有中间处理层。
+//! - perceive(prompt): LLM 自定义 VLM 提示词, 返回 VLM 原文
+//! - press(keys, ticks): LLM 控制任意按键
+//! - look(dx, dy): 视角旋转
+//! - mine(ticks): 原地挖矿
 
 use craft_agent::core::tool::{GameTool, ToolEffects, ToolResult};
 use serde_json::Value;
 
-// ── Perceive (感知) ──
-
 pub struct PerceiveTool;
-
 impl GameTool for PerceiveTool {
     fn name(&self) -> &str { "perceive" }
     fn description(&self) -> &str {
-        "拍照识别3D世界物体(树/石头/水/动物/矿石), 返回物体列表。"
-    }
-    fn parameters(&self) -> Value { serde_json::json!({}) }
-    fn effects(&self) -> ToolEffects { ToolEffects::read_only() }
-    fn execute(&self, _args: Value) -> anyhow::Result<ToolResult> {
-        // 实际执行在 Agent::run() 中 (需要 Adapter 上下文)
-        unreachable!("perceive executed by Agent")
-    }
-}
-
-// ── AimAndMine (瞄准挖掘) ──
-
-pub struct AimAndMineTool;
-
-impl GameTool for AimAndMineTool {
-    fn name(&self) -> &str { "aim_and_mine" }
-    fn description(&self) -> &str {
-        "转动视角对准指定目标并挖掘2秒。"
+        "拍照并用自定义prompt让VLM描述场景。prompt应问清楚: 周围有什么? 树在哪? 石头在哪?"
     }
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "target": {
+                "prompt": {
                     "type": "string",
-                    "description": "目标名称(tree/stone/water/dirt/ore等)"
-                }
-            },
-            "required": ["target"]
-        })
-    }
-    fn execute(&self, _args: Value) -> anyhow::Result<ToolResult> {
-        unreachable!("aim_and_mine executed by Agent")
-    }
-}
-
-// ── MoveForward (前进) ──
-
-pub struct MoveForwardTool;
-
-impl GameTool for MoveForwardTool {
-    fn name(&self) -> &str { "move_forward" }
-    fn description(&self) -> &str {
-        "按住W键向前移动探索新区域。"
-    }
-    fn parameters(&self) -> Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "ticks": {
-                    "type": "integer",
-                    "description": "移动时长, 80≈4秒",
-                    "default": 80
+                    "description": "给VLM的提示词, 用英文问清楚, 如: 'What blocks are near the crosshair? List trees, stones, animals, water.'"
                 }
             }
         })
     }
+    fn effects(&self) -> ToolEffects { ToolEffects::read_only() }
     fn execute(&self, _args: Value) -> anyhow::Result<ToolResult> {
-        unreachable!("move_forward executed by Agent")
+        unreachable!("perceive executed by Agent")
     }
 }
 
-// ── Look (观察) ──
-
-pub struct LookTool;
-
-impl GameTool for LookTool {
-    fn name(&self) -> &str { "look" }
+pub struct PressTool;
+impl GameTool for PressTool {
+    fn name(&self) -> &str { "press" }
     fn description(&self) -> &str {
-        "转动视角观察四周。dx>0右转, dy>0下看。"
+        "按下按键。可用: w(前),a(左),s(后),d(右),space(跳),shift(潜行),e(背包),1~9(快捷栏)"
     }
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "dx": { "type": "integer", "description": "水平转动量, 300≈90度" },
-                "dy": { "type": "integer", "description": "垂直转动量" }
+                "keys": {
+                    "type": "string",
+                    "description": "按键字母, 如 'w', 'space', 'a+d'(组合)"
+                },
+                "ticks": {
+                    "type": "integer",
+                    "description": "持续时间, 40≈2秒, 80≈4秒",
+                    "default": 40
+                }
+            },
+            "required": ["keys"]
+        })
+    }
+    fn execute(&self, _args: Value) -> anyhow::Result<ToolResult> {
+        unreachable!("press executed by Agent")
+    }
+}
+
+pub struct LookTool;
+impl GameTool for LookTool {
+    fn name(&self) -> &str { "look" }
+    fn description(&self) -> &str {
+        "转动视角。dx>0右转, dx<0左转。dy>0低头, dy<0抬头。约300≈90度。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "dx": { "type": "integer", "description": "水平转动" },
+                "dy": { "type": "integer", "description": "垂直转动" }
             },
             "required": ["dx", "dy"]
         })
@@ -100,14 +81,35 @@ impl GameTool for LookTool {
     }
 }
 
-// ── 工具工厂 ──
+pub struct MineTool;
+impl GameTool for MineTool {
+    fn name(&self) -> &str { "mine" }
+    fn description(&self) -> &str {
+        "按住左键挖掘准星对准的方块。perceive确认目标对准后再用。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "ticks": {
+                    "type": "integer",
+                    "description": "挖掘时长, 60≈3秒, 120≈6秒(矿石)",
+                    "default": 60
+                }
+            }
+        })
+    }
+    fn effects(&self) -> ToolEffects { ToolEffects::destructive() }
+    fn execute(&self, _args: Value) -> anyhow::Result<ToolResult> {
+        unreachable!("mine executed by Agent")
+    }
+}
 
-/// 创建 Minecraft 默认工具集 (pi 风格: for tool in enabled { match name { ... } })
 pub fn create_mc_tools() -> Vec<Box<dyn GameTool>> {
     vec![
         Box::new(PerceiveTool),
-        Box::new(AimAndMineTool),
-        Box::new(MoveForwardTool),
+        Box::new(PressTool),
         Box::new(LookTool),
+        Box::new(MineTool),
     ]
 }

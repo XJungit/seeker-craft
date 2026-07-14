@@ -10,12 +10,15 @@ use anyhow::Result;
 /// - `BrowserAdapter`：headless 截图 + DOM（网页游戏，后续）
 /// - `DesktopAdapter`：xcap + enigo（其他桌面游戏）
 pub trait GameAdapter {
-    /// 截图（返回 RGBA 原始字节）
+    /// 截图
     fn capture(&self) -> Result<Screenshot>;
 
     /// 截图 → 检测 + VLM → 统一世界状态
     fn perceive(&self) -> Result<WorldState>;
 
-    /// 执行抽象动作（键鼠）
+    /// 截图 → LLM自定义prompt → VLM原文 (LLM完全控制)
+    fn perceive_with_prompt(&self, prompt: &str) -> Result<String>;
+
+    /// 执行动作
     fn execute(&mut self, action: Action) -> Result<ExecResult>;
 }
