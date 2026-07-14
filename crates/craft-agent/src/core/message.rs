@@ -28,12 +28,15 @@ pub struct UserMsg {
     pub content: String,
 }
 
-/// 助手消息 (pi: AssistantMessage + ToolCall)
+/// 助手消息 (pi: AssistantMessage + ThinkingContent)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AssistantMsg {
-    /// 文本回复 (纯文本时非空, tool_calls 时可为 None)
+    /// 文本回复
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content: Option<String>,
+    /// 思维链 (pi: ThinkingContent, 进历史供下轮参考)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<String>,
     /// 工具调用列表
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_calls: Vec<ToolCall>,
@@ -78,6 +81,7 @@ impl Message {
     pub fn assistant_text(content: impl Into<String>) -> Self {
         Self::Assistant(AssistantMsg {
             content: Some(content.into()),
+            reasoning: None,
             tool_calls: vec![],
         })
     }
@@ -85,11 +89,20 @@ impl Message {
     pub fn assistant_tool_call(id: impl Into<String>, name: impl Into<String>, args: Value) -> Self {
         Self::Assistant(AssistantMsg {
             content: None,
+            reasoning: None,
             tool_calls: vec![ToolCall {
                 id: id.into(),
                 name: name.into(),
                 arguments: args,
             }],
+        })
+    }
+
+    pub fn assistant_with_reasoning(content: impl Into<String>, reasoning: impl Into<String>) -> Self {
+        Self::Assistant(AssistantMsg {
+            content: Some(content.into()),
+            reasoning: Some(reasoning.into()),
+            tool_calls: vec![],
         })
     }
 
@@ -123,15 +136,20 @@ impl Message {
                 "content": m.content
             }),
             Self::Assistant(m) => {
+                let text = if let Some(r) = &m.reasoning {
+                    Some(format!("[思考] {r}\n{}", m.content.as_deref().unwrap_or("")))
+                } else {
+                    m.content.clone()
+                };
                 if m.tool_calls.is_empty() {
                     serde_json::json!({
                         "role": "assistant",
-                        "content": m.content.as_deref().unwrap_or("")
+                        "content": text.unwrap_or_default()
                     })
                 } else {
                     serde_json::json!({
                         "role": "assistant",
-                        "content": m.content,
+                        "content": text,
                         "tool_calls": m.tool_calls.iter().map(|tc| serde_json::json!({
                             "id": tc.id,
                             "type": "function",

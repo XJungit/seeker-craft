@@ -52,10 +52,10 @@ fn main() -> anyhow::Result<()> {
             .add_example("前方是开阔地 -> press keys=w ticks=80 前进4秒 -> perceive")
             .add_example("perceive看到左前方有石头 -> look dx=-150 dy=20 -> perceive -> mine ticks=120")
             .jailbreak(
-                "策略: perceive->对准->mine 的循环。\
-                 每次perceive决定自己的prompt(英文好)。所有距离和时间你自己决定。\
-                 看到目标就调整视角对准后mine。看不到目标就look或press w探索。\
-                 不要解释, 只输出tool_call。"
+                "策略: 先简短思考(一行), 再输出tool_call。\
+                 例如: '我看到三棵树,选最近那棵' 然后tool_call。\
+                 每次perceive决定自己的prompt。所有距离和时间你自己决定。\
+                 看到目标就调整视角对准后mine。看不到目标就look或press w探索。"
             ),
         max_turns,
     );

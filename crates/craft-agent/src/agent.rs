@@ -37,7 +37,7 @@ pub struct SessionEntry {
 
 // ── Agent 配置 ──
 
-pub type DecideFn = dyn Fn(&[Value], &[Value]) -> Result<Vec<(String, String)>>;
+pub type DecideFn = dyn Fn(&[Value], &[Value]) -> Result<(Option<String>, Vec<(String, String)>)>;
 
 #[derive(Debug, Clone)]
 pub struct AgentConfig {
@@ -104,8 +104,8 @@ impl<A: GameAdapter> Agent<A> {
             chatml.extend(self.messages.iter().map(Message::to_chatml));
 
             let tool_defs = self.tools.to_openai_defs();
-            let calls = match decide(&chatml, &tool_defs) {
-                Ok(c) => c,
+            let (reasoning, calls) = match decide(&chatml, &tool_defs) {
+                Ok(r) => r,
                 Err(e) => { log.push(format!("[turn{turn}] LLM: {e}")); break; }
             };
             if calls.is_empty() { break; }
@@ -113,14 +113,16 @@ impl<A: GameAdapter> Agent<A> {
             let (name, args_json) = &calls[0];
             let call_id = format!("call_{turn}");
 
-            // 3. ToolEffects 检查 (pi ToolEffects)
+            // 3. 记录 assistant (含思维链, pi model.rs ThinkingContent)
             let tool = self.tools.get(name);
-            let effects = tool.map(|t| t.effects());
-            let _ = effects; // 后续用于并行调度 (pi ToolEffects 位掩码)
-
-            // 4. 记录 assistant tool_call
             let args: Value = serde_json::from_str(args_json).unwrap_or_default();
-            self.messages.push(Message::assistant_tool_call(&call_id, name, args.clone()));
+            if let Some(reason) = reasoning {
+                self.messages.push(Message::assistant_with_reasoning(
+                    format!("→ {name}"), reason,
+                ));
+            } else {
+                self.messages.push(Message::assistant_tool_call(&call_id, name, args.clone()));
+            }
 
             // 5. 执行工具
             let result = if tool.is_none() {

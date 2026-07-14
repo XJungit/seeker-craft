@@ -255,13 +255,12 @@ pub mod real {
             self.chat_raw(&json!([{"role": "user", "content": prompt}]))
         }
 
-        /// OpenAI 兼容 function calling：带工具定义的多轮对话。
-        /// 返回 tool_calls 列表，每个元素为 (name, arguments_json_string)。
+        /// 返回 (reasoning_text, tool_calls), reasoning 为 LLM 思考内容
         pub fn chat_tools(
             &self,
             messages: &Value,
             tools: &Value,
-        ) -> Result<Vec<(String, String)>> {
+        ) -> Result<(Option<String>, Vec<(String, String)>)> {
             let mut body = json!({
                 "model": self.model,
                 "messages": messages,
@@ -284,6 +283,9 @@ pub mod real {
                 .json::<Value>()?;
 
             let msg = &resp["choices"][0]["message"];
+            let reasoning = msg["content"].as_str()
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string());
             let tool_calls = msg["tool_calls"].as_array();
 
             match tool_calls {
@@ -300,14 +302,11 @@ pub mod real {
                             .to_string();
                         result.push((name, args));
                     }
-                    Ok(result)
+                    Ok((reasoning, result))
                 }
                 None => {
-                    // 无 tool_calls → 回退到 content 文本
-                    let content = msg["content"].as_str().filter(|s| !s.is_empty())
-                        .or_else(|| msg["reasoning_content"].as_str())
-                        .unwrap_or("");
-                    Ok(vec![("text".into(), content.to_string())])
+                    let content = reasoning.unwrap_or_default();
+                    Ok((None, vec![("text".into(), content)]))
                 }
             }
         }
