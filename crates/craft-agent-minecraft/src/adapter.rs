@@ -108,6 +108,7 @@ impl MinecraftAdapter {
             .context("编码截图 PNG 失败")?;
         Ok(png)
     }
+    pub fn capture_screen(&self) -> anyhow::Result<Vec<u8>> { self.capture() }
 }
 
 /// 绕过 enigo 的绝对定位转换，直接用 SendInput + MOUSEEVENTF_MOVE（无 ABSOLUTE flag）
@@ -118,7 +119,7 @@ impl MinecraftAdapter {
 /// 这只会把光标钉回中心、不产生视角差。而 SendInput 裸 `MOUSEEVENTF_MOVE`（无 ABSOLUTE）
 /// 触发 MC raw input 的路由，这才是 AutoHotkey / Java Robot 能在 MC 中转视角的机制。
 #[cfg(windows)]
-fn raw_mouse_rel(dx: i32, dy: i32) -> Result<()> {
+pub fn raw_mouse_rel(dx: i32, dy: i32) -> Result<()> {
     use std::mem::size_of;
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::{
         INPUT, INPUT_0, INPUT_MOUSE, MOUSEEVENTF_MOVE, MOUSEINPUT, SendInput,

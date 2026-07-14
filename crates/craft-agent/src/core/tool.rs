@@ -43,7 +43,7 @@ pub struct ToolResult {
 ///
 /// 新增工具: 写一个 struct + impl GameTool + 注册到 ToolRegistry。
 /// 不改 agent.rs, 不改 types.rs。
-pub trait GameTool: Send + Sync {
+pub trait GameTool {
     /// 工具名 (LLM function calling 中使用的 name)
     fn name(&self) -> &str;
 
