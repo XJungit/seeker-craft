@@ -1,77 +1,103 @@
-//! Agent 主循环 — Pi 风格：Agent 拥有循环、工具定义、消息历史。
+//! Agent 主循环 — 基于 pi_agent_rust 架构
 //!
-//! 参考 Pi Coding Agent: while tool_calls -> execute -> observe -> continue
-//! 参考 SillyTavern: 多层 prompt 组装 + 丰富的 tool result 文本
+//! 参考: pi_agent_rust (agent.rs / model.rs / tools.rs / session.rs / compaction.rs)
+//! 参考: SillyTavern (PromptManager.js / world-info.js)
 //!
-//! 设计原则:
-//! - Agent 不感知具体游戏 (Minecraft/StarCraft)
-//! - 工具执行通过闭包注入，Agent 只负责编排
-//! - 系统 prompt 从 config 加载，不在代码里硬编码
-//! - 消息历史完整积累，LLM 知道之前所有行动的后果
+//! 已落地模式:
+//! - Message enum (pi model.rs)
+//! - Tool trait + ToolRegistry (pi tools.rs)
+//! - PromptBuilder 五层 (酒馆 PromptManager)
+//! - Compaction 上下文压缩 (pi compaction.rs)
+//! - SessionEntry id/parentId 树 (pi session.rs)
+//! - WorldInfo 动态注入 (酒馆 world-info.js)
+//! - ToolEffects 副作用声明 (pi ToolEffects)
 
 use crate::core::adapter::GameAdapter;
 use crate::core::message::{Message, system_chatml};
 use crate::core::prompt::PromptBuilder;
 use crate::core::tool::ToolRegistry;
-use crate::core::types::{Action, ExecResult, WorldState};
+use crate::core::types::{Action, WorldState};
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-/// LLM 决策回调: 接收 ChatML 消息数组 + 工具定义, 返回 (tool_name, arguments_json)
-pub type DecideFn = dyn Fn(&[Value], &[Value]) -> Result<Vec<(String, String)>>;
+// ── Session 树 (pi session.rs SessionEntry) ──
 
-/// Agent 配置
-#[derive(Debug, Clone)]
-pub struct AgentConfig {
-    /// 五层 prompt 组装器 (酒馆风格)
-    pub prompt: PromptBuilder,
-    /// 最大总轮次
-    pub max_turns: u32,
+/// 会话条目: id/parentId 树结构 (pi 风格)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionEntry {
+    pub id: String,
+    pub parent_id: Option<String>,
+    pub turn: u32,
+    pub tool: String,
+    pub detail: String,
+    pub timestamp: i64,
 }
 
-/// 通用 Agent: 拥有循环、消息历史、game adapter
-///
-/// Pi 风格: agent.run() 是主入口, 不需要外部编排。
+// ── Agent 配置 ──
+
+pub type DecideFn = dyn Fn(&[Value], &[Value]) -> Result<Vec<(String, String)>>;
+
+#[derive(Debug, Clone)]
+pub struct AgentConfig {
+    pub prompt: PromptBuilder,
+    pub max_turns: u32,
+    /// 触发压缩的消息数阈值 (pi: MAX_AGENT_MESSAGES)
+    pub max_messages: usize,
+}
+
+impl AgentConfig {
+    pub fn new(prompt: PromptBuilder, max_turns: u32) -> Self {
+        Self { prompt, max_turns, max_messages: 50 }
+    }
+}
+
+// ── Agent 结构 ──
+
 pub struct Agent<A: GameAdapter> {
     pub adapter: A,
     pub config: AgentConfig,
-    /// 工具注册表 (pi 风格: Vec<Box<dyn GameTool>>)
     pub tools: ToolRegistry,
-    /// 会话消息历史
     pub messages: Vec<Message>,
-    /// 最近一次 perceive 的世界状态
+    /// 会话树 (pi session.rs: Vec<SessionEntry>)
+    pub session: Vec<SessionEntry>,
     pub last_state: Option<WorldState>,
+    turn: u32,
 }
 
 impl<A: GameAdapter> Agent<A> {
     pub fn new(adapter: A, config: AgentConfig, tools: ToolRegistry) -> Self {
         Self {
-            adapter,
-            config,
-            tools,
+            adapter, config, tools,
             messages: Vec::new(),
+            session: Vec::new(),
             last_state: None,
+            turn: 0,
         }
     }
 
-    /// 重置消息历史
     pub fn reset_messages(&mut self) {
-        self.messages = Vec::new();
+        self.messages.clear();
+        self.session.clear();
+        self.turn = 0;
     }
 
-    /// 🏃 运行 Agent 主循环 (Pi 风格: 工具在 Agent 内部执行)
-    ///
-    /// `decide` — 调用 LLM 返回 tool_calls
-    ///
-    /// 循环: LLM决定 -> Agent内部执行 -> 结果注入 -> LLM再次决定 -> ... -> 结束
-    pub fn run(
-        &mut self,
-        decide: &DecideFn,
-    ) -> Result<Vec<String>> {
+    /// 🏃 Agent 主循环 —— 基于 pi agent loop
+    pub fn run(&mut self, decide: &DecideFn) -> Result<Vec<String>> {
         let mut log: Vec<String> = Vec::new();
+        let parent_id = None; // 顶级分支
 
-        for turn in 1..=self.config.max_turns {
-            // 1. 组装 system prompt (五层) 并调用 LLM
+        for _ in 1..=self.config.max_turns {
+            self.turn += 1;
+            let turn = self.turn;
+
+            // 1. 压缩检测 (pi compaction.rs)
+            if self.messages.len() > self.config.max_messages {
+                self.compact()?;
+            }
+
+            // 2. 组装上下文
             let system_prompt = self.config.prompt.build();
             let system = system_chatml(&system_prompt);
             let mut chatml: Vec<Value> = vec![system];
@@ -80,61 +106,69 @@ impl<A: GameAdapter> Agent<A> {
             let tool_defs = self.tools.to_openai_defs();
             let calls = match decide(&chatml, &tool_defs) {
                 Ok(c) => c,
-                Err(e) => {
-                    let msg = format!("[turn{turn}] LLM error: {e}");
-                    log.push(msg);
-                    break;
-                }
+                Err(e) => { log.push(format!("[turn{turn}] LLM: {e}")); break; }
             };
             if calls.is_empty() { break; }
 
-            // 取第一个 tool call
             let (name, args_json) = &calls[0];
             let call_id = format!("call_{turn}");
 
-            // 2. 记录 assistant 的 tool_call (类型化)
-            let args: Value = serde_json::from_str(args_json).unwrap_or_default();
-            self.messages.push(Message::assistant_tool_call(
-                &call_id, name, args.clone(),
-            ));
+            // 3. ToolEffects 检查 (pi ToolEffects)
+            let tool = self.tools.get(name);
+            let effects = tool.map(|t| t.effects());
+            let _ = effects; // 后续用于并行调度 (pi ToolEffects 位掩码)
 
-            // 3. Agent 内部执行工具 (pi 风格: 先查 registry 验证工具存在)
-            let result = if self.tools.get(name).is_none() {
+            // 4. 记录 assistant tool_call
+            let args: Value = serde_json::from_str(args_json).unwrap_or_default();
+            self.messages.push(Message::assistant_tool_call(&call_id, name, args.clone()));
+
+            // 5. 执行工具
+            let result = if tool.is_none() {
                 format!("未知工具: {name}")
             } else {
-                let args: Value = serde_json::from_str(args_json).unwrap_or_default();
                 match name.as_str() {
                     "perceive" => {
                         let prompt = args["prompt"].as_str()
-                            .unwrap_or("描述你看到的Minecraft场景, 列出可视物体");
+                            .unwrap_or("Describe the Minecraft scene. List visible blocks and entities.");
                         let reply = self.adapter.perceive_with_prompt(prompt)?;
+                        // WorldInfo 注入感知结果到场景层 (酒馆 world-info.js)
+                        self.config.prompt.set_scenario(format!("最近观察: {:.300}", &reply));
                         reply
                     }
                     "press" => {
                         let keys = args["keys"].as_str().unwrap_or("w").to_string();
                         let ticks = args["ticks"].as_u64().unwrap_or(40) as u32;
-                        let r = self.adapter.execute(Action::Press { keys, ticks })?;
-                        format!("按下 {} {}ms。{}", r.detail.split(' ').next().unwrap_or("?"), ticks as u64 * 50, r.detail)
+                        self.adapter.execute(Action::Press { keys: keys.clone(), ticks })?;
+                        format!("按键 {} {}ms", keys, ticks as u64 * 50)
                     }
                     "look" => {
-                        let dx = args["dx"].as_i64().unwrap_or(200) as i32;
+                        let dx = args["dx"].as_i64().unwrap_or(0) as i32;
                         let dy = args["dy"].as_i64().unwrap_or(0) as i32;
                         self.adapter.execute(Action::Look { dx, dy })?;
-                        let dir = if dx > 0 { "右" } else if dx < 0 { "左" } else { "" };
-                        let up = if dy < 0 { "上" } else if dy > 0 { "下" } else { "" };
-                        format!("转动视角{dir}{up}(dx={dx},dy={dy})。")
+                        format!("转动视角 dx={dx} dy={dy}")
                     }
                     "mine" => {
                         let ticks = args["ticks"].as_u64().unwrap_or(60) as u32;
-                        let r = self.adapter.execute(Action::Mine { ticks })?;
-                        format!("挖掘{}ms。{}", ticks as u64 * 50, r.detail)
+                        self.adapter.execute(Action::Mine { ticks })?;
+                        format!("挖掘 {}ms", ticks as u64 * 50)
                     }
-                    _ => format!("未实现的工具: {name}")
+                    _ => format!("未实现: {name}")
                 }
             };
 
-            // 4. 工具结果注入 (类型化)
+            // 6. 工具结果注入
             self.messages.push(Message::tool_result(&call_id, name, &result));
+
+            // 7. 会话树记录 (pi session.rs SessionEntry)
+            let entry = SessionEntry {
+                id: call_id.clone(),
+                parent_id: parent_id.clone(),
+                turn,
+                tool: name.clone(),
+                detail: format!("{:.100}", &result),
+                timestamp: SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() as i64,
+            };
+            self.session.push(entry);
 
             log.push(format!("[turn{turn}] {}({})", name, args_json));
         }
@@ -142,25 +176,56 @@ impl<A: GameAdapter> Agent<A> {
         Ok(log)
     }
 
-    // ── 以下为兼容旧 API 的辅助方法 ──
+    /// 上下文压缩 (pi compaction.rs 模式)
+    /// 保留最近 10 条消息，把旧消息替换为摘要
+    fn compact(&mut self) -> Result<()> {
+        let keep = 10; // 保留最近 N 条
+        if self.messages.len() <= keep { return Ok(()); }
 
-    /// 执行 perceive：VLM 拍照 → 更新 last_state
-    pub fn perceive(&mut self) -> Result<&WorldState> {
-        let state = self.adapter.perceive()?;
-        self.last_state = Some(state);
-        Ok(self.last_state.as_ref().unwrap())
+        let old_count = self.messages.len() - keep;
+        let summary = format!(
+            "[上下文压缩] 前 {} 轮已完成。继续当前任务。",
+            old_count
+        );
+
+        // 替换旧消息为压缩摘要
+        let compacted = Message::user(summary);
+        let recent: Vec<_> = self.messages.drain(self.messages.len() - keep..).collect();
+        self.messages = vec![compacted];
+        self.messages.extend(recent);
+
+        Ok(())
     }
 
-    /// 执行游戏动作
-    pub fn execute(&mut self, action: Action) -> Result<ExecResult> {
-        self.adapter.execute(action)
-    }
+    /// Fork 会话分支 (pi session.rs tree)
+    pub fn fork(&self, from_id: &str) -> Agent<A>
+    where A: Clone
+    {
+        let mut forked = Agent {
+            adapter: self.adapter.clone(),
+            config: self.config.clone(),
+            tools: ToolRegistry::new(), // 简化: 重新注册
+            messages: Vec::new(),
+            session: Vec::new(),
+            last_state: None,
+            turn: 0,
+        };
 
-    /// 单步 (兼容旧 API)
-    pub fn step(&mut self) -> Result<ExecResult> {
-        let _state = self.adapter.perceive()?;
-        let action = Action::Look { dx: 0, dy: 0 };
-        self.adapter.execute(action)
+        // 复制到分叉点的消息
+        let mut found = false;
+        for entry in &self.session {
+            forked.session.push(entry.clone());
+            if entry.id == from_id { found = true; break; }
+        }
+        if found {
+            // 找到分叉点对应的消息
+            let idx = self.session.iter().position(|e| e.id == from_id).unwrap_or(0);
+            if idx < self.messages.len() {
+                forked.messages = self.messages[..=idx].to_vec();
+            }
+        }
+
+        forked
     }
 }
 
@@ -170,15 +235,15 @@ mod tests {
     use crate::adapters::fake::FakeGameAdapter;
 
     #[test]
-    fn agent_runs_basic_loop() {
-        let config = AgentConfig {
-            prompt: PromptBuilder::new().identity("test"),
-            max_turns: 1,
-        };
+    fn agent_compacts_when_full() {
+        let config = AgentConfig::new(PromptBuilder::new().identity("test"), 1);
         let mut agent = Agent::new(FakeGameAdapter, config, ToolRegistry::new());
-        let log = agent.run(
-            &|_msgs, _tools| Ok(vec![]),
-        ).unwrap();
-        assert!(log.is_empty());
+        // 填充超过 50 条消息触发压缩
+        for i in 0..55 {
+            agent.messages.push(Message::user(format!("msg {i}")));
+        }
+        assert_eq!(agent.messages.len(), 55);
+        agent.compact().unwrap();
+        assert!(agent.messages.len() <= 11); // 1 compacted + 10 recent
     }
 }

@@ -7,6 +7,7 @@ use crate::core::adapter::GameAdapter;
 use crate::core::types::{Action, Element, ExecResult, Screenshot, Target, WorldState};
 use anyhow::Result;
 
+#[derive(Clone)]
 pub struct FakeGameAdapter;
 
 impl GameAdapter for FakeGameAdapter {
