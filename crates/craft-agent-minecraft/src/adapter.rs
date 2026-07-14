@@ -258,13 +258,8 @@ impl GameAdapter for MinecraftAdapter {
             .join("  ");
 
         // 合并场景描述 + 目标检测为一次 VLM 调用
-        let combined_prompt = format!(
-            "列出3D物体坐标。每行: label: (x,y)。x范围0~{ww}, y范围0~{wh}。\n\
-             可识别的物体: tree stone water animal ore grass dirt。\n\
-             不要UI/HUD/hotbar。不要解释。标注: {}",
-            _elements_str
-        );
-        let reply = self.vision.chat(&png, &combined_prompt)
+        let combined_prompt = "描述场景并列出物体坐标。格式: label: (x,y)。可识别: tree stone water animal ore grass dirt。不要UI/HUD。";
+        let reply = self.vision.chat(&png, combined_prompt)
             .context("VLM 场景描述失败")?;
 
         // 从回复中提取场景描述（坐标部分之前的内容）
@@ -432,7 +427,7 @@ impl GameAdapter for MinecraftAdapter {
 /// 从 VLM 回复中解析目标坐标
 fn parse_vlm_targets(reply: &str, screen_w: u32, screen_h: u32) -> Result<Vec<Target>> {
     let mut targets = Vec::new();
-    let re = regex::Regex::new(r"(\S+?):\s*.*?\((\d+),\s*(\d+)\)")
+    let re = regex::Regex::new(r"(?i)(tree|stone|water|animal|ore|grass|dirt|wood|sand|gravel)\b.*?(?:\(|（)\s*(\d+)\s*[,，]\s*(\d+)\s*(?:\)|）)")
         .context("编译 VLM 检测正则失败")?;
     let (screen_cx, screen_cy) = (screen_w as f32 / 2.0, screen_h as f32 / 2.0);
 
