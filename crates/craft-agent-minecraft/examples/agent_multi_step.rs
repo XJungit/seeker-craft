@@ -1,5 +1,5 @@
 //! Agent — pi_agent_rust 架构
-//! cargo run -p craft-agent-minecraft --example agent_multi_step --features real -- --steps=10
+//! cargo run -p craft-agent-minecraft --example agent_multi_step --features real -- --steps=12
 
 #[cfg(feature = "real")]
 fn main() -> anyhow::Result<()> {
@@ -18,16 +18,16 @@ fn main() -> anyhow::Result<()> {
 
     let _ = dotenvy::dotenv();
     let args: Vec<String> = std::env::args().collect();
-    let max_turns: u32 = args.iter().find(|a| a.starts_with("--steps="))
-        .and_then(|s| s.trim_start_matches("--steps=").parse().ok()).unwrap_or(10);
+    let max_iter: u32 = args.iter().find(|a| a.starts_with("--steps="))
+        .and_then(|s| s.trim_start_matches("--steps=").parse().ok()).unwrap_or(12);
 
     let model_cfg = ModelConfig::load("config/agent.toml")?;
     let vlm_backend = model_cfg.vlm.active_backend()?;
     let llm_group = model_cfg.llm.as_ref().ok_or_else(|| anyhow::anyhow!("缺少 [llm]"))?;
     let llm_backend = llm_group.active_backend()?;
-
     let llm = Arc::new(OpenAiLlmClient::from_config(llm_backend)?);
 
+    // Provider
     struct Lp { llm: Arc<OpenAiLlmClient> }
     impl LlmProvider for Lp {
         fn complete(&self, m: &[Value], t: &[Value]) -> anyhow::Result<(Option<String>, Vec<(String,String)>)> {
@@ -35,6 +35,7 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
+    // 资源
     let enigo = Rc::new(RefCell::new(enigo::Enigo::new(&enigo::Settings::default())?));
     let adapter = Rc::new(RefCell::new(MinecraftAdapter::new(
         Box::new(OpenAiVisionClient::from_config(vlm_backend)?)
@@ -50,18 +51,17 @@ fn main() -> anyhow::Result<()> {
     }
 
     let mut agent = Agent::new(Box::new(Lp { llm }), registry, AgentConfig::new(
-        "\
-你是 Minecraft AI 玩家。循环: perceive -> 思考 -> act -> perceive -> ...
-工具: perceive(拍照,prompt英文) / look(dx,dy) / press(keys,ticks) / mine(ticks)
-策略: perceive看周围 -> 有目标就look对准 -> mine挖掘。没目标就look/press探索。
-先思考一行,再tool_call。".into(),
-        max_turns,
+        "你是 Minecraft AI 玩家。你的循环: perceive -> 思考 -> act -> perceive -> ...\n\
+         工具: perceive(拍照)/look(转视角)/press(按键)/mine(挖掘)。\n\
+         策略: perceive看周围, 有目标就look对准后mine。没目标就look或press w探索。\n\
+         每次先简短思考(1行), 再tool_call。perceive的prompt用英文。".into(),
+        max_iter,
     ));
 
-    println!("\n=== VLM:{} LLM:{} ===\n", vlm_backend.model, llm_backend.model);
+    println!("\n=== VLM:{} LLM:{} {} iterations ===\n", vlm_backend.model, llm_backend.model, max_iter);
     let t0 = Instant::now();
     for e in agent.run()? { println!("{}", e); }
-    println!("\n=== {}轮 {:.1}s ===", agent.session.len(), t0.elapsed().as_secs_f64());
+    println!("\n=== {} turns {:.1}s ===", agent.session.len(), t0.elapsed().as_secs_f64());
     Ok(())
 }
 

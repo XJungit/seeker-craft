@@ -151,7 +151,7 @@ pub fn raw_mouse_rel(dx: i32, dy: i32) -> Result<()> {
 /// 绕过 Windows 前台锁的标准做法：`AttachThreadInput` 挂到当前前台线程后 `SetForegroundWindow`
 /// + `SetFocus`（独占全屏被挂起时先 `ShowWindow(SW_RESTORE)` 唤醒）。
 #[cfg(windows)]
-fn focus_minecraft() -> Result<()> {
+pub fn focus_minecraft() -> Result<()> {
     use windows_sys::Win32::Foundation::{HWND, LPARAM};
     use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
     use windows_sys::Win32::UI::Input::KeyboardAndMouse::SetFocus;
