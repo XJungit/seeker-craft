@@ -38,12 +38,37 @@ pub struct SessionEntry {
     pub timestamp: i64,
 }
 
+// ── Compaction 配置 (pi ResolvedCompactionSettings) ──
+
+#[derive(Debug, Clone)]
+pub struct CompactionConfig {
+    /// 模型上下文窗口 token 数
+    pub context_window: u32,
+    /// 预留 token (给系统 prompt + 后续对话)
+    pub reserve: u32,
+    /// 保留最近 N token (不被压缩)
+    pub keep_recent: u32,
+}
+
+impl Default for CompactionConfig {
+    fn default() -> Self {
+        Self { context_window: 128_000, reserve: 10_240, keep_recent: 12_800 }
+    }
+}
+
 // ── Agent 配置 ──
 
 pub struct AgentConfig {
-    pub prompt: String, // 直接用字符串, 不用 PromptBuilder
+    pub prompt: String,
     pub max_turns: u32,
-    pub max_messages: usize,
+    /// 压缩设置 (pi 风格: 基于 token 预算)
+    pub compaction: CompactionConfig,
+}
+
+impl AgentConfig {
+    pub fn new(prompt: String, max_turns: u32) -> Self {
+        Self { prompt, max_turns, compaction: CompactionConfig::default() }
+    }
 }
 
 // ── Agent (pi 同构) ──
@@ -70,8 +95,8 @@ impl Agent {
             self.turn += 1;
             let turn = self.turn;
 
-            // Compaction (pi compaction.rs: LLM 摘要)
-            if self.messages.len() > self.config.max_messages {
+            // Compaction: token 预算检查 (pi 风格)
+            if self.estimate_tokens() > self.config.compaction.context_window.saturating_sub(self.config.compaction.reserve) {
                 self.compact()?;
             }
 
@@ -127,35 +152,62 @@ impl Agent {
         Ok(log)
     }
 
-    /// Compaction — pi 风格: LLM 生成摘要
-    fn compact(&mut self) -> Result<()> {
-        let keep = 10;
-        if self.messages.len() <= keep { return Ok(()); }
+    /// 估算当前消息总 token 数 (pi: chars/3 per token)
+    fn estimate_tokens(&self) -> u32 {
+        let chars: usize = self.messages.iter()
+            .map(|m| format!("{}", serde_json::to_string(&m).unwrap_or_default()).len())
+            .sum();
+        (chars.saturating_div(3)) as u32
+    }
 
-        // 把旧消息拼成文本, 让 LLM 生成摘要
-        let old: Vec<String> = self.messages[..self.messages.len() - keep]
+    /// Compaction — pi 风格: LLM 摘要 + token 预算
+    fn compact(&mut self) -> Result<()> {
+        let keep_tokens = self.config.compaction.keep_recent;
+        let mut kept = 0u32;
+        let mut cut_idx = self.messages.len();
+
+        // 从后往前找到要保留的最近 N 条 (基于 token 估算)
+        for (i, msg) in self.messages.iter().enumerate().rev() {
+            let t = serde_json::to_string(msg).map(|s| s.len().saturating_div(3) as u32).unwrap_or(0);
+            if kept + t > keep_tokens {
+                cut_idx = i + 1;
+                break;
+            }
+            kept += t;
+        }
+        if cut_idx >= self.messages.len() { return Ok(()); }
+
+        // 旧消息拼成人类可读格式
+        let old: Vec<String> = self.messages[..cut_idx]
             .iter()
-            .map(|m| format!("{:?}", m))
+            .map(|m| match m {
+                Message::Assistant(a) => {
+                    let r = a.reasoning.as_deref().unwrap_or("");
+                    let tc = a.tool_calls.first().map(|t| t.name.as_str()).unwrap_or("?");
+                    format!("assistant({tc}): {r}")
+                }
+                Message::ToolResult(r) => format!("result({}): {:.200}", r.tool_name, r.content),
+                Message::User(u) => format!("user: {:.200}", u.content),
+            })
             .collect();
         let old_text = old.join("\n");
 
-        // 调 LLM 生成摘要 (简化: 直接用 provider)
+        // LLM 生成摘要
         let summary_prompt = vec![system_chatml(
-            "Summarize this Minecraft gameplay history in 2-3 sentences. Keep key facts: \
-             what was mined, where we explored, what we saw.\n\nHISTORY:"
+            "Summarize this gameplay history in 2-3 sentences. Key: what was mined, where explored."
         )];
-        let summary_msg = Message::user(format!("{:.2000}", old_text));
+        let summary_msg = Message::user(format!("{:.3000}", old_text));
         let mut chatml = summary_prompt;
         chatml.push(summary_msg.to_chatml());
 
         let summary = match self.provider.complete(&chatml, &[]) {
-            Ok((text, _)) => text.unwrap_or_else(|| format!("前 {} 轮已完成", self.messages.len() - keep)),
-            Err(_) => format!("[压缩] 前 {} 轮已完成", self.messages.len() - keep),
+            Ok((text, _)) => text.unwrap_or_else(|| format!("{} actions completed", cut_idx)),
+            Err(_) => format!("{} actions completed", cut_idx),
         };
 
         // 保留最近
-        let recent: Vec<_> = self.messages.drain(self.messages.len() - keep..).collect();
-        self.messages = vec![Message::user(format!("[历史摘要] {summary}"))];
+        let recent: Vec<_> = self.messages.drain(cut_idx..).collect();
+        self.messages = vec![Message::user(format!("[summary] {summary}"))];
         self.messages.extend(recent);
 
         Ok(())

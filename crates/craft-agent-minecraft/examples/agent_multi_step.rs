@@ -49,15 +49,14 @@ fn main() -> anyhow::Result<()> {
         registry.register(tool);
     }
 
-    let mut agent = Agent::new(Box::new(Lp { llm }), registry, AgentConfig {
-        prompt: "\
+    let mut agent = Agent::new(Box::new(Lp { llm }), registry, AgentConfig::new(
+        "\
 你是 Minecraft AI 玩家。循环: perceive -> 思考 -> act -> perceive -> ...
 工具: perceive(拍照,prompt英文) / look(dx,dy) / press(keys,ticks) / mine(ticks)
 策略: perceive看周围 -> 有目标就look对准 -> mine挖掘。没目标就look/press探索。
 先思考一行,再tool_call。".into(),
         max_turns,
-        max_messages: 50,
-    });
+    ));
 
     println!("\n=== VLM:{} LLM:{} ===\n", vlm_backend.model, llm_backend.model);
     let t0 = Instant::now();
