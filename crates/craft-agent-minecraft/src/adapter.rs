@@ -391,8 +391,11 @@ impl GameAdapter for MinecraftAdapter {
                             }
                             // 灵敏度缩放: 像素偏移 ≠ 鼠标delta, 1px ≈ 0.15°
                             let sdx = (dx as f32 * 0.5) as i32;
-                            let sdy = (dy as f32 * 0.5) as i32;
-                            eprintln!("[aim] raw_mouse_rel({sdx}, {sdy}) ← ({dx},{dy}) → {t_label}", t_label = t.label, dy = dy, dx = dx);
+                            // MC 视角: 正dy=低头, 负dy=抬头。VLM坐标: y小=上半屏(天空), y大=下半屏(地面)
+                            // offset = VLM_y - 中心_y。树在上半屏 → offset<0 → 应抬头 → raw_mouse_rel dy应为负
+                            // 但实测 dy 正才抬头, 疑似 raw input 方向与我们预期相反, 先反转 Y
+                            let sdy = -(dy as f32 * 0.5) as i32;
+                            eprintln!("[aim] raw_mouse_rel({sdx}, {sdy}) ← ({dx},{dy}) → {t_label}", t_label = t.label);
                             #[cfg(windows)]
                             raw_mouse_rel(sdx, sdy)?;
                             #[cfg(not(windows))]
