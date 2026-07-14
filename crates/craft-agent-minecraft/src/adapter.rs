@@ -315,25 +315,19 @@ impl GameAdapter for MinecraftAdapter {
                 })
             }
             Action::Look { dx, dy } => {
-                // 窗口化 MC：必须先在窗口内点击激活鼠标捕获，然后 raw delta 才被解释为视角旋转。
-                // 独占全屏自带 raw input 捕获，无需此步骤。
                 if !self.fullscreen {
                     let cx = wx + (ww / 2) as i32;
                     let cy = wy + (wh / 2) as i32;
-                    self.enigo
-                        .move_mouse(cx, cy, Coordinate::Abs)
-                        .context("Look: 移鼠标至窗口中心失败")?;
-                    thread::sleep(Duration::from_millis(30));
-                    self.enigo
-                        .button(Button::Left, Direction::Click)
-                        .context("Look: 左键激活鼠标捕获失败")?;
-                    thread::sleep(Duration::from_millis(50));
+                    self.enigo.move_mouse(cx, cy, Coordinate::Abs)?;
+                    thread::sleep(Duration::from_millis(100));
+                    // 按住再松开, 确保 MC 注册点击
+                    self.enigo.button(Button::Left, Direction::Press)?;
+                    thread::sleep(Duration::from_millis(100));
+                    self.enigo.button(Button::Left, Direction::Release)?;
+                    thread::sleep(Duration::from_millis(200));
                 }
-                // 直调 SendInput + MOUSEEVENTF_MOVE（无 ABSOLUTE flag），触发 MC raw input 视角旋转。
-                // 不用 enigo move_mouse(Rel)——它在 Windows 内部转绝对坐标，全屏 raw input 不认。
                 #[cfg(windows)]
                 raw_mouse_rel(dx, dy)?;
-                // 非 Windows 回退 enigo 的相对移动（如 Linux XTest/macOS CGEvent）
                 #[cfg(not(windows))]
                 self.enigo.move_mouse(dx, dy, Coordinate::Rel)?;
                 Ok(ExecResult {
@@ -377,23 +371,28 @@ impl GameAdapter for MinecraftAdapter {
                     Some(t) => {
                         let (dx, dy) = t.offset_from_crosshair;
                         if dx != 0 || dy != 0 {
-                            // 窗口化 MC: 先点击窗口中心激活鼠标捕获
+                            // 窗口化 MC: 点击窗口中心激活鼠标捕获
+                            // MC 需要足够的响应时间 (~300ms) 才能可靠捕获鼠标
                             if !self.fullscreen {
                                 let rect = self.rect.borrow();
                                 if let Some((wx, wy, ww, wh)) = *rect {
                                     let cx = wx + (ww / 2) as i32;
                                     let cy = wy + (wh / 2) as i32;
+                                    // 移光标到窗口中心
                                     self.enigo.move_mouse(cx, cy, Coordinate::Abs)?;
-                                    thread::sleep(Duration::from_millis(30));
-                                    self.enigo.button(Button::Left, Direction::Click)?;
-                                    thread::sleep(Duration::from_millis(50));
+                                    thread::sleep(Duration::from_millis(100));
+                                    // 按住左键 100ms 再松开 (确保 MC 注册点击事件)
+                                    self.enigo.button(Button::Left, Direction::Press)?;
+                                    thread::sleep(Duration::from_millis(100));
+                                    self.enigo.button(Button::Left, Direction::Release)?;
+                                    // 等待 MC 捕获鼠标
+                                    thread::sleep(Duration::from_millis(200));
                                 }
                             }
-                            // 灵敏度缩放: 像素偏移 ≠ 鼠标delta, 1px ≈ 0.15° in MC
-                            // 缩到 0.5 避免过度转动
+                            // 灵敏度缩放: 像素偏移 ≠ 鼠标delta, 1px ≈ 0.15°
                             let sdx = (dx as f32 * 0.5) as i32;
                             let sdy = (dy as f32 * 0.5) as i32;
-                            eprintln!("[aim] raw_mouse_rel({sdx}, {sdy}) ← 原始({dx},{dy}) → 瞄准 {}", t.label);
+                            eprintln!("[aim] raw_mouse_rel({sdx}, {sdy}) ← ({dx},{dy}) → {t_label}", t_label = t.label, dy = dy, dx = dx);
                             #[cfg(windows)]
                             raw_mouse_rel(sdx, sdy)?;
                             #[cfg(not(windows))]
