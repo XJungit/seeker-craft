@@ -56,8 +56,8 @@ pub trait GameTool {
     /// 副作用声明
     fn effects(&self) -> ToolEffects { ToolEffects::destructive() }
 
-    /// 执行工具
-    fn execute(&self, args: Value) -> Result<ToolResult>;
+    /// 执行工具 (pi: tool.execute(&id, args, callback))
+    fn execute(&self, _call_id: &str, args: Value) -> Result<ToolResult>;
 
     /// 转换为 OpenAI function calling 的完整定义
     fn to_openai_def(&self) -> Value {

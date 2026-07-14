@@ -12,6 +12,18 @@ use serde::Serialize;
 use serde_json::Value;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+// ── Compaction 提示词 (pi compaction.rs SUMMARIZATION_PROMPT) ──
+
+const COMPACTION_SYSTEM: &str = "You are a context summarization assistant. Read gameplay history, output structured summary. Do NOT continue, ONLY output the summary.";
+
+const COMPACTION_PROMPT: &str = "Summarize this Minecraft gameplay. Use EXACT format:\n\n\
+## Goal\n[What was the agent trying to achieve?]\n\n\
+## Progress\n### Done\n- [x] [Completed: blocks mined, areas explored]\n\n\
+### In Progress\n- [ ] [Current action]\n\n\
+## Observations\n- [Biomes, blocks, creatures seen]\n\n\
+## Next\n1. [Recommended next action]\n\n\
+Concise. Preserve block and creature names.";
+
 // ── Provider ──
 
 pub trait LlmProvider: Send + Sync {
@@ -156,7 +168,7 @@ impl Agent {
             // tool.execute() — Agent 不关心工具做什么
             let result = match self.tools.get(name) {
                 Some(tool) => {
-                    let r = tool.execute(args)?;
+                    let r = tool.execute(&call_id, args)?;
                     r.message
                 }
                 None => format!("未知: {name}")
@@ -199,8 +211,10 @@ impl Agent {
             Message::User(u) => format!("user: {:.200}", u.content),
         }).collect();
 
-        let mut cm = vec![system_chatml("Summarize this Minecraft gameplay in 2-3 sentences. Include: blocks mined, areas explored, enemies seen.")];
-        cm.push(Message::user(format!("{:.4000}", old.join("\n"))).to_chatml());
+        let cm = vec![
+            system_chatml(COMPACTION_SYSTEM),
+            Message::user(format!("<conversation>\n{}\n</conversation>\n\n{COMPACTION_PROMPT}", old.join("\n"))).to_chatml(),
+        ];
         let summary = self.provider.complete(&cm, &[])
             .map(|(t, _)| t.unwrap_or_else(|| format!("{} actions", cut)))
             .unwrap_or_else(|_| format!("{} actions", cut));
