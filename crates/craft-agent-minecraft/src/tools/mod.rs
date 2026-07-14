@@ -1,6 +1,6 @@
 //! Minecraft 工具 — 每个工具自己完整执行
 
-use craft_agent::core::tool::{GameTool, ToolEffects, ToolResult};
+use craft_agent::core::tool::{GameTool, ToolEffects, ToolResult, ToolUpdateFn};
 use craft_agent_model::vision::VisionClient;
 use enigo::{Keyboard, Mouse};
 use serde_json::Value;
@@ -25,8 +25,8 @@ impl GameTool for PerceiveTool {
     fn parameters(&self) -> Value {
         serde_json::json!({"type":"object","properties":{"prompt":{"type":"string","description":"英文提示词, 如: Describe the Minecraft scene. List trees, stones, animals, monsters, water near the crosshair."}}})
     }
-    fn effects(&self) -> ToolEffects { ToolEffects::read_only() }
-    fn execute(&self, _id: &str, args: Value) -> anyhow::Result<ToolResult> {
+    fn effects(&self) -> ToolEffects { ToolEffects::network() } // 调 VLM, 网络 I/O
+    fn execute(&self, _id: &str, args: Value, _on_update: Option<ToolUpdateFn>) -> anyhow::Result<ToolResult> {
         let prompt = args["prompt"].as_str()
             .unwrap_or("Describe the Minecraft scene. List all visible blocks and entities near the crosshair.");
         let png = (self.capture)()?;
@@ -51,7 +51,8 @@ impl GameTool for PressTool {
     fn parameters(&self) -> Value {
         serde_json::json!({"type":"object","properties":{"keys":{"type":"string","description":"按键字母, 如 w, space, e, shift, 1-9"},"ticks":{"type":"integer","description":"持续时间, 20≈1秒, 40≈2秒","default":20}},"required":["keys"]})
     }
-    fn execute(&self, _id: &str, args: Value) -> anyhow::Result<ToolResult> {
+    fn effects(&self) -> ToolEffects { ToolEffects::write() } // 改变游戏状态
+    fn execute(&self, _id: &str, args: Value, _on_update: Option<ToolUpdateFn>) -> anyhow::Result<ToolResult> {
         (self.focus)();
         let keys = args["keys"].as_str().unwrap_or("w");
         let ticks = args["ticks"].as_u64().unwrap_or(20) as u64;
@@ -98,7 +99,8 @@ impl GameTool for LookTool {
     fn parameters(&self) -> Value {
         serde_json::json!({"type":"object","properties":{"dx":{"type":"integer"},"dy":{"type":"integer"}},"required":["dx","dy"]})
     }
-    fn execute(&self, _id: &str, args: Value) -> anyhow::Result<ToolResult> {
+    fn effects(&self) -> ToolEffects { ToolEffects::read() } // 只读, 不改动世界
+    fn execute(&self, _id: &str, args: Value, _on_update: Option<ToolUpdateFn>) -> anyhow::Result<ToolResult> {
         let dx = args["dx"].as_i64().unwrap_or(0) as i32;
         let dy = args["dy"].as_i64().unwrap_or(0) as i32;
         #[cfg(windows)]
@@ -122,8 +124,8 @@ impl GameTool for MineTool {
     fn parameters(&self) -> Value {
         serde_json::json!({"type":"object","properties":{"ticks":{"type":"integer","description":"挖掘时长, 20≈1秒","default":60}}})
     }
-    fn effects(&self) -> ToolEffects { ToolEffects::destructive() }
-    fn execute(&self, _id: &str, args: Value) -> anyhow::Result<ToolResult> {
+    fn effects(&self) -> ToolEffects { ToolEffects::write() } // 改变游戏状态
+    fn execute(&self, _id: &str, args: Value, _on_update: Option<ToolUpdateFn>) -> anyhow::Result<ToolResult> {
         (self.focus)();
         let ticks = args["ticks"].as_u64().unwrap_or(60) as u64;
         let ms = ticks * 50;

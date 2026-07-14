@@ -255,12 +255,12 @@ pub mod real {
             self.chat_raw(&json!([{"role": "user", "content": prompt}]))
         }
 
-        /// 返回 (reasoning_text, tool_calls), reasoning 为 LLM 思考内容
+        /// 返回 (reasoning_text, tool_calls, usage), reasoning 为 LLM 思考内容
         pub fn chat_tools(
             &self,
             messages: &Value,
             tools: &Value,
-        ) -> Result<(Option<String>, Vec<(String, String)>)> {
+        ) -> Result<(Option<String>, Vec<(String, String)>, craft_agent::core::message::Usage)> {
             let mut body = json!({
                 "model": self.model,
                 "messages": messages,
@@ -288,6 +288,14 @@ pub mod real {
                 .map(|s| s.to_string());
             let tool_calls = msg["tool_calls"].as_array();
 
+            // Usage (pi: provider 返回的 total_tokens 优先用于估算上下文)
+            let usage = &resp["usage"];
+            let u = craft_agent::core::message::Usage {
+                input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0),
+                output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0),
+                total_tokens: usage["total_tokens"].as_u64().unwrap_or(0),
+            };
+
             match tool_calls {
                 Some(calls) => {
                     let mut result = Vec::new();
@@ -302,11 +310,11 @@ pub mod real {
                             .to_string();
                         result.push((name, args));
                     }
-                    Ok((reasoning, result))
+                    Ok((reasoning, result, u))
                 }
                 None => {
                     let content = reasoning.unwrap_or_default();
-                    Ok((None, vec![("text".into(), content)]))
+                    Ok((None, vec![("text".into(), content)], u))
                 }
             }
         }

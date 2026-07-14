@@ -1,36 +1,103 @@
-//! 游戏工具 trait + 注册表 — pi 风格
+//! 游戏工具 trait + 注册表 — pi 风格 (严格对应 pi_agent_rust src/tools.rs)
 //!
-//! 参考 pi_agent_rust src/tools.rs:
-//! - Tool trait (name/description/parameters/execute/effects)
-//! - ToolRegistry (按名查找, config-driven 激活)
-//! - ToolEffects 副作用声明 (READ/WRITE 位掩码)
+//! 与 pi 同构:
+//! - Tool trait: name / label / description / parameters / execute / effects
+//! - ToolEffects: 手写位掩码 (READ/WRITE/APPEND/NETWORK/PROCESS/BARRIER)
+//! - ToolRegistry: Vec<Box<dyn Tool>>, 按名线性查找
+//! - plan_tool_effect_batches: 按副作用分组 (pi agent.rs:417 plan_tool_effect_batches)
 
 use anyhow::Result;
 use serde_json::Value;
+use std::sync::Arc;
 
-// ── 副作用声明 ──
+// ── 副作用位掩码 (pi tools.rs L36-155, 手写非 bitflags crate) ──
 
-/// 工具副作用 (pi 的 ToolEffects 位掩码, 游戏版简化)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ToolEffects {
-    /// 感知类: 不修改游戏世界 (perceive, look)
-    pub is_readonly: bool,
-    /// 修改类: 可能改变游戏状态 (aim_and_mine, move)
-    pub is_destructive: bool,
+    bits: u8,
 }
 
 impl ToolEffects {
-    pub const fn read_only() -> Self {
-        Self { is_readonly: true, is_destructive: false }
+    const READ: u8 = 1 << 0; // 只读本地态
+    const WRITE: u8 = 1 << 1; // 替换/变更
+    const APPEND: u8 = 1 << 2; // 追加
+    const NETWORK: u8 = 1 << 3; // 网络 I/O (不变更本地)
+    const PROCESS: u8 = 1 << 4; // 启动本地进程 (视作调度屏障)
+    /// 写/追加/进程 = 不可并行的复合屏障
+    const BARRIER: u8 = Self::WRITE | Self::APPEND | Self::PROCESS;
+
+    pub const fn read() -> Self {
+        Self { bits: Self::READ }
     }
-    pub const fn destructive() -> Self {
-        Self { is_readonly: false, is_destructive: true }
+    pub const fn write() -> Self {
+        Self { bits: Self::WRITE }
+    }
+    pub const fn append() -> Self {
+        Self { bits: Self::APPEND }
+    }
+    pub const fn network() -> Self {
+        Self { bits: Self::NETWORK }
+    }
+    pub const fn process() -> Self {
+        Self { bits: Self::PROCESS }
+    }
+
+    /// 组合两个副作用 (pi: union)
+    pub const fn union(self, other: Self) -> Self {
+        Self {
+            bits: self.bits | other.bits,
+        }
+    }
+
+    pub fn reads(&self) -> bool {
+        self.bits & Self::READ != 0
+    }
+    pub fn writes(&self) -> bool {
+        self.bits & Self::WRITE != 0
+    }
+    pub fn appends(&self) -> bool {
+        self.bits & Self::APPEND != 0
+    }
+    pub fn networks(&self) -> bool {
+        self.bits & Self::NETWORK != 0
+    }
+    pub fn processes(&self) -> bool {
+        self.bits & Self::PROCESS != 0
+    }
+
+    /// 能否并行 (pi: parallel_safe = bits != 0 && bits & BARRIER == 0)
+    pub fn parallel_safe(&self) -> bool {
+        self.bits != 0 && self.bits & Self::BARRIER == 0
+    }
+
+    /// 两个工具能否同批并发 (pi: compatible_with)
+    pub fn compatible_with(&self, other: &Self) -> bool {
+        self.parallel_safe() && other.parallel_safe()
+    }
+
+    pub fn labels(&self) -> Vec<&'static str> {
+        let mut v = Vec::new();
+        if self.reads() {
+            v.push("read");
+        }
+        if self.writes() {
+            v.push("write");
+        }
+        if self.appends() {
+            v.push("append");
+        }
+        if self.networks() {
+            v.push("network");
+        }
+        if self.processes() {
+            v.push("process");
+        }
+        v
     }
 }
 
-// ── Tool trait ──
+// ── Tool 执行结果 ──
 
-/// 工具执行结果
 #[derive(Debug, Clone)]
 pub struct ToolResult {
     /// LLM 可读的执行描述
@@ -39,7 +106,11 @@ pub struct ToolResult {
     pub is_error: bool,
 }
 
-/// 游戏工具 trait (pi 风格: 每个工具一个 struct, impl 这个 trait)
+/// 增量结果回调 (pi: on_update: Option<Box<dyn Fn(ToolUpdate) + Send + Sync>>)
+/// 长任务 (如长跑 bash) 可边执行边回传进度。游戏工具通常为瞬时, 传 None。
+pub type ToolUpdateFn = Arc<dyn Fn(&str) + Send + Sync>;
+
+/// 游戏工具 trait (pi Tool trait, L157)
 ///
 /// 新增工具: 写一个 struct + impl GameTool + 注册到 ToolRegistry。
 /// 不改 agent.rs, 不改 types.rs。
@@ -47,17 +118,29 @@ pub trait GameTool {
     /// 工具名 (LLM function calling 中使用的 name)
     fn name(&self) -> &str;
 
+    /// 显示名 (pi: label, 默认 = name)
+    fn label(&self) -> &str {
+        self.name()
+    }
+
     /// 工具描述 (给 LLM 看的)
     fn description(&self) -> &str;
 
     /// 参数 JSON Schema (OpenAI function calling 格式)
     fn parameters(&self) -> Value;
 
-    /// 副作用声明
-    fn effects(&self) -> ToolEffects { ToolEffects::destructive() }
+    /// 副作用声明 (pi: 默认 write() = 保守串行化, fail-closed)
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
 
-    /// 执行工具 (pi: tool.execute(&id, args, callback))
-    fn execute(&self, _call_id: &str, args: Value) -> Result<ToolResult>;
+    /// 执行工具 (pi: tool.execute(&tool_call_id, input, on_update))
+    fn execute(
+        &self,
+        call_id: &str,
+        args: Value,
+        on_update: Option<ToolUpdateFn>,
+    ) -> Result<ToolResult>;
 
     /// 转换为 OpenAI function calling 的完整定义
     fn to_openai_def(&self) -> Value {
@@ -83,9 +166,9 @@ pub trait GameTool {
     }
 }
 
-// ── ToolRegistry ──
+// ── ToolRegistry (pi tools.rs L2646) ──
 
-/// 工具注册表 (pi 风格: 做 Vec<Box<dyn Tool>> 管理)
+/// 工具注册表 (pi 风格: Vec<Box<dyn Tool>>)
 pub struct ToolRegistry {
     tools: Vec<Box<dyn GameTool>>,
 }
@@ -100,7 +183,25 @@ impl ToolRegistry {
         self.tools.push(tool);
     }
 
-    /// 按名称查找工具
+    /// 追加一批工具 (pi: extend)
+    pub fn extend(&mut self, others: Vec<Box<dyn GameTool>>) {
+        self.tools.extend(others);
+    }
+
+    /// 追加单个工具 (pi: push)
+    pub fn push(&mut self, tool: Box<dyn GameTool>) {
+        self.tools.push(tool);
+    }
+
+    pub fn len(&self) -> usize {
+        self.tools.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.tools.is_empty()
+    }
+
+    /// 按名称查找工具 (pi: 线性 find, 无 HashMap 索引)
     pub fn get(&self, name: &str) -> Option<&dyn GameTool> {
         self.tools.iter().find(|t| t.name() == name).map(AsRef::as_ref)
     }
@@ -119,5 +220,83 @@ impl ToolRegistry {
 impl Default for ToolRegistry {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// ── 副作用分组 (pi agent.rs L417 plan_tool_effect_batches) ──
+//
+// 把连续兼容的工具分进同一批; 遇到屏障 (BARRIER: write/append/process) 就切新批。
+// 兼容批内可并行 (pi 用 buffer_unordered); 游戏输入设备单一, 我们串行执行 (见 agent.rs)。
+pub fn plan_tool_effect_batches(effects: &[ToolEffects]) -> Vec<Vec<usize>> {
+    let mut batches: Vec<Vec<usize>> = Vec::new();
+    let mut active: Option<ToolEffects> = None;
+
+    for (i, e) in effects.iter().enumerate() {
+        let compatible = match active {
+            None => true,
+            Some(a) => a.compatible_with(e),
+        };
+        if compatible {
+            match batches.last_mut() {
+                Some(b) => b.push(i),
+                None => batches.push(vec![i]),
+            }
+            active = Some(match active {
+                Some(a) => a.union(*e),
+                None => *e,
+            });
+        } else {
+            batches.push(vec![i]);
+            active = Some(*e);
+        }
+    }
+    batches
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn effects_bitmask() {
+        let r = ToolEffects::read();
+        let w = ToolEffects::write();
+        assert!(r.parallel_safe());
+        assert!(!w.parallel_safe()); // WRITE 是屏障
+        assert!(r.compatible_with(&r)); // read + read 可并行 (同批)
+        assert!(!r.compatible_with(&w)); // read + write 不可并行
+        assert!(!w.compatible_with(&w)); // write+write 都非 parallel_safe → 不同批 (串行屏障)
+    }
+
+    #[test]
+    fn plan_batches_groups_compatible() {
+        // read, read, write, read → [[0,1],[2],[3]]
+        let eff = [
+            ToolEffects::read(),
+            ToolEffects::read(),
+            ToolEffects::write(),
+            ToolEffects::read(),
+        ];
+        let b = plan_tool_effect_batches(&eff);
+        assert_eq!(b, vec![vec![0, 1], vec![2], vec![3]]);
+    }
+
+    #[test]
+    fn registry_lookup_and_extend() {
+        struct T;
+        impl GameTool for T {
+            fn name(&self) -> &str { "x" }
+            fn description(&self) -> &str { "d" }
+            fn parameters(&self) -> Value { serde_json::json!({}) }
+            fn execute(&self, _: &str, _: Value, _: Option<ToolUpdateFn>) -> Result<ToolResult> {
+                Ok(ToolResult { message: "ok".into(), is_error: false })
+            }
+        }
+        let mut reg = ToolRegistry::new();
+        reg.register(Box::new(T));
+        assert!(reg.get("x").is_some());
+        assert!(reg.get("y").is_none());
+        reg.extend(vec![Box::new(T)]);
+        assert_eq!(reg.len(), 2);
     }
 }

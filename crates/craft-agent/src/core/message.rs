@@ -67,6 +67,8 @@ pub struct ToolResultMsg {
 pub struct Usage {
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// 整轮上下文总 token (pi: total_tokens, estimate_context_tokens 优先用它)
+    pub total_tokens: u64,
 }
 
 // ── 构造器 (pi: Message::assistant / Message::tool_result 风格) ──
@@ -95,6 +97,28 @@ impl Message {
                 name: name.into(),
                 arguments: args,
             }],
+        })
+    }
+
+    /// 一条 assistant 消息携带**多个** tool_calls (pi: 一轮可返回多个 tool_call)
+    /// id 自动编号为 `{id_prefix}_{i}`, 与后续 tool_result 的 id 对应。
+    pub fn assistant_tool_calls(
+        id_prefix: &str,
+        calls: &[(String, String)],
+        reasoning: Option<String>,
+    ) -> Self {
+        Self::Assistant(AssistantMsg {
+            content: None,
+            reasoning,
+            tool_calls: calls
+                .iter()
+                .enumerate()
+                .map(|(i, (n, a))| ToolCall {
+                    id: format!("{id_prefix}_{i}"),
+                    name: n.clone(),
+                    arguments: serde_json::from_str(a).unwrap_or(Value::Null),
+                })
+                .collect(),
         })
     }
 

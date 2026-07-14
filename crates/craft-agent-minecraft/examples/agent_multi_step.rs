@@ -30,7 +30,7 @@ fn main() -> anyhow::Result<()> {
     // Provider
     struct Lp { llm: Arc<OpenAiLlmClient> }
     impl LlmProvider for Lp {
-        fn complete(&self, m: &[Value], t: &[Value]) -> anyhow::Result<(Option<String>, Vec<(String,String)>)> {
+        fn complete(&self, m: &[Value], t: &[Value]) -> anyhow::Result<(Option<String>, Vec<(String,String)>, craft_agent::core::message::Usage)> {
             self.llm.chat_tools(&Value::Array(m.to_vec()), &Value::Array(t.to_vec()))
         }
     }
