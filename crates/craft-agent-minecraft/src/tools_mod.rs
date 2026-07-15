@@ -752,6 +752,96 @@ impl GameTool for ModLookAtTool {
     }
 }
 
+// ── Craftable（查询可合成物品）──
+
+/// 已知配方及其所需材料（与 mod 侧 craft 命令支持的配方一致）。
+const RECIPES: &[(&str, &[(&str, u32)])] = &[
+    ("oak_planks", &[("oak_log", 1)]),
+    ("birch_planks", &[("birch_log", 1)]),
+    ("stick", &[("planks", 2)]),
+    ("crafting_table", &[("planks", 4)]),
+    ("wooden_pickaxe", &[("planks", 3), ("stick", 2)]),
+    ("wooden_axe", &[("planks", 3), ("stick", 2)]),
+    ("wooden_sword", &[("planks", 2), ("stick", 1)]),
+    ("wooden_shovel", &[("planks", 1), ("stick", 2)]),
+    ("torch", &[("stick", 1), ("coal", 1)]),
+    ("furnace", &[("cobblestone", 8)]),
+];
+
+pub struct ModCraftableTool {
+    adapter: Rc<RefCell<MinecraftModAdapter>>,
+}
+impl ModCraftableTool {
+    pub fn new(adapter: Rc<RefCell<MinecraftModAdapter>>) -> Self {
+        Self { adapter }
+    }
+}
+impl GameTool for ModCraftableTool {
+    fn name(&self) -> &str {
+        "craftable"
+    }
+    fn description(&self) -> &str {
+        "Query what items you can craft with current inventory. Returns list of craftable recipes with quantities. Use before calling craft() to ensure you have materials."
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({"type":"object","properties":{},"required":[]})
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::read()
+    }
+    fn execute(
+        &self,
+        _id: &str,
+        _args: Value,
+        _on_update: Option<ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let st = self.adapter.borrow().reload()?;
+        let mut craftable = Vec::new();
+
+        for (item, ingredients) in RECIPES {
+            let can_craft = ingredients.iter().all(|(mat, need)| {
+                let have: u32 = st
+                    .inventory
+                    .iter()
+                    .filter(|i| i.id.contains(mat))
+                    .map(|i| i.count)
+                    .sum();
+                have >= *need
+            });
+            if can_craft {
+                let max_count = ingredients
+                    .iter()
+                    .map(|(mat, need)| {
+                        let have: u32 = st
+                            .inventory
+                            .iter()
+                            .filter(|i| i.id.contains(mat))
+                            .map(|i| i.count)
+                            .sum();
+                        have / need
+                    })
+                    .min()
+                    .unwrap_or(0);
+                craftable.push(format!("  {item} x{max_count}"));
+            }
+        }
+
+        if craftable.is_empty() {
+            Ok(ToolResult {
+                message: "CRAFTABLE: nothing (gather more materials first)".into(),
+                is_error: false,
+                images: vec![],
+            })
+        } else {
+            Ok(ToolResult {
+                message: format!("CRAFTABLE:\n{}", craftable.join("\n")),
+                is_error: false,
+                images: vec![],
+            })
+        }
+    }
+}
+
 // ── 工厂 ──
 
 /// 构建完整的 mod 工具集。enable_visual_perceive 仅在配置了 VLM 时为 true。
@@ -785,7 +875,9 @@ pub fn create_mc_mod_tools(
     tools.push(Box::new(ModAttackTool::new(adapter.clone())));
     // 导航与精确瞄准
     tools.push(Box::new(ModMoveToTool::new(adapter.clone())));
-    tools.push(Box::new(ModLookAtTool::new(adapter)));
+    tools.push(Box::new(ModLookAtTool::new(adapter.clone())));
+    // 查询工具
+    tools.push(Box::new(ModCraftableTool::new(adapter)));
     tools
 }
 

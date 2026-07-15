@@ -220,6 +220,12 @@ look_at(x, y, z)
   - x/y/z: block coordinates from NEARBY BLOCKS
   - Usage: look_at(-35.0, 68.0, 56.0)
 
+--- Query Tools ---
+
+craftable()
+  Check what items can be crafted from current inventory. Returns list of recipes with max craftable count. Use before calling craft() to verify materials are sufficient.
+  - Usage: craftable()
+
 --- Fine Control Tools ---
 
 look(dx, dy)
