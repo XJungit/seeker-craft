@@ -3,6 +3,7 @@
 use crate::core::message::{Message, Usage, system_chatml};
 use crate::core::prompt::{PromptBuilder, WorldInfo, WorldInfoLib, default_mc_world_info};
 use crate::core::session::{AgentSnapshot, Session};
+use crate::core::skill::SkillLibrary;
 use crate::core::tool::{ToolEffects, ToolRegistry, ToolResult, plan_tool_effect_batches};
 use anyhow::Result;
 use serde::Serialize;
@@ -309,6 +310,8 @@ pub struct Agent {
     turn: u32,
     /// WorldInfo for dynamic knowledge injection
     world_info: WorldInfoLib,
+    /// Skill library: reusable action sequences learned from experience
+    skill_lib: SkillLibrary,
     knowledge_bootstrapped: bool,
     obs_streak: u32,
     /// Session persistence
@@ -335,6 +338,7 @@ impl Agent {
             follow_up: VecDeque::new(),
             turn: 0,
             world_info,
+            skill_lib: SkillLibrary::new(20),
             knowledge_bootstrapped: false,
             obs_streak: 0,
             session: None,
@@ -368,7 +372,7 @@ impl Agent {
     }
 
     /// Build system prompt with layered prompt pipeline: identity -> role_desc -> scenario -> jailbreak
-    fn build_context(&self) -> Context {
+    fn build_context(&mut self) -> Context {
         let recent_perception = self
             .messages
             .iter()
@@ -381,6 +385,13 @@ impl Agent {
             })
             .unwrap_or("");
         let dynamic_hints = self.world_info.scan_text(recent_perception, 4_000);
+
+        // Skill library: inject matched skills as examples
+        let now_ms = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+        let skill_examples = self.skill_lib.to_examples(recent_perception, 3, now_ms);
 
         let mut jailbreak =
             "Act autonomously. If a tool fails, adjust parameters and retry - never pretend success.".to_string();
@@ -397,8 +408,11 @@ impl Agent {
 
         let mut builder = PromptBuilder::new()
             .identity(&self.config.prompt)
-            .role_desc(MC_KNOWLEDGE)
-            .jailbreak(jailbreak);
+            .role_desc(MC_KNOWLEDGE);
+        for example in &skill_examples {
+            builder = builder.add_example(example);
+        }
+        builder = builder.jailbreak(jailbreak);
         if !dynamic_hints.is_empty() {
             builder.set_scenario(dynamic_hints.join("\n"));
         }
@@ -495,231 +509,246 @@ impl Agent {
         let mut log = Vec::new();
         self.turn += 1;
         let turn = self.turn;
-            self.events.push(AgentEvent::TurnStart { turn });
-            self.drain_queues();
+        self.events.push(AgentEvent::TurnStart { turn });
+        self.drain_queues();
 
-            // Compaction check
-            let budget = self
-                .config
-                .compaction
-                .context_window
-                .saturating_sub(self.config.compaction.reserve);
-            if self.estimate_tokens() > budget {
-                self.events.push(AgentEvent::AutoCompactionStart);
-                if let Err(e) = self.compact() {
-                    log.push(format!("[t{turn}] compaction failed: {e}"));
-                }
-                self.events.push(AgentEvent::AutoCompactionEnd);
+        // Compaction check
+        let budget = self
+            .config
+            .compaction
+            .context_window
+            .saturating_sub(self.config.compaction.reserve);
+        if self.estimate_tokens() > budget {
+            self.events.push(AgentEvent::AutoCompactionStart);
+            if let Err(e) = self.compact() {
+                log.push(format!("[t{turn}] compaction failed: {e}"));
             }
+            self.events.push(AgentEvent::AutoCompactionEnd);
+        }
 
-            // Auto-perceive: inject latest game state as user message (Mindcraft style, replaced each turn)
-            if self.config.auto_perceive {
-                if let Some(tool) = self.tools.get("perceive") {
-                    match tool.execute("auto_perceive", serde_json::json!({}), None) {
-                        Ok(result) => {
-                            let state_msg = format!(
-                                "【Current Game State (auto-injected)】\n{}",
-                                result.message
-                            );
-                            self.messages.retain(|m| {
+        // Auto-perceive: inject latest game state as user message (Mindcraft style, replaced each turn)
+        if self.config.auto_perceive {
+            if let Some(tool) = self.tools.get("perceive") {
+                match tool.execute("auto_perceive", serde_json::json!({}), None) {
+                    Ok(result) => {
+                        let state_msg =
+                            format!("【Current Game State (auto-injected)】\n{}", result.message);
+                        self.messages.retain(|m| {
                                 !matches!(m, Message::User(u) if u.content.starts_with("【Current Game State"))
                             });
-                            self.messages.push(Message::user(state_msg));
-                        }
-                        Err(e) => {
-                            log.push(format!("[t{turn}] auto-perceive failed: {e}"));
-                        }
-                    }
-                }
-            }
-
-            let ctx = self.build_context();
-
-            // LLM call with retry
-            let mut response = None;
-            let mut last_error = String::new();
-            let max_attempts = if self.config.retry.enabled {
-                1 + self.config.retry.max_retries
-            } else {
-                1
-            };
-            for attempt in 1..=max_attempts {
-                match self.provider.complete(&ctx.messages, &ctx.tools) {
-                    Ok(resp) => {
-                        response = Some(resp);
-                        if attempt > 1 {
-                            self.events.push(AgentEvent::AutoRetryEnd {
-                                success: true,
-                                attempt,
-                                final_error: None,
-                            });
-                        }
-                        break;
+                        self.messages.push(Message::user(state_msg));
                     }
                     Err(e) => {
-                        last_error = format!("{e}");
-                        let retryable = is_retryable_error(&last_error);
-                        if attempt >= max_attempts || !retryable {
-                            if attempt > 1 {
-                                self.events.push(AgentEvent::AutoRetryEnd {
-                                    success: false,
-                                    attempt,
-                                    final_error: Some(last_error.clone()),
-                                });
-                            }
-                            log.push(format!(
-                                "[t{turn}] LLM error (attempt {attempt}): {last_error}"
-                            ));
-                            break;
-                        }
-                        let delay_ms = self.config.retry.delay_ms(attempt);
-                        self.events.push(AgentEvent::AutoRetryStart {
-                            attempt,
-                            max_attempts,
-                            delay_ms,
-                            error_message: last_error.clone(),
-                        });
-                        let ticks = delay_ms / 50;
-                        for _ in 0..ticks {
-                            if self.retry_abort.load(Ordering::Relaxed) {
-                                break;
-                            }
-                            std::thread::sleep(std::time::Duration::from_millis(50));
-                        }
+                        log.push(format!("[t{turn}] auto-perceive failed: {e}"));
                     }
                 }
             }
+        }
 
-            let Some(response) = response else {
-                self.persist_turn()?;
-                self.events.push(AgentEvent::Done {
-                    reason: "LLM call failed after retries".into(),
-                });
-                return Ok((log, false));
-            };
+        let ctx = self.build_context();
 
-            self.usage = response.usage.clone();
-
-            // Track obs streak
-            let calls = response.tool_calls.clone();
-            if calls.is_empty() {
-                // LLM returned text-only — nudge if not at max
-                self.obs_streak += 1;
-                self.events.push(AgentEvent::Assistant {
-                    content: response.content.clone(),
-                    reasoning: response.reasoning.clone(),
-                    calls: vec![],
-                });
-                self.messages.push(Message::assistant_response(&response));
-
-                if self.turn >= self.config.max_iterations {
-                    self.events.push(AgentEvent::TurnEnd { turn });
-                    self.persist_turn()?;
-                    return Ok((log, false));
-                } else {
-                    let nudge = "【Continue】You responded with text only. You MUST call a tool. Pick any tool based on the current state and act now. Never end a turn with text-only.".to_string();
-                    self.messages.push(Message::user(nudge));
-                    log.push(format!(
-                        "[t{turn}] nudge: text-only response, injected continue prompt"
-                    ));
-                    self.events.push(AgentEvent::TurnEnd { turn });
-                    self.persist_turn()?;
-                    return Ok((log, true));
+        // LLM call with retry
+        let mut response = None;
+        let mut last_error = String::new();
+        let max_attempts = if self.config.retry.enabled {
+            1 + self.config.retry.max_retries
+        } else {
+            1
+        };
+        for attempt in 1..=max_attempts {
+            match self.provider.complete(&ctx.messages, &ctx.tools) {
+                Ok(resp) => {
+                    response = Some(resp);
+                    if attempt > 1 {
+                        self.events.push(AgentEvent::AutoRetryEnd {
+                            success: true,
+                            attempt,
+                            final_error: None,
+                        });
+                    }
+                    break;
+                }
+                Err(e) => {
+                    last_error = format!("{e}");
+                    let retryable = is_retryable_error(&last_error);
+                    if attempt >= max_attempts || !retryable {
+                        if attempt > 1 {
+                            self.events.push(AgentEvent::AutoRetryEnd {
+                                success: false,
+                                attempt,
+                                final_error: Some(last_error.clone()),
+                            });
+                        }
+                        log.push(format!(
+                            "[t{turn}] LLM error (attempt {attempt}): {last_error}"
+                        ));
+                        break;
+                    }
+                    let delay_ms = self.config.retry.delay_ms(attempt);
+                    self.events.push(AgentEvent::AutoRetryStart {
+                        attempt,
+                        max_attempts,
+                        delay_ms,
+                        error_message: last_error.clone(),
+                    });
+                    let ticks = delay_ms / 50;
+                    for _ in 0..ticks {
+                        if self.retry_abort.load(Ordering::Relaxed) {
+                            break;
+                        }
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                    }
                 }
             }
+        }
 
-            // Track obs streak from tool names
-            let obs_tools: &[&str] = &["perceive", "visual_perceive", "look"];
-            if calls.iter().all(|tc| obs_tools.contains(&tc.name.as_str())) {
-                self.obs_streak += 1;
-            } else {
-                self.obs_streak = 0;
-            }
-            // Update knowledge bootstrap flag after first successful tool call
-            if !self.knowledge_bootstrapped {
-                self.knowledge_bootstrapped = true;
-            }
+        let Some(response) = response else {
+            self.persist_turn()?;
+            self.events.push(AgentEvent::Done {
+                reason: "LLM call failed after retries".into(),
+            });
+            return Ok((log, false));
+        };
 
+        self.usage = response.usage.clone();
+
+        // Track obs streak
+        let calls = response.tool_calls.clone();
+        if calls.is_empty() {
+            // LLM returned text-only — nudge if not at max
+            self.obs_streak += 1;
             self.events.push(AgentEvent::Assistant {
                 content: response.content.clone(),
                 reasoning: response.reasoning.clone(),
-                calls: calls.iter().map(|tc| tc.name.clone()).collect(),
+                calls: vec![],
             });
             self.messages.push(Message::assistant_response(&response));
 
-            // Execute each tool call
-            let effects: Vec<ToolEffects> = calls
-                .iter()
-                .map(|tc| {
-                    self.tools
-                        .get(&tc.name)
-                        .map(|tool| tool.effects())
-                        .unwrap_or(ToolEffects::write())
-                })
-                .collect();
-            let batches = plan_tool_effect_batches(&effects);
+            if self.turn >= self.config.max_iterations {
+                self.events.push(AgentEvent::TurnEnd { turn });
+                self.persist_turn()?;
+                return Ok((log, false));
+            } else {
+                let nudge = "【Continue】You responded with text only. You MUST call a tool. Pick any tool based on the current state and act now. Never end a turn with text-only.".to_string();
+                self.messages.push(Message::user(nudge));
+                log.push(format!(
+                    "[t{turn}] nudge: text-only response, injected continue prompt"
+                ));
+                self.events.push(AgentEvent::TurnEnd { turn });
+                self.persist_turn()?;
+                return Ok((log, true));
+            }
+        }
 
-            for batch in &batches {
-                for &idx in batch {
-                    let tc = &calls[idx];
-                    // Handle meta-tool: manage_knowledge
-                    if tc.name == MANAGE_KNOWLEDGE {
-                        let args = tc.arguments.clone();
-                        let (msg, _is_err) = self.manage_knowledge(&args);
-                        self.messages.push(Message::tool_result(
-                            &format!("call_{turn}_{idx}"),
-                            &tc.name,
-                            &msg,
-                        ));
-                        log.push(format!("[t{turn}] manage_knowledge -> {:.100}", msg));
-                        continue;
-                    }
+        // Track obs streak from tool names
+        let obs_tools: &[&str] = &["perceive", "visual_perceive", "look"];
+        if calls.iter().all(|tc| obs_tools.contains(&tc.name.as_str())) {
+            self.obs_streak += 1;
+        } else {
+            self.obs_streak = 0;
+        }
+        // Update knowledge bootstrap flag after first successful tool call
+        if !self.knowledge_bootstrapped {
+            self.knowledge_bootstrapped = true;
+        }
 
-                    self.events.push(AgentEvent::ToolExecutionStart {
-                        name: tc.name.clone(),
-                    });
+        self.events.push(AgentEvent::Assistant {
+            content: response.content.clone(),
+            reasoning: response.reasoning.clone(),
+            calls: calls.iter().map(|tc| tc.name.clone()).collect(),
+        });
+        self.messages.push(Message::assistant_response(&response));
+
+        // Execute each tool call
+        let effects: Vec<ToolEffects> = calls
+            .iter()
+            .map(|tc| {
+                self.tools
+                    .get(&tc.name)
+                    .map(|tool| tool.effects())
+                    .unwrap_or(ToolEffects::write())
+            })
+            .collect();
+        let batches = plan_tool_effect_batches(&effects);
+
+        for batch in &batches {
+            for &idx in batch {
+                let tc = &calls[idx];
+                // Handle meta-tool: manage_knowledge
+                if tc.name == MANAGE_KNOWLEDGE {
                     let args = tc.arguments.clone();
-                    let result = match self.tools.get(&tc.name) {
-                        Some(tool) => tool.execute(&format!("call_{turn}_{idx}"), args, None),
-                        None => Ok(ToolResult {
-                            message: format!("Unknown tool: {}", tc.name),
-                            is_error: true,
-                            images: vec![],
-                        }),
-                    };
-                    let (msg, is_err) = match result {
-                        Ok(r) => (r.message, r.is_error),
-                        Err(e) => (format!("Error: {e}"), true),
-                    };
-                    self.events.push(AgentEvent::ToolExecutionEnd {
-                        name: tc.name.clone(),
-                        is_error: is_err,
-                    });
+                    let (msg, _is_err) = self.manage_knowledge(&args);
                     self.messages.push(Message::tool_result(
                         &format!("call_{turn}_{idx}"),
                         &tc.name,
                         &msg,
                     ));
-                    self.session_entries.push(SessionEntry {
-                        id: format!("call_{turn}_{idx}"),
-                        parent_id: Some(format!("call_{turn}")),
-                        turn,
-                        tool: tc.name.clone(),
-                        reasoning: response.reasoning.clone(),
-                        detail: format!("{:.120}", msg),
-                        timestamp: SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap()
-                            .as_millis() as i64,
-                    });
-                    log.push(format!(
-                        "[t{turn}] {}({}) -> {:.100}",
-                        tc.name, tc.arguments, msg
-                    ));
+                    log.push(format!("[t{turn}] manage_knowledge -> {:.100}", msg));
+                    continue;
                 }
+
+                self.events.push(AgentEvent::ToolExecutionStart {
+                    name: tc.name.clone(),
+                });
+                let args = tc.arguments.clone();
+                let result = match self.tools.get(&tc.name) {
+                    Some(tool) => tool.execute(&format!("call_{turn}_{idx}"), args, None),
+                    None => Ok(ToolResult {
+                        message: format!("Unknown tool: {}", tc.name),
+                        is_error: true,
+                        images: vec![],
+                    }),
+                };
+                let (msg, is_err) = match result {
+                    Ok(r) => (r.message, r.is_error),
+                    Err(e) => (format!("Error: {e}"), true),
+                };
+                self.events.push(AgentEvent::ToolExecutionEnd {
+                    name: tc.name.clone(),
+                    is_error: is_err,
+                });
+                self.messages.push(Message::tool_result(
+                    &format!("call_{turn}_{idx}"),
+                    &tc.name,
+                    &msg,
+                ));
+                self.session_entries.push(SessionEntry {
+                    id: format!("call_{turn}_{idx}"),
+                    parent_id: Some(format!("call_{turn}")),
+                    turn,
+                    tool: tc.name.clone(),
+                    reasoning: response.reasoning.clone(),
+                    detail: format!("{:.120}", msg),
+                    timestamp: SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as i64,
+                });
+                log.push(format!(
+                    "[t{turn}] {}({}) -> {:.100}",
+                    tc.name, tc.arguments, msg
+                ));
             }
-            self.events.push(AgentEvent::TurnEnd { turn });
-            return Ok((log, true));
+        }
+        // 提取技能：如果本轮工具调用非纯观察且无错误，记录为技能
+        if !calls.is_empty() && calls.iter().all(|tc| !is_obs_tool(&tc.name)) {
+            let tool_names: Vec<String> = calls.iter().map(|tc| tc.name.clone()).collect();
+            let scene = self
+                .messages
+                .iter()
+                .rev()
+                .find_map(|m| match m {
+                    Message::User(u) if u.content.starts_with("【Current Game State") => {
+                        Some(u.content.as_str())
+                    }
+                    _ => None,
+                })
+                .unwrap_or("");
+            let goal = self.config.prompt.as_str();
+            let _ = self.skill_lib.extract_from_turn(&tool_names, goal, scene);
+        }
+        self.events.push(AgentEvent::TurnEnd { turn });
+        return Ok((log, true));
     }
 
     fn persist_turn(&mut self) -> Result<()> {
@@ -912,6 +941,11 @@ impl Agent {
     }
 }
 
+/// 判断工具是否为纯观察类（不产生世界状态变化的工具）。
+fn is_obs_tool(name: &str) -> bool {
+    matches!(name, "perceive" | "visual_perceive" | "look")
+}
+
 // ── Compaction prompts ──
 
 const COMPACTION_SYSTEM: &str = "You are a context summarization assistant.";
@@ -996,7 +1030,7 @@ mod tests {
 
     #[test]
     fn build_context_includes_role_desc() {
-        let agent = Agent::new(
+        let mut agent = Agent::new(
             Box::new(TextProvider),
             ToolRegistry::new(),
             AgentConfig::new("You are a test bot.".into(), 5),
@@ -1008,7 +1042,7 @@ mod tests {
 
     #[test]
     fn jailbreak_english_consistent() {
-        let agent = Agent::new(
+        let mut agent = Agent::new(
             Box::new(TextProvider),
             ToolRegistry::new(),
             AgentConfig::new("sys".into(), 5),

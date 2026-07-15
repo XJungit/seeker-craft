@@ -285,9 +285,13 @@ fn mine_ticks_for(block_id: &str, held_item: &str) -> u32 {
     } else if block_id.contains("stone") || block_id.contains("cobble") {
         200 // 石头硬度 1.5 → 徒手 7.5s, 给 10s
     } else if block_id.contains("_ore") {
-        if block_id.contains("coal") || block_id.contains("copper") { 200 }
-        else if block_id.contains("iron") { 250 }
-        else { 250 }
+        if block_id.contains("coal") || block_id.contains("copper") {
+            200
+        } else if block_id.contains("iron") {
+            250
+        } else {
+            250
+        }
     } else if block_id.contains("dirt") || block_id.contains("grass") || block_id.contains("sand") {
         30
     } else if block_id.contains("leaves") {
@@ -298,13 +302,21 @@ fn mine_ticks_for(block_id: &str, held_item: &str) -> u32 {
 
     // 工具加速：根据手持物品类型乘以倍率
     let tool_mult: f64 = if held_item.contains("_axe") {
-        if held_item.contains("wooden") { 0.5 }
-        else if held_item.contains("stone") { 0.25 }
-        else { 0.2 }
+        if held_item.contains("wooden") {
+            0.5
+        } else if held_item.contains("stone") {
+            0.25
+        } else {
+            0.2
+        }
     } else if held_item.contains("_pickaxe") {
-        if held_item.contains("wooden") { 0.6 }
-        else if held_item.contains("stone") { 0.3 }
-        else { 0.2 }
+        if held_item.contains("wooden") {
+            0.6
+        } else if held_item.contains("stone") {
+            0.3
+        } else {
+            0.2
+        }
     } else if held_item.contains("_shovel") {
         0.4
     } else if held_item.contains("_sword") && block_id.contains("leaves") {
@@ -660,45 +672,83 @@ impl GameTool for ModUseItemTool {
 
 // ── MoveTo（导航到世界坐标）──
 
-pub struct ModMoveToTool { adapter: Rc<RefCell<MinecraftModAdapter>> }
-impl ModMoveToTool { pub fn new(adapter: Rc<RefCell<MinecraftModAdapter>>) -> Self { Self { adapter } } }
+pub struct ModMoveToTool {
+    adapter: Rc<RefCell<MinecraftModAdapter>>,
+}
+impl ModMoveToTool {
+    pub fn new(adapter: Rc<RefCell<MinecraftModAdapter>>) -> Self {
+        Self { adapter }
+    }
+}
 impl GameTool for ModMoveToTool {
-    fn name(&self) -> &str { "move_to" }
+    fn name(&self) -> &str {
+        "move_to"
+    }
     fn description(&self) -> &str {
         "Navigate to exact world coordinates. Mod handles aiming and forward movement each tick, no oscillation. x/y/z: target position from NEARBY BLOCKS section. Use for precise positioning before mining or placing blocks."
     }
     fn parameters(&self) -> Value {
         serde_json::json!({"type":"object","properties":{"x":{"type":"number","description":"Target X coordinate"},"y":{"type":"number","description":"Target Y coordinate (block Y + 0.5 for center)"},"z":{"type":"number","description":"Target Z coordinate"}},"required":["x","y","z"]})
     }
-    fn effects(&self) -> ToolEffects { ToolEffects::write() }
-    fn execute(&self, _id: &str, args: Value, _on_update: Option<ToolUpdateFn>) -> anyhow::Result<ToolResult> {
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _id: &str,
+        args: Value,
+        _on_update: Option<ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
         let x = args["x"].as_f64().unwrap_or(0.0);
         let y = args["y"].as_f64().unwrap_or(0.0);
         let z = args["z"].as_f64().unwrap_or(0.0);
         self.adapter.borrow_mut().move_to(x, y, z)?;
-        Ok(ToolResult { message: format!("moving to ({:.1},{:.1},{:.1})", x, y, z), is_error: false, images: vec![] })
+        Ok(ToolResult {
+            message: format!("moving to ({:.1},{:.1},{:.1})", x, y, z),
+            is_error: false,
+            images: vec![],
+        })
     }
 }
 
 // ── LookAt（精确看向世界坐标）──
 
-pub struct ModLookAtTool { adapter: Rc<RefCell<MinecraftModAdapter>> }
-impl ModLookAtTool { pub fn new(adapter: Rc<RefCell<MinecraftModAdapter>>) -> Self { Self { adapter } } }
+pub struct ModLookAtTool {
+    adapter: Rc<RefCell<MinecraftModAdapter>>,
+}
+impl ModLookAtTool {
+    pub fn new(adapter: Rc<RefCell<MinecraftModAdapter>>) -> Self {
+        Self { adapter }
+    }
+}
 impl GameTool for ModLookAtTool {
-    fn name(&self) -> &str { "look_at" }
+    fn name(&self) -> &str {
+        "look_at"
+    }
     fn description(&self) -> &str {
         "Face a specific world coordinate precisely. Uses mod's absolute look-at to snap crosshair to target. x/y/z: block coordinates from NEARBY BLOCKS. Much more accurate than look(dx,dy) for precise aiming."
     }
     fn parameters(&self) -> Value {
         serde_json::json!({"type":"object","properties":{"x":{"type":"number","description":"Target X coordinate"},"y":{"type":"number","description":"Target Y coordinate"},"z":{"type":"number","description":"Target Z coordinate"}},"required":["x","y","z"]})
     }
-    fn effects(&self) -> ToolEffects { ToolEffects::read() }
-    fn execute(&self, _id: &str, args: Value, _on_update: Option<ToolUpdateFn>) -> anyhow::Result<ToolResult> {
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::read()
+    }
+    fn execute(
+        &self,
+        _id: &str,
+        args: Value,
+        _on_update: Option<ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
         let x = args["x"].as_f64().unwrap_or(0.0);
         let y = args["y"].as_f64().unwrap_or(0.0);
         let z = args["z"].as_f64().unwrap_or(0.0);
         self.adapter.borrow_mut().look_at(x, y, z)?;
-        Ok(ToolResult { message: format!("looking at ({:.1},{:.1},{:.1})", x, y, z), is_error: false, images: vec![] })
+        Ok(ToolResult {
+            message: format!("looking at ({:.1},{:.1},{:.1})", x, y, z),
+            is_error: false,
+            images: vec![],
+        })
     }
 }
 

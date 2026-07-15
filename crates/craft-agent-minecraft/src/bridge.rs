@@ -126,7 +126,9 @@ pub struct ModState {
     pub held_item: String,
 }
 
-fn default_held_item() -> String { "minecraft:air".into() }
+fn default_held_item() -> String {
+    "minecraft:air".into()
+}
 
 /// 发给 mod 的动作命令（serde tag = `type` 字段，与 mod 侧小写匹配）。
 #[derive(Debug, Clone, Serialize)]

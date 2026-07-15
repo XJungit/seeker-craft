@@ -282,20 +282,30 @@ fn run_agent(
     loop {
         if ctrl.stop.load(Ordering::Relaxed) {
             agent.retry_abort.store(true, Ordering::Relaxed);
-            let _ = event_tx.send(AgentEvent::Done { reason: "用户手动停止".into() });
+            let _ = event_tx.send(AgentEvent::Done {
+                reason: "用户手动停止".into(),
+            });
             break;
         }
         if ctrl.pause.load(Ordering::Relaxed) {
-            let _ = event_tx.send(AgentEvent::Log { text: "⏸ 已暂停".into() });
+            let _ = event_tx.send(AgentEvent::Log {
+                text: "⏸ 已暂停".into(),
+            });
             while ctrl.pause.load(Ordering::Relaxed) {
                 if ctrl.stop.load(Ordering::Relaxed) {
-                    let _ = event_tx.send(AgentEvent::Done { reason: "用户手动停止".into() });
+                    let _ = event_tx.send(AgentEvent::Done {
+                        reason: "用户手动停止".into(),
+                    });
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(200));
             }
-            if ctrl.stop.load(Ordering::Relaxed) { break; }
-            let _ = event_tx.send(AgentEvent::Log { text: "▶ 恢复运行".into() });
+            if ctrl.stop.load(Ordering::Relaxed) {
+                break;
+            }
+            let _ = event_tx.send(AgentEvent::Log {
+                text: "▶ 恢复运行".into(),
+            });
         }
 
         step += 1;
@@ -304,7 +314,9 @@ fn run_agent(
         // 检查是否有运行时注入的新目标
         for new_goal in ctrl.drain_goals() {
             agent.queue_steering(format!("【目标更新】{new_goal}"));
-            let _ = event_tx.send(AgentEvent::Log { text: format!("📋 目标已更新: {new_goal}") });
+            let _ = event_tx.send(AgentEvent::Log {
+                text: format!("📋 目标已更新: {new_goal}"),
+            });
         }
 
         // 单步执行
@@ -321,12 +333,15 @@ fn run_agent(
 
         // 保存 session
         if let Some(ref mut sess) = agent.session {
-            let _ = std::fs::create_dir_all(Path::new(session_path).parent().unwrap_or(Path::new(".")));
+            let _ =
+                std::fs::create_dir_all(Path::new(session_path).parent().unwrap_or(Path::new(".")));
             let _ = sess.save_to(Path::new(session_path));
         }
 
         if !should_continue {
-            let _ = event_tx.send(AgentEvent::Done { reason: "目标达成或达到最大步数".into() });
+            let _ = event_tx.send(AgentEvent::Done {
+                reason: "目标达成或达到最大步数".into(),
+            });
             break;
         }
     }
