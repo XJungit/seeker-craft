@@ -332,15 +332,26 @@ public class CraftAgentBridge implements ClientModInitializer {
                 double ty = req.get("y").getAsDouble();
                 double tz = req.get("z").getAsDouble();
                 Vec3 eye = player.getEyePosition();
-                double ddx = tx - eye.x, ddy = ty - eye.y, ddz = tz - eye.z;
+                // Auto-offset to block center: if coordinates are integers, shift to center
+                double bx = (Math.abs(tx % 1.0) < 0.01) ? tx + 0.5 : tx;
+                double by = (Math.abs(ty % 1.0) < 0.01) ? ty + 0.5 : ty;
+                double bz = (Math.abs(tz % 1.0) < 0.01) ? tz + 0.5 : tz;
+                double ddx = bx - eye.x, ddy = by - eye.y, ddz = bz - eye.z;
                 double len = Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
-                // MC 前向向量 = (-sin(yaw)cos(pitch), sin(pitch), cos(yaw)cos(pitch))
-                // 反解：yaw = atan2(-dx, dz)，pitch = asin(dy/len)
+                if (len < 0.001) break;
                 float yaw = (float) Math.toDegrees(Math.atan2(-ddx, ddz));
                 float pitch = (float) Math.toDegrees(Math.asin(clamp(ddy / len, -1.0, 1.0)));
                 player.setYRot(yaw);
                 player.setXRot(clamp(pitch, -90f, 90f));
-                o.addProperty("detail", "look_at " + tx + "," + ty + "," + tz);
+                // Force raycast update so targeted_block is correct immediately
+                HitResult forceHit = player.pick(6.0, 0.0f, false);
+                String hitInfo = "nothing";
+                if (forceHit != null && forceHit.getType() == HitResult.Type.BLOCK) {
+                    BlockPos bp = ((BlockHitResult) forceHit).getBlockPos();
+                    BlockState bs = level.getBlockState(bp);
+                    hitInfo = BuiltInRegistries.BLOCK.getKey(bs.getBlock()).toString();
+                }
+                o.addProperty("detail", "look_at(" + tx + "," + ty + "," + tz + ") -> facing " + hitInfo);
                 break;
             }
             case "press":
