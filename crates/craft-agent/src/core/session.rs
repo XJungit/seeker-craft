@@ -129,6 +129,9 @@ pub struct AgentSnapshot {
     pub previous_summary: Option<String>,
     pub usage: Usage,
     pub turn: u32,
+    /// 技能库 JSON（序列化的 SkillLibrary，加载时回放）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skills_json: Option<String>,
 }
 
 /// 分支摘要 entry（与 pi `BranchSummaryEntry` 同构，记录从哪个节点 fork）

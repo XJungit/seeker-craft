@@ -772,11 +772,13 @@ impl Agent {
             return Ok(());
         };
         if self.pending_checkpoint {
+            let skills_json = serde_json::to_string(&self.skill_lib).ok();
             let snapshot = AgentSnapshot {
                 messages: self.messages.clone(),
                 previous_summary: self.previous_summary.clone(),
                 usage: self.usage.clone(),
                 turn: self.turn,
+                skills_json,
             };
             sess.append_checkpoint("compaction", snapshot);
             self.pending_checkpoint = false;
