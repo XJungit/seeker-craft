@@ -1020,4 +1020,103 @@ mod tests {
             "obs_streak>=5 should inject hint"
         );
     }
+
+    #[test]
+    fn continue_run_with_one_tool_call() {
+        use std::sync::atomic::AtomicU32;
+        struct OneCallProvider {
+            n: AtomicU32,
+        }
+        impl LlmProvider for OneCallProvider {
+            fn complete(&self, _m: &[Value], _t: &[Value]) -> Result<AssistantResponse> {
+                let k = self.n.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if k == 0 {
+                    Ok(AssistantResponse {
+                        content: None,
+                        reasoning: Some("I will collect wood".into()),
+                        tool_calls: vec![crate::core::message::ToolCall {
+                            id: "call_1".into(),
+                            name: "perceive".into(),
+                            arguments: serde_json::json!({}),
+                        }],
+                        usage: Usage::default(),
+                        stop_reason: StopReason::ToolCalls,
+                    })
+                } else {
+                    Ok(AssistantResponse {
+                        content: None,
+                        reasoning: None,
+                        tool_calls: vec![],
+                        usage: Usage::default(),
+                        stop_reason: StopReason::Stop,
+                    })
+                }
+            }
+        }
+        let mut reg = ToolRegistry::new();
+        reg.register(Box::new(DummyTool {
+            name: "perceive",
+            effect: ToolEffects::read(),
+        }));
+        let cfg = AgentConfig::new("test".into(), 5).with_auto_perceive(false);
+        let mut agent = Agent::new(
+            Box::new(OneCallProvider {
+                n: AtomicU32::new(0),
+            }),
+            reg,
+            cfg,
+        );
+        let log = agent.run("collect wood").unwrap();
+        assert_eq!(
+            agent
+                .messages
+                .iter()
+                .filter(|m| matches!(m, Message::ToolResult(_)))
+                .count(),
+            1,
+            "should have exactly 1 tool result, but got {}",
+            agent
+                .messages
+                .iter()
+                .filter(|m| matches!(m, Message::ToolResult(_)))
+                .count()
+        );
+        assert!(
+            log.iter().any(|l| l.contains("perceive")),
+            "perceive should be in log"
+        );
+    }
+
+    #[test]
+    fn text_only_response_gets_nudged() {
+        struct TextOnlyProvider;
+        impl LlmProvider for TextOnlyProvider {
+            fn complete(&self, _m: &[Value], _t: &[Value]) -> Result<AssistantResponse> {
+                Ok(AssistantResponse {
+                    content: Some("I should look around first".into()),
+                    reasoning: None,
+                    tool_calls: vec![],
+                    usage: Usage::default(),
+                    stop_reason: StopReason::Stop,
+                })
+            }
+        }
+        let cfg = AgentConfig::new("test".into(), 3)
+            .with_compaction(CompactionConfig {
+                context_window: 1_000_000,
+                reserve: 200_000,
+                keep_recent: 200_000,
+            })
+            .with_auto_perceive(false);
+        let mut agent = Agent::new(Box::new(TextOnlyProvider), ToolRegistry::new(), cfg);
+        let _log = agent.run("goal").unwrap();
+        let has_nudge = agent
+            .messages
+            .iter()
+            .any(|m| matches!(m, Message::User(u) if u.content.contains("Continue")));
+        assert!(
+            has_nudge,
+            "text-only responses should trigger nudge message"
+        );
+    }
 }
