@@ -6,6 +6,8 @@
 //! 参考 SillyTavern world-info.js (关键词触发 + 7 种注入位置):
 //!   perceive 结果 → WorldInfo 条目 → 匹配触发 → 注入到 scenario 位置
 
+use serde::{Deserialize, Serialize};
+
 /// 五层 prompt 组装器 (酒馆 PromptManager 风格)
 ///
 /// 分层原则:
@@ -84,7 +86,9 @@ impl PromptBuilder {
             parts.push(format!("[当前场景]\n{}", self.scenario));
         }
         if !self.examples.is_empty() {
-            let examples = self.examples.iter()
+            let examples = self
+                .examples
+                .iter()
                 .map(|e| format!("- {}", e))
                 .collect::<Vec<_>>()
                 .join("\n");
@@ -110,24 +114,44 @@ impl Default for PromptBuilder {
 ///
 /// 酒馆的 WI 支持 sticky/cooldown/delay + 7 种注入位置。
 /// 我们取最核心的模式: 关键词触发 → 注入到 scenario 位置。
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorldInfo {
-    /// 触发关键词 (都转小写匹配)
+    /// 稳定标识，供 `remove_by_id` 精确删除。add 时由调用方提供。
+    pub id: Option<String>,
+    /// 触发关键词 (都转小写匹配)；空列表表示常驻。
     pub keys: Vec<String>,
     /// 注入内容模板 (支持 {label} {offset_x} {offset_y} 变量)
     pub template: String,
+    /// 数值越大越优先，预算不足时优先保留。
+    pub priority: i32,
 }
 
 impl WorldInfo {
     pub fn new(keys: Vec<String>, template: impl Into<String>) -> Self {
         Self {
+            id: None,
             keys: keys.into_iter().map(|k| k.to_lowercase()).collect(),
             template: template.into(),
+            priority: 0,
         }
+    }
+
+    /// 设置稳定 id，便于日后按 id 删除（推荐每次 add 都给）。
+    pub fn with_id(mut self, id: impl Into<String>) -> Self {
+        self.id = Some(id.into());
+        self
+    }
+
+    pub fn with_priority(mut self, priority: i32) -> Self {
+        self.priority = priority;
+        self
     }
 
     /// 检查给定文本是否触发此条目
     pub fn matches(&self, text: &str) -> bool {
+        if self.keys.is_empty() {
+            return true;
+        }
         let lower = text.to_lowercase();
         self.keys.iter().any(|k| lower.contains(k))
     }
@@ -148,27 +172,71 @@ pub struct WorldInfoLib {
 
 impl WorldInfoLib {
     pub fn new() -> Self {
-        Self { entries: Vec::new() }
+        Self {
+            entries: Vec::new(),
+        }
     }
 
     pub fn add(&mut self, entry: WorldInfo) {
         self.entries.push(entry);
     }
 
+    /// 当前条目数（含默认库与运行时动态新增）。
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// 按稳定 id 精确删除一条（add 时给的 id）。
+    pub fn remove_by_id(&mut self, id: &str) {
+        self.entries.retain(|e| e.id.as_deref() != Some(id));
+    }
+
+    /// 按关键词删除所有 keys 与给定任一关键词相等的条目。
+    pub fn remove_by_keys(&mut self, keys: &[String]) {
+        let lower: Vec<String> = keys.iter().map(|k| k.to_lowercase()).collect();
+        self.entries
+            .retain(|e| !e.keys.iter().any(|k| lower.contains(k)));
+    }
+
+    /// 对任意感知文本做关键词扫描，按优先级去重并限制字符预算。
+    pub fn scan_text(&self, text: &str, char_budget: usize) -> Vec<String> {
+        let mut matched: Vec<&WorldInfo> =
+            self.entries.iter().filter(|e| e.matches(text)).collect();
+        matched.sort_by_key(|e| std::cmp::Reverse(e.priority));
+        let mut used = 0usize;
+        let mut hints = Vec::new();
+        for entry in matched {
+            let rendered = entry.render("当前场景", 0, 0);
+            if hints.contains(&rendered) {
+                continue;
+            }
+            if used.saturating_add(rendered.len()) > char_budget {
+                continue;
+            }
+            used += rendered.len();
+            hints.push(rendered);
+        }
+        hints
+    }
+
     /// 扫描目标列表, 对每个目标匹配 WI 条目, 生成场景提示
-    pub fn scan(
-        &self,
-        targets: &[crate::core::types::Target],
-    ) -> Vec<String> {
+    pub fn scan(&self, targets: &[crate::core::types::Target]) -> Vec<String> {
         let mut hints = Vec::new();
         for target in targets {
             for entry in &self.entries {
                 if entry.matches(&target.label) {
-                    hints.push(entry.render(
+                    let rendered = entry.render(
                         &target.label,
                         target.offset_from_crosshair.0,
                         target.offset_from_crosshair.1,
-                    ));
+                    );
+                    if !hints.contains(&rendered) {
+                        hints.push(rendered);
+                    }
                 }
             }
         }
@@ -183,27 +251,30 @@ impl Default for WorldInfoLib {
 }
 
 /// Minecraft 场景的默认 World Info 库
+///
+/// 注入的提示必须引用真实工具名（perceive/look/press/mine），
+/// 不能用已被 `craft-agent-minecraft::tools` 取代的旧名（aim_and_mine/move_forward）。
 pub fn default_mc_world_info() -> WorldInfoLib {
     let mut lib = WorldInfoLib::new();
     lib.add(WorldInfo::new(
         vec!["tree".into(), "oak".into(), "橡树".into(), "树".into()],
-        "前方有 {label}(偏移 {offset_x},{offset_y})。应 aim_and_mine {label}。",
+        "Wood source nearby: {label} (offset {offset_x},{offset_y}). Use collect() to gather.",
     ));
     lib.add(WorldInfo::new(
         vec!["stone".into(), "石头".into()],
-        "左侧有 {label}(偏移 {offset_x},{offset_y})。应 aim_and_mine {label}。",
+        "Stone source nearby: {label} (offset {offset_x},{offset_y}). Use collect() with a pickaxe equipped.",
     ));
     lib.add(WorldInfo::new(
         vec!["ore".into(), "coal".into(), "iron".into(), "矿石".into()],
-        "发现 {label}(偏移 {offset_x},{offset_y})！优先 aim_and_mine {label}。",
+        "Ore detected: {label} (offset {offset_x},{offset_y}). Mine with appropriate pickaxe.",
     ));
     lib.add(WorldInfo::new(
         vec!["water".into(), "水".into()],
-        "远处有 {label}(偏移 {offset_x},{offset_y})。可 move_forward 靠近。",
+        "Water nearby: {label} (offset {offset_x},{offset_y}). Avoid drowning.",
     ));
     lib.add(WorldInfo::new(
-        vec!["dirt".into(), "泥土".into(), "grass".into()],
-        "地面有 {label}(偏移 {offset_x},{offset_y})。低优先级, 不必挖掘。",
+        vec!["creeper".into(), "zombie".into(), "skeleton".into(), "spider".into()],
+        "Hostile mob nearby: {label} (offset {offset_x},{offset_y}). Attack or flee based on health and equipment.",
     ));
     lib
 }
@@ -232,5 +303,18 @@ mod tests {
         assert!(wi.matches("前方有tree"));
         assert!(wi.matches("一棵树"));
         assert!(!wi.matches("石头"));
+    }
+
+    #[test]
+    fn world_info_add_and_remove() {
+        let mut lib = WorldInfoLib::new();
+        lib.add(WorldInfo::new(vec!["creeper".into()], "苦力怕会爆炸").with_id("mob_creeper"));
+        lib.add(WorldInfo::new(vec!["zombie".into()], "僵尸近战").with_id("mob_zombie"));
+        assert_eq!(lib.len(), 2);
+        lib.remove_by_id("mob_creeper");
+        assert_eq!(lib.len(), 1);
+        assert_ne!(lib.entries[0].id.as_deref(), Some("mob_creeper"));
+        lib.remove_by_keys(&["zombie".to_string()]);
+        assert!(lib.is_empty());
     }
 }

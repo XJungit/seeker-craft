@@ -1,25 +1,26 @@
-//! Agent — pi_agent_rust 架构的多步真实入口
+//! Agent — 全量 mod 控制入口（craft-agent-bridge 桥接 mod）。
 //!
-//! 运行（真机，需要前台已打开 Minecraft）：
+//! 运行（先开 MC 并加载 craft-agent-bridge，再另开终端跑本程序）：
 //! ```bash
-//! cargo run -p craft-agent-minecraft --example agent_multi_step --features real \
-//!   -- --steps=12 --goal="收集木头做工作台" --session=sessions/mc_run.jsonl
+//! cargo run -p craft-agent-minecraft --example agent_multi_step_mod --features mod-bridge \
+//!   -- --steps=40 --goal="收集木头做工作台" --session=sessions/mc_run_mod.jsonl
 //! ```
-//! - `--steps`  最大决策迭代次数（默认 12）
-//! - `--goal`   本轮用户目标（必填语义入口，进入历史首条 User 消息）
-//! - `--session` 可选 session 文件路径；存在则恢复、不存在则新建，支持断点续跑
+//! - 感知：mod 结构化状态（精确物品栏/方块/实体坐标），不依赖 VLM 看图猜。
+//! - 动作：mod 进程内精确控制（look/press/mine/look_at），不抢鼠标键盘、可后台运行。
+//! - `--steps` 最大决策迭代；`--goal` 目标；`--session` 可选断点续跑。
 
-#[cfg(feature = "real")]
+#[cfg(feature = "mod-bridge")]
 fn main() -> anyhow::Result<()> {
     use craft_agent::agent::{Agent, AgentConfig, CompactionConfig, LlmProvider};
     use craft_agent::core::message::{AssistantResponse, Message};
     use craft_agent::core::session::Session;
     use craft_agent::core::tool::ToolRegistry;
-    use craft_agent_minecraft::adapter::MinecraftAdapter;
-    use craft_agent_minecraft::tools::create_mc_tools;
+    use craft_agent_minecraft::adapter_mod::MinecraftModAdapter;
+    use craft_agent_minecraft::bridge::DEFAULT_PORT;
+    use craft_agent_minecraft::tools_mod::create_mc_mod_tools;
     use craft_agent_model::config::AgentConfig as ModelConfig;
     use craft_agent_model::decision::real::OpenAiLlmClient;
-    use craft_agent_model::vision::{VisionClient, real::OpenAiVisionClient};
+    use craft_agent_model::vision::real::OpenAiVisionClient;
     use serde_json::Value;
     use std::cell::RefCell;
     use std::path::{Path, PathBuf};
@@ -33,22 +34,20 @@ fn main() -> anyhow::Result<()> {
         .iter()
         .find(|a| a.starts_with("--steps="))
         .and_then(|s| s.trim_start_matches("--steps=").parse().ok())
-        .unwrap_or(12);
+        .unwrap_or(40);
     let goal: String = args
         .iter()
         .find(|a| a.starts_with("--goal="))
         .map(|s| s.trim_start_matches("--goal=").to_string())
-        .unwrap_or_else(|| "收集木头做工作台，先perceive观察周围".to_string());
+        .unwrap_or_else(|| "收集木头做工作台".to_string());
     let session_path: Option<String> = args
         .iter()
         .find(|a| a.starts_with("--session="))
         .map(|s| s.trim_start_matches("--session=").to_string());
+    let use_vision = args.iter().any(|a| a == "--vision");
 
     let model_cfg = ModelConfig::load("config/agent.toml")?;
-    // perceive 视觉后端模式：缺省 vlm（向后兼容）。换 multimodal 只改 agent.toml。
     let perceive_cfg = model_cfg.perceive.unwrap_or_default();
-    // 截图落盘目录：跟随 session 推导（sessions/mc_run.jsonl → sessions/mc_run.shots/）。
-    // 无 --session 时不落盘（避免污染单测 / 纯内存运行）。
     let shots_dir: Option<PathBuf> = session_path.as_ref().map(|p| {
         let p = Path::new(p);
         let parent = p.parent().unwrap_or_else(|| Path::new("."));
@@ -58,7 +57,7 @@ fn main() -> anyhow::Result<()> {
             .unwrap_or_else(|| "session".to_string());
         parent.join(format!("{stem}.shots"))
     });
-    let vlm_backend = model_cfg.vlm.active_backend()?;
+
     let llm_group = model_cfg
         .llm
         .as_ref()
@@ -66,7 +65,21 @@ fn main() -> anyhow::Result<()> {
     let llm_backend = llm_group.active_backend()?;
     let llm = Arc::new(OpenAiLlmClient::from_config(llm_backend)?);
 
-    // Provider：直接转发 OpenAI 兼容的带工具 chat，返回结构化 AssistantResponse。
+    // VLM 视觉客户端（仅 --vision 时启用）
+    let vision: Option<Box<dyn craft_agent_model::vision::VisionClient>> = if use_vision {
+        let vlm_backend = model_cfg.vlm.active_backend()?;
+        let vc = OpenAiVisionClient::from_config(vlm_backend)?;
+        println!(
+            "=== VLM 已启用: {}（仅在 visual_perceive 时调用） ===",
+            vlm_backend.model
+        );
+        Some(Box::new(vc))
+    } else {
+        println!("=== VLM 未启用（加 --vision 可启用视觉补充） ===");
+        None
+    };
+
+    // Provider：转发 OpenAI 兼容带工具 chat。
     struct Lp {
         llm: Arc<OpenAiLlmClient>,
     }
@@ -77,33 +90,23 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    // 真机资源
-    let enigo = Rc::new(RefCell::new(
-        enigo::Enigo::new(&enigo::Settings::default())?,
-    ));
-    let adapter = Rc::new(RefCell::new(MinecraftAdapter::new(Box::new(
-        OpenAiVisionClient::from_config(vlm_backend)?,
-    ))?));
-    let vlm_arc: Arc<dyn VisionClient> = Arc::new(OpenAiVisionClient::from_config(vlm_backend)?);
-
-    let a = adapter.clone();
-    let capture: Box<dyn Fn() -> anyhow::Result<Vec<u8>>> =
-        Box::new(move || a.borrow().capture_screen());
+    // 连接本机 MC 桥接 mod（MC 必须先启动并加载 craft-agent-bridge）。
+    let adapter = Rc::new(RefCell::new(MinecraftModAdapter::connect_with_vision(
+        "127.0.0.1",
+        DEFAULT_PORT,
+        vision,
+    )?));
 
     let mut registry = ToolRegistry::new();
-    for tool in create_mc_tools(
-        vlm_arc,
-        capture,
-        enigo,
-        perceive_cfg.mode,
+    for tool in create_mc_mod_tools(
+        adapter.clone(),
         perceive_cfg.image_max_side,
         shots_dir.clone(),
+        use_vision,
     ) {
         registry.register(tool);
     }
 
-    // 压缩预算从 LLM 后端上下文窗口读取（LongCat = 1M），不再硬编码保留量。
-    // 预留 20% 给后续对话，keep_recent 同样取 20%（保证最近上下文不被截断）。
     let cw = llm_backend.context_window;
     let reserve = (cw as f64 * 0.2) as u32;
     let keep_recent = (cw as f64 * 0.2) as u32;
@@ -113,24 +116,28 @@ fn main() -> anyhow::Result<()> {
         keep_recent,
     };
 
-    let cfg = AgentConfig::new(
-        "你是 Minecraft AI 玩家。循环: perceive -> 思考 -> act -> perceive。\n\
-         工具: perceive(拍照看周围)/look(转视角)/press(按键)/mine(挖掘)。\n\
-         策略: 先 perceive 看周围, 有目标就 look 对准后 mine; 没目标就 look 或 press w 探索。\n\
-         每次先简短思考(1行), 再 tool_call。perceive 的 prompt 用英文。工具执行失败先调参数重试, 不要假装成功。\n\
-         除非已明确完成目标(已收集≥4原木并合成工作台), 否则每个回合都必须以 tool_call 行动收尾, 不得只用文本结束回合。".into(),
-        max_iter,
-    )
-    .with_compaction(compaction);
+    let mut system_prompt = String::from(
+        "你是 Minecraft AI 玩家，通过 MC 桥接 mod 精确控制角色。循环: perceive -> 思考 -> act -> perceive。\n\
+         感知 perceive 返回的是游戏结构化状态(精确物品栏数量/方块与生物的世界坐标与距离/玩家坐标朝向/血量饥饿)，直接据数据决策，不要靠看图猜。\n\
+         工具: perceive(读状态)/look(转视角,dx>0右转,dy>0低头)/press(按键,如 press w 走向目标)/mine(挖掘,返回是否真挖到原木)。",
+    );
+    if use_vision {
+        system_prompt.push_str(" visual_perceive(prompt)工具可截屏看图, 仅在需要识别UI界面/合成台/背包画面时使用, 平时用perceive(精确数据)即可。");
+    }
+    system_prompt.push_str(
+        "\n采集木头标准流程: \u{2460}perceive 找到最近 oak_log/birch_log 的坐标与距离 \u{2461}look 对准 \u{2462}press w 走近直到距离<3米 \u{2463}mine 60ticks(3秒)挖原木 \u{2464}重复直到\u{2265}4原木 \u{2465}e开背包合成木板->工作台。\n\
+         你能在 mine 回执里确认是否挖到原木，据此判断是否要走近/再挖，不要原地反复 look。\n\
+         除非已合成工作台(物品栏出现 crafting_table 或已放置)，否则每个回合必须以 tool_call 收尾，不得只用文本结束。",
+    );
+    let cfg = AgentConfig::new(system_prompt, max_iter).with_compaction(compaction);
 
-    // Session：给定 --session 则打开/新建并接入持久化；否则仅内存运行。
     let mut agent = match session_path {
         Some(p) => {
             let path = Path::new(&p);
             let sess = if path.exists() {
                 Session::open(path)?
             } else {
-                let mut s = Session::new("minecraft");
+                let mut s = Session::new("minecraft-mod");
                 if let Some(parent) = path.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
@@ -143,8 +150,8 @@ fn main() -> anyhow::Result<()> {
     };
 
     println!(
-        "\n=== VLM:{} LLM:{} (ctx={}) {} iterations, goal: {} ===",
-        vlm_backend.model, llm_backend.model, llm_backend.context_window, max_iter, goal
+        "\n=== BRIDGE:127.0.0.1:{} LLM:{} (ctx={}) {} iterations, goal: {} ===",
+        DEFAULT_PORT, llm_backend.model, llm_backend.context_window, max_iter, goal
     );
     match &shots_dir {
         Some(d) => println!("=== 截图落盘: {} （viewer 可逐张核对） ===\n", d.display()),
@@ -169,7 +176,7 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(not(feature = "real"))]
+#[cfg(not(feature = "mod-bridge"))]
 fn main() {
-    eprintln!("需要 --features real");
+    eprintln!("需要 --features mod-bridge");
 }

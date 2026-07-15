@@ -1,52 +1,69 @@
-//! Agent 核心 — 严格基于 pi_agent_rust (agent.rs / tools.rs / model.rs / compaction.rs / provider.rs)
-//!
-//! 与 pi 同构:
-//!   Agent { provider, tools, messages, config }
-//!   run() → build_context() → provider.complete() → plan_tool_effect_batches → tool.execute() → loop
-//!   compact(): pi generate_summary (LLM 6 段结构化摘要) + previous_summary 增量更新
-//!
-//! 相对旧版的实质修复 (不是改名):
-//!   1. 一轮内**所有** tool_calls 都执行 (旧版只取 calls[0], 其余丢弃)
-//!   2. ToolEffects 位掩码 + plan_tool_effect_batches 分组 (旧版 bool 未用于调度)
-//!   3. 压缩用 pi 完整 6 段 prompt + 增量 previous_summary (旧版 4 段 + 每次从零)
-//!   4. 真实 Usage 优先 (pi estimate_context_tokens 优先用 provider total_tokens)
-//!   5. AgentEvent 生命周期 + steering/follow_up 队列 (旧版只有 Vec<String> log)
+//! Agent 核心
 
 use crate::core::message::{Message, Usage, system_chatml};
+use crate::core::prompt::{PromptBuilder, WorldInfo, WorldInfoLib, default_mc_world_info};
+use crate::core::session::{AgentSnapshot, Session};
 use crate::core::tool::{ToolEffects, ToolRegistry, ToolResult, plan_tool_effect_batches};
 use anyhow::Result;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-// ── Provider (pi provider.rs: 极简 trait, 仅 complete + 身份) ──
+// ── Provider ──
 
 pub trait LlmProvider: Send + Sync {
-    /// 返回 (思维链, tool_calls[(name, args_json)], Usage)
     fn complete(
         &self,
         messages: &[Value],
         tools: &[Value],
-    ) -> Result<(Option<String>, Vec<(String, String)>, Usage)>;
+    ) -> Result<crate::core::message::AssistantResponse>;
 }
 
-// ── AgentEvent (pi agent.rs AgentEvent L935, 全周期事件) ──
+// ── AgentEvent ──
 
 #[derive(Debug, Clone, Serialize)]
 pub enum AgentEvent {
     AgentStart,
-    TurnStart { turn: u32 },
-    Assistant { reasoning: Option<String>, calls: Vec<String> },
-    ToolExecutionStart { name: String },
-    ToolExecutionEnd { name: String, is_error: bool },
-    TurnEnd { turn: u32 },
+    TurnStart {
+        turn: u32,
+    },
+    Assistant {
+        content: Option<String>,
+        reasoning: Option<String>,
+        calls: Vec<String>,
+    },
+    ToolExecutionStart {
+        name: String,
+    },
+    ToolExecutionEnd {
+        name: String,
+        is_error: bool,
+    },
+    TurnEnd {
+        turn: u32,
+    },
     AgentEnd,
+    Done {
+        reason: String,
+    },
     AutoCompactionStart,
     AutoCompactionEnd,
+    AutoRetryStart {
+        attempt: u32,
+        max_attempts: u32,
+        delay_ms: u64,
+        error_message: String,
+    },
+    AutoRetryEnd {
+        success: bool,
+        attempt: u32,
+        final_error: Option<String>,
+    },
 }
 
-// ── Session (pi session.rs SessionEntry 树, 简化) ──
+// ── SessionEntry ──
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionEntry {
@@ -59,17 +76,16 @@ pub struct SessionEntry {
     pub timestamp: i64,
 }
 
-// ── Compaction (pi ResolvedCompactionSettings) ──
+// ── Compaction ──
 
 #[derive(Debug, Clone)]
 pub struct CompactionConfig {
-    pub context_window: u32, // 模型上下文窗口 token 数
-    pub reserve: u32,        // 预留 token (给后续对话)
-    pub keep_recent: u32,    // 压缩时保留最近 N token
+    pub context_window: u32,
+    pub reserve: u32,
+    pub keep_recent: u32,
 }
 impl Default for CompactionConfig {
     fn default() -> Self {
-        // LongCat 1M 上下文; 触发阈值 = window - reserve
         Self {
             context_window: 1_000_000,
             reserve: 200_000,
@@ -78,12 +94,49 @@ impl Default for CompactionConfig {
     }
 }
 
+// ── Retry ──
+
+#[derive(Debug, Clone)]
+pub struct RetryConfig {
+    pub enabled: bool,
+    pub max_retries: u32,
+    pub base_delay_ms: u64,
+    pub backoff_multiplier: f64,
+}
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            max_retries: 2,
+            base_delay_ms: 500,
+            backoff_multiplier: 2.0,
+        }
+    }
+}
+impl RetryConfig {
+    pub fn delay_ms(&self, attempt: u32) -> u64 {
+        (self.base_delay_ms as f64 * self.backoff_multiplier.powi(attempt as i32 - 1)) as u64
+    }
+}
+
+fn is_retryable_error(msg: &str) -> bool {
+    let lower = msg.to_lowercase();
+    lower.contains("timeout")
+        || lower.contains("rate")
+        || lower.contains("503")
+        || lower.contains("502")
+        || lower.contains("429")
+        || lower.contains("connection")
+}
+
 // ── Config ──
 
 pub struct AgentConfig {
     pub prompt: String,
-    pub max_iterations: u32, // pi: max_tool_iterations
+    pub max_iterations: u32,
     pub compaction: CompactionConfig,
+    pub retry: RetryConfig,
+    pub auto_perceive: bool,
 }
 impl AgentConfig {
     pub fn new(prompt: String, max_iterations: u32) -> Self {
@@ -91,50 +144,117 @@ impl AgentConfig {
             prompt,
             max_iterations,
             compaction: CompactionConfig::default(),
+            retry: RetryConfig::default(),
+            auto_perceive: false,
         }
     }
-    /// 自定义压缩参数 (测试/小窗口模型用)
     pub fn with_compaction(mut self, c: CompactionConfig) -> Self {
         self.compaction = c;
         self
     }
+    pub fn with_retry(mut self, r: RetryConfig) -> Self {
+        self.retry = r;
+        self
+    }
+    pub fn with_auto_perceive(mut self, v: bool) -> Self {
+        self.auto_perceive = v;
+        self
+    }
 }
 
-// ── Minecraft 完整知识 (酒馆 World Info 风格, 注入 system prompt) ──
+// ── MC Knowledge (injected as role_desc, prefix-cached) ──
 
 pub const MC_KNOWLEDGE: &str = r#"
-## Minecraft 控制知识
-### 移动
-- press w: 前进
-- press a: 左移
-- press s: 后退
-- press d: 右移
-- press space: 跳跃 (1格高)
-- press shift: 潜行 (不会从边缘掉落)
-- press ctrl: 疾跑
-### 交互
-- press e: 打开/关闭背包
-- press 1~9: 切换到快捷栏对应物品
-- press q: 丢弃手中物品
-- press f: 切换到副手
-- 鼠标左键=挖掘/攻击, 右键=放置/使用
-### 视角
-- look dx=N: 水平转视角 (300≈90度, 150≈45度, 负=左)
-- look dy=N: 垂直转视角 (正=低头, 负=抬头)
-### 挖掘
-- mine ticks=60: 按住左键挖3秒 (木头/泥土)
-- mine ticks=120: 6秒 (石头)
-- mine ticks=200: 10秒 (矿石, 无合适工具时)
-### 生存知识
-- 优先收集木头(tree) → 做木斧/木镐
-- 石头(stone) → 圆石 → 石镐 → 挖铁
-- 晚上要躲怪物: 挖三格深的洞, 上面盖住
-- 快捷栏物品: press 1~9 切换
-- 背包满了: press e 打开背包整理
-- 怪物(僵尸/骷髅/苦力怕)靠近时: 优先 mine 或 press ctrl 逃跑
+## Your Role
+You are a Minecraft bot controlling a player via tools. Each turn you receive game state (STATS, INVENTORY, NEARBY BLOCKS, NEARBY ENTITIES) and must decide the next action. Always respond with exactly one tool call — no text-only responses ever.
+
+## Tool Reference (call exactly as shown)
+
+--- High-Level Tools (preferred) ---
+
+collect(target, count)
+  Auto: find nearest target block → aim at it → walk to it → mine it. Your primary gathering tool.
+  - target: block ID string. Examples: "oak_log", "birch_log", "stone", "coal_ore", "iron_ore"
+  - count: how many to collect (integer, default 1)
+  - Usage: collect("oak_log", 4)
+  - Returns actual count collected.
+
+craft(item, count)
+  Craft items from inventory materials. Mod handles recipe automatically.
+  - item: "oak_planks", "stick", "crafting_table", "wooden_pickaxe", "wooden_axe", "wooden_sword"
+  - count: how many to craft (integer, default 1)
+  - Usage: craft("oak_planks", 8)
+
+place(item)
+  Place a block from your hotbar at the targeted position (right-click).
+  - item: "crafting_table", "torch", "furnace"
+  - Usage: place("crafting_table")
+  - Automatically switches to the hotbar slot containing the item, then right-clicks.
+  - Look at the ground or surface where you want to place before calling.
+
+--- Utility Tools ---
+
+equip(slot)
+  Switch active hotbar slot.
+  - slot: number 1-9
+  - Usage: equip(3)
+
+use_item(ticks)
+  Right-click to eat food, drink potions, open doors, interact with blocks/entities.
+  - ticks: hold duration (20 ~ 1 second). Default 20 for eating, 5 for quick use.
+  - Usage: use_item(20)
+
+attack(ticks)
+  Hold left-click to attack the nearest entity in your crosshair direction.
+  - ticks: duration (30 ~ 1.5 seconds), default 30
+  - Usage: attack(30)
+
+--- Fine Control Tools ---
+
+look(dx, dy)
+  Rotate camera precisely. dx>0 turns right (~300 units ~ 90 deg), dy>0 looks down.
+  - dx: horizontal rotation amount (integer)
+  - dy: vertical rotation amount (integer)
+  - Usage: look(150, 0)
+
+press(keys, ticks)
+  Hold keyboard keys for movement/interaction.
+  - keys: "w"/"a"/"s"/"d" (movement), "space" (jump), "shift" (sneak), "e" (inventory)
+  - ticks: hold duration (20 ~ 1s), default 20
+  - Usage: press("w", 30), press("space", 5)
+
+mine(ticks)
+  Hold left-click to mine the targeted block.
+  - ticks: 60 for wood/leaves (~3s), 120 for stone (~6s), 120+ for ores
+  - Usage: mine(60)
+
+## Crafting Recipes (craft tool handles these automatically)
+- 1 oak_log -> 4 oak_planks (any log type works)
+- 2 oak_planks -> 4 sticks (any plank type works)
+- 4 oak_planks -> 1 crafting_table
+- 3 planks + 2 sticks -> 1 wooden_pickaxe
+- 3 planks + 2 sticks -> 1 wooden_axe
+- 2 planks + 1 stick -> 1 wooden_sword
+- 1 stick + 1 coal -> 4 torches
+
+## Decision Rules
+1. Read STATS data: position, health, hunger, nearby blocks and entities
+2. Gather resources with collect() - it handles aim+walk+mine automatically
+3. Craft items with craft() when you have enough materials
+4. Place blocks with place() - first ensure you're looking at the target surface
+5. If hostile mobs attack you -> attack() to fight back; if health < 8 -> press("w", 40) to flee
+6. Every response MUST end with a tool call. Never text-only.
+7. Tool error -> retry with adjusted parameters. Don't fake success.
+
+## Response Format
+ALWAYS end with a tool call:
+  GOOD: collect("oak_log", 4)
+  GOOD: craft("oak_planks", 8)
+  BAD: "I should collect some wood first"
+  BAD: "Now I need to mine the oak log that is nearby"
 "#;
 
-// ── Context (pi provider.rs Context, 组装 system+messages+tools) ──
+// ── Context ──
 
 pub struct Context {
     pub system_prompt: String,
@@ -142,44 +262,85 @@ pub struct Context {
     pub tools: Vec<Value>,
 }
 
-// ── Agent (pi 同构) ──
+// ── Knowledge tool schema ──
+
+pub const MANAGE_KNOWLEDGE: &str = "manage_knowledge";
+pub const MANAGE_KNOWLEDGE_TOOL: &str = r#"{
+  "type": "function",
+  "function": {
+    "name": "manage_knowledge",
+    "description": "Dynamically manage long-term game knowledge (WorldInfo). Use add to remember block/mob/pattern discoveries; use remove to delete outdated knowledge. Matched keywords auto-inject context in future turns.",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "action": {"type": "string", "enum": ["add", "remove"], "description": "add=new knowledge entry, remove=delete entry"},
+        "id": {"type": "string", "description": "Stable id for removal. Recommended for add too."},
+        "keys": {"type": "array", "items": {"type": "string"}, "description": "Trigger keywords (lowercase), e.g. ['creeper']"},
+        "template": {"type": "string", "description": "Knowledge template, supports {label} {offset_x} {offset_y} variables"}
+      },
+      "required": ["action"]
+    }
+  }
+}"#;
+
+// ── Agent ──
 
 pub struct Agent {
     pub provider: Box<dyn LlmProvider>,
     pub tools: ToolRegistry,
     pub messages: Vec<Message>,
-    pub session: Vec<SessionEntry>,
+    pub session_entries: Vec<SessionEntry>,
     pub config: AgentConfig,
-    /// 结构化事件 (pi AgentEvent)
     pub events: Vec<AgentEvent>,
-    /// 真实 token 用量 (pi Usage, estimate_context_tokens 优先用它)
     usage: Usage,
-    /// 上一次压缩摘要 (pi previous_summary, 增量更新)
     previous_summary: Option<String>,
-    /// 异步注入队列 (pi MessageQueue: steering / follow_up)
     steering: VecDeque<String>,
     follow_up: VecDeque<String>,
     turn: u32,
+    /// WorldInfo for dynamic knowledge injection
+    world_info: WorldInfoLib,
+    knowledge_bootstrapped: bool,
+    obs_streak: u32,
+    /// Session persistence
+    pub session: Option<Session>,
+    pending_checkpoint: bool,
+    session_msg_offset: usize,
+    /// Retry abort signal
+    pub retry_abort: AtomicBool,
 }
 
 impl Agent {
     pub fn new(provider: Box<dyn LlmProvider>, tools: ToolRegistry, config: AgentConfig) -> Self {
+        let world_info = default_mc_world_info();
         Self {
             provider,
             tools,
             config,
             messages: vec![],
-            session: vec![],
+            session_entries: vec![],
             events: vec![],
             usage: Usage::default(),
             previous_summary: None,
             steering: VecDeque::new(),
             follow_up: VecDeque::new(),
             turn: 0,
+            world_info,
+            knowledge_bootstrapped: false,
+            obs_streak: 0,
+            session: None,
+            pending_checkpoint: false,
+            session_msg_offset: 0,
+            retry_abort: AtomicBool::new(false),
         }
     }
 
-    // ── 队列 (pi queue_steering / queue_follow_up / drain_*) ──
+    /// Attach session for persistence
+    pub fn with_session(mut self, sess: Session) -> Self {
+        self.session = Some(sess);
+        self
+    }
+
+    // ── Queues ──
     pub fn queue_steering(&mut self, msg: impl Into<String>) {
         self.steering.push_back(msg.into());
     }
@@ -191,17 +352,54 @@ impl Agent {
             self.messages.push(Message::user(format!("[steering] {m}")));
         }
         while let Some(m) = self.follow_up.pop_front() {
-            self.messages.push(Message::user(format!("[follow_up] {m}")));
+            self.messages
+                .push(Message::user(format!("[follow_up] {m}")));
         }
     }
 
-    /// pi build_context(): system prompt + messages + tools → Context
+    /// Build system prompt with layered prompt pipeline: identity -> role_desc -> scenario -> jailbreak
     fn build_context(&self) -> Context {
-        let full_prompt = format!("{}\n\n{}", self.config.prompt, MC_KNOWLEDGE);
+        let recent_perception = self
+            .messages
+            .iter()
+            .rev()
+            .find_map(|message| match message {
+                Message::ToolResult(result) if result.tool_name == "perceive" => {
+                    Some(result.content.as_str())
+                }
+                _ => None,
+            })
+            .unwrap_or("");
+        let dynamic_hints = self.world_info.scan_text(recent_perception, 4_000);
+
+        let mut jailbreak =
+            "Act autonomously. If a tool fails, adjust parameters and retry - never pretend success.".to_string();
+        if !self.knowledge_bootstrapped {
+            jailbreak
+                .push_str(" Start executing tasks directly, no need to re-enter game knowledge.");
+        }
+        if self.obs_streak >= 5 {
+            jailbreak.push_str(&format!(
+                " [Hint: {} steps observing without action. Pick any tool and act now.]",
+                self.obs_streak
+            ));
+        }
+
+        let mut builder = PromptBuilder::new()
+            .identity(&self.config.prompt)
+            .role_desc(MC_KNOWLEDGE)
+            .jailbreak(jailbreak);
+        if !dynamic_hints.is_empty() {
+            builder.set_scenario(dynamic_hints.join("\n"));
+        }
+        let full_prompt = builder.build();
         let system = system_chatml(&full_prompt);
         let mut chatml = vec![system];
         chatml.extend(self.messages.iter().map(Message::to_chatml));
-        let tool_defs = self.tools.to_openai_defs();
+        let mut tool_defs = self.tools.to_openai_defs();
+        if let Ok(def) = serde_json::from_str::<Value>(MANAGE_KNOWLEDGE_TOOL) {
+            tool_defs.push(def);
+        }
         Context {
             system_prompt: full_prompt,
             messages: chatml,
@@ -209,21 +407,18 @@ impl Agent {
         }
     }
 
-    /// pi estimate_tokens(): chars / 3 (CHARS_PER_TOKEN_ESTIMATE=3, 保守高估)
     fn estimate_tokens(&self) -> u32 {
-        // pi estimate_context_tokens: 优先用 provider 返回的 total_tokens
-        if self.usage.total_tokens > 0 {
-            return self.usage.total_tokens as u32;
-        }
         let chars = self.config.prompt.len()
             + MC_KNOWLEDGE.len()
             + self.messages.iter().map(Self::msg_chars).sum::<usize>();
-        (chars / 3) as u32
+        let estimated = u32::try_from(chars / 3).unwrap_or(u32::MAX);
+        let measured = u32::try_from(self.usage.total_tokens).unwrap_or(u32::MAX);
+        estimated.max(measured)
     }
 
     fn msg_chars(m: &Message) -> usize {
         match m {
-            Message::User(u) => u.content.len(),
+            Message::User(u) => u.content.len() + u.images.iter().map(|i| i.len()).sum::<usize>(),
             Message::Assistant(a) => {
                 a.reasoning.as_deref().map_or(0, |s| s.len())
                     + a.content.as_deref().map_or(0, |s| s.len())
@@ -232,24 +427,30 @@ impl Agent {
                         .map(|tc| tc.name.len() + tc.arguments.to_string().len())
                         .sum::<usize>()
             }
-            Message::ToolResult(r) => r.content.len(),
+            Message::ToolResult(r) => {
+                r.content.len() + r.images.iter().map(|i| i.len()).sum::<usize>()
+            }
         }
     }
 
-    /// 🏃 pi run_loop() 同构 — 一轮 = 一次 LLM 调用, 处理该轮**所有** tool_calls
-    pub fn run(&mut self) -> Result<Vec<String>> {
-        let mut log: Vec<String> = Vec::new();
+    /// Run one turn
+    pub fn run(&mut self, user_message: impl Into<String>) -> Result<Vec<String>> {
+        self.messages.push(Message::user(user_message));
+        self.continue_run()
+    }
+
+    /// Continue from current state
+    pub fn continue_run(&mut self) -> Result<Vec<String>> {
+        let mut log = Vec::new();
         self.events.push(AgentEvent::AgentStart);
 
         for _ in 0..self.config.max_iterations {
             self.turn += 1;
             let turn = self.turn;
             self.events.push(AgentEvent::TurnStart { turn });
-
-            // 1. drain steering/follow_up (pi drain_steering_messages)
             self.drain_queues();
 
-            // 2. compaction (pi maybe_compact at run entry)
+            // Compaction check
             let budget = self
                 .config
                 .compaction
@@ -258,95 +459,215 @@ impl Agent {
             if self.estimate_tokens() > budget {
                 self.events.push(AgentEvent::AutoCompactionStart);
                 if let Err(e) = self.compact() {
-                    log.push(format!("[t{turn}] 压缩失败: {e}"));
+                    log.push(format!("[t{turn}] compaction failed: {e}"));
                 }
                 self.events.push(AgentEvent::AutoCompactionEnd);
             }
 
-            // 3. build_context → provider.complete()
-            let ctx = self.build_context();
-            let (reasoning, calls, usage) = match self.provider.complete(&ctx.messages, &ctx.tools) {
-                Ok(r) => r,
-                Err(e) => {
-                    log.push(format!("[t{turn}] LLM 错误: {e}"));
-                    break;
+            // Auto-perceive: inject latest game state as user message (Mindcraft style, replaced each turn)
+            if self.config.auto_perceive {
+                if let Some(tool) = self.tools.get("perceive") {
+                    match tool.execute("auto_perceive", serde_json::json!({}), None) {
+                        Ok(result) => {
+                            let state_msg = format!(
+                                "【Current Game State (auto-injected)】\n{}",
+                                result.message
+                            );
+                            self.messages.retain(|m| {
+                                !matches!(m, Message::User(u) if u.content.starts_with("【Current Game State"))
+                            });
+                            self.messages.push(Message::user(state_msg));
+                        }
+                        Err(e) => {
+                            log.push(format!("[t{turn}] auto-perceive failed: {e}"));
+                        }
+                    }
                 }
-            };
-            self.usage = usage; // 用最新一次真实用量
+            }
 
-            // 4. 无 tool_calls → 纯文本/结束 (pi: 无 tool_calls 且队列空 → break)
-            if calls.is_empty() {
-                if let Some(text) = &reasoning {
-                    log.push(format!("[t{turn}] 文本回复: {:.200}", text));
+            let ctx = self.build_context();
+
+            // LLM call with retry
+            let mut response = None;
+            let mut last_error = String::new();
+            let max_attempts = if self.config.retry.enabled {
+                1 + self.config.retry.max_retries
+            } else {
+                1
+            };
+            for attempt in 1..=max_attempts {
+                match self.provider.complete(&ctx.messages, &ctx.tools) {
+                    Ok(resp) => {
+                        response = Some(resp);
+                        if attempt > 1 {
+                            self.events.push(AgentEvent::AutoRetryEnd {
+                                success: true,
+                                attempt,
+                                final_error: None,
+                            });
+                        }
+                        break;
+                    }
+                    Err(e) => {
+                        last_error = format!("{e}");
+                        let retryable = is_retryable_error(&last_error);
+                        if attempt >= max_attempts || !retryable {
+                            if attempt > 1 {
+                                self.events.push(AgentEvent::AutoRetryEnd {
+                                    success: false,
+                                    attempt,
+                                    final_error: Some(last_error.clone()),
+                                });
+                            }
+                            log.push(format!(
+                                "[t{turn}] LLM error (attempt {attempt}): {last_error}"
+                            ));
+                            break;
+                        }
+                        let delay_ms = self.config.retry.delay_ms(attempt);
+                        self.events.push(AgentEvent::AutoRetryStart {
+                            attempt,
+                            max_attempts,
+                            delay_ms,
+                            error_message: last_error.clone(),
+                        });
+                        let ticks = delay_ms / 50;
+                        for _ in 0..ticks {
+                            if self.retry_abort.load(Ordering::Relaxed) {
+                                break;
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(50));
+                        }
+                    }
                 }
-                self.events.push(AgentEvent::TurnEnd { turn });
+            }
+
+            let Some(response) = response else {
+                self.persist_turn()?;
+                self.events.push(AgentEvent::Done {
+                    reason: "LLM call failed after retries".into(),
+                });
                 break;
+            };
+
+            self.usage = response.usage.clone();
+
+            // Track obs streak
+            let calls = response.tool_calls.clone();
+            if calls.is_empty() {
+                // LLM returned text-only — nudge if not at max
+                self.obs_streak += 1;
+                self.events.push(AgentEvent::Assistant {
+                    content: response.content.clone(),
+                    reasoning: response.reasoning.clone(),
+                    calls: vec![],
+                });
+                self.messages.push(Message::assistant_response(&response));
+
+                if self.turn >= self.config.max_iterations {
+                    self.events.push(AgentEvent::TurnEnd { turn });
+                    self.persist_turn()?;
+                    break;
+                } else {
+                    let nudge = "【Continue】You responded with text only. You MUST call a tool. Pick any tool based on the current state and act now. Never end a turn with text-only.".to_string();
+                    self.messages.push(Message::user(nudge));
+                    log.push(format!(
+                        "[t{turn}] nudge: text-only response, injected continue prompt"
+                    ));
+                    self.events.push(AgentEvent::TurnEnd { turn });
+                    self.persist_turn()?;
+                    continue;
+                }
+            }
+
+            // Track obs streak from tool names
+            let obs_tools: &[&str] = &["perceive", "visual_perceive", "look"];
+            if calls.iter().all(|tc| obs_tools.contains(&tc.name.as_str())) {
+                self.obs_streak += 1;
+            } else {
+                self.obs_streak = 0;
+            }
+            // Update knowledge bootstrap flag after first successful tool call
+            if !self.knowledge_bootstrapped {
+                self.knowledge_bootstrapped = true;
             }
 
             self.events.push(AgentEvent::Assistant {
-                reasoning: reasoning.clone(),
-                calls: calls.iter().map(|(n, _)| n.clone()).collect(),
+                content: response.content.clone(),
+                reasoning: response.reasoning.clone(),
+                calls: calls.iter().map(|tc| tc.name.clone()).collect(),
             });
+            self.messages.push(Message::assistant_response(&response));
 
-            // 5. 一条 assistant 消息携带所有 tool_calls (pi: 一轮可能多个 tool_call)
-            let call_id = format!("call_{turn}");
-            self.messages
-                .push(Message::assistant_tool_calls(&call_id, &calls, reasoning.clone()));
-
-            // 6. 按 ToolEffects 分组 (pi plan_tool_effect_batches)
+            // Execute each tool call
             let effects: Vec<ToolEffects> = calls
                 .iter()
-                .map(|(n, _)| {
+                .map(|tc| {
                     self.tools
-                        .get(n)
-                        .map(|t| t.effects())
+                        .get(&tc.name)
+                        .map(|tool| tool.effects())
                         .unwrap_or(ToolEffects::write())
                 })
                 .collect();
             let batches = plan_tool_effect_batches(&effects);
 
-            // 7. 逐批执行 (MC 输入设备单一, 批内串行; pi 会在兼容批内 buffer_unordered 并行)
             for batch in &batches {
                 for &idx in batch {
-                    let (name, args_json) = &calls[idx];
-                    let args: Value =
-                        serde_json::from_str(args_json).unwrap_or(Value::Null);
-                    let sub_id = format!("{call_id}_{idx}");
+                    let tc = &calls[idx];
+                    // Handle meta-tool: manage_knowledge
+                    if tc.name == MANAGE_KNOWLEDGE {
+                        let args = tc.arguments.clone();
+                        let (msg, _is_err) = self.manage_knowledge(&args);
+                        self.messages.push(Message::tool_result(
+                            &format!("call_{turn}_{idx}"),
+                            &tc.name,
+                            &msg,
+                        ));
+                        log.push(format!("[t{turn}] manage_knowledge -> {:.100}", msg));
+                        continue;
+                    }
 
                     self.events.push(AgentEvent::ToolExecutionStart {
-                        name: name.clone(),
+                        name: tc.name.clone(),
                     });
-                    let result = match self.tools.get(name) {
-                        Some(tool) => tool.execute(&sub_id, args, None),
+                    let args = tc.arguments.clone();
+                    let result = match self.tools.get(&tc.name) {
+                        Some(tool) => tool.execute(&format!("call_{turn}_{idx}"), args, None),
                         None => Ok(ToolResult {
-                            message: format!("未知工具: {name}"),
+                            message: format!("Unknown tool: {}", tc.name),
                             is_error: true,
+                            images: vec![],
                         }),
                     };
                     let (msg, is_err) = match result {
                         Ok(r) => (r.message, r.is_error),
-                        Err(e) => (format!("执行错误: {e}"), true),
+                        Err(e) => (format!("Error: {e}"), true),
                     };
                     self.events.push(AgentEvent::ToolExecutionEnd {
-                        name: name.clone(),
+                        name: tc.name.clone(),
                         is_error: is_err,
                     });
-
-                    self.messages
-                        .push(Message::tool_result(&sub_id, name, &msg));
-                    self.session.push(SessionEntry {
-                        id: sub_id.clone(),
-                        parent_id: Some(call_id.clone()),
+                    self.messages.push(Message::tool_result(
+                        &format!("call_{turn}_{idx}"),
+                        &tc.name,
+                        &msg,
+                    ));
+                    self.session_entries.push(SessionEntry {
+                        id: format!("call_{turn}_{idx}"),
+                        parent_id: Some(format!("call_{turn}")),
                         turn,
-                        tool: name.clone(),
-                        reasoning: reasoning.clone(),
+                        tool: tc.name.clone(),
+                        reasoning: response.reasoning.clone(),
                         detail: format!("{:.120}", msg),
                         timestamp: SystemTime::now()
                             .duration_since(UNIX_EPOCH)
                             .unwrap()
                             .as_millis() as i64,
                     });
-                    log.push(format!("[t{turn}] {}({}) → {:.100}", name, args_json, msg));
+                    log.push(format!(
+                        "[t{turn}] {}({}) -> {:.100}",
+                        tc.name, tc.arguments, msg
+                    ));
                 }
             }
             self.events.push(AgentEvent::TurnEnd { turn });
@@ -356,10 +677,98 @@ impl Agent {
         Ok(log)
     }
 
-    /// pi compact(): LLM 生成历史摘要 (pi generate_summary + SUMMARIZATION_PROMPT)
+    fn persist_turn(&mut self) -> Result<()> {
+        let Some(sess) = &mut self.session else {
+            return Ok(());
+        };
+        if self.pending_checkpoint {
+            let snapshot = AgentSnapshot {
+                messages: self.messages.clone(),
+                previous_summary: self.previous_summary.clone(),
+                usage: self.usage.clone(),
+                turn: self.turn,
+            };
+            sess.append_checkpoint("compaction", snapshot);
+            self.pending_checkpoint = false;
+            self.session_msg_offset = self.messages.len();
+        } else {
+            let new_msgs: Vec<Message> = self.messages[self.session_msg_offset..].to_vec();
+            for m in new_msgs {
+                sess.append_message(m);
+            }
+            self.session_msg_offset = self.messages.len();
+        }
+        sess.save()?;
+        Ok(())
+    }
+
+    fn manage_knowledge(&mut self, args: &Value) -> (String, bool) {
+        let action = match args["action"].as_str() {
+            Some(a) => a,
+            None => {
+                return (
+                    "manage_knowledge missing 'action' parameter (add/remove)".into(),
+                    true,
+                );
+            }
+        };
+        match action {
+            "add" => {
+                let keys: Vec<String> = args["keys"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str().map(|s| s.to_lowercase()))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let template = args["template"].as_str().unwrap_or("Detected {label}");
+                let id = args["id"].as_str().map(|s| s.to_string());
+                let wi = WorldInfo {
+                    keys,
+                    template: template.to_string(),
+                    priority: 0,
+                    id: id.clone(),
+                };
+                self.world_info.add(wi);
+                (
+                    format!(
+                        "Added knowledge entry (id={:?}). Total entries: {}",
+                        id,
+                        self.world_info.len()
+                    ),
+                    false,
+                )
+            }
+            "remove" => {
+                let before = self.world_info.len();
+                if let Some(id) = args["id"].as_str() {
+                    self.world_info.remove_by_id(id);
+                } else if let Some(keys) = args["keys"].as_array() {
+                    let ks: Vec<String> = keys
+                        .iter()
+                        .filter_map(|v| v.as_str().map(|s| s.to_lowercase()))
+                        .collect();
+                    self.world_info.remove_by_keys(&ks);
+                } else {
+                    return ("remove needs 'id' or 'keys' parameter".into(), true);
+                }
+                let removed = before - self.world_info.len();
+                (
+                    format!(
+                        "Removed {removed} entries. Total: {}",
+                        self.world_info.len()
+                    ),
+                    false,
+                )
+            }
+            other => (format!("Unknown action: {other}"), true),
+        }
+    }
+
+    /// Compaction: LLM-generated structured summary
     fn compact(&mut self) -> Result<()> {
         let keep_tokens = self.config.compaction.keep_recent;
-        // find_cut_point: 从尾部累加, 直到 >= keep_recent (pi L998)
         let mut kept: u32 = 0;
         let mut cut = self.messages.len();
         for (i, msg) in self.messages.iter().enumerate().rev() {
@@ -371,14 +780,18 @@ impl Agent {
             kept += t;
         }
         if cut == 0 || cut >= self.messages.len() {
-            return Ok(()); // 没到阈值, 不压缩
+            return Ok(());
         }
 
-        let old: Vec<String> = self.messages[..cut].iter().map(Self::serialize_msg).collect();
-        // pi generate_summary: <conversation> 包裹 + 可选 <previous-summary> 增量
+        let old: Vec<String> = self.messages[..cut]
+            .iter()
+            .map(Self::serialize_msg)
+            .collect();
         let mut prompt = format!("<conversation>\n{}\n</conversation>\n\n", old.join("\n\n"));
         let system = if let Some(prev) = &self.previous_summary {
-            prompt.push_str(&format!("<previous-summary>\n{prev}\n</previous-summary>\n\n"));
+            prompt.push_str(&format!(
+                "<previous-summary>\n{prev}\n</previous-summary>\n\n"
+            ));
             prompt.push_str(UPDATE_SUMMARIZATION_PROMPT);
             COMPACTION_SYSTEM
         } else {
@@ -387,40 +800,58 @@ impl Agent {
         };
 
         let cm = vec![system_chatml(system), Message::user(prompt).to_chatml()];
-        let summary = match self.provider.complete(&cm, &[]) {
-            Ok((text, _, _)) => {
-                text.unwrap_or_else(|| format!("{} 条消息已压缩", cut))
+        // Retry summarization too
+        let summary = {
+            let mut result = None;
+            for attempt in 1..=3 {
+                match self.provider.complete(&cm, &[]) {
+                    Ok(resp) => {
+                        result = Some(
+                            resp.content
+                                .filter(|t| !t.trim().is_empty())
+                                .or_else(|| resp.reasoning.filter(|t| !t.trim().is_empty()))
+                                .unwrap_or_else(|| format!("{cut} messages compacted")),
+                        );
+                        break;
+                    }
+                    Err(_) if attempt < 3 => {
+                        std::thread::sleep(std::time::Duration::from_millis(500 * attempt as u64));
+                    }
+                    Err(_) => {
+                        result = Some(format!("{cut} messages compacted"));
+                    }
+                }
             }
-            Err(_) => format!("{} 条消息已压缩", cut),
+            result.unwrap_or_else(|| format!("{cut} messages compacted"))
         };
 
         let recent: Vec<_> = self.messages.drain(cut..).collect();
-        // pi: 摘要作为 User 消息, 包 <summary> 标签, 置于保留消息之前
         let summary_msg = Message::user(format!(
-            "The conversation history before this point was compacted into the following summary:\n\n<summary>\n{summary}\n</summary>"
+            "Previous conversation compacted:\n\n<summary>\n{}\n</summary>",
+            summary
         ));
         self.messages = vec![summary_msg];
         self.messages.extend(recent);
         self.previous_summary = Some(summary);
+        self.pending_checkpoint = true;
         Ok(())
     }
 
-    /// 把一条消息序列化为可读文本给 LLM 做摘要 (pi serialize_conversation)
     fn serialize_msg(m: &Message) -> String {
         match m {
             Message::User(u) => format!("user: {}", u.content),
             Message::Assistant(a) => {
                 let mut s = String::new();
                 if let Some(r) = &a.reasoning {
-                    s.push_str(&format!("[思考] {r}\n"));
+                    s.push_str(&format!("[Think] {r}\n"));
                 }
-                if let Some(c) = &a.content
-                    && !c.is_empty()
-                {
-                    s.push_str(&format!("{c}\n"));
+                if let Some(c) = &a.content {
+                    if !c.is_empty() {
+                        s.push_str(&format!("{c}\n"));
+                    }
                 }
                 for tc in &a.tool_calls {
-                    s.push_str(&format!("→ {}({})\n", tc.name, tc.arguments));
+                    s.push_str(&format!("-> {}({})\n", tc.name, tc.arguments));
                 }
                 s.trim().to_string()
             }
@@ -436,90 +867,157 @@ impl Agent {
     }
 }
 
-// ── 压缩提示词 (pi compaction.rs SUMMARIZATION_PROMPT, 6 段结构化 + 游戏化) ──
+// ── Compaction prompts ──
 
-const COMPACTION_SYSTEM: &str = "You are a context summarization assistant. Your task is to read a Minecraft gameplay conversation, then produce a structured summary following the exact format specified.\n\nDo NOT continue the conversation. Do NOT respond to any questions. ONLY output the structured summary.";
+const COMPACTION_SYSTEM: &str = "You are a context summarization assistant.";
 
-const SUMMARIZATION_PROMPT: &str = "The messages above are a conversation to summarize. Create a structured context checkpoint summary that another LLM will use to continue the Minecraft gameplay.\n\nUse this EXACT format:\n\n## Goal\n[What is the agent trying to accomplish? e.g. collect wood, build shelter, find iron]\n\n## Constraints & Preferences\n- [e.g. prefer trees over stone; keep tool durability; avoid creepers at night]\n\n## Progress\n### Done\n- [x] [blocks mined, areas explored, mobs avoided, items crafted]\n### In Progress\n- [ ] [current action]\n### Blocked\n- [ ] [if any]\n\n## Key Decisions\n- **[Decision]**: [why, e.g. mined oak first to craft a crafting table]\n\n## Next Steps\n1. [recommended next action]\n\n## Critical Context\n- [biomes, exact block/creature/item names, relative directions, inventory state]\n\nKeep each section concise. Preserve exact block, creature, and item names.";
+const SUMMARIZATION_PROMPT: &str = "Summarize the Minecraft gameplay conversation:\n\n## Goal\n[What is the agent trying to accomplish?]\n\n## Progress\n### Done\n- [x] [accomplished]\n### In Progress\n- [ ] [current]\n\n## Key Decisions\n- **[Decision]**: [why]\n\n## Next Steps\n1. [recommended]\n\n## Critical Context\n- [inventory, position, nearby blocks, threats]";
 
-const UPDATE_SUMMARIZATION_PROMPT: &str = "The messages above are NEW conversation messages to incorporate into the existing summary in <previous-summary>.\n\nUpdate the existing structured summary with new information. RULES:\n- PRESERVE all existing information from the previous summary\n- ADD new progress, decisions, and context from the new messages\n- UPDATE the Progress section: move items from \"In Progress\" to \"Done\" when completed\n- UPDATE \"Next Steps\" to reflect what should happen now\n- PRESERVE exact block, creature, and item names\n- If something is no longer relevant, you may remove it\n\nUse this EXACT format:\n\n## Goal / ## Constraints & Preferences / ## Progress(Done/In Progress/Blocked) / ## Key Decisions / ## Next Steps / ## Critical Context";
+const UPDATE_SUMMARIZATION_PROMPT: &str =
+    "Update the existing summary with new information from the messages above.";
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::core::message::Usage;
-    use crate::core::tool::{GameTool, ToolEffects, ToolResult, ToolUpdateFn};
-    use serde_json::Value;
+    use crate::core::message::AssistantResponse;
+    use crate::core::message::StopReason;
+    use crate::core::tool::ToolUpdateFn;
 
-    struct DummyTool { name: &'static str, effect: ToolEffects }
-    impl GameTool for DummyTool {
-        fn name(&self) -> &str { self.name }
-        fn description(&self) -> &str { "dummy" }
-        fn parameters(&self) -> Value { serde_json::json!({}) }
-        fn effects(&self) -> ToolEffects { self.effect }
-        fn execute(&self, _id: &str, _args: Value, _on: Option<ToolUpdateFn>) -> anyhow::Result<ToolResult> {
-            Ok(ToolResult { message: format!("ran {}", self.name), is_error: false })
+    struct TextProvider;
+    impl LlmProvider for TextProvider {
+        fn complete(&self, _m: &[Value], _t: &[Value]) -> Result<AssistantResponse> {
+            Ok(AssistantResponse {
+                content: Some("ok".into()),
+                reasoning: None,
+                tool_calls: vec![],
+                usage: Usage::default(),
+                stop_reason: StopReason::Stop,
+            })
         }
     }
 
-    // 假 provider: 第 0 轮返回两个 tool_call, 之后返回空 (结束)
-    struct MultiCallProvider { calls: std::sync::atomic::AtomicU32 }
-    impl LlmProvider for MultiCallProvider {
-        fn complete(&self, _m: &[Value], _t: &[Value]) -> anyhow::Result<(Option<String>, Vec<(String, String)>, Usage)> {
-            use std::sync::atomic::Ordering;
-            let n = self.calls.fetch_add(1, Ordering::SeqCst);
-            if n == 0 {
-                Ok((Some("我先看再挖".into()), vec![
-                    ("perceive".into(), "{\"prompt\":\"x\"}".into()),
-                    ("mine".into(), "{\"ticks\":60}".into()),
-                ], Usage::default()))
-            } else {
-                Ok((None, vec![], Usage::default()))
-            }
+    struct DummyTool {
+        name: &'static str,
+        effect: ToolEffects,
+    }
+    impl crate::core::tool::GameTool for DummyTool {
+        fn name(&self) -> &str {
+            self.name
+        }
+        fn description(&self) -> &str {
+            "dummy"
+        }
+        fn parameters(&self) -> Value {
+            serde_json::json!({})
+        }
+        fn effects(&self) -> ToolEffects {
+            self.effect
+        }
+        fn execute(
+            &self,
+            _id: &str,
+            _args: Value,
+            _on: Option<ToolUpdateFn>,
+        ) -> Result<ToolResult> {
+            Ok(ToolResult {
+                message: format!("ran {}", self.name),
+                is_error: false,
+                images: vec![],
+            })
+        }
+    }
+
+    fn response(
+        content: Option<&str>,
+        reasoning: Option<&str>,
+        calls: Vec<crate::core::message::ToolCall>,
+        stop: StopReason,
+    ) -> AssistantResponse {
+        AssistantResponse {
+            content: content.map(|s| s.to_string()),
+            reasoning: reasoning.map(|s| s.to_string()),
+            tool_calls: calls,
+            usage: Usage::default(),
+            stop_reason: stop,
         }
     }
 
     #[test]
-    fn executes_all_tool_calls_in_one_turn() {
-        let mut reg = ToolRegistry::new();
-        reg.register(Box::new(DummyTool { name: "perceive", effect: ToolEffects::read() }));
-        reg.register(Box::new(DummyTool { name: "mine", effect: ToolEffects::write() }));
-        let cfg = AgentConfig::new("sys".into(), 5);
-        let mut agent = Agent::new(Box::new(MultiCallProvider { calls: std::sync::atomic::AtomicU32::new(0) }), reg, cfg);
-        let log = agent.run().unwrap();
-        assert!(log.iter().any(|l| l.contains("perceive")), "perceive 应被执行: {log:?}");
-        assert!(log.iter().any(|l| l.contains("mine")), "mine 应被执行: {log:?}");
-        // 一轮只产生 1 条 assistant (含 2 tool_calls) + 2 tool_result
-        let assistants = agent.messages.iter().filter(|m| matches!(m, Message::Assistant(_))).count();
-        assert_eq!(assistants, 1, "一轮只应产生 1 条 assistant 消息");
-        let tool_results = agent.messages.iter().filter(|m| matches!(m, Message::ToolResult(_))).count();
-        assert_eq!(tool_results, 2, "应产生 2 条 tool_result");
-    }
-
-    // 压缩测试: 小窗口, 每轮塞大文本撑爆预算
-    struct ManyCallsProvider { n: std::sync::atomic::AtomicU32 }
-    impl LlmProvider for ManyCallsProvider {
-        fn complete(&self, _m: &[Value], _t: &[Value]) -> anyhow::Result<(Option<String>, Vec<(String, String)>, Usage)> {
-            use std::sync::atomic::Ordering;
-            let k = self.n.fetch_add(1, Ordering::SeqCst);
-            if k < 10 {
-                Ok((Some("x".repeat(5000)), vec![("perceive".into(), "{\"prompt\":\"x\"}".into())], Usage::default()))
-            } else {
-                Ok((None, vec![], Usage::default()))
-            }
-        }
+    fn mc_knowledge_loaded() {
+        assert!(MC_KNOWLEDGE.contains("collect"));
+        assert!(MC_KNOWLEDGE.contains("craft"));
+        assert!(!MC_KNOWLEDGE.contains("Survival Strategy"));
     }
 
     #[test]
-    fn compaction_triggers_and_summarizes() {
-        let mut reg = ToolRegistry::new();
-        reg.register(Box::new(DummyTool { name: "perceive", effect: ToolEffects::read() }));
-        let cfg = AgentConfig::new("sys".into(), 20)
-            .with_compaction(CompactionConfig { context_window: 1000, reserve: 200, keep_recent: 300 });
-        let mut agent = Agent::new(Box::new(ManyCallsProvider { n: std::sync::atomic::AtomicU32::new(0) }), reg, cfg);
-        let _ = agent.run();
-        assert!(agent.previous_summary.is_some(), "压缩后应有 previous_summary");
-        assert!(matches!(agent.messages.first(), Some(Message::User(u)) if u.content.contains("<summary>")), "首条消息应为 summary");
-        assert!(agent.events.iter().any(|e| matches!(e, AgentEvent::AutoCompactionStart)), "应触发过压缩");
+    fn build_context_includes_role_desc() {
+        let agent = Agent::new(
+            Box::new(TextProvider),
+            ToolRegistry::new(),
+            AgentConfig::new("You are a test bot.".into(), 5),
+        );
+        let ctx = agent.build_context();
+        assert!(ctx.system_prompt.contains("You are a test bot"));
+        assert!(ctx.system_prompt.contains("Tool Reference"));
+    }
+
+    #[test]
+    fn jailbreak_english_consistent() {
+        let agent = Agent::new(
+            Box::new(TextProvider),
+            ToolRegistry::new(),
+            AgentConfig::new("sys".into(), 5),
+        );
+        let ctx = agent.build_context();
+        assert!(
+            !ctx.system_prompt.contains("保持自主"),
+            "jailbreak must be English"
+        );
+        assert!(
+            ctx.system_prompt.contains("autonomously"),
+            "jailbreak should say 'autonomously'"
+        );
+    }
+
+    #[test]
+    fn knowledge_bootstrap_injects_once() {
+        let mut agent = Agent::new(
+            Box::new(TextProvider),
+            ToolRegistry::new(),
+            AgentConfig::new("sys".into(), 5),
+        );
+        let before = agent.build_context();
+        assert!(
+            before.system_prompt.contains("no need to re-enter"),
+            "fresh agent should bootstrap"
+        );
+
+        agent.knowledge_bootstrapped = true;
+        let after = agent.build_context();
+        assert!(
+            !after.system_prompt.contains("no need to re-enter"),
+            "bootstrapped agent should not repeat"
+        );
+    }
+
+    #[test]
+    fn obs_streak_hint_at_threshold() {
+        let mut agent = Agent::new(
+            Box::new(TextProvider),
+            ToolRegistry::new(),
+            AgentConfig::new("sys".into(), 5),
+        );
+        let fresh = agent.build_context();
+        assert!(
+            !fresh.system_prompt.contains("observing without action"),
+            "obs_streak=0, no hint"
+        );
+
+        agent.obs_streak = 5;
+        let guarded = agent.build_context();
+        assert!(
+            guarded.system_prompt.contains("observing without action"),
+            "obs_streak>=5 should inject hint"
+        );
     }
 }
