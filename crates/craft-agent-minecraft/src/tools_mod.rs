@@ -930,7 +930,9 @@ pub fn create_mc_mod_tools(
     // 搜索工具
     tools.push(Box::new(ModSearchBlockTool::new(adapter.clone())));
     // 查询工具
-    tools.push(Box::new(ModCraftableTool::new(adapter)));
+    tools.push(Box::new(ModCraftableTool::new(adapter.clone())));
+    // Mindcraft 对齐扩展工具
+    crate::tools_ext::register_mindcraft_tools(&mut tools, adapter);
     tools
 }
 

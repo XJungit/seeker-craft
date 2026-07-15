@@ -255,6 +255,29 @@ mine(ticks)
 - 2 planks + 1 stick -> 1 wooden_sword
 - 1 stick + 1 coal -> 4 torches
 
+--- Mindcraft-Aligned Tools ---
+
+searchForBlock(type)
+  Find nearest block of type and walk to it. Does NOT mine. Use to position yourself near a tree/cave/chest before manual action.
+  - type: block ID like "oak_log", "crafting_table", "chest"
+  - Usage: searchForBlock("oak_log")
+
+digDown(distance)
+  Dig straight down 1-10 blocks. Auto-stops for safety. Use to create pits, mine shafts, or hide underground.
+  - distance: blocks to dig down
+  - Usage: digDown(3)
+
+moveAway(distance)
+  Walk backward from current position. Use to back up before placing blocks or flee danger.
+  - distance: rough meters to retreat
+  - Usage: moveAway(5)
+
+consume(item, ticks)
+  Eat food by name. Finds the item in hotbar, equips it, right-clicks to eat.
+  - item: food name like "cooked_beef", "bread", "apple"
+  - ticks: 32≈1.6s for food
+  - Usage: consume("bread", 32)
+
 ## Decision Rules
 1. Read STATS data: position, health, hunger, nearby blocks and entities
 2. Gather resources with collect() - it handles aim+walk+mine automatically

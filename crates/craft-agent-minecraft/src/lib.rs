@@ -20,6 +20,8 @@ pub mod adapter_mod;
 pub mod bridge;
 #[cfg(feature = "mod-bridge")]
 pub mod tools_mod;
+#[cfg(feature = "mod-bridge")]
+pub mod tools_ext;
 
 /// 点击/移动目标与窗口边缘的安全间距（像素）。MC 光标移出窗口会自暂停，所有坐标必须内缩。
 pub const WINDOW_MARGIN: i32 = 20;
