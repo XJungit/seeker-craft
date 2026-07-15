@@ -209,6 +209,16 @@ attack(ticks)
   - ticks: duration (30 ~ 1.5 seconds), default 30
   - Usage: attack(30)
 
+move_to(x, y, z)
+  Navigate to exact world coordinates. Mod handles aiming+movement per tick. Use coordinates from NEARBY BLOCKS section.
+  - x/y/z: target position (block y + 0.5 for center)
+  - Usage: move_to(-35.0, 68.5, 56.0)
+
+look_at(x, y, z)
+  Instantly face a specific world coordinate. More precise than look(dx,dy). Use for accurate aiming before mining.
+  - x/y/z: block coordinates from NEARBY BLOCKS
+  - Usage: look_at(-35.0, 68.0, 56.0)
+
 --- Fine Control Tools ---
 
 look(dx, dy)

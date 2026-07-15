@@ -121,6 +121,14 @@ impl MinecraftModAdapter {
         Ok(())
     }
 
+    /// 精确看向世界坐标（mod 侧直接设置视角，无相对转动误差）。
+    pub fn look_at(&self, x: f64, y: f64, z: f64) -> Result<()> {
+        self.bridge
+            .borrow_mut()
+            .send(ModCommand::LookAt { x, y, z })?;
+        Ok(())
+    }
+
     /// 合成物品（调 mod 直接操作 Inventory 扣材料加结果，零视觉依赖）。
     pub fn craft(&self, item: &str, count: u32) -> Result<()> {
         self.bridge.borrow_mut().send(ModCommand::Craft {
@@ -178,6 +186,10 @@ fn build_scene_desc(st: &ModState) -> String {
     s.push_str(&format!(
         "  Light: sky={}/15 block={}/15  Weather: rain={} thunder={}\n",
         st.sky_light, st.block_light, st.raining, st.thundering
+    ));
+    s.push_str(&format!(
+        "  Held: {}\n",
+        st.held_item.replace("minecraft:", "")
     ));
     if !st.effects.is_empty() {
         let fx: Vec<String> = st

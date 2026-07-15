@@ -204,6 +204,12 @@ public class CraftAgentBridge implements ClientModInitializer {
         }
         o.add("inventory", inv);
 
+        // 手持物品
+        ItemStack held = player.getMainHandItem();
+        o.addProperty("held_item",
+            held.isEmpty() ? "minecraft:air"
+            : BuiltInRegistries.ITEM.getKey(held.getItem()).toString());
+
         // 准星所指方块（MC 自带 raycast）
         HitResult hit = mc.hitResult;
         if (hit != null && hit.getType() == HitResult.Type.BLOCK) {

@@ -276,22 +276,46 @@ impl GameTool for ModVisualPerceiveTool {
 
 // ═══ 高层工具（Mindcraft 风格，封装操作闭环）═══
 
-/// 根据方块类型估算挖掘 tick 数（徒手，无工具加速）。
-/// 实际时间受工具类型影响，这里取保守上界保证挖掉。
-fn mine_ticks_for(block_id: &str) -> u32 {
-    if block_id.contains("_log") || block_id.contains("planks") {
-        100 // 木头: 徒手 3s, 给 5s 余量
+/// 根据方块类型和手持工具估算挖掘 tick 数。
+/// MC 硬度 × 工具效率倍率 → 实际 tick（20 tick = 1 秒）。
+fn mine_ticks_for(block_id: &str, held_item: &str) -> u32 {
+    // 基础 tick（徒手，不含工具加速）
+    let base: u32 = if block_id.contains("_log") || block_id.contains("planks") {
+        100 // 木头硬度 2.0 → 3s, 给 5s
     } else if block_id.contains("stone") || block_id.contains("cobble") {
-        200 // 石头: 徒手 7.5s, 给 10s
+        200 // 石头硬度 1.5 → 徒手 7.5s, 给 10s
     } else if block_id.contains("_ore") {
-        250 // 矿石: 徒手极慢, 25s，实际需要对应镐
+        if block_id.contains("coal") || block_id.contains("copper") { 200 }
+        else if block_id.contains("iron") { 250 }
+        else { 250 }
     } else if block_id.contains("dirt") || block_id.contains("grass") || block_id.contains("sand") {
-        30 // 泥土/沙子: <1s
+        30
     } else if block_id.contains("leaves") {
-        20 // 树叶: <0.5s
+        20
     } else {
-        100 // 默认 5s
-    }
+        100
+    };
+
+    // 工具加速：根据手持物品类型乘以倍率
+    let tool_mult: f64 = if held_item.contains("_axe") {
+        if held_item.contains("wooden") { 0.5 }
+        else if held_item.contains("stone") { 0.25 }
+        else { 0.2 }
+    } else if held_item.contains("_pickaxe") {
+        if held_item.contains("wooden") { 0.6 }
+        else if held_item.contains("stone") { 0.3 }
+        else { 0.2 }
+    } else if held_item.contains("_shovel") {
+        0.4
+    } else if held_item.contains("_sword") && block_id.contains("leaves") {
+        0.2
+    } else if held_item.contains("shears") && block_id.contains("leaves") {
+        0.07 // 剪刀极快
+    } else {
+        1.0 // 徒手
+    };
+
+    (base as f64 * tool_mult).max(5.0) as u32
 }
 
 /// 辅助：从适配器拿到最近状态并找最近目标方块。
@@ -354,7 +378,6 @@ impl GameTool for ModCollectTool {
         let target = args["target"].as_str().unwrap_or("oak_log");
         let want = args["count"].as_u64().unwrap_or(1) as u32;
         let mut adapter = self.adapter.borrow_mut();
-        let mine_ticks = mine_ticks_for(target);
 
         let st = adapter.reload()?;
         let before: u32 = st
@@ -363,6 +386,7 @@ impl GameTool for ModCollectTool {
             .filter(|i| i.id.contains(target))
             .map(|i| i.count)
             .sum();
+        let mine_ticks = mine_ticks_for(target, &st.held_item);
 
         let max_attempts = (want * 5).max(15);
         let mut got = before;
@@ -634,6 +658,50 @@ impl GameTool for ModUseItemTool {
     }
 }
 
+// ── MoveTo（导航到世界坐标）──
+
+pub struct ModMoveToTool { adapter: Rc<RefCell<MinecraftModAdapter>> }
+impl ModMoveToTool { pub fn new(adapter: Rc<RefCell<MinecraftModAdapter>>) -> Self { Self { adapter } } }
+impl GameTool for ModMoveToTool {
+    fn name(&self) -> &str { "move_to" }
+    fn description(&self) -> &str {
+        "Navigate to exact world coordinates. Mod handles aiming and forward movement each tick, no oscillation. x/y/z: target position from NEARBY BLOCKS section. Use for precise positioning before mining or placing blocks."
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({"type":"object","properties":{"x":{"type":"number","description":"Target X coordinate"},"y":{"type":"number","description":"Target Y coordinate (block Y + 0.5 for center)"},"z":{"type":"number","description":"Target Z coordinate"}},"required":["x","y","z"]})
+    }
+    fn effects(&self) -> ToolEffects { ToolEffects::write() }
+    fn execute(&self, _id: &str, args: Value, _on_update: Option<ToolUpdateFn>) -> anyhow::Result<ToolResult> {
+        let x = args["x"].as_f64().unwrap_or(0.0);
+        let y = args["y"].as_f64().unwrap_or(0.0);
+        let z = args["z"].as_f64().unwrap_or(0.0);
+        self.adapter.borrow_mut().move_to(x, y, z)?;
+        Ok(ToolResult { message: format!("moving to ({:.1},{:.1},{:.1})", x, y, z), is_error: false, images: vec![] })
+    }
+}
+
+// ── LookAt（精确看向世界坐标）──
+
+pub struct ModLookAtTool { adapter: Rc<RefCell<MinecraftModAdapter>> }
+impl ModLookAtTool { pub fn new(adapter: Rc<RefCell<MinecraftModAdapter>>) -> Self { Self { adapter } } }
+impl GameTool for ModLookAtTool {
+    fn name(&self) -> &str { "look_at" }
+    fn description(&self) -> &str {
+        "Face a specific world coordinate precisely. Uses mod's absolute look-at to snap crosshair to target. x/y/z: block coordinates from NEARBY BLOCKS. Much more accurate than look(dx,dy) for precise aiming."
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({"type":"object","properties":{"x":{"type":"number","description":"Target X coordinate"},"y":{"type":"number","description":"Target Y coordinate"},"z":{"type":"number","description":"Target Z coordinate"}},"required":["x","y","z"]})
+    }
+    fn effects(&self) -> ToolEffects { ToolEffects::read() }
+    fn execute(&self, _id: &str, args: Value, _on_update: Option<ToolUpdateFn>) -> anyhow::Result<ToolResult> {
+        let x = args["x"].as_f64().unwrap_or(0.0);
+        let y = args["y"].as_f64().unwrap_or(0.0);
+        let z = args["z"].as_f64().unwrap_or(0.0);
+        self.adapter.borrow_mut().look_at(x, y, z)?;
+        Ok(ToolResult { message: format!("looking at ({:.1},{:.1},{:.1})", x, y, z), is_error: false, images: vec![] })
+    }
+}
+
 // ── 工厂 ──
 
 /// 构建完整的 mod 工具集。enable_visual_perceive 仅在配置了 VLM 时为 true。
@@ -664,7 +732,10 @@ pub fn create_mc_mod_tools(
     tools.push(Box::new(ModPlaceTool::new(adapter.clone())));
     tools.push(Box::new(ModEquipTool::new(adapter.clone())));
     tools.push(Box::new(ModUseItemTool::new(adapter.clone())));
-    tools.push(Box::new(ModAttackTool::new(adapter)));
+    tools.push(Box::new(ModAttackTool::new(adapter.clone())));
+    // 导航与精确瞄准
+    tools.push(Box::new(ModMoveToTool::new(adapter.clone())));
+    tools.push(Box::new(ModLookAtTool::new(adapter)));
     tools
 }
 

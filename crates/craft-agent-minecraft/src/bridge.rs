@@ -121,7 +121,12 @@ pub struct ModState {
     /// 方块光照等级（0~15）。缺失按 0。
     #[serde(default)]
     pub block_light: i32,
+    /// 主手物品 id（如 minecraft:wooden_pickaxe），缺失按 air。
+    #[serde(default = "default_held_item")]
+    pub held_item: String,
 }
+
+fn default_held_item() -> String { "minecraft:air".into() }
 
 /// 发给 mod 的动作命令（serde tag = `type` 字段，与 mod 侧小写匹配）。
 #[derive(Debug, Clone, Serialize)]
