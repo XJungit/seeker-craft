@@ -366,6 +366,48 @@ fn find_nearest(adapter: &MinecraftModAdapter, target: &str) -> Option<(crate::b
 }
 
 // ═══════════════════════════════════════════════════════════════
+// rememberHere / goToRememberedPlace / savedPlaces — 位置记忆
+// ═══════════════════════════════════════════════════════════════
+
+pub struct ModRememberTool { adapter: Rc<RefCell<MinecraftModAdapter>> }
+impl ModRememberTool { pub fn new(a: Rc<RefCell<MinecraftModAdapter>>) -> Self { Self { adapter: a } } }
+impl GameTool for ModRememberTool {
+    fn name(&self) -> &str { "rememberHere" }
+    fn description(&self) -> &str { "Save current position with a name for later recall. name: label like 'base', 'cave_entrance', 'tree_farm'." }
+    fn parameters(&self) -> Value { serde_json::json!({"type":"object","properties":{"name":{"type":"string","description":"Label for this location"}},"required":["name"]}) }
+    fn effects(&self) -> ToolEffects { ToolEffects::read() }
+    fn execute(&self, _id: &str, args: Value, _on_update: Option<ToolUpdateFn>) -> anyhow::Result<ToolResult> {
+        let name = args["name"].as_str().unwrap_or("here");
+        Ok(ToolResult { message: self.adapter.borrow().remember_here(name), is_error: false, images: vec![] })
+    }
+}
+
+pub struct ModGoPlaceTool { adapter: Rc<RefCell<MinecraftModAdapter>> }
+impl ModGoPlaceTool { pub fn new(a: Rc<RefCell<MinecraftModAdapter>>) -> Self { Self { adapter: a } } }
+impl GameTool for ModGoPlaceTool {
+    fn name(&self) -> &str { "goToRememberedPlace" }
+    fn description(&self) -> &str { "Walk to a previously saved location. name: label from rememberHere. Uses move_to for navigation." }
+    fn parameters(&self) -> Value { serde_json::json!({"type":"object","properties":{"name":{"type":"string","description":"Location label from rememberHere"}},"required":["name"]}) }
+    fn effects(&self) -> ToolEffects { ToolEffects::write() }
+    fn execute(&self, _id: &str, args: Value, _on_update: Option<ToolUpdateFn>) -> anyhow::Result<ToolResult> {
+        let name = args["name"].as_str().unwrap_or("here");
+        Ok(ToolResult { message: self.adapter.borrow().go_to_place(name)?, is_error: false, images: vec![] })
+    }
+}
+
+pub struct ModListPlacesTool { adapter: Rc<RefCell<MinecraftModAdapter>> }
+impl ModListPlacesTool { pub fn new(a: Rc<RefCell<MinecraftModAdapter>>) -> Self { Self { adapter: a } } }
+impl GameTool for ModListPlacesTool {
+    fn name(&self) -> &str { "savedPlaces" }
+    fn description(&self) -> &str { "List all saved location names and coordinates from rememberHere." }
+    fn parameters(&self) -> Value { serde_json::json!({"type":"object","properties":{},"required":[]}) }
+    fn effects(&self) -> ToolEffects { ToolEffects::read() }
+    fn execute(&self, _id: &str, _args: Value, _on_update: Option<ToolUpdateFn>) -> anyhow::Result<ToolResult> {
+        Ok(ToolResult { message: self.adapter.borrow().list_places(), is_error: false, images: vec![] })
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
 // 工厂
 // ═══════════════════════════════════════════════════════════════
 
@@ -378,6 +420,7 @@ pub fn create_mc_mod_tools(adapter: Rc<RefCell<MinecraftModAdapter>>, image_max_
     tools.push(Box::new(ModMoveToTool::new(adapter.clone()))); tools.push(Box::new(ModLookAtTool::new(adapter.clone())));
     tools.push(Box::new(ModSearchBlockTool::new(adapter.clone()))); tools.push(Box::new(ModMoveAwayTool::new(adapter.clone())));
     tools.push(Box::new(ModDigDownTool::new(adapter.clone()))); tools.push(Box::new(ModConsumeTool::new(adapter.clone())));
+    tools.push(Box::new(ModRememberTool::new(adapter.clone()))); tools.push(Box::new(ModGoPlaceTool::new(adapter.clone()))); tools.push(Box::new(ModListPlacesTool::new(adapter.clone())));
     tools.push(Box::new(ModCraftableTool::new(adapter)));
     tools
 }

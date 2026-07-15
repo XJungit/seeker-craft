@@ -20,6 +20,8 @@ use std::cell::RefCell;
 use std::thread;
 use std::time::Duration;
 
+use std::collections::HashMap;
+
 /// mine 默认 60 tick（3 秒）→ 木头破坏时间。
 const MINE_TICKS: u32 = 60;
 
@@ -31,6 +33,8 @@ pub struct MinecraftModAdapter {
     /// 可选 VLM 客户端：仅在需要视觉补充时调用（如识别 GUI 界面、确认合成配方）。
     /// 日常感知走 mod 结构化数据，不消耗 VLM API 额度。
     vision: Option<Box<dyn VisionClient>>,
+    /// 位置记忆（rememberHere / goToRememberedPlace）
+    saved_places: RefCell<HashMap<String, (f64, f64, f64)>>,
 }
 
 impl MinecraftModAdapter {
@@ -51,6 +55,7 @@ impl MinecraftModAdapter {
             bridge: RefCell::new(bridge),
             last: RefCell::new(None),
             vision,
+            saved_places: RefCell::new(HashMap::new()),
         })
     }
 
@@ -121,12 +126,36 @@ impl MinecraftModAdapter {
         Ok(())
     }
 
-    /// 精确看向世界坐标（mod 侧直接设置视角，无相对转动误差）。
+    /// 精确看向世界坐标
     pub fn look_at(&self, x: f64, y: f64, z: f64) -> Result<()> {
-        self.bridge
-            .borrow_mut()
-            .send(ModCommand::LookAt { x, y, z })?;
+        self.bridge.borrow_mut().send(ModCommand::LookAt { x, y, z })?;
         Ok(())
+    }
+
+    /// 记住当前位置
+    pub fn remember_here(&self, name: &str) -> String {
+        let st = self.reload().ok();
+        if let Some(s) = st {
+            let pos = (s.position[0], s.position[1], s.position[2]);
+            self.saved_places.borrow_mut().insert(name.to_string(), pos);
+            format!("saved '{name}' at ({:.1},{:.1},{:.1})", pos.0, pos.1, pos.2)
+        } else { format!("failed to save '{name}'") }
+    }
+
+    /// 去已记住的位置
+    pub fn go_to_place(&self, name: &str) -> Result<String> {
+        let pos = self.saved_places.borrow().get(name).cloned();
+        match pos {
+            Some((x, y, z)) => { self.move_to(x, y, z)?; Ok(format!("moving to '{name}' ({:.1},{:.1},{:.1})", x, y, z)) }
+            None => Ok(format!("place '{name}' not found")),
+        }
+    }
+
+    /// 列出所有已保存位置
+    pub fn list_places(&self) -> String {
+        let places = self.saved_places.borrow();
+        if places.is_empty() { "no saved places".into() }
+        else { places.iter().map(|(k, (x,y,z))| format!("  {k}: ({x:.0},{y:.0},{z:.0})")).collect::<Vec<_>>().join("\n") }
     }
 
     /// 合成物品（调 mod 直接操作 Inventory 扣材料加结果，零视觉依赖）。

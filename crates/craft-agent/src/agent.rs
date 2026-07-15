@@ -223,13 +223,24 @@ mine(ticks)
 ## Tool Reference — Query
 
 craftable()
-  Query craftable items and max count from current inventory. Call BEFORE craft().
+  Query craftable items from current inventory. Returns item:max_count. Call BEFORE craft().
 
 perceive()
-  Full state snapshot (<100ms). Auto-injected each turn — rarely need manual call.
+  Full state snapshot (<100ms). Auto-injected each turn.
 
 visual_perceive(prompt)
-  Screenshot+VLM (3-5s). Use ONLY for GUI: crafting table, furnace, chest.
+  Screenshot+VLM (3-5s). Use ONLY for GUI.
+
+savedPlaces()
+  List all locations saved with rememberHere.
+
+## Tool Reference — Memory
+
+rememberHere(name)
+  Save current position with a label. name: "base","cave","farm".
+
+goToRememberedPlace(name)
+  Walk to a saved location. Uses move_to navigation.
 
 ## Crafting Recipes (craft handles automatically)
 1 log→4 planks | 2 planks→4 sticks | 4 planks→1 crafting_table
