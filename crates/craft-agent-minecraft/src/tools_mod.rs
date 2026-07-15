@@ -120,7 +120,7 @@ impl GameTool for ModLookTool {
         "look"
     }
     fn description(&self) -> &str {
-        "Rotate camera: dx>0 turns right, dx<0 turns left (300≈90°). dy>0 looks down, dy<0 looks up. Use for precise aiming before collect/mine."
+        "Rotate camera: dx>0=turn right (300≈90°). ⚠️ dy>0=look UP(sky), dy<0=look DOWN(ground). Prefer look_at() for precise block targeting."
     }
     fn parameters(&self) -> Value {
         serde_json::json!({"type":"object","properties":{"dx":{"type":"integer","description":"Horizontal rotation amount"},"dy":{"type":"integer","description":"Vertical rotation amount"}},"required":["dx","dy"]})
@@ -203,7 +203,7 @@ impl GameTool for ModMineTool {
         "mine"
     }
     fn description(&self) -> &str {
-        "Hold left-click to mine the targeted block. Returns whether logs were actually collected. Wood=60ticks(3s), stone=120ticks(6s). Use collect() for automatic gathering instead."
+        "Hold left-click to mine targeted block. Mod automatically keeps mining until the block breaks (max ticks as safety timeout). No fixed duration — returns true if block broken. Use collect() for automatic gathering instead."
     }
     fn parameters(&self) -> Value {
         serde_json::json!({"type":"object","properties":{"ticks":{"type":"integer","description":"Mining duration in ticks","default":60}}})
@@ -373,7 +373,7 @@ impl GameTool for ModCollectTool {
         "collect"
     }
     fn description(&self) -> &str {
-        "AUTO find, aim, walk to, and mine blocks. Your primary tool for gathering resources. target: block ID (e.g. oak_log, birch_log, stone, coal_ore). count: how many to collect. Each block takes ~3-5s. Returns collected count."
+        "AUTO find, walk to, and mine target blocks. Uses mod-side move_to for smooth navigation (no camera oscillation). Mod-side mining auto-stops when block breaks (no fixed tick guessing). Your primary gathering tool. count: how many to collect."
     }
     fn parameters(&self) -> Value {
         serde_json::json!({"type":"object","properties":{"target":{"type":"string","description":"Block ID to collect, e.g. oak_log, stone, coal_ore"},"count":{"type":"integer","description":"Number to collect","default":1}},"required":["target"]})
@@ -473,7 +473,7 @@ impl GameTool for ModCraftTool {
         "craft"
     }
     fn description(&self) -> &str {
-        "Craft an item from inventory materials. Mod handles the recipe automatically (2x2 or 3x3). No visual input needed. item: what to craft (oak_planks, stick, crafting_table, wooden_pickaxe, wooden_axe, wooden_sword, torch). count: how many. Recipe list: 1 log→4 planks, 2 planks→4 sticks, 4 planks→1 crafting_table, 3 planks+2 sticks→wooden_pickaxe/axe, 2 planks+1 stick→wooden_sword, 1 stick+1 coal→4 torches."
+        "Craft items directly via inventory manipulation. Mod handles: finding recipe, consuming materials, adding result. item: target item name like oak_planks, stick, crafting_table, wooden_pickaxe, torch. count: how many. Always check craftable() first if unsure."
     }
     fn parameters(&self) -> Value {
         serde_json::json!({"type":"object","properties":{"item":{"type":"string","description":"Item to craft, e.g. crafting_table, oak_planks, stick, wooden_pickaxe"},"count":{"type":"integer","description":"How many to craft","default":1}},"required":["item"]})
@@ -685,7 +685,7 @@ impl GameTool for ModMoveToTool {
         "move_to"
     }
     fn description(&self) -> &str {
-        "Navigate to exact world coordinates. Mod handles aiming and forward movement each tick, no oscillation. x/y/z: target position from NEARBY BLOCKS section. Use for precise positioning before mining or placing blocks."
+        "Navigate to world coordinates. Mod re-aims every tick toward the target while walking — no camera oscillation. Stops within 1.5m of target. Uses obstacle detection (strafe around walls, jump over blocks). Takes ~2-5s depending on distance."
     }
     fn parameters(&self) -> Value {
         serde_json::json!({"type":"object","properties":{"x":{"type":"number","description":"Target X coordinate"},"y":{"type":"number","description":"Target Y coordinate (block Y + 0.5 for center)"},"z":{"type":"number","description":"Target Z coordinate"}},"required":["x","y","z"]})
@@ -842,6 +842,57 @@ impl GameTool for ModCraftableTool {
     }
 }
 
+// ── SearchForBlock（Mindcraft !searchForBlock 风格）──
+
+pub struct ModSearchBlockTool {
+    adapter: Rc<RefCell<MinecraftModAdapter>>,
+}
+impl ModSearchBlockTool {
+    pub fn new(adapter: Rc<RefCell<MinecraftModAdapter>>) -> Self {
+        Self { adapter }
+    }
+}
+impl GameTool for ModSearchBlockTool {
+    fn name(&self) -> &str {
+        "searchForBlock"
+    }
+    fn description(&self) -> &str {
+        "Find the nearest block of a given type and navigate to it. Does NOT mine the block — just walks to it. Use this before placing blocks nearby or for exploration. Returns what was found and distance moved."
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({"type":"object","properties":{"type":{"type":"string","description":"Block type to search for, e.g. oak_log, stone, crafting_table"}},"required":["type"]})
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _id: &str,
+        args: Value,
+        _on_update: Option<ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let target = args["type"].as_str().unwrap_or("oak_log");
+        let adapter = self.adapter.borrow_mut();
+        let Some((block, _)) = find_nearest(&adapter, target) else {
+            return Ok(ToolResult {
+                message: format!("searchForBlock: no {target} found nearby"),
+                is_error: true,
+                images: vec![],
+            });
+        };
+        adapter.move_to(block.x, block.y + 0.5, block.z)?;
+        let dist = format!("{:.1}m", block.dist);
+        Ok(ToolResult {
+            message: format!(
+                "walked to nearest {} at ({:.0},{:.0},{:.0}), distance was {}",
+                target, block.x, block.y, block.z, dist
+            ),
+            is_error: false,
+            images: vec![],
+        })
+    }
+}
+
 // ── 工厂 ──
 
 /// 构建完整的 mod 工具集。enable_visual_perceive 仅在配置了 VLM 时为 true。
@@ -876,6 +927,8 @@ pub fn create_mc_mod_tools(
     // 导航与精确瞄准
     tools.push(Box::new(ModMoveToTool::new(adapter.clone())));
     tools.push(Box::new(ModLookAtTool::new(adapter.clone())));
+    // 搜索工具
+    tools.push(Box::new(ModSearchBlockTool::new(adapter.clone())));
     // 查询工具
     tools.push(Box::new(ModCraftableTool::new(adapter)));
     tools
