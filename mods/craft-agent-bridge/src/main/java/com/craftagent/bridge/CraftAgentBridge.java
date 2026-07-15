@@ -537,7 +537,13 @@ public class CraftAgentBridge implements ClientModInitializer {
             case "shift": return opt.keyShift;
             case "ctrl": case "sprint": return opt.keySprint;
             case "e": case "inventory": return opt.keyInventory;
-            default: return null;
+            default:
+                // Number keys 1-9: hotbar slots
+                try {
+                    int slot = Integer.parseInt(k);
+                    if (slot >= 1 && slot <= 9) return opt.keyHotbarSlots[slot - 1];
+                } catch (NumberFormatException ignored) {}
+                return null;
         }
     }
 
