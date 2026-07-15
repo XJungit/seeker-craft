@@ -407,10 +407,16 @@ impl Agent {
                 .push_str(" Start executing tasks directly, no need to re-enter game knowledge.");
         }
         if self.obs_streak >= 5 {
-            jailbreak.push_str(&format!(
-                " [Hint: {} steps observing without action. Pick any tool and act now.]",
-                self.obs_streak
-            ));
+            if self.obs_streak >= 10 {
+                jailbreak.push_str(
+                    " [CRITICAL: You have been stuck in a loop for 10+ steps. STOP repeating the same action. Pick a COMPLETELY DIFFERENT tool RIGHT NOW — collect, craft, press, mine, move_to — anything but what you've been doing.]",
+                );
+            } else {
+                jailbreak.push_str(&format!(
+                    " [Hint: {} steps observing without action. Pick any tool and act now.]",
+                    self.obs_streak
+                ));
+            }
         }
 
         let mut builder = PromptBuilder::new()
@@ -754,8 +760,9 @@ impl Agent {
             let goal = self.config.prompt.as_str();
             let _ = self.skill_lib.extract_from_turn(&tool_names, goal, scene);
         }
-        self.events.push(AgentEvent::TurnEnd { turn });
-        return Ok((log, true));
+            self.events.push(AgentEvent::TurnEnd { turn });
+            self.persist_turn()?;
+            return Ok((log, true));
     }
 
     fn persist_turn(&mut self) -> Result<()> {
@@ -950,7 +957,7 @@ impl Agent {
 
 /// 判断工具是否为纯观察类（不产生世界状态变化的工具）。
 fn is_obs_tool(name: &str) -> bool {
-    matches!(name, "perceive" | "visual_perceive" | "look")
+    matches!(name, "perceive" | "visual_perceive" | "look" | "look_at")
 }
 
 // ── Compaction prompts ──
