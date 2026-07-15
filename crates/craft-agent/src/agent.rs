@@ -400,7 +400,7 @@ impl Agent {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_millis() as i64;
-        let skill_examples = self.skill_lib.to_examples(recent_perception, 3, now_ms);
+        let skill_examples = self.skill_lib.to_examples(recent_perception, &self.config.prompt, 3, now_ms);
 
         let mut jailbreak =
             "自主行动。工具失败时调整参数重试——不准假装成功。".to_string();

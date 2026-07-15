@@ -673,6 +673,7 @@ mod tests {
                     total_tokens: 15,
                 },
                 turn: 3,
+                skills_json: None,
             },
         );
         s.append_message(Message::assistant_text("after"));
