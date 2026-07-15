@@ -1052,7 +1052,7 @@ mod tests {
             AgentConfig::new("You are a test bot.".into(), 5),
         );
         let ctx = agent.build_context();
-        assert!(ctx.system_prompt.contains("一个测试机器人"));
+        assert!(ctx.system_prompt.contains("You are a test bot"));
         assert!(ctx.system_prompt.contains("工具参考"));
     }
 
@@ -1111,7 +1111,7 @@ mod tests {
         agent.obs_streak = 5;
         let guarded = agent.build_context();
         assert!(
-            guarded.system_prompt.contains("不行动"),
+            guarded.system_prompt.contains("观察"),
             "obs_streak>=5 should inject hint"
         );
     }
@@ -1208,7 +1208,7 @@ mod tests {
         let has_nudge = agent
             .messages
             .iter()
-            .any(|m| matches!(m, Message::User(u) if u.content.contains("Continue")));
+            .any(|m| matches!(m, Message::User(u) if u.content.contains("继续")));
         assert!(
             has_nudge,
             "text-only responses should trigger nudge message"
