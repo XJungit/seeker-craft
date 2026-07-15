@@ -10,6 +10,7 @@ use serde::Serialize;
 use serde_json::Value;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // ── Provider ──
@@ -324,8 +325,8 @@ pub struct Agent {
     pub session: Option<Session>,
     pending_checkpoint: bool,
     session_msg_offset: usize,
-    /// Retry abort signal
-    pub retry_abort: AtomicBool,
+    /// Retry abort signal (shared with controller for instant stop)
+    pub retry_abort: Arc<AtomicBool>,
 }
 
 impl Agent {
@@ -350,7 +351,7 @@ impl Agent {
             session: None,
             pending_checkpoint: false,
             session_msg_offset: 0,
-            retry_abort: AtomicBool::new(false),
+            retry_abort: Arc::new(AtomicBool::new(false)),
         }
     }
 

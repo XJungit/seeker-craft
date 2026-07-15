@@ -55,9 +55,10 @@ pub enum AgentEvent {
 pub struct AgentController {
     pub pause: Arc<AtomicBool>,
     pub stop: Arc<AtomicBool>,
+    /// Shared with agent.retry_abort — set by stop button to cancel LLM retries instantly.
+    pub abort: Arc<AtomicBool>,
     pub running: Arc<AtomicBool>,
     pub status: std::sync::Mutex<Status>,
-    /// 运行时动态注入的新目标（UI 推送到此队列，agent 循环每次检查并注入）。
     goal_queue: std::sync::Mutex<VecDeque<String>>,
 }
 
@@ -66,6 +67,7 @@ impl AgentController {
         Self {
             pause: Arc::new(AtomicBool::new(false)),
             stop: Arc::new(AtomicBool::new(false)),
+            abort: Arc::new(AtomicBool::new(false)),
             running: Arc::new(AtomicBool::new(false)),
             status: std::sync::Mutex::new(Status {
                 running: false,
@@ -106,6 +108,7 @@ impl AgentController {
 
     pub fn request_stop(&self) {
         self.stop.store(true, Ordering::Relaxed);
+        self.abort.store(true, Ordering::Relaxed);
     }
 }
 
@@ -145,7 +148,10 @@ pub fn spawn_agent_loop(
         text: format!("Agent 启动 | 目标: {goal} | {steps_text}"),
     });
 
+    // Share abort signal with controller for instant stop
+    let abort = controller.abort.clone();
     std::thread::spawn(move || {
+        let goal = controller.status.lock().unwrap().goal.clone();
         let _ = dotenvy::dotenv();
         if let Err(e) = run_agent(
             &goal,
@@ -156,6 +162,7 @@ pub fn spawn_agent_loop(
             shots_dir,
             &ctrl,
             &tx,
+            &abort,
         ) {
             let _ = tx.send(AgentEvent::Error {
                 message: format!("{e}"),
@@ -178,6 +185,7 @@ fn run_agent(
     shots_dir: Option<PathBuf>,
     ctrl: &AgentController,
     event_tx: &broadcast::Sender<AgentEvent>,
+    abort: &Arc<AtomicBool>,
 ) -> anyhow::Result<()> {
     let model_cfg = ModelConfig::load(cfg_path)?;
     let perceive_cfg = model_cfg.perceive.unwrap_or_default();
@@ -254,7 +262,9 @@ fn run_agent(
             s.save_to(path)?;
             s
         };
-        Agent::new(Box::new(Lp { llm }), registry, agent_cfg).with_session(sess)
+        let mut agent = Agent::new(Box::new(Lp { llm }), registry, agent_cfg).with_session(sess);
+        agent.retry_abort = abort.clone();
+        agent
     };
 
     let _ = event_tx.send(AgentEvent::Log {
@@ -281,7 +291,6 @@ fn run_agent(
 
     loop {
         if ctrl.stop.load(Ordering::Relaxed) {
-            agent.retry_abort.store(true, Ordering::Relaxed);
             let _ = event_tx.send(AgentEvent::Done {
                 reason: "用户手动停止".into(),
             });
