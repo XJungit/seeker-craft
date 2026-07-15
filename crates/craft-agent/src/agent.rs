@@ -547,8 +547,8 @@ impl Agent {
                         let state_msg =
                             format!("【当前游戏状态（自动注入）】\n{}", result.message);
                         self.messages.retain(|m| {
-                                !matches!(m, Message::User(u) if u.content.starts_with("【Current Game State"))
-                            });
+                            !matches!(m, Message::User(u) if u.content.starts_with("【当前游戏状态"))
+                        });
                         self.messages.push(Message::user(state_msg));
                     }
                     Err(e) => {
@@ -751,7 +751,7 @@ impl Agent {
                 .iter()
                 .rev()
                 .find_map(|m| match m {
-                    Message::User(u) if u.content.starts_with("【Current Game State") => {
+                    Message::User(u) if u.content.starts_with("【当前游戏状态") => {
                         Some(u.content.as_str())
                     }
                     _ => None,
