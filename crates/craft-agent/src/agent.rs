@@ -230,10 +230,10 @@ craftable()
 --- Fine Control Tools ---
 
 look(dx, dy)
-  Rotate camera precisely. dx>0 turns right (~300 units ~ 90 deg), dy>0 looks down.
-  - dx: horizontal rotation amount (integer)
-  - dy: vertical rotation amount (integer)
-  - Usage: look(150, 0)
+  Rotate camera. ⚠️ dy>0 looks UP (toward sky), dy<0 looks DOWN (toward ground). Prefer look_at() for precise targeting.
+  - dx: horizontal rotation (300≈90° right)
+  - dy: vertical rotation (65≈20° up), use NEGATIVE to look down
+  - Usage: look(0, -65) to look down at ground
 
 press(keys, ticks)
   Hold keyboard keys for movement/interaction.
