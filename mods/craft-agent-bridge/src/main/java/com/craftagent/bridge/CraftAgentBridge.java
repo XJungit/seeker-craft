@@ -359,14 +359,35 @@ public class CraftAgentBridge implements ClientModInitializer {
                 break;
             }
             case "mine": {
-                int ticks = req.has("ticks") ? req.get("ticks").getAsInt() : 60;
+                int maxTicks = req.has("ticks") ? req.get("ticks").getAsInt() : 200;
                 int before = countLogs(player);
+                // 挖到方块破坏为止，不是固定 tick
+                HitResult hit = mc.hitResult;
+                BlockPos target = null;
+                BlockState targetState = null;
+                if (hit != null && hit.getType() == HitResult.Type.BLOCK) {
+                    target = ((BlockHitResult) hit).getBlockPos();
+                    targetState = level.getBlockState(target);
+                }
                 KeyMapping attack = mc.options.keyAttack;
-                holdKey(attack, ticks);
+                int usedTicks = 0;
+                for (int t = 0; t < maxTicks; t++) {
+                    attack.setDown(true);
+                    try { Thread.sleep(50); } catch (InterruptedException e) { Thread.currentThread().interrupt(); break; }
+                    attack.setDown(false);
+                    usedTicks++;
+                    // 检查方块是否已被破坏
+                    if (target != null && targetState != null) {
+                        BlockState current = level.getBlockState(target);
+                        if (!current.equals(targetState) || current.isAir()) break;
+                    }
+                }
+                attack.setDown(false);
                 int after = countLogs(player);
                 o.addProperty("logs_before", before);
                 o.addProperty("logs_after", after);
-                o.addProperty("detail", "mine " + ticks + "ticks");
+                o.addProperty("detail", "mine " + usedTicks + "ticks (block broken=" + (after > before) + ")");
+                o.addProperty("ok", true);
                 break;
             }
             case "move_to": {
@@ -418,32 +439,65 @@ public class CraftAgentBridge implements ClientModInitializer {
         }
     }
 
-    /** 简易寻路：转向目标并前进，水平距离 < 1.5 或超时停止；卡墙则跳一下。 */
+    /** 简易寻路：转向目标并前进。遇障碍时左右绕行、跳起跨障。 */
     private void moveToward(LocalPlayer player, Options options, double tx, double ty, double tz, int maxTicks) {
-        KeyMapping fwd = options.keyUp; // 前进
+        KeyMapping fwd = options.keyUp;
+        KeyMapping left = options.keyLeft;
+        KeyMapping right = options.keyRight;
         KeyMapping jump = options.keyJump;
+        int stuckTicks = 0;
+        int strafeDir = 1; // 1=右绕, -1=左绕, 交替
+        Vec3 lastPos = player.position();
+
         for (int i = 0; i < maxTicks; i++) {
             Vec3 p = player.position();
             double ddx = tx - p.x, ddz = tz - p.z;
             double horiz = Math.sqrt(ddx * ddx + ddz * ddz);
             if (horiz < 1.5) break;
-            // 水平朝目标设 yaw（忽略 y 以稳定前进）
+
             float yaw = (float) Math.toDegrees(Math.atan2(-ddx, ddz));
             player.setYRot(yaw);
             fwd.setDown(true);
+
+            // 检测卡墙
             if (player.horizontalCollision) {
+                stuckTicks++;
                 jump.setDown(true);
+                // 卡住超过 5 tick 时左右绕行
+                if (stuckTicks > 5) {
+                    if (strafeDir > 0) {
+                        right.setDown(true);
+                        left.setDown(false);
+                    } else {
+                        left.setDown(true);
+                        right.setDown(false);
+                    }
+                    // 绕行 15 tick 后换方向
+                    if (stuckTicks > 20) {
+                        strafeDir = -strafeDir;
+                        stuckTicks = 6;
+                    }
+                }
+            } else {
+                stuckTicks = 0;
+                left.setDown(false);
+                right.setDown(false);
+                if (!player.horizontalCollision) jump.setDown(false);
             }
-            try {
-                Thread.sleep(50);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            } finally {
-                if (player.horizontalCollision) jump.setDown(false);
+
+            // 如果还是完全没移动，换方向绕行
+            if (i > 0 && i % 10 == 0 && p.distanceTo(lastPos) < 0.1 && !player.horizontalCollision) {
+                stuckTicks = 6; // 触发绕行
+            }
+            lastPos = p;
+
+            try { Thread.sleep(50); } catch (InterruptedException e) {
+                Thread.currentThread().interrupt(); break;
             }
         }
         fwd.setDown(false);
+        left.setDown(false);
+        right.setDown(false);
         jump.setDown(false);
     }
 
@@ -482,103 +536,127 @@ public class CraftAgentBridge implements ClientModInitializer {
         return Math.max(lo, Math.min(hi, v));
     }
 
-    /** 从玩家背包扣除材料并添加合成结果。覆盖核心早期配方。 */
+    /** 合成：直接操作 Inventory 扣材料加结果。覆盖全部常用配方。 */
     private static int craftItem(LocalPlayer player, Level level, String targetId, int want) {
+        return craftItemFallback(player, targetId, want);
+    }
+
+    private static int craftItemFallback(LocalPlayer player, String targetId, int want) {
         Inventory inv = player.getInventory();
         int crafted = 0;
+        String t = targetId.toLowerCase();
 
-        // 橡木原木 → 橡木木板 (1→4)
-        if (targetId.contains("planks") || targetId.contains("plank")) {
-            for (String log : new String[]{"oak_log", "birch_log", "spruce_log", "jungle_log", "acacia_log", "dark_oak_log", "mangrove_log", "cherry_log"}) {
-                if (!targetId.contains(log.replace("_log", ""))) continue;
+        // ── 原木 → 木板 (1→4) ──
+        if (t.contains("planks") && countItem(inv, "log") > 0) {
+            for (String log : new String[]{"oak_log","birch_log","spruce_log","jungle_log","acacia_log","dark_oak_log","mangrove_log","cherry_log"}) {
                 while (crafted < want && countItem(inv, log) > 0) {
                     removeItem(inv, log, 1);
-                    addItem(inv, targetId, 4);
-                    crafted += 4;
+                    String plank = log.replace("_log","_planks");
+                    addItem(inv, plank, 4); crafted += 4;
                 }
             }
         }
-        // 木板 → 木棍 (2→4)
-        if (targetId.contains("stick")) {
-            while (crafted < want) {
-                boolean found = false;
-                for (String plank : new String[]{"oak_planks", "birch_planks", "spruce_planks", "jungle_planks", "acacia_planks", "dark_oak_planks", "mangrove_planks", "cherry_planks"}) {
-                    if (countItem(inv, plank) >= 2) {
-                        removeItem(inv, plank, 2);
-                        addItem(inv, "stick", 4);
-                        crafted += 4;
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) break;
+        // ── 木板 → 木棍 (2→4) ──
+        if (t.contains("stick")) {
+            while (crafted < want && countItem(inv, "planks") >= 2) {
+                removeItem(inv, "planks", 2); addItem(inv, "stick", 4); crafted += 4;
             }
         }
-        // 木板 → 工作台 (4→1)
-        if (targetId.contains("crafting_table")) {
-            while (crafted < want) {
-                boolean found = false;
-                for (String plank : new String[]{"oak_planks", "birch_planks", "spruce_planks", "jungle_planks", "acacia_planks", "dark_oak_planks", "mangrove_planks", "cherry_planks"}) {
-                    if (countItem(inv, plank) >= 4) {
-                        removeItem(inv, plank, 4);
-                        addItem(inv, "crafting_table", 1);
-                        crafted += 1;
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) break;
+        // ── 木板 → 工作台 (4→1) ──
+        if (t.contains("crafting_table")) {
+            while (crafted < want && countItem(inv, "planks") >= 4) {
+                removeItem(inv, "planks", 4); addItem(inv, "crafting_table", 1); crafted += 1;
             }
         }
-        // 木棍+木板 → 木镐 (3+2→1)
-        if (targetId.contains("wooden_pickaxe")) {
-            while (crafted < want) {
-                boolean found = false;
-                for (String plank : new String[]{"oak_planks", "birch_planks", "spruce_planks", "jungle_planks", "acacia_planks", "dark_oak_planks", "mangrove_planks", "cherry_planks"}) {
-                    if (countItem(inv, plank) >= 3 && countItem(inv, "stick") >= 2) {
-                        removeItem(inv, plank, 3);
-                        removeItem(inv, "stick", 2);
-                        addItem(inv, "wooden_pickaxe", 1);
-                        crafted += 1;
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) break;
+        // ── 木工具 (2 sticks + 3 planks or 1 stick + 2 planks) ──
+        if (t.contains("wooden_pickaxe") || t.contains("wooden_axe") || t.contains("wooden_hoe")) {
+            while (crafted < want && countItem(inv, "planks") >= 3 && countItem(inv, "stick") >= 2) {
+                removeItem(inv, "planks", 3); removeItem(inv, "stick", 2);
+                addItem(inv, t.contains("pickaxe") ? "wooden_pickaxe" : t.contains("axe") ? "wooden_axe" : "wooden_hoe", 1);
+                crafted += 1;
             }
         }
-        // 木棍+木板 → 木斧 (3+2→1)
-        if (targetId.contains("wooden_axe")) {
-            while (crafted < want) {
-                boolean found = false;
-                for (String plank : new String[]{"oak_planks", "birch_planks", "spruce_planks", "jungle_planks", "acacia_planks", "dark_oak_planks", "mangrove_planks", "cherry_planks"}) {
-                    if (countItem(inv, plank) >= 3 && countItem(inv, "stick") >= 2) {
-                        removeItem(inv, plank, 3);
-                        removeItem(inv, "stick", 2);
-                        addItem(inv, "wooden_axe", 1);
-                        crafted += 1;
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) break;
+        if (t.contains("wooden_sword")) {
+            while (crafted < want && countItem(inv, "planks") >= 2 && countItem(inv, "stick") >= 1) {
+                removeItem(inv, "planks", 2); removeItem(inv, "stick", 1);
+                addItem(inv, "wooden_sword", 1); crafted += 1;
             }
         }
-        // 木棍+木板 → 木剑 (2+1→1)
-        if (targetId.contains("wooden_sword")) {
-            while (crafted < want) {
-                boolean found = false;
-                for (String plank : new String[]{"oak_planks", "birch_planks", "spruce_planks", "jungle_planks", "acacia_planks", "dark_oak_planks", "mangrove_planks", "cherry_planks"}) {
-                    if (countItem(inv, plank) >= 2 && countItem(inv, "stick") >= 1) {
-                        removeItem(inv, plank, 2);
-                        removeItem(inv, "stick", 1);
-                        addItem(inv, "wooden_sword", 1);
-                        crafted += 1;
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) break;
+        if (t.contains("wooden_shovel")) {
+            while (crafted < want && countItem(inv, "planks") >= 1 && countItem(inv, "stick") >= 2) {
+                removeItem(inv, "planks", 1); removeItem(inv, "stick", 2);
+                addItem(inv, "wooden_shovel", 1); crafted += 1;
+            }
+        }
+        // ── 石工具 (2 sticks + 3 cobblestone) ──
+        if (t.contains("stone_pickaxe") || t.contains("stone_axe") || t.contains("stone_hoe")) {
+            while (crafted < want && countItem(inv, "cobblestone") >= 3 && countItem(inv, "stick") >= 2) {
+                removeItem(inv, "cobblestone", 3); removeItem(inv, "stick", 2);
+                addItem(inv, t.contains("pickaxe") ? "stone_pickaxe" : t.contains("axe") ? "stone_axe" : "stone_hoe", 1);
+                crafted += 1;
+            }
+        }
+        if (t.contains("stone_sword")) {
+            while (crafted < want && countItem(inv, "cobblestone") >= 2 && countItem(inv, "stick") >= 1) {
+                removeItem(inv, "cobblestone", 2); removeItem(inv, "stick", 1);
+                addItem(inv, "stone_sword", 1); crafted += 1;
+            }
+        }
+        if (t.contains("stone_shovel")) {
+            while (crafted < want && countItem(inv, "cobblestone") >= 1 && countItem(inv, "stick") >= 2) {
+                removeItem(inv, "cobblestone", 1); removeItem(inv, "stick", 2);
+                addItem(inv, "stone_shovel", 1); crafted += 1;
+            }
+        }
+        // ── 火把 (1 stick + 1 coal → 4) ──
+        if (t.contains("torch")) {
+            while (crafted < want && countItem(inv, "stick") >= 1 && countItem(inv, "coal") >= 1) {
+                removeItem(inv, "stick", 1); removeItem(inv, "coal", 1);
+                addItem(inv, "torch", 4); crafted += 4;
+            }
+        }
+        // ── 熔炉 (8 cobblestone → 1) ──
+        if (t.contains("furnace")) {
+            while (crafted < want && countItem(inv, "cobblestone") >= 8) {
+                removeItem(inv, "cobblestone", 8); addItem(inv, "furnace", 1); crafted += 1;
+            }
+        }
+        // ── 箱子 (8 planks → 1) ──
+        if (t.contains("chest")) {
+            while (crafted < want && countItem(inv, "planks") >= 8) {
+                removeItem(inv, "planks", 8); addItem(inv, "chest", 1); crafted += 1;
+            }
+        }
+        // ── 木门 (6 planks → 3) ──
+        if (t.contains("door")) {
+            while (crafted < want && countItem(inv, "planks") >= 6) {
+                removeItem(inv, "planks", 6); addItem(inv, "oak_door", 3); crafted += 3;
+            }
+        }
+        // ── 碗 (3 planks → 4) ──
+        if (t.contains("bowl")) {
+            while (crafted < want && countItem(inv, "planks") >= 3) {
+                removeItem(inv, "planks", 3); addItem(inv, "bowl", 4); crafted += 4;
+            }
+        }
+        // ── 梯子 (7 sticks → 3) ──
+        if (t.contains("ladder")) {
+            while (crafted < want && countItem(inv, "stick") >= 7) {
+                removeItem(inv, "stick", 7); addItem(inv, "ladder", 3); crafted += 3;
+            }
+        }
+        // ── 告示牌 (6 planks + 1 stick → 3) ──
+        if (t.contains("sign")) {
+            while (crafted < want && countItem(inv, "planks") >= 6 && countItem(inv, "stick") >= 1) {
+                removeItem(inv, "planks", 6); removeItem(inv, "stick", 1);
+                addItem(inv, "oak_sign", 3); crafted += 3;
+            }
+        }
+        // ── 栅栏 (4 planks + 2 sticks → 3) ──
+        if (t.contains("fence")) {
+            while (crafted < want && countItem(inv, "planks") >= 4 && countItem(inv, "stick") >= 2) {
+                removeItem(inv, "planks", 4); removeItem(inv, "stick", 2);
+                addItem(inv, "oak_fence", 3); crafted += 3;
             }
         }
         return crafted;
