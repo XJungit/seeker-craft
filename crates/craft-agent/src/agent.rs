@@ -433,20 +433,58 @@ impl Agent {
         }
     }
 
-    /// Run one turn
+    /// Run one turn: push goal message, then execute all iterations.
     pub fn run(&mut self, user_message: impl Into<String>) -> Result<Vec<String>> {
         self.messages.push(Message::user(user_message));
         self.continue_run()
     }
 
-    /// Continue from current state
+    /// Single-step: execute exactly one turn (LLM call + tool execution).
+    /// Returns (log_lines, should_continue). `should_continue` is false when
+    /// the agent has reached max iterations or hit a terminal stop reason.
+    /// Call this in a loop from external runners (e.g. the control panel viewer).
+    pub fn step(&mut self) -> Result<(Vec<String>, bool)> {
+        self.retry_abort.store(false, Ordering::Relaxed);
+        let (log, done) = self.run_one_turn()?;
+        Ok((log, done))
+    }
+
+    /// Continue from current state (used by `run` and session recovery).
     pub fn continue_run(&mut self) -> Result<Vec<String>> {
-        let mut log = Vec::new();
+        self.retry_abort.store(false, Ordering::Relaxed);
+        let mut all_logs = Vec::new();
         self.events.push(AgentEvent::AgentStart);
 
         for _ in 0..self.config.max_iterations {
-            self.turn += 1;
-            let turn = self.turn;
+            match self.run_one_turn() {
+                Ok((log, true)) => {
+                    all_logs.extend(log);
+                    // turn completed, continue loop
+                }
+                Ok((log, false)) => {
+                    all_logs.extend(log);
+                    self.events.push(AgentEvent::AgentEnd);
+                    return Ok(all_logs);
+                }
+                Err(e) => {
+                    all_logs.push(format!("Fatal error: {e}"));
+                    self.events.push(AgentEvent::AgentEnd);
+                    return Ok(all_logs);
+                }
+            }
+        }
+
+        self.events.push(AgentEvent::AgentEnd);
+        Ok(all_logs)
+    }
+
+    /// Core: execute a single turn. Returns (log_lines, should_continue).
+    /// `should_continue = true` means more iterations are possible;
+    /// `false` means terminal (max reached, LLM fatal error, or explicit stop).
+    fn run_one_turn(&mut self) -> Result<(Vec<String>, bool)> {
+        let mut log = Vec::new();
+        self.turn += 1;
+        let turn = self.turn;
             self.events.push(AgentEvent::TurnStart { turn });
             self.drain_queues();
 
@@ -547,7 +585,7 @@ impl Agent {
                 self.events.push(AgentEvent::Done {
                     reason: "LLM call failed after retries".into(),
                 });
-                break;
+                return Ok((log, false));
             };
 
             self.usage = response.usage.clone();
@@ -567,7 +605,7 @@ impl Agent {
                 if self.turn >= self.config.max_iterations {
                     self.events.push(AgentEvent::TurnEnd { turn });
                     self.persist_turn()?;
-                    break;
+                    return Ok((log, false));
                 } else {
                     let nudge = "【Continue】You responded with text only. You MUST call a tool. Pick any tool based on the current state and act now. Never end a turn with text-only.".to_string();
                     self.messages.push(Message::user(nudge));
@@ -576,7 +614,7 @@ impl Agent {
                     ));
                     self.events.push(AgentEvent::TurnEnd { turn });
                     self.persist_turn()?;
-                    continue;
+                    return Ok((log, true));
                 }
             }
 
@@ -671,10 +709,7 @@ impl Agent {
                 }
             }
             self.events.push(AgentEvent::TurnEnd { turn });
-        }
-
-        self.events.push(AgentEvent::AgentEnd);
-        Ok(log)
+            return Ok((log, true));
     }
 
     fn persist_turn(&mut self) -> Result<()> {
