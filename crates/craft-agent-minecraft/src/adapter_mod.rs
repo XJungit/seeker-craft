@@ -186,11 +186,7 @@ fn build_scene_desc(st: &ModState) -> String {
     s.push_str(&format!(
         "  Light: sky={}/15 block={}/15  Weather: rain={} thunder={}\n",
         st.sky_light, st.block_light, st.raining, st.thundering
-    ));
-    s.push_str(&format!(
-        "  Held: {}\n",
-        st.held_item.replace("minecraft:", "")
-    ));
+    )    );
     if !st.effects.is_empty() {
         let fx: Vec<String> = st
             .effects
@@ -208,20 +204,43 @@ fn build_scene_desc(st: &ModState) -> String {
     }
 
     // ── INVENTORY ──
-    let items: Vec<String> = st
+    let hotbar: Vec<String> = st
         .inventory
         .iter()
-        .filter(|i| i.count > 0)
-        .map(|i| format!("{}x{}", i.id.replace("minecraft:", ""), i.count))
+        .filter(|i| i.count > 0 && i.slot < 9)
+        .map(|i| format!("[{s}] {item}x{c}", s = i.slot + 1, item = i.id.replace("minecraft:", ""), c = i.count))
+        .collect();
+    let main_inv: Vec<String> = st
+        .inventory
+        .iter()
+        .filter(|i| i.count > 0 && i.slot >= 9)
+        .map(|i| format!("[{s}] {item}x{c}", s = i.slot, item = i.id.replace("minecraft:", ""), c = i.count))
         .collect();
     s.push_str(&format!(
-        "INVENTORY\n  {}\n",
-        if items.is_empty() {
-            "(empty)".into()
-        } else {
-            items.join(", ")
-        }
+        "HOTBAR (slot 1-9):  {}\n",
+        if hotbar.is_empty() { "(empty)" } else { &hotbar.join(", ") }
     ));
+    s.push_str(&format!(
+        "INVENTORY (slots 9-):  {}\n",
+        if main_inv.is_empty() { "(empty)" } else { &main_inv.join(", ") }
+    ));
+
+    // Find which hotbar slot is currently held
+    let held_info = if let Some(held_slot) = st
+        .inventory
+        .iter()
+        .find(|i| i.slot < 9 && i.id == st.held_item && i.count > 0)
+        .map(|i| i.slot + 1)
+    {
+        format!(
+            "{} (hotbar slot {})",
+            st.held_item.replace("minecraft:", ""),
+            held_slot
+        )
+    } else {
+        st.held_item.replace("minecraft:", "")
+    };
+    s.push_str(&format!("  Held: {}\n", held_info));
 
     // ── TARGETED ──
     if let Some(b) = &st.targeted_block {
