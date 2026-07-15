@@ -17,7 +17,7 @@ use std::time::Duration;
 /// 桥接 mod 默认监听端口（避开 GameQuery 的 25566）。
 pub const DEFAULT_PORT: u16 = 25567;
 /// 动作（如 mine 10s）可能耗时较长，读超时给足余量。
-const READ_TIMEOUT: Duration = Duration::from_secs(5);
+const READ_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// 物品栏槽位。
 #[derive(Debug, Clone, Serialize, Deserialize)]
