@@ -167,6 +167,18 @@ impl MinecraftModAdapter {
         Ok(())
     }
 
+    /// 丢弃物品
+    pub fn discard_item(&self, item: &str, num: u32) -> Result<()> {
+        self.bridge.borrow_mut().send(ModCommand::Discard { item: item.to_string(), num })?;
+        Ok(())
+    }
+
+    /// 烧制物品
+    pub fn smelt_item(&self, item: &str, num: u32) -> Result<()> {
+        self.bridge.borrow_mut().send(ModCommand::Smelt { item: item.to_string(), num })?;
+        Ok(())
+    }
+
     /// xcap 截 MC 窗口（仅用于 viewer 可视化；失败不影响主流程，返回空截图）。
     fn capture_xcap(&self) -> Screenshot {
         let windows = match xcap::Window::all() {

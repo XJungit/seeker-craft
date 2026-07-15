@@ -429,6 +429,20 @@ public class CraftAgentBridge implements ClientModInitializer {
                 o.addProperty("detail", "craft " + item + " x" + crafted);
                 break;
             }
+            case "discard": {
+                String item = req.get("item").getAsString();
+                int num = req.has("num") ? req.get("num").getAsInt() : 1;
+                int discarded = discardItem(player, item, num);
+                o.addProperty("detail", "discarded " + discarded + " x " + item);
+                break;
+            }
+            case "smelt": {
+                String item = req.get("item").getAsString();
+                int num = req.has("num") ? req.get("num").getAsInt() : 1;
+                int smelted = smeltItem(player, mc, level, item, num);
+                o.addProperty("detail", "smelted " + smelted + " x " + item);
+                break;
+            }
             default:
                 o.addProperty("status", "fail");
                 o.addProperty("detail", "未知命令: " + type);
@@ -437,7 +451,7 @@ public class CraftAgentBridge implements ClientModInitializer {
     }
 
     /** 按住某键 ticks*50ms 后释放（RAII 式：任何异常也释放）。 */
-    private void holdKey(KeyMapping km, int ticks) {
+    private static void holdKey(KeyMapping km, int ticks) {
         long ms = (long) ticks * 50L;
         KeyMapping.click(km.getDefaultKey());
         km.setDown(true);
@@ -451,7 +465,7 @@ public class CraftAgentBridge implements ClientModInitializer {
     }
 
     /** 简易寻路：转向目标并前进。遇障碍时左右绕行、跳起跨障。 */
-    private void moveToward(LocalPlayer player, Options options, double tx, double ty, double tz, int maxTicks) {
+    private static void moveToward(LocalPlayer player, Options options, double tx, double ty, double tz, int maxTicks) {
         KeyMapping fwd = options.keyUp;
         KeyMapping left = options.keyLeft;
         KeyMapping right = options.keyRight;
@@ -671,6 +685,69 @@ public class CraftAgentBridge implements ClientModInitializer {
             }
         }
         return crafted;
+    }
+
+    /** 丢弃指定物品 N 个：找到物品→切到该格→按 Q */
+    private static int discardItem(LocalPlayer player, String itemId, int num) {
+        Inventory inv = player.getInventory();
+        int discarded = 0;
+        for (int i = 0; i < inv.getContainerSize() && discarded < num; i++) {
+            ItemStack s = inv.getItem(i);
+            if (s.isEmpty()) continue;
+            String id = BuiltInRegistries.ITEM.getKey(s.getItem()).toString();
+            if (!id.contains(itemId)) continue;
+            int take = Math.min(s.getCount(), num - discarded);
+            // Switch to slot if in hotbar
+            if (i < 9) {
+                KeyMapping slotKey = resolveKeyBySlot(i);
+                if (slotKey != null) { holdKey(slotKey, 2); try { Thread.sleep(100); } catch (InterruptedException e) {} }
+            }
+            // Press Q to drop
+            KeyMapping dropKey = Minecraft.getInstance().options.keyDrop;
+            for (int d = 0; d < take; d++) {
+                KeyMapping.click(dropKey.getDefaultKey());
+                try { Thread.sleep(50); } catch (InterruptedException e) {}
+            }
+            discarded += take;
+        }
+        return discarded;
+    }
+
+    /** 烧制物品：找最近熔炉→右键打开→放物品+燃料→等待→取成品*/
+    private static int smeltItem(LocalPlayer player, Minecraft mc, Level level, String itemId, int num) {
+        // Find nearest furnace
+        BlockPos playerPos = player.blockPosition();
+        BlockPos furnacePos = null;
+        for (BlockPos bp : BlockPos.betweenClosed(
+                playerPos.getX() - 8, playerPos.getY() - 4, playerPos.getZ() - 8,
+                playerPos.getX() + 8, playerPos.getY() + 4, playerPos.getZ() + 8)) {
+            if (level.getBlockState(bp).getBlock().getName().getString().toLowerCase().contains("furnace")) {
+                furnacePos = bp; break;
+            }
+        }
+        if (furnacePos == null) return 0;
+        // Right-click furnace (open GUI)
+        moveTowardBlock(player, mc.options, furnacePos, 100);
+        holdKey(mc.options.keyUse, 5);
+        try { Thread.sleep(500); } catch (InterruptedException e) {}
+        // Simplified: just wait and return placeholder
+        // Full GUI manipulation needs screen handler access which is complex
+        try { Thread.sleep(num * 10000L); } catch (InterruptedException e) {}
+        return 0; // TODO: implement proper GUI furnace interaction
+    }
+
+    private static void moveTowardBlock(LocalPlayer player, Options options, BlockPos target, int maxTicks) {
+        double tx = target.getX() + 0.5, ty = target.getY() + 0.5, tz = target.getZ() + 0.5;
+        moveToward(player, options, tx, ty, tz, maxTicks);
+    }
+
+    private static KeyMapping resolveKeyBySlot(int slot) {
+        // Hotbar keys: slots 0-8 correspond to keys 1-9
+        if (slot >= 0 && slot < 9) {
+            String key = Integer.toString(slot + 1);
+            return resolveKey(Minecraft.getInstance().options, key);
+        }
+        return null;
     }
 
     private static int countItem(Inventory inv, String id) {

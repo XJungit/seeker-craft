@@ -161,6 +161,12 @@ pub enum ModCommand {
     /// 合成物品：mod 侧直接操作 Inventory 扣材料加结果，零视觉依赖。
     #[serde(rename = "craft")]
     Craft { item: String, count: u32 },
+    /// 丢弃物品（切到该格→按 Q N 次）
+    #[serde(rename = "discard")]
+    Discard { item: String, num: u32 },
+    /// 烧制物品（找最近熔炉→放料→等待）
+    #[serde(rename = "smelt")]
+    Smelt { item: String, num: u32 },
 }
 
 /// mod 对动作命令的回执。

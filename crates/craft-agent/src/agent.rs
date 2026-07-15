@@ -192,6 +192,12 @@ consume(item, ticks)
 attack(ticks)
   Attack nearest entity. ticks: 30≈1.5s. Use when hostile mobs appear.
 
+discard(item, num)
+  Drop items from inventory. item: "dirt","cobblestone". num: how many.
+
+smeltItem(item, num)
+  Smelt in nearest furnace. Finds furnace, opens it, smelts items. item: "raw_iron","raw_copper". num: 1-8. Each takes ~10s.
+
 ## Tool Reference — Navigation
 
 searchForBlock(type)

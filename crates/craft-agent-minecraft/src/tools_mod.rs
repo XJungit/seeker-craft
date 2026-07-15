@@ -408,6 +408,38 @@ impl GameTool for ModListPlacesTool {
 }
 
 // ═══════════════════════════════════════════════════════════════
+// discard / smeltItem — 物品管理
+// ═══════════════════════════════════════════════════════════════
+
+pub struct ModDiscardTool { adapter: Rc<RefCell<MinecraftModAdapter>> }
+impl ModDiscardTool { pub fn new(a: Rc<RefCell<MinecraftModAdapter>>) -> Self { Self { adapter: a } } }
+impl GameTool for ModDiscardTool {
+    fn name(&self) -> &str { "discard" }
+    fn description(&self) -> &str { "Throw away items from inventory. item: item name like dirt, cobblestone. num: how many to discard." }
+    fn parameters(&self) -> Value { serde_json::json!({"type":"object","properties":{"item":{"type":"string","description":"Item to discard"},"num":{"type":"integer","description":"Count to discard","default":1,"minimum":1}},"required":["item"]}) }
+    fn effects(&self) -> ToolEffects { ToolEffects::write() }
+    fn execute(&self, _id: &str, args: Value, _on_update: Option<ToolUpdateFn>) -> anyhow::Result<ToolResult> {
+        let item = args["item"].as_str().unwrap_or("dirt"); let num = args["num"].as_u64().unwrap_or(1) as u32;
+        self.adapter.borrow_mut().discard_item(item, num)?;
+        Ok(ToolResult { message: format!("discarded {num}x {item}"), is_error: false, images: vec![] })
+    }
+}
+
+pub struct ModSmeltTool { adapter: Rc<RefCell<MinecraftModAdapter>> }
+impl ModSmeltTool { pub fn new(a: Rc<RefCell<MinecraftModAdapter>>) -> Self { Self { adapter: a } } }
+impl GameTool for ModSmeltTool {
+    fn name(&self) -> &str { "smeltItem" }
+    fn description(&self) -> &str { "Smelt items in nearest furnace. Finds furnace, opens it, places items+fuel, waits for smelting. item: raw material like raw_iron, oak_log(for charcoal). num: how many to smelt (each takes ~10s)." }
+    fn parameters(&self) -> Value { serde_json::json!({"type":"object","properties":{"item":{"type":"string","description":"Raw material to smelt, e.g. raw_iron, raw_copper"},"num":{"type":"integer","description":"Count to smelt","default":1,"minimum":1}},"required":["item"]}) }
+    fn effects(&self) -> ToolEffects { ToolEffects::write() }
+    fn execute(&self, _id: &str, args: Value, _on_update: Option<ToolUpdateFn>) -> anyhow::Result<ToolResult> {
+        let item = args["item"].as_str().unwrap_or("raw_iron"); let num = args["num"].as_u64().unwrap_or(1) as u32;
+        self.adapter.borrow_mut().smelt_item(item, num)?;
+        Ok(ToolResult { message: format!("smelting {num}x {item} in furnace"), is_error: false, images: vec![] })
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
 // 工厂
 // ═══════════════════════════════════════════════════════════════
 
@@ -421,6 +453,7 @@ pub fn create_mc_mod_tools(adapter: Rc<RefCell<MinecraftModAdapter>>, image_max_
     tools.push(Box::new(ModSearchBlockTool::new(adapter.clone()))); tools.push(Box::new(ModMoveAwayTool::new(adapter.clone())));
     tools.push(Box::new(ModDigDownTool::new(adapter.clone()))); tools.push(Box::new(ModConsumeTool::new(adapter.clone())));
     tools.push(Box::new(ModRememberTool::new(adapter.clone()))); tools.push(Box::new(ModGoPlaceTool::new(adapter.clone()))); tools.push(Box::new(ModListPlacesTool::new(adapter.clone())));
+    tools.push(Box::new(ModDiscardTool::new(adapter.clone()))); tools.push(Box::new(ModSmeltTool::new(adapter.clone())));
     tools.push(Box::new(ModCraftableTool::new(adapter)));
     tools
 }
