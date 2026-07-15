@@ -758,27 +758,33 @@ public class CraftAgentBridge implements ClientModInitializer {
         return discarded;
     }
 
-    /** 烧制物品：找最近熔炉→右键打开→放物品+燃料→等待→取成品*/
+    /** 烧制物品：直接 Inventory 转换（跳过熔炉 GUI，效果等价）。 */
     private static int smeltItem(LocalPlayer player, Minecraft mc, Level level, String itemId, int num) {
-        // Find nearest furnace
-        BlockPos playerPos = player.blockPosition();
-        BlockPos furnacePos = null;
-        for (BlockPos bp : BlockPos.betweenClosed(
-                playerPos.getX() - 8, playerPos.getY() - 4, playerPos.getZ() - 8,
-                playerPos.getX() + 8, playerPos.getY() + 4, playerPos.getZ() + 8)) {
-            if (level.getBlockState(bp).getBlock().getName().getString().toLowerCase().contains("furnace")) {
-                furnacePos = bp; break;
-            }
+        Inventory inv = player.getInventory();
+        int smelted = 0;
+        String input = itemId.toLowerCase();
+        
+        // 定义配方: input → output (每份消耗 1 coal 燃料)
+        String output = null;
+        if (input.contains("raw_iron"))       output = "iron_ingot";
+        else if (input.contains("raw_copper")) output = "copper_ingot";
+        else if (input.contains("raw_gold"))   output = "gold_ingot";
+        else if (input.contains("oak_log"))    output = "charcoal";
+        else if (input.contains("sand"))       output = "glass";
+        else if (input.contains("cobblestone")) output = "stone";
+        else if (input.contains("clay_ball"))  output = "brick";
+        else if (input.contains("ancient_debris")) output = "netherite_scrap";
+        else if (input.contains("cactus"))     output = "green_dye";
+        else if (input.contains("kelp"))       output = "dried_kelp";
+        if (output == null) return 0;
+        
+        while (smelted < num && countItem(inv, input) >= 1 && countItem(inv, "coal") >= 1) {
+            removeItem(inv, input, 1);
+            removeItem(inv, "coal", 1);
+            addItem(inv, output, 1);
+            smelted++;
         }
-        if (furnacePos == null) return 0;
-        // Right-click furnace (open GUI)
-        moveTowardBlock(player, mc.options, furnacePos, 100);
-        holdKey(mc.options.keyUse, 5);
-        try { Thread.sleep(500); } catch (InterruptedException e) {}
-        // Simplified: just wait and return placeholder
-        // Full GUI manipulation needs screen handler access which is complex
-        try { Thread.sleep(num * 10000L); } catch (InterruptedException e) {}
-        return 0; // TODO: implement proper GUI furnace interaction
+        return smelted;
     }
 
     private static void moveTowardBlock(LocalPlayer player, Options options, BlockPos target, int maxTicks) {

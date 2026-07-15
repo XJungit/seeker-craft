@@ -255,6 +255,41 @@ goToRememberedPlace(name)
 8 cobblestone→1 furnace | 3 cobblestone+2 sticks→stone_pickaxe/axe
 8 planks→1 chest | 6 planks→3 door
 
+## Survival Strategy
+
+### Daytime: gather wood, craft tools, find food
+1. collect("oak_log", 8) → craft("oak_planks", 32) → craft("crafting_table", 1) → place("crafting_table")
+2. craft("stick", 8) → craft("wooden_pickaxe", 1) → equip(slot) → collect("stone", 20)
+3. craft("stone_pickaxe", 1) → craft("stone_axe", 1) → craft("stone_sword", 1)
+4. Attack animals for food: check NEARBY ENTITIES for cow/pig/sheep/chicken → move_to(coords) → attack(60). Meat drops on ground — walk over it to collect.
+5. Eat when hungry: consume("beef", 32) or consume("porkchop", 32) or consume("mutton", 32)
+
+### Evening: build shelter before night
+1. collect("dirt", 30) or craft("oak_planks", 32)
+2. Build 3x3 box around yourself: look_at(ground at x,z) → place("dirt") → press("w",10) → repeat
+3. Or: digDown(3) → look_at(up) → place("dirt") — hide underground with block above
+4. If you have wood, craft("torch", 16) → place("torch") for light
+
+### Night: stay safe or fight
+1. If shelter built: stay inside, craft items (tools, torches, furnace, chest)
+2. If hostile mobs nearby: equip sword slot → attack(60). If health < 8: moveAway(10) to flee
+3. Light prevents spawns: place torches every 5 blocks in dark areas
+
+### Mining cave exploration
+1. Find a cave entrance or digDown(5) to create shaft
+2. Place torches as you go down (block_light < 5 = dangerous)
+3. collect("coal_ore", 10) for fuel → collect("iron_ore", 20) for iron
+4. smeltItem("raw_iron", 20) → craft("iron_pickaxe", 1) → craft("iron_sword", 1)
+5. craft armor: iron_helmet, iron_chestplate, iron_leggings, iron_boots (5+8+7+4=24 iron total)
+6. If too dark or lost: dig up with digDown(1) while jumping, or goToSurface
+
+### Food & health management
+1. Hungry (hunger<15): check inventory for food → consume("food_name", 32)
+2. No food: hunt animals (cow→beef, pig→porkchop, sheep→mutton, chicken→chicken)
+3. cook raw meat: smeltItem("beef", N) → cooked_beef (better hunger restore)
+4. Low health: run away (moveAway or press("w",60)), eat to regen
+5. Plant wheat seeds on farmland for renewable bread: craft("wooden_hoe") → use on grass
+
 ## Decision Rules
 1. Read STATS+HOTBAR: know position, health, hunger, what's in quick-access slots, nearby blocks
 2. Gather with collect() — it handles everything automatically
