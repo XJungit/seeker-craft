@@ -186,88 +186,56 @@ pub struct ModAck {
 
 /// 本地桥接客户端。
 pub struct McBridge {
-    stream: TcpStream,
-    reader: BufReader<TcpStream>,
     host: String,
     port: u16,
 }
 
 impl McBridge {
-    /// 连接本机 mod（默认端口 25567）。
+    /// 存储连接参数（每次命令建立独立 TCP 连接，避免 BufReader 跨命令缓冲 bug）。
     pub fn connect(host: &str, port: u16) -> Result<Self> {
-        let (stream, reader) = Self::new_stream(host, port)?;
-        Ok(Self {
-            stream,
-            reader,
-            host: host.to_string(),
-            port,
-        })
-    }
-
-    fn new_stream(host: &str, port: u16) -> Result<(TcpStream, BufReader<TcpStream>)> {
-        let stream = TcpStream::connect((host, port)).with_context(|| {
-            format!(
-                "连接 MC 桥接 mod 失败 {host}:{port}（确认 MC 已启动且加载了 craft-agent-bridge，端口 {DEFAULT_PORT}）"
-            )
+        // 验证可达性
+        let _ = TcpStream::connect((host, port)).with_context(|| {
+            format!("连接 MC 桥接 mod 失败 {host}:{port}（确认 MC 已启动且加载了 craft-agent-bridge，端口 {DEFAULT_PORT}）")
         })?;
-        stream
-            .set_read_timeout(Some(READ_TIMEOUT))
-            .context("设置读超时失败")?;
-        stream
-            .set_write_timeout(Some(Duration::from_secs(5)))
-            .context("设置写超时失败")?;
-        let reader = BufReader::new(stream.try_clone().context("克隆 socket 失败")?);
-        Ok((stream, reader))
+        Ok(Self { host: host.to_string(), port })
     }
 
     /// 重连 mod（MC 崩溃重启后恢复连接）。
     pub fn reconnect(&mut self) -> Result<()> {
-        let (stream, reader) = Self::new_stream(&self.host, self.port)?;
-        self.stream = stream;
-        self.reader = reader;
-        Ok(())
+        // 用一次轻量请求验证连接
+        Self::send_one_shot(&serde_json::json!({"type": "state"}), &self.host, self.port).map(|_| ())
     }
 
     /// 检查连接是否存活（发轻量 state 请求，如果失败返回 false）。
     pub fn is_alive(&mut self) -> bool {
-        self.send_line(&serde_json::json!({"type": "state"}))
-            .is_ok()
-            && self.read_line().is_ok()
+        Self::send_one_shot(&serde_json::json!({"type": "state"}), &self.host, self.port).is_ok()
     }
 
     /// 查询最新游戏状态快照。
     pub fn query_state(&mut self) -> Result<ModState> {
-        self.send_line(&serde_json::json!({"type": "state"}))?;
-        let line = self.read_line()?;
+        let line = Self::send_one_shot(&serde_json::json!({"type": "state"}), &self.host, self.port)?;
         serde_json::from_str(&line).with_context(|| format!("解析 mod state 失败: {line}"))
     }
 
     /// 发送动作命令并等待回执。
     pub fn send(&mut self, cmd: ModCommand) -> Result<ModAck> {
-        self.send_line(&serde_json::to_value(&cmd)?)?;
-        let line = self.read_line()?;
+        let line = Self::send_one_shot(&serde_json::to_value(&cmd)?, &self.host, self.port)?;
         serde_json::from_str(&line).with_context(|| format!("解析 mod ack 失败: {line}"))
     }
 
-    fn send_line(&mut self, v: &serde_json::Value) -> Result<()> {
+    /// 每次独立 TCP 连接发送+接收（避免 BufReader 跨命令缓冲 bug）。
+    fn send_one_shot(v: &serde_json::Value, host: &str, port: u16) -> Result<String> {
+        let mut stream = TcpStream::connect((host, port)).with_context(|| {
+            format!("连接 MC 桥接 mod 失败 {host}:{port}")
+        })?;
+        stream.set_read_timeout(Some(READ_TIMEOUT)).context("设置读超时失败")?;
         let mut s = serde_json::to_string(v).context("序列化命令失败")?;
         s.push('\n');
-        self.stream
-            .write_all(s.as_bytes())
-            .and_then(|_| self.stream.flush())
-            .context("发送命令到 mod 失败")?;
-        Ok(())
-    }
-
-    fn read_line(&mut self) -> Result<String> {
+        stream.write_all(s.as_bytes()).context("发送命令到 mod 失败")?;
+        stream.flush().context("flush 命令失败")?;
         let mut buf = String::new();
-        let n = self
-            .reader
-            .read_line(&mut buf)
-            .context("读取 mod 响应失败（mod 可能已崩溃或卡住）")?;
-        if n == 0 {
-            return Err(anyhow!("mod 连接已关闭（MC 可能已退出）"));
-        }
+        let n = BufReader::new(&mut stream).read_line(&mut buf).context("读取 mod 响应失败（mod 可能已崩溃或卡住）")?;
+        if n == 0 { return Err(anyhow!("mod 连接已关闭（MC 可能已退出）")); }
         Ok(buf.trim_end().to_string())
     }
 }
