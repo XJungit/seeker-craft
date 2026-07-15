@@ -528,8 +528,10 @@ impl Agent {
         self.retry_abort.store(false, Ordering::Relaxed);
         let mut all_logs = Vec::new();
         self.events.push(AgentEvent::AgentStart);
+        eprintln!("[DBG] continue_run: max_iterations={}", self.config.max_iterations);
 
         for _ in 0..self.config.max_iterations {
+            eprintln!("[DBG] continue_run: starting iteration");
             match self.run_one_turn() {
                 Ok((log, true)) => {
                     all_logs.extend(log);
@@ -589,6 +591,7 @@ impl Agent {
                         self.messages.push(Message::user(state_msg));
                     }
                     Err(e) => {
+                        eprintln!("[DBG] auto_perceive FAIL: {e}");
                         log.push(format!("[t{turn}] 自动感知失败: {e}"));
                     }
                 }
@@ -605,6 +608,8 @@ impl Agent {
         } else {
             1
         };
+        eprintln!("[DBG] calling LLM ({msg_count} msgs, {tool_count} tools)...",
+            msg_count = ctx.messages.len(), tool_count = ctx.tools.len());
         for attempt in 1..=max_attempts {
             match self.provider.complete(&ctx.messages, &ctx.tools) {
                 Ok(resp) => {
@@ -653,6 +658,7 @@ impl Agent {
         }
 
         let Some(response) = response else {
+            eprintln!("[DBG] LLM: all attempts failed");
             self.persist_turn()?;
             self.events.push(AgentEvent::Done {
                 reason: "LLM call failed after retries".into(),
@@ -661,6 +667,8 @@ impl Agent {
         };
 
         self.usage = response.usage.clone();
+        eprintln!("[DBG] LLM response: {} chars, {} tools", 
+            response.content.as_ref().map_or(0, |s| s.len()), response.tool_calls.len());
 
         // Track obs streak
         let calls = response.tool_calls.clone();
