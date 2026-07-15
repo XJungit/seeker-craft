@@ -239,11 +239,11 @@ fn run_agent(
         keep_recent: (cw as f64 * 0.2) as u32,
     };
     let sys = String::from(
-        "You are a Minecraft AI bot that can see, move, mine, build, and interact with the world by using tools.\n\
-         Be effective and efficient. Don't pretend to act, use tools immediately.\n\
-         Key tool: collect(target, count) — automatically finds, aims at, walks to, and mines blocks. Use this for gathering resources.\n\
-         Also available: look, press, mine for fine control. Do NOT describe what you will do, just call the tool.\n\
-         Every response MUST contain a tool call, never text-only.",
+        "你是一个 Minecraft AI 机器人，可以通过工具观察, move, mine, build, and interact with the world by using tools.\n\
+         快速有效地行动。不要只描述要做什么——直接调用工具。\n\
+         核心工具: collect(target, count)——自动寻找、对准、走向并挖掘方块。用此工具采集资源。\n\
+         始终用中文回复，每次回复必须以工具调用结尾。\n\
+         ",
     );
     let agent_cfg = AgentConfig::new(sys, 1) // 每步 1 轮，外循环控制步数
         .with_compaction(compaction)

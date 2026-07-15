@@ -401,15 +401,15 @@ impl Agent {
         let skill_examples = self.skill_lib.to_examples(recent_perception, 3, now_ms);
 
         let mut jailbreak =
-            "Act autonomously. If a tool fails, adjust parameters and retry - never pretend success.".to_string();
+            "自主行动。工具失败时调整参数重试——不准假装成功。".to_string();
         if !self.knowledge_bootstrapped {
             jailbreak
-                .push_str(" Start executing tasks directly, no need to re-enter game knowledge.");
+                .push_str(" 直接开始执行任务，不需要重新输入游戏知识。");
         }
         if self.obs_streak >= 5 {
             if self.obs_streak >= 10 {
                 jailbreak.push_str(
-                    " [CRITICAL: You have been stuck in a loop for 10+ steps. STOP repeating the same action. Pick a COMPLETELY DIFFERENT tool RIGHT NOW — collect, craft, press, mine, move_to — anything but what you've been doing.]",
+                    " [关键警告: 你已经循环了 10+ 步！ STOP repeating the same action. Pick a COMPLETELY DIFFERENT tool RIGHT NOW — collect, craft, press, mine, move_to — anything but what you've been doing.]",
                 );
             } else {
                 jailbreak.push_str(&format!(
@@ -534,7 +534,7 @@ impl Agent {
         if self.estimate_tokens() > budget {
             self.events.push(AgentEvent::AutoCompactionStart);
             if let Err(e) = self.compact() {
-                log.push(format!("[t{turn}] compaction failed: {e}"));
+                log.push(format!("[t{turn}] 压缩失败: {e}"));
             }
             self.events.push(AgentEvent::AutoCompactionEnd);
         }
@@ -545,14 +545,14 @@ impl Agent {
                 match tool.execute("auto_perceive", serde_json::json!({}), None) {
                     Ok(result) => {
                         let state_msg =
-                            format!("【Current Game State (auto-injected)】\n{}", result.message);
+                            format!("【当前游戏状态（自动注入）】\n{}", result.message);
                         self.messages.retain(|m| {
                                 !matches!(m, Message::User(u) if u.content.starts_with("【Current Game State"))
                             });
                         self.messages.push(Message::user(state_msg));
                     }
                     Err(e) => {
-                        log.push(format!("[t{turn}] auto-perceive failed: {e}"));
+                        log.push(format!("[t{turn}] 自动感知失败: {e}"));
                     }
                 }
             }
@@ -593,7 +593,7 @@ impl Agent {
                             });
                         }
                         log.push(format!(
-                            "[t{turn}] LLM error (attempt {attempt}): {last_error}"
+                            "[t{turn}] LLM 错误 (第{attempt}次): {last_error}"
                         ));
                         break;
                     }
@@ -642,10 +642,10 @@ impl Agent {
                 self.persist_turn()?;
                 return Ok((log, false));
             } else {
-                let nudge = "【Continue】You responded with text only. You MUST call a tool. Pick any tool based on the current state and act now. Never end a turn with text-only.".to_string();
+                let nudge = "【继续】你刚才只用了文字回复。必须调用一个工具。根据当前状态选一个工具立即行动，不要只用文字回复。".to_string();
                 self.messages.push(Message::user(nudge));
                 log.push(format!(
-                    "[t{turn}] nudge: text-only response, injected continue prompt"
+                    "[t{turn}] 提醒: 纯文字回复，已注入续跑指令"
                 ));
                 self.events.push(AgentEvent::TurnEnd { turn });
                 self.persist_turn()?;
@@ -959,6 +959,8 @@ impl Agent {
 fn is_obs_tool(name: &str) -> bool {
     matches!(name, "perceive" | "visual_perceive" | "look" | "look_at")
 }
+
+// ── Compaction prompts ──
 
 // ── Compaction prompts ──
 
