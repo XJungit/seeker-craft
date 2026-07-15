@@ -758,27 +758,34 @@ public class CraftAgentBridge implements ClientModInitializer {
         }
         return n;
     }
+
+    private static void addItem(Inventory inv, String id, int count) {
+        net.minecraft.world.item.Item exact = null;
+        net.minecraft.world.item.Item fallback = null;
+        String search = id.toLowerCase();
+        for (net.minecraft.world.item.Item item : BuiltInRegistries.ITEM) {
+            String key = BuiltInRegistries.ITEM.getKey(item).toString().toLowerCase();
+            // 精确匹配: key 以 ":{search}" 结尾（如 "minecraft:stick"）
+            if (key.endsWith(":" + search)) { exact = item; break; }
+            // 回退: key 包含 search（如 "oak_planks" 匹配 "plank"）
+            if (fallback == null && key.contains(search) && !key.contains("sticky")) { fallback = item; }
+        }
+        net.minecraft.world.item.Item target = exact != null ? exact : fallback;
+        if (target != null) {
+            inv.add(new ItemStack(target, count));
+        }
+    }
+
     private static void removeItem(Inventory inv, String id, int count) {
+        String search = id.toLowerCase();
         for (int i = 0; i < inv.getContainerSize() && count > 0; i++) {
             ItemStack s = inv.getItem(i);
-            if (BuiltInRegistries.ITEM.getKey(s.getItem()).toString().contains(id)) {
+            String key = BuiltInRegistries.ITEM.getKey(s.getItem()).toString().toLowerCase();
+            if (key.endsWith(":" + search) || key.contains(search)) {
                 int take = Math.min(s.getCount(), count);
                 s.shrink(take);
                 count -= take;
             }
-        }
-    }
-    private static void addItem(Inventory inv, String id, int count) {
-        // 通过注册表名映射到 Item 实例
-        net.minecraft.world.item.Item target = null;
-        for (net.minecraft.world.item.Item item : BuiltInRegistries.ITEM) {
-            if (BuiltInRegistries.ITEM.getKey(item).toString().contains(id)) {
-                target = item;
-                break;
-            }
-        }
-        if (target != null) {
-            inv.add(new ItemStack(target, count));
         }
     }
 }
