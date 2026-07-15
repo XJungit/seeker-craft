@@ -690,6 +690,54 @@ public class CraftAgentBridge implements ClientModInitializer {
                 addItem(inv, "oak_fence", 3); crafted += 3;
             }
         }
+        // ── 铁工具 (2 sticks + 3 iron_ingot) ──
+        if (t.contains("iron_pickaxe") || t.contains("iron_axe") || t.contains("iron_hoe")) {
+            while (crafted < want && countItem(inv, "iron_ingot") >= 3 && countItem(inv, "stick") >= 2) {
+                removeItem(inv, "iron_ingot", 3); removeItem(inv, "stick", 2);
+                String item = t.contains("pickaxe") ? "iron_pickaxe" : t.contains("axe") ? "iron_axe" : "iron_hoe";
+                addItem(inv, item, 1); crafted += 1;
+            }
+        }
+        if (t.contains("iron_sword") && countItem(inv, "iron_ingot") >= 2 && countItem(inv, "stick") >= 1) {
+            while (crafted < want && countItem(inv, "iron_ingot") >= 2 && countItem(inv, "stick") >= 1) {
+                removeItem(inv, "iron_ingot", 2); removeItem(inv, "stick", 1);
+                addItem(inv, "iron_sword", 1); crafted += 1;
+            }
+        }
+        if (t.contains("iron_shovel") && countItem(inv, "iron_ingot") >= 1 && countItem(inv, "stick") >= 2) {
+            while (crafted < want && countItem(inv, "iron_ingot") >= 1 && countItem(inv, "stick") >= 2) {
+                removeItem(inv, "iron_ingot", 1); removeItem(inv, "stick", 2);
+                addItem(inv, "iron_shovel", 1); crafted += 1;
+            }
+        }
+        // ── 护甲 (leather: 5帽/8衣/7裤/4靴, iron: 同) ──
+        String armorType = null; int armorCost = 0;
+        if (t.contains("helmet") || t.contains("cap")) { armorType = "helmet"; armorCost = 5; }
+        else if (t.contains("chestplate") || t.contains("tunic")) { armorType = "chestplate"; armorCost = 8; }
+        else if (t.contains("leggings") || t.contains("pants")) { armorType = "leggings"; armorCost = 7; }
+        else if (t.contains("boots")) { armorType = "boots"; armorCost = 4; }
+        if (armorType != null) {
+            String mat = t.contains("iron") ? "iron_ingot" : t.contains("diamond") ? "diamond" : "leather";
+            while (crafted < want && countItem(inv, mat) >= armorCost) {
+                removeItem(inv, mat, armorCost);
+                addItem(inv, (t.contains("iron") ? "iron_" : t.contains("diamond") ? "diamond_" : "leather_") + armorType, 1);
+                crafted += 1;
+            }
+        }
+        // ── 钻石工具 (同配方，材料换 diamond) ──
+        if (t.contains("diamond_pickaxe") || t.contains("diamond_axe") || t.contains("diamond_hoe")) {
+            while (crafted < want && countItem(inv, "diamond") >= 3 && countItem(inv, "stick") >= 2) {
+                removeItem(inv, "diamond", 3); removeItem(inv, "stick", 2);
+                String item = t.contains("pickaxe") ? "diamond_pickaxe" : t.contains("axe") ? "diamond_axe" : "diamond_hoe";
+                addItem(inv, item, 1); crafted += 1;
+            }
+        }
+        if (t.contains("diamond_sword") && countItem(inv, "diamond") >= 2 && countItem(inv, "stick") >= 1) {
+            while (crafted < want && countItem(inv, "diamond") >= 2 && countItem(inv, "stick") >= 1) {
+                removeItem(inv, "diamond", 2); removeItem(inv, "stick", 1);
+                addItem(inv, "diamond_sword", 1); crafted += 1;
+            }
+        }
         return crafted;
     }
 
