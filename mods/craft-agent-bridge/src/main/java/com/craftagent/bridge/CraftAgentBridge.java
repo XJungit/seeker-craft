@@ -687,27 +687,18 @@ public class CraftAgentBridge implements ClientModInitializer {
         return crafted;
     }
 
-    /** 丢弃指定物品 N 个：找到物品→切到该格→按 Q */
+    /** 丢弃指定物品 N 个：直接从 Inventory 移除物品 */
     private static int discardItem(LocalPlayer player, String itemId, int num) {
         Inventory inv = player.getInventory();
         int discarded = 0;
+        String search = itemId.toLowerCase();
         for (int i = 0; i < inv.getContainerSize() && discarded < num; i++) {
             ItemStack s = inv.getItem(i);
             if (s.isEmpty()) continue;
-            String id = BuiltInRegistries.ITEM.getKey(s.getItem()).toString();
-            if (!id.contains(itemId)) continue;
+            String key = BuiltInRegistries.ITEM.getKey(s.getItem()).toString().toLowerCase();
+            if (!key.endsWith(":" + search) && !key.contains(search)) continue;
             int take = Math.min(s.getCount(), num - discarded);
-            // Switch to slot if in hotbar
-            if (i < 9) {
-                KeyMapping slotKey = resolveKeyBySlot(i);
-                if (slotKey != null) { holdKey(slotKey, 2); try { Thread.sleep(100); } catch (InterruptedException e) {} }
-            }
-            // Press Q to drop
-            KeyMapping dropKey = Minecraft.getInstance().options.keyDrop;
-            for (int d = 0; d < take; d++) {
-                KeyMapping.click(dropKey.getDefaultKey());
-                try { Thread.sleep(50); } catch (InterruptedException e) {}
-            }
+            s.shrink(take); // 直接删除物品，不用 Q 键
             discarded += take;
         }
         return discarded;
@@ -751,10 +742,13 @@ public class CraftAgentBridge implements ClientModInitializer {
     }
 
     private static int countItem(Inventory inv, String id) {
+        String search = id.toLowerCase();
         int n = 0;
         for (int i = 0; i < inv.getContainerSize(); i++) {
             ItemStack s = inv.getItem(i);
-            if (BuiltInRegistries.ITEM.getKey(s.getItem()).toString().contains(id)) n += s.getCount();
+            if (s.isEmpty()) continue;
+            String key = BuiltInRegistries.ITEM.getKey(s.getItem()).toString().toLowerCase();
+            if (key.endsWith(":" + search) || (!search.contains(":") && key.contains(search))) n += s.getCount();
         }
         return n;
     }
