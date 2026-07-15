@@ -5,7 +5,6 @@
 //!   - 结果精确反馈实际执行效果
 
 use crate::adapter_mod::MinecraftModAdapter;
-use crate::tools_ext::register_mindcraft_tools;
 use base64::Engine as _;
 use craft_agent::core::adapter::GameAdapter;
 use craft_agent::core::tool::{GameTool, ToolEffects, ToolResult, ToolUpdateFn};
