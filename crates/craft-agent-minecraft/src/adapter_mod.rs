@@ -257,13 +257,15 @@ fn build_scene_desc(st: &ModState) -> String {
         .filter(|i| i.count > 0 && i.slot >= 9)
         .map(|i| format!("[{s}] {item}x{c}", s = i.slot, item = i.id.replace("minecraft:", ""), c = i.count))
         .collect();
+    let hotbar_str = hotbar.join(", ");
     s.push_str(&format!(
         "HOTBAR (slot 1-9):  {}\n",
-        if hotbar.is_empty() { "(empty)" } else { &hotbar.join(", ") }
+        if hotbar.is_empty() { "(empty)" } else { &hotbar_str }
     ));
+    let main_inv_str = main_inv.join(", ");
     s.push_str(&format!(
         "INVENTORY (slots 9-):  {}\n",
-        if main_inv.is_empty() { "(empty)" } else { &main_inv.join(", ") }
+        if main_inv.is_empty() { "(empty)" } else { &main_inv_str }
     ));
 
     // Find which hotbar slot is currently held
