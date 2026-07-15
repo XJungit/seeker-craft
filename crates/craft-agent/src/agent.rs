@@ -1052,8 +1052,8 @@ mod tests {
             AgentConfig::new("You are a test bot.".into(), 5),
         );
         let ctx = agent.build_context();
-        assert!(ctx.system_prompt.contains("You are a test bot"));
-        assert!(ctx.system_prompt.contains("Tool Reference"));
+        assert!(ctx.system_prompt.contains("一个测试机器人"));
+        assert!(ctx.system_prompt.contains("工具参考"));
     }
 
     #[test]
@@ -1069,7 +1069,7 @@ mod tests {
             "jailbreak must be English"
         );
         assert!(
-            ctx.system_prompt.contains("autonomously"),
+            ctx.system_prompt.contains("自主行动"),
             "jailbreak should say 'autonomously'"
         );
     }
@@ -1083,14 +1083,14 @@ mod tests {
         );
         let before = agent.build_context();
         assert!(
-            before.system_prompt.contains("no need to re-enter"),
+            before.system_prompt.contains("不需要重新输入"),
             "fresh agent should bootstrap"
         );
 
         agent.knowledge_bootstrapped = true;
         let after = agent.build_context();
         assert!(
-            !after.system_prompt.contains("no need to re-enter"),
+            !after.system_prompt.contains("不需要重新输入"),
             "bootstrapped agent should not repeat"
         );
     }
@@ -1104,14 +1104,14 @@ mod tests {
         );
         let fresh = agent.build_context();
         assert!(
-            !fresh.system_prompt.contains("observing without action"),
+            !fresh.system_prompt.contains("不行动"),
             "obs_streak=0, no hint"
         );
 
         agent.obs_streak = 5;
         let guarded = agent.build_context();
         assert!(
-            guarded.system_prompt.contains("observing without action"),
+            guarded.system_prompt.contains("不行动"),
             "obs_streak>=5 should inject hint"
         );
     }
