@@ -9,6 +9,7 @@
 //! 透传，换后端只改 TOML。
 
 use anyhow::{Result, anyhow, bail};
+use craft_agent::core::message::{AssistantResponse, StopReason, ToolCall, Usage};
 use craft_agent::core::types::{Action, Direction, WorldState};
 use serde_json::Value;
 
@@ -112,6 +113,71 @@ pub fn value_to_action(v: &Value) -> Result<Action> {
         }
         other => bail!("未知 action 类型: {other}（可选 Click/AimAndMine/Move/Look）"),
     }
+}
+
+/// 解析 OpenAI 兼容 chat/completions 响应为结构化 assistant 响应。
+/// 作为纯函数单测真实响应形状，避免“假 provider 通过、真实链路失效”。
+pub fn parse_chat_tools_response(resp: &Value) -> Result<AssistantResponse> {
+    let choice = resp["choices"]
+        .as_array()
+        .and_then(|choices| choices.first())
+        .ok_or_else(|| anyhow!("LLM 响应缺少 choices[0]: {resp}"))?;
+    let msg = &choice["message"];
+    let content = msg["content"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned);
+    let reasoning = msg["reasoning_content"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .map(str::to_owned);
+
+    let mut tool_calls = Vec::new();
+    if let Some(calls) = msg["tool_calls"].as_array() {
+        for tc in calls {
+            let id = tc["id"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| anyhow!("tool_call 缺少 id: {tc}"))?;
+            let name = tc["function"]["name"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .ok_or_else(|| anyhow!("tool_call 缺少 function.name: {tc}"))?;
+            let raw_args = tc["function"]["arguments"]
+                .as_str()
+                .ok_or_else(|| anyhow!("tool_call 缺少 function.arguments: {tc}"))?;
+            let arguments: Value = serde_json::from_str(raw_args)
+                .map_err(|e| anyhow!("tool_call 参数不是合法 JSON: {e}; call={tc}"))?;
+            tool_calls.push(ToolCall {
+                id: id.to_owned(),
+                name: name.to_owned(),
+                arguments,
+            });
+        }
+    }
+
+    let usage_json = &resp["usage"];
+    let usage = Usage {
+        input_tokens: usage_json["prompt_tokens"].as_u64().unwrap_or(0),
+        output_tokens: usage_json["completion_tokens"].as_u64().unwrap_or(0),
+        total_tokens: usage_json["total_tokens"].as_u64().unwrap_or(0),
+    };
+    let raw_reason = choice["finish_reason"].as_str().unwrap_or("stop");
+    let stop_reason = match raw_reason {
+        "stop" => StopReason::Stop,
+        "tool_calls" | "function_call" => StopReason::ToolCalls,
+        "length" => StopReason::Length,
+        "content_filter" => StopReason::ContentFilter,
+        other => StopReason::Other(other.to_owned()),
+    };
+
+    Ok(AssistantResponse {
+        content,
+        reasoning,
+        tool_calls,
+        usage,
+        stop_reason,
+    })
 }
 
 /// 把 [`WorldState`] 渲染成给 LLM 的紧凑文本状态。
@@ -255,20 +321,22 @@ pub mod real {
             self.chat_raw(&json!([{"role": "user", "content": prompt}]))
         }
 
-        /// 返回 (reasoning_text, tool_calls, usage), reasoning 为 LLM 思考内容
-        pub fn chat_tools(
-            &self,
-            messages: &Value,
-            tools: &Value,
-        ) -> Result<(Option<String>, Vec<(String, String)>, craft_agent::core::message::Usage)> {
+        /// 带工具的结构化 chat。保留 assistant 正文、推理、provider 原始 call id、usage 与终止原因。
+        pub fn chat_tools(&self, messages: &Value, tools: &Value) -> Result<AssistantResponse> {
             let mut body = json!({
                 "model": self.model,
                 "messages": messages,
-                "tools": tools,
                 "temperature": self.temperature,
                 "max_tokens": self.max_tokens,
             });
-            if let (Some(Value::Object(extra)), Value::Object(base)) = (&self.extra_body, &mut body) {
+            // 仅当 tools 非空才发送 tools 字段：部分兼容端（如 stepfun step-3.7-flash）
+            // 收到 "tools":[] 时会把正文塞进 reasoning_content 且 content 为空
+            // (finish_reason=length)，导致纯文本/无工具场景拿不到正文。
+            if tools.as_array().is_some_and(|arr| !arr.is_empty()) {
+                body["tools"] = tools.clone();
+            }
+            if let (Some(Value::Object(extra)), Value::Object(base)) = (&self.extra_body, &mut body)
+            {
                 for (k, v) in extra {
                     base.insert(k.clone(), v.clone());
                 }
@@ -281,42 +349,7 @@ pub mod real {
                 .send()?
                 .error_for_status()?
                 .json::<Value>()?;
-
-            let msg = &resp["choices"][0]["message"];
-            let reasoning = msg["content"].as_str()
-                .filter(|s| !s.is_empty())
-                .map(|s| s.to_string());
-            let tool_calls = msg["tool_calls"].as_array();
-
-            // Usage (pi: provider 返回的 total_tokens 优先用于估算上下文)
-            let usage = &resp["usage"];
-            let u = craft_agent::core::message::Usage {
-                input_tokens: usage["prompt_tokens"].as_u64().unwrap_or(0),
-                output_tokens: usage["completion_tokens"].as_u64().unwrap_or(0),
-                total_tokens: usage["total_tokens"].as_u64().unwrap_or(0),
-            };
-
-            match tool_calls {
-                Some(calls) => {
-                    let mut result = Vec::new();
-                    for tc in calls {
-                        let name = tc["function"]["name"]
-                            .as_str()
-                            .unwrap_or("")
-                            .to_string();
-                        let args = tc["function"]["arguments"]
-                            .as_str()
-                            .unwrap_or("{}")
-                            .to_string();
-                        result.push((name, args));
-                    }
-                    Ok((reasoning, result, u))
-                }
-                None => {
-                    let content = reasoning.unwrap_or_default();
-                    Ok((None, vec![("text".into(), content)], u))
-                }
-            }
+            parse_chat_tools_response(&resp)
         }
 
         fn chat_raw(&self, messages: &Value) -> Result<String> {
@@ -326,7 +359,8 @@ pub mod real {
                 "temperature": self.temperature,
                 "max_tokens": self.max_tokens,
             });
-            if let (Some(Value::Object(extra)), Value::Object(base)) = (&self.extra_body, &mut body) {
+            if let (Some(Value::Object(extra)), Value::Object(base)) = (&self.extra_body, &mut body)
+            {
                 for (k, v) in extra {
                     base.insert(k.clone(), v.clone());
                 }
@@ -446,5 +480,72 @@ mod tests {
         assert!(s.contains("crafting_table"));
         assert!(s.contains("oak_tree"));
         assert!(s.contains("斧头"));
+    }
+
+    #[test]
+    fn parses_plain_text_completion_without_fake_tool() {
+        let raw = serde_json::json!({
+            "choices": [{
+                "finish_reason": "stop",
+                "message": {"role":"assistant", "content":"任务完成", "reasoning_content":"检查完成"}
+            }],
+            "usage": {"prompt_tokens":10, "completion_tokens":2, "total_tokens":12}
+        });
+        let r = parse_chat_tools_response(&raw).unwrap();
+        assert_eq!(r.content.as_deref(), Some("任务完成"));
+        assert_eq!(r.reasoning.as_deref(), Some("检查完成"));
+        assert!(r.tool_calls.is_empty(), "纯文本绝不能伪造成 text 工具");
+        assert_eq!(r.stop_reason, StopReason::Stop);
+        assert_eq!(r.usage.total_tokens, 12);
+    }
+
+    #[test]
+    fn preserves_provider_tool_call_id_and_arguments() {
+        let raw = serde_json::json!({
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "message": {"role":"assistant", "content":null, "reasoning_content":"先观察", "tool_calls":[{
+                    "id":"call_from_provider", "type":"function",
+                    "function":{"name":"perceive", "arguments":"{\"prompt\":\"scene\"}"}
+                }]}
+            }],
+            "usage": {"prompt_tokens":20, "completion_tokens":5, "total_tokens":25}
+        });
+        let r = parse_chat_tools_response(&raw).unwrap();
+        assert_eq!(r.tool_calls[0].id, "call_from_provider");
+        assert_eq!(r.tool_calls[0].arguments["prompt"], "scene");
+        assert_eq!(r.stop_reason, StopReason::ToolCalls);
+    }
+
+    #[test]
+    fn stepfun_empty_tools_yields_empty_content_not_reasoning() {
+        // 回归：stepfun step-3.7-flash 收到 "tools":[] 时会把正文塞进 reasoning_content、
+        // content 为空、finish_reason=length（已在 chat_tools 改为空 tools 不发送该字段规避）。
+        // 此处锁定解析层：即便遇到这种畸形响应，content 必须为空而非误取 reasoning，
+        // 防止将来有人为“修 content 空”而把 reasoning 当 content fallback（会污染 agent 决策语义）。
+        let raw = serde_json::json!({
+            "choices": [{
+                "finish_reason": "length",
+                "message": {"role":"assistant", "content":null, "reasoning_content":"let me think step by step..."}
+            }],
+            "usage": {"prompt_tokens":1, "completion_tokens":1, "total_tokens":2}
+        });
+        let r = parse_chat_tools_response(&raw).unwrap();
+        assert!(
+            r.content.is_none(),
+            "畸形响应 content 应为空，不能误取 reasoning"
+        );
+        assert!(r.reasoning.is_some());
+        assert_eq!(r.stop_reason, StopReason::Length);
+    }
+
+    #[test]
+    fn rejects_invalid_tool_arguments_json() {
+        let raw = serde_json::json!({
+            "choices": [{"finish_reason":"tool_calls", "message":{"tool_calls":[{
+                "id":"bad", "function":{"name":"mine", "arguments":"not-json"}
+            }]}}]
+        });
+        assert!(parse_chat_tools_response(&raw).is_err());
     }
 }

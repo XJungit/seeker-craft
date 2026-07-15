@@ -13,6 +13,14 @@ pub mod adapter;
 #[cfg(feature = "real")]
 pub mod tools;
 
+#[cfg(feature = "mod-bridge")]
+pub mod adapter_mod;
+/// MC 桥接 mod 适配器（全量 mod 控制，见 §"治本缺口"）。仅 `mod-bridge` 特性编译。
+#[cfg(feature = "mod-bridge")]
+pub mod bridge;
+#[cfg(feature = "mod-bridge")]
+pub mod tools_mod;
+
 /// 点击/移动目标与窗口边缘的安全间距（像素）。MC 光标移出窗口会自暂停，所有坐标必须内缩。
 pub const WINDOW_MARGIN: i32 = 20;
 

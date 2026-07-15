@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Craft-Agent 控制面板</title>
+<style>
+  :root { --bg:#0f1419; --panel:#161c24; --panel2:#1d2530; --border:#2a3340;
+    --text:#d7dde5; --muted:#8b97a7; --accent:#4aa3ff; --err:#ff5c6c;
+    --green:#3ddc84; --orange:#ff9f43; --purple:#b07cff; --yellow:#ffd166; }
+  *{box-sizing:border-box;margin:0}
+  html,body{height:100%;background:var(--bg);color:var(--text);
+    font-family:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;font-size:14px}
+  /* ── 控制栏 ── */
+  #ctl{border-bottom:1px solid var(--border);background:var(--panel);padding:8px 16px;
+    display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  #ctl h1{font-size:15px;font-weight:600;margin-right:12px;white-space:nowrap}
+  .btn{border:1px solid var(--border);border-radius:6px;padding:6px 14px;font-size:13px;
+    cursor:pointer;background:var(--panel2);color:var(--text);font-weight:500;transition:all .15s}
+  .btn:hover{filter:brightness(1.25)}
+  .btn.start{background:var(--green);border-color:var(--green);color:#000}
+  .btn.stop{background:var(--err);border-color:var(--err);color:#fff}
+  .btn.pause{background:var(--orange);border-color:var(--orange);color:#000}
+  .btn:disabled{opacity:.4;cursor:not-allowed;filter:none}
+  .badge{display:inline-flex;align-items:center;gap:6px;font-size:12px;border-radius:999px;
+    padding:3px 10px;background:var(--panel2);border:1px solid var(--border);color:var(--muted)}
+  .badge b{color:var(--text);font-weight:600}
+  .dot{width:8px;height:8px;border-radius:50%}
+  .dot.go{background:var(--green);box-shadow:0 0 8px var(--green)}
+  .dot.pa{background:var(--orange);box-shadow:0 0 8px var(--orange)}
+  .dot.st{background:var(--muted)}
+  input.goal{border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:13px;
+    background:var(--panel2);color:var(--text);width:220px}
+  /* ── 日志流 ── */
+  #log{background:var(--panel2);border-bottom:1px solid var(--border);
+    max-height:140px;overflow-y:auto;padding:8px 16px;font-family:Menlo,monospace;font-size:12px}
+  #log .line{margin:2px 0;color:var(--muted)}
+  #log .line.err{color:var(--err)}
+  #log .line.step{color:var(--accent)}
+  #log .line.done{color:var(--green);font-weight:600}
+  /* ── 双栏 ── */
+  main{display:grid;grid-template-columns:1.05fr 0.95fr;gap:1px;background:var(--border);
+    height:calc(100vh - 193px)}
+  .col{background:var(--bg);overflow-y:auto;padding:14px}
+  .col h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;
+    color:var(--muted);margin:0 0 12px;position:sticky;top:-14px;background:var(--bg);padding:4px 0}
+  .ev{margin-bottom:12px}
+  .user{background:linear-gradient(180deg,#1b3a5c,#16283c);border:1px solid #2a4a6c;border-radius:10px;padding:10px 12px}
+  .user .label{font-size:11px;color:var(--accent);font-weight:600;margin-bottom:4px}
+  .asst{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
+  .asst .say{line-height:1.55;white-space:pre-wrap}
+  details.reason{margin-top:8px;border-top:1px dashed var(--border);padding-top:6px}
+  details.reason summary{cursor:pointer;color:var(--muted);font-size:12px}
+  details.reason pre{margin:6px 0 0;white-space:pre-wrap;color:#aab4c5;font-size:12.5px;line-height:1.5}
+  .tool{border:1px solid var(--border);border-left-width:4px;border-radius:8px;padding:9px 11px;background:var(--panel);margin-bottom:10px}
+  .tool.perceive{border-left-color:var(--accent)}
+  .tool.look{border-left-color:var(--purple)}
+  .tool.mine{border-left-color:var(--orange)}
+  .tool.press{border-left-color:var(--green)}
+  .tool.manage_knowledge{border-left-color:var(--yellow)}
+  .tool.visual_perceive{border-left-color:#e87fd9}
+  .tool.err{border-color:var(--err);border-left-color:var(--err)}
+  .tool .head{display:flex;align-items:center;gap:8px}
+  .tool .name{font-weight:700;font-family:Menlo,monospace}
+  .tool.perceive .name{color:var(--accent)}
+  .tool.look .name{color:var(--purple)}
+  .tool.mine .name{color:var(--orange)}
+  .tool.press .name{color:var(--green)}
+  .tool.visual_perceive .name{color:#e87fd9}
+  .tool .args{color:var(--muted);font-size:12px;font-family:Menlo,monospace}
+  .tool .err-tag{margin-left:auto;color:var(--err);font-size:11px;font-weight:600}
+  details.res summary{cursor:pointer;color:var(--muted);font-size:12px;margin-top:6px}
+  details.res pre{margin:6px 0 0;white-space:pre-wrap;color:#b9c2d0;font-size:12.5px;line-height:1.5;
+    max-height:320px;overflow:auto;background:var(--panel2);border-radius:6px;padding:8px}
+  .tool .shotlink{display:block;margin-top:8px}
+  .tool .shot{max-width:100%;border-radius:6px;border:1px solid var(--border);cursor:zoom-in;display:block;background:#000}
+  .tool .shotcap{color:var(--muted);font-size:11px;margin-top:4px}
+  .knowledge{color:var(--yellow);font-size:12px;border:1px dashed var(--yellow);border-radius:8px;padding:6px 10px;opacity:.85}
+  .empty{color:var(--muted);text-align:center;margin-top:40px}
+</style>
+</head>
+<body>
+<!-- ── 控制栏 ── -->
+<div id="ctl">
+  <span style="font-weight:600;margin-right:8px">🎮 Agent</span>
+  <input class="goal" id="goalInput" placeholder="目标（如：收集木头做工作台）" />
+  <button class="btn" style="background:var(--accent);border-color:var(--accent);color:#fff" onclick="doGoal()" title="运行时动态修改目标">📋 发送目标</button>
+  <span class="badge">步数限制 <input type="number" id="stepInput" value="0" min="0" max="9999" style="width:50px;background:transparent;border:0;color:var(--text);font-size:12px;text-align:center" title="0=无限循环" /><b>（0=无限）</b></span>
+  <button class="btn start" id="btnStart" onclick="doStart()" title="启动 Agent 循环">▶ 启动</button>
+  <button class="btn pause" id="btnPause" onclick="doPause()" disabled title="暂停/恢复">⏸ 暂停</button>
+  <button class="btn stop" id="btnStop" onclick="doStop()" disabled title="停止运行">⏹ 停止</button>
+  <span class="badge">状态 <b id="stStatus">就绪</b> <span class="dot st" id="dotStatus"></span></span>
+  <span class="badge" style="margin-left:auto">轮次 <b id="stTurns">0</b></span>
+  <span class="badge">工具调用 <b id="stTools">0</b></span>
+</div>
+
+<!-- ── 实时日志 ── -->
+<div id="log"><div class="line" style="color:var(--muted)">等待启动…（输入目标，点击 ▶ 启动）</div></div>
+
+<!-- ── 仪表盘双栏 ── -->
+<main>
+  <section class="col"><h2>对话历史</h2><div id="chat"></div></section>
+  <section class="col"><h2>工具调用与结果</h2><div id="tools"></div></section>
+</main>
+
+<script>
+const TOOLS = {perceive:"perceive",look:"look",mine:"mine",press:"press",visual_perceive:"visual_perceive",manage_knowledge:"manage_knowledge"};
+function esc(s){return String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
+function shortArgs(a){const s=typeof a=="string"?a:JSON.stringify(a);return s.length>120?s.slice(0,120)+" …":s}
+
+// ── 控制按钮 ──
+async function doStart(){
+  const goal=document.getElementById("goalInput").value||"收集木头做工作台";
+  const max=parseInt(document.getElementById("stepInput").value)||40;
+  const r=await fetch("/api/start",{method:"POST"});
+  const j=await r.json();
+  if(!j.ok) alert("启动失败: "+(j.error||"未知错误"));
+}
+async function doStop(){await fetch("/api/stop",{method:"POST"})}
+async function doPause(){await fetch("/api/pause",{method:"POST"})}
+async function doGoal(){
+  const goal=document.getElementById("goalInput").value;
+  if(!goal) return alert("请输入目标");
+  const r=await fetch("/api/goal",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({goal})});
+  const j=await r.json();
+  if(!j.ok) alert("发送失败: "+(j.error||""));
+}
+
+// ── 按钮状态同步 ──
+setInterval(async()=>{
+  try{const r=await fetch("/api/status");const s=await r.json();
+    const running=s.running,paused=s.paused;
+    const start=document.getElementById("btnStart"),pause=document.getElementById("btnPause"),stop=document.getElementById("btnStop");
+    start.disabled=running;stop.disabled=!running;pause.disabled=!running;
+    pause.textContent=paused?"▶ 继续":"⏸ 暂停";
+    const dot=document.getElementById("dotStatus");
+    document.getElementById("stStatus").textContent=running?(paused?"暂停中":"运行中"):"就绪";
+    dot.className="dot "+(running?(paused?"pa":"go"):"st");
+    document.getElementById("stTurns").textContent=s.step??0;
+  }catch(e){}
+},500);
+
+// ── SSE 实时日志 ──
+const logEl=document.getElementById("log");
+function addLog(text,cls){
+  const d=document.createElement("div");d.className="line"+(cls?" "+cls:"");d.textContent=text;
+  logEl.appendChild(d);logEl.scrollTop=logEl.scrollHeight;
+  if(logEl.children.length>200) logEl.removeChild(logEl.firstChild);
+}
+const evtSource=new EventSource("/api/events");
+evtSource.onmessage=function(e){
+  try{const d=JSON.parse(e.data);
+    if(d.kind==="log") addLog(d.text);
+    else if(d.kind==="step") addLog(`📍 第${d.step}步: ${d.action}`,"step");
+    else if(d.kind==="done") addLog(`✅ ${d.reason}`,"done");
+    else if(d.kind==="error") addLog(`❌ ${d.message}`,"err");
+  }catch(_){}
+};
+
+// ── 仪表盘轮询（增量渲染，不闪烁） ──
+let lastEventCount = 0;
+function render(data){
+  document.getElementById("stTools").textContent=data.tool_total??0;
+  const events=data.events||[];
+  if(!events.length && lastEventCount===0){
+    document.getElementById("chat").innerHTML='<div class="empty">暂无数据</div>';return
+  }
+  // 只渲染新增的事件，不清空已有的 DOM
+  const chat=document.getElementById("chat"),tools=document.getElementById("tools");
+  for(let i=lastEventCount;i<events.length;i++){
+    const e=events[i];
+    if(e.kind==="user"){
+      const d=document.createElement("div");d.className="ev user";
+      d.innerHTML=`<div class="label">🎯 目标</div><div>${esc(e.content)}</div>`;chat.appendChild(d)
+    }else if(e.kind==="assistant"){
+      const d=document.createElement("div");d.className="ev asst";
+      let h="";
+      if(e.content)h+=`<div class="say">${esc(e.content)}</div>`;
+      if(e.reasoning)h+=`<details class="reason" open><summary>🧠 推理链</summary><pre>${esc(e.reasoning)}</pre></details>`;
+      if(!e.content&&!e.reasoning)h+='<div class="say" style="color:var(--muted)">（仅工具调用）</div>';
+      d.innerHTML=h;chat.appendChild(d)
+    }else if(e.kind==="tool"){
+      const d=document.createElement("div"),cls=TOOLS[e.name]||"";
+      d.className="ev tool "+cls+(e.is_error?" err":"");
+      const len=(e.content||"").length;
+      d.innerHTML=`<div class="head"><span class="name">${esc(e.name)}</span>`+
+        (e.is_error?`<span class="err-tag">出错</span>`:"")+
+        `</div>`+(e.content?`<details class="res" open><summary>结果（${len}字符）</summary><pre>${esc(e.content)}</pre></details>`:"")+
+        (e.shot?`<a class="shotlink" href="/api/shot/${encodeURIComponent(e.shot)}" target="_blank"><img class="shot" src="/api/shot/${encodeURIComponent(e.shot)}" loading="lazy" /></a><div class="shotcap">📷 ${esc(e.shot)}</div>`:"");
+      tools.appendChild(d)
+    }else if(e.kind==="knowledge"){
+      const d=document.createElement("div");d.className="ev knowledge";
+      d.textContent="📚 知识库变更："+(e.action||"");tools.appendChild(d)
+    }
+  }
+  lastEventCount=events.length;
+}
+async function poll(){try{const r=await fetch("/api/session",{cache:"no-store"});if(r.ok)render(await r.json())}catch(_){}setTimeout(poll,1000)}
+poll();
+</script>
+</body>
+</html>

@@ -1,6 +1,0 @@
-[模型] D:\Craft-Agent\phase0_verify\synthetic_detector.onnx  (输入 1x3x640x640, 合成小检测骨干)
-[CPUExecutionProvider]  mean=   3.16ms  median=   2.97ms  min=  2.36  max=   4.43  std= 0.55
-[DmlExecutionProvider]  mean=   1.64ms  median=   1.52ms  min=  1.30  max=   3.83  std= 0.45
-
-[DML 加速比 vs CPU]  1.9x  (单帧 DML=1.52ms)
-[吞吐估算] DML 纯推理约 660 帧/秒（检测这一步不会成为瓶颈）

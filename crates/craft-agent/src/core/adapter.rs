@@ -6,7 +6,7 @@ use anyhow::Result;
 /// 游戏适配器：屏蔽"怎么截图、怎么理解、怎么操作"。
 ///
 /// 换游戏 = 换 Adapter 实现，内核（记忆/规划/决策/反思）零改动。
-/// - `MinecraftAdapter`：xcap 截图 + ort 检测 + VLM API + enigo 键鼠
+/// - `MinecraftModAdapter`：mod TCP 桥接（精确结构化状态）+ 可选 VLM 视觉补充
 /// - `BrowserAdapter`：headless 截图 + DOM（网页游戏，后续）
 /// - `DesktopAdapter`：xcap + enigo（其他桌面游戏）
 pub trait GameAdapter {

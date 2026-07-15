@@ -276,6 +276,24 @@ impl GameTool for ModVisualPerceiveTool {
 
 // ═══ 高层工具（Mindcraft 风格，封装操作闭环）═══
 
+/// 根据方块类型估算挖掘 tick 数（徒手，无工具加速）。
+/// 实际时间受工具类型影响，这里取保守上界保证挖掉。
+fn mine_ticks_for(block_id: &str) -> u32 {
+    if block_id.contains("_log") || block_id.contains("planks") {
+        100 // 木头: 徒手 3s, 给 5s 余量
+    } else if block_id.contains("stone") || block_id.contains("cobble") {
+        200 // 石头: 徒手 7.5s, 给 10s
+    } else if block_id.contains("_ore") {
+        250 // 矿石: 徒手极慢, 25s，实际需要对应镐
+    } else if block_id.contains("dirt") || block_id.contains("grass") || block_id.contains("sand") {
+        30 // 泥土/沙子: <1s
+    } else if block_id.contains("leaves") {
+        20 // 树叶: <0.5s
+    } else {
+        100 // 默认 5s
+    }
+}
+
 /// 辅助：从适配器拿到最近状态并找最近目标方块。
 fn find_nearest(
     adapter: &MinecraftModAdapter,
@@ -336,6 +354,7 @@ impl GameTool for ModCollectTool {
         let target = args["target"].as_str().unwrap_or("oak_log");
         let want = args["count"].as_u64().unwrap_or(1) as u32;
         let mut adapter = self.adapter.borrow_mut();
+        let mine_ticks = mine_ticks_for(target);
 
         let st = adapter.reload()?;
         let before: u32 = st
@@ -352,14 +371,14 @@ impl GameTool for ModCollectTool {
                 break;
             }
 
-            // Fast path: already looking at the target and close enough → mine directly
+            // Fast path: already looking at target and close → mine directly
             let st = adapter.reload()?;
             if let Some(ref tb) = st.targeted_block
                 && tb.id.contains(target)
                 && tb.dist <= 4.0
             {
-                adapter.execute(Action::Mine { ticks: 60 })?;
-                std::thread::sleep(std::time::Duration::from_millis(150));
+                adapter.execute(Action::Mine { ticks: mine_ticks })?;
+                std::thread::sleep(std::time::Duration::from_millis(200));
                 let st2 = adapter.reload()?;
                 got = st2
                     .inventory
@@ -370,32 +389,23 @@ impl GameTool for ModCollectTool {
                 continue;
             }
 
-            let Some((block, yaw_diff)) = find_nearest(&adapter, target) else {
+            // Use mod-side move_to: handles aiming + walking to exact world coords, no oscillation
+            let Some((block, _yaw_diff)) = find_nearest(&adapter, target) else {
                 return Ok(ToolResult {
                     message: format!("collected {target}: {before}→{got} (no more nearby)"),
                     is_error: got == before,
                     images: vec![],
                 });
             };
-            if yaw_diff.abs() > 10.0 {
-                adapter.execute(Action::Look {
-                    dx: yaw_diff as i32,
-                    dy: 0,
-                })?;
-                std::thread::sleep(std::time::Duration::from_millis(80));
-                continue;
-            }
-            if block.dist > 3.5 {
-                let walk = ((block.dist * 10.0) as u32).min(80).max(5);
-                adapter.execute(Action::Press {
-                    keys: "w".into(),
-                    ticks: walk,
-                })?;
-                std::thread::sleep(std::time::Duration::from_millis(200));
-                continue;
-            }
-            adapter.execute(Action::Mine { ticks: 60 })?;
-            std::thread::sleep(std::time::Duration::from_millis(150));
+
+            // Walk to block position using mod's built-in pathfinding
+            adapter.move_to(block.x, block.y + 0.5, block.z)?;
+            std::thread::sleep(std::time::Duration::from_millis(300));
+
+            // Mine with appropriate ticks for this block type
+            adapter.execute(Action::Mine { ticks: mine_ticks })?;
+            std::thread::sleep(std::time::Duration::from_millis(200));
+
             let st2 = adapter.reload()?;
             got = st2
                 .inventory

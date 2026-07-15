@@ -3,6 +3,8 @@
 > 参考 pi_agent_rust (Rust, 43K+ 行已读) 和 SillyTavern (TypeScript, PromptManager + WorldInfo + ToolManager 已读)
 >
 > 目标: 把当前"硬编码玩具 Agent"升级为"可扩展通用游戏 Agent 框架"
+>
+> **状态**: 本方案已落地（核心 crate 已实现对齐）。实际工具名为 `perceive` / `press` / `look` / `mine`（对应 `PerceiveTool` / `PressTool` / `LookTool` / `MineTool`），下文旧名 `aim_and_mine` / `move_forward` 仅保留为历史设计痕迹。具体实现以 `crates/craft-agent*/src` 为准。
 
 ---
 
@@ -13,7 +15,7 @@
 ```
 agent_multi_step.rs (90 行入口)
   └─ agent.rs (Agent::run, 80 行 loop)
-       ├─ 工具执行: match name { "perceive" => ..., "aim_and_mine" => ..., ... }
+       ├─ 工具执行: match name { "perceive" => ..., "mine" => ..., ... }
        ├─ 消息存储: Vec<Value> (裸 JSON, 无类型安全)
        ├─ 系统 prompt: 单个字符串 blob (规则 + 示例 + 身份 混在一起)
        └─ 无会话树、无压缩、无工具副作用声明
@@ -77,8 +79,8 @@ agent_multi_step.rs (90 行入口)
 │  ┌──────────────────┐  ┌──────────────────────────┐ │
 │  │ MinecraftAdapter │  │ MinecraftTools            │ │
 │  │ (GameAdapter)    │  │ PerceiveTool              │ │
-│  │ capture/screenshot│  │ AimAndMineTool            │ │
-│  └──────────────────┘  │ MoveTool / LookTool       │ │
+│  │ capture/screenshot│  │ MineTool                  │ │
+│  └──────────────────┘  │ PressTool / LookTool      │ │
 │                        └──────────────────────────┘ │
 └─────────────────────────────────────────────────────┘
 ```
@@ -181,7 +183,7 @@ pub struct Usage {
 pub struct ToolEffects {
     /// 只读: 不修改游戏状态 (perceive, look)
     pub is_readonly: bool,
-    /// 修改游戏状态 (aim_and_mine, move)
+    /// 修改游戏状态 (mine, press)
     pub is_destructive: bool,
 }
 
@@ -224,8 +226,8 @@ impl ToolRegistry {
 **Minecraft 工具实现** (放在 `craft-agent-minecraft/src/tools/`):
 ```rust
 // PerceiveTool: 调用 VLM 感知
-// AimAndMineTool: raw_mouse_rel + 左键
-// MoveTool: W 键移动
+// MineTool: raw_mouse_rel + 左键
+// PressTool: W 键移动
 // LookTool: raw_mouse_rel 转视角
 ```
 
@@ -288,7 +290,7 @@ impl PromptBuilder {
 // 每次 perceive 后, 检测结果以 World Info 格式注入到上下文
 pub struct WorldInfo {
     pub trigger: String,    // "tree", "stone", "creeper"
-    pub content: String,    // "前方有橡树, 偏移(122,-103)。应 aim_and_mine tree。"
+    pub content: String,    // "前方有橡树, 偏移(122,-103)。应 mine tree。"
     pub sticky: u32,        // 保持激活轮数
 }
 

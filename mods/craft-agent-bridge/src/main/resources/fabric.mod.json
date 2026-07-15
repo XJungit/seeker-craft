@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "craft-agent-bridge",
+  "version": "${version}",
+  "name": "Craft-Agent Bridge",
+  "description": "本地 TCP 桥接 mod：向外部 AI Agent 暴露结构化游戏状态(物品栏/方块/实体/坐标)并接受精确动作指令(look/press/mine/move)，实现 MindFlayer 式直接读取游戏数据。",
+  "authors": ["Craft-Agent"],
+  "contact": {},
+  "license": "MIT",
+  "environment": "client",
+  "entrypoints": {
+    "client": [
+      "com.craftagent.bridge.CraftAgentBridge"
+    ]
+  },
+  "depends": {
+    "fabricloader": ">=0.16.0",
+    "fabric-api": "*",
+    "minecraft": "1.21.11"
+  },
+  "mixins": []
+}

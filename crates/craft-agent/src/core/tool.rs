@@ -36,10 +36,14 @@ impl ToolEffects {
         Self { bits: Self::APPEND }
     }
     pub const fn network() -> Self {
-        Self { bits: Self::NETWORK }
+        Self {
+            bits: Self::NETWORK,
+        }
     }
     pub const fn process() -> Self {
-        Self { bits: Self::PROCESS }
+        Self {
+            bits: Self::PROCESS,
+        }
     }
 
     /// 组合两个副作用 (pi: union)
@@ -104,6 +108,11 @@ pub struct ToolResult {
     pub message: String,
     /// 是否出错
     pub is_error: bool,
+    /// 可选图像段：base64 data URI（如 `data:image/png;base64,...`）。
+    /// 非空时由 Agent 以 `tool_result_with_images` 落历史，并以
+    /// OpenAI ChatML `image_url` 内容段形式直接发给决策 LLM（多模态直读场景）。
+    /// 纯文本工具保持为空。
+    pub images: Vec<String>,
 }
 
 /// 增量结果回调 (pi: on_update: Option<Box<dyn Fn(ToolUpdate) + Send + Sync>>)
@@ -145,7 +154,7 @@ pub trait GameTool {
     /// 转换为 OpenAI function calling 的完整定义
     fn to_openai_def(&self) -> Value {
         let params = self.parameters();
-        if params.as_object().map_or(true, |o| o.is_empty()) {
+        if params.as_object().is_none_or(|o| o.is_empty()) {
             serde_json::json!({
                 "type": "function",
                 "function": {
@@ -203,7 +212,10 @@ impl ToolRegistry {
 
     /// 按名称查找工具 (pi: 线性 find, 无 HashMap 索引)
     pub fn get(&self, name: &str) -> Option<&dyn GameTool> {
-        self.tools.iter().find(|t| t.name() == name).map(AsRef::as_ref)
+        self.tools
+            .iter()
+            .find(|t| t.name() == name)
+            .map(AsRef::as_ref)
     }
 
     /// 获取所有工具
@@ -285,11 +297,21 @@ mod tests {
     fn registry_lookup_and_extend() {
         struct T;
         impl GameTool for T {
-            fn name(&self) -> &str { "x" }
-            fn description(&self) -> &str { "d" }
-            fn parameters(&self) -> Value { serde_json::json!({}) }
+            fn name(&self) -> &str {
+                "x"
+            }
+            fn description(&self) -> &str {
+                "d"
+            }
+            fn parameters(&self) -> Value {
+                serde_json::json!({})
+            }
             fn execute(&self, _: &str, _: Value, _: Option<ToolUpdateFn>) -> Result<ToolResult> {
-                Ok(ToolResult { message: "ok".into(), is_error: false })
+                Ok(ToolResult {
+                    message: "ok".into(),
+                    is_error: false,
+                    images: vec![],
+                })
             }
         }
         let mut reg = ToolRegistry::new();

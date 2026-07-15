@@ -113,6 +113,14 @@ impl MinecraftModAdapter {
         Ok(())
     }
 
+    /// 导航到世界坐标（mod 侧每 tick 重新计算朝向 + 前进，无振荡）。
+    pub fn move_to(&self, x: f64, y: f64, z: f64) -> Result<()> {
+        self.bridge
+            .borrow_mut()
+            .send(ModCommand::MoveTo { x, y, z })?;
+        Ok(())
+    }
+
     /// 合成物品（调 mod 直接操作 Inventory 扣材料加结果，零视觉依赖）。
     pub fn craft(&self, item: &str, count: u32) -> Result<()> {
         self.bridge.borrow_mut().send(ModCommand::Craft {

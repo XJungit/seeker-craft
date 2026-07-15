@@ -108,7 +108,9 @@ impl MinecraftAdapter {
             .context("编码截图 PNG 失败")?;
         Ok(png)
     }
-    pub fn capture_screen(&self) -> anyhow::Result<Vec<u8>> { self.capture() }
+    pub fn capture_screen(&self) -> anyhow::Result<Vec<u8>> {
+        self.capture()
+    }
 }
 
 /// 绕过 enigo 的绝对定位转换，直接用 SendInput + MOUSEEVENTF_MOVE（无 ABSOLUTE flag）
@@ -245,7 +247,8 @@ impl GameAdapter for MinecraftAdapter {
         elements.extend(mc_hud_marks(ww, wh));
 
         // 叠加编号渲染 → 编号图喂给 VLM（让 VLM 说"点③"而非模糊方位）
-        let _marked_png = render_marks(&png, &elements).context("SoM 渲染编号失败（需系统字体）")?;
+        let _marked_png =
+            render_marks(&png, &elements).context("SoM 渲染编号失败（需系统字体）")?;
         let _elements_str: String = elements
             .iter()
             .map(|e| {
@@ -260,7 +263,9 @@ impl GameAdapter for MinecraftAdapter {
 
         // 合并场景描述 + 目标检测为一次 VLM 调用
         let combined_prompt = "描述场景并列出物体坐标。格式: label: (x,y)。可识别: tree stone water animal ore grass dirt。不要UI/HUD。";
-        let reply = self.vision.chat(&png, combined_prompt)
+        let reply = self
+            .vision
+            .chat(&png, combined_prompt)
             .context("VLM 场景描述失败")?;
 
         // 从回复中提取场景描述（坐标部分之前的内容）
@@ -346,7 +351,11 @@ impl GameAdapter for MinecraftAdapter {
                 }
                 thread::sleep(Duration::from_millis(100));
                 let key = dir_to_key(dir);
-                eprintln!("[move] 按下 {:?} {}ms", key, (ticks as u64).saturating_mul(STEP_MS));
+                eprintln!(
+                    "[move] 按下 {:?} {}ms",
+                    key,
+                    (ticks as u64).saturating_mul(STEP_MS)
+                );
                 self.enigo.key(key, Direction::Press)?;
                 thread::sleep(Duration::from_millis(
                     (ticks as u64).saturating_mul(STEP_MS),
@@ -398,7 +407,10 @@ impl GameAdapter for MinecraftAdapter {
                             // offset = VLM_y - 中心_y。树在上半屏 → offset<0 → 应抬头 → raw_mouse_rel dy应为负
                             // 但实测 dy 正才抬头, 疑似 raw input 方向与我们预期相反, 先反转 Y
                             let sdy = -(dy as f32 * 0.5) as i32;
-                            eprintln!("[aim] raw_mouse_rel({sdx}, {sdy}) ← ({dx},{dy}) → {t_label}", t_label = t.label);
+                            eprintln!(
+                                "[aim] raw_mouse_rel({sdx}, {sdy}) ← ({dx},{dy}) → {t_label}",
+                                t_label = t.label
+                            );
                             #[cfg(windows)]
                             raw_mouse_rel(sdx, sdy)?;
                             #[cfg(not(windows))]
@@ -433,20 +445,32 @@ impl GameAdapter for MinecraftAdapter {
                 for part in keys.split('+').map(|s| s.trim()) {
                     let ch = part.chars().next().unwrap_or('w');
                     eprintln!("[press] {part}");
-                    self.enigo.key(enigo::Key::Unicode(ch), enigo::Direction::Press)?;
+                    self.enigo
+                        .key(enigo::Key::Unicode(ch), enigo::Direction::Press)?;
                 }
-                thread::sleep(Duration::from_millis((ticks as u64).saturating_mul(STEP_MS)));
+                thread::sleep(Duration::from_millis(
+                    (ticks as u64).saturating_mul(STEP_MS),
+                ));
                 for part in keys.split('+').map(|s| s.trim()) {
                     let ch = part.chars().next().unwrap_or('w');
-                    self.enigo.key(enigo::Key::Unicode(ch), enigo::Direction::Release)?;
+                    self.enigo
+                        .key(enigo::Key::Unicode(ch), enigo::Direction::Release)?;
                 }
-                Ok(ExecResult { ok: true, detail: format!("press {keys} x{ticks}") })
+                Ok(ExecResult {
+                    ok: true,
+                    detail: format!("press {keys} x{ticks}"),
+                })
             }
             Action::Mine { ticks } => {
                 self.enigo.button(Button::Left, Direction::Press)?;
-                thread::sleep(Duration::from_millis((ticks as u64).saturating_mul(STEP_MS)));
+                thread::sleep(Duration::from_millis(
+                    (ticks as u64).saturating_mul(STEP_MS),
+                ));
                 self.enigo.button(Button::Left, Direction::Release)?;
-                Ok(ExecResult { ok: true, detail: format!("mine {}ms", (ticks as u64).saturating_mul(STEP_MS)) })
+                Ok(ExecResult {
+                    ok: true,
+                    detail: format!("mine {}ms", (ticks as u64).saturating_mul(STEP_MS)),
+                })
             }
         }
     }
@@ -478,8 +502,10 @@ fn parse_vlm_targets(reply: &str, screen_w: u32, screen_h: u32) -> Result<Vec<Ta
         // debug: 打印所有匹配
         eprintln!("[parse] raw={raw_label:?} → label={label:?} ({cx},{cy})");
         // 过滤 UI 元素
-        if label.starts_with("hotbar") || label.starts_with("hud")
-            || label.is_empty() || label.len() > 30
+        if label.starts_with("hotbar")
+            || label.starts_with("hud")
+            || label.is_empty()
+            || label.len() > 30
         {
             eprintln!("[parse] ^ 过滤(UI)");
             continue;

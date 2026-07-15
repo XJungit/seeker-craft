@@ -22,7 +22,9 @@ fn main() -> anyhow::Result<()> {
             if let Some((k, v)) = line.trim().split_once('=') {
                 let (k, v) = (k.trim(), v.trim());
                 if std::env::var(k).is_err() {
-                    unsafe { std::env::set_var(k, v); }
+                    unsafe {
+                        std::env::set_var(k, v);
+                    }
                 }
             }
         }

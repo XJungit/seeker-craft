@@ -29,6 +29,47 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::Path;
 
+/// perceive 工具的视觉后端模式。
+///
+/// - `vlm`：独立 VLM 把截图转成文字描述，文字进历史（默认，向后兼容）。
+/// - `multimodal`：截图以 base64 直接作为工具结果的图像段返回，由决策 LLM 自己看像素
+///   （去掉 VLM 中间层，对"编造木头"这类幻觉更稳，因为 LLM 直接面对真实画面）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum VisionMode {
+    /// 独立 VLM 转文字（默认，向后兼容）
+    #[default]
+    Vlm,
+    /// 多模态 LLM 直读截图
+    Multimodal,
+}
+
+/// perceive 配置（可选；缺省 mode=vlm，保持向后兼容）。
+#[derive(Debug, Clone, Deserialize)]
+pub struct PerceiveConfig {
+    /// 视觉后端模式：vlm=独立视觉模型转文字，multimodal=截图直传决策 LLM 由它看像素。
+    #[serde(default)]
+    pub mode: VisionMode,
+    /// 多模态模式下发给 LLM 的截图最长边（像素）。
+    /// 缺省 768（省 token）；显式 `0` 表示不缩放（发原图）。VLM 模式忽略。
+    #[serde(default = "default_perceive_image_max_side")]
+    pub image_max_side: Option<u32>,
+}
+
+/// 截图最长边默认值：768px（多模态模式发往 LLM 前缩放，省带宽/编码/token）。
+fn default_perceive_image_max_side() -> Option<u32> {
+    Some(768)
+}
+
+impl Default for PerceiveConfig {
+    fn default() -> Self {
+        Self {
+            mode: VisionMode::Vlm,
+            image_max_side: Some(768),
+        }
+    }
+}
+
 /// 顶层配置：目前含 VLM，后续可平行加入 `[llm]` 决策后端（结构完全同构）。
 #[derive(Debug, Clone, Deserialize)]
 pub struct AgentConfig {
@@ -36,6 +77,10 @@ pub struct AgentConfig {
     /// 决策 LLM 后端组（可选；未配置时用 mock / 环境变量）
     #[serde(default)]
     pub llm: Option<BackendGroup>,
+    /// perceive 的视觉后端模式（独立 VLM 转文字，或多模态 LLM 直读截图）。
+    /// 可选；缺省视为 vlm，保持向后兼容。换模式只改本配置，无需重编译。
+    #[serde(default)]
+    pub perceive: Option<PerceiveConfig>,
 }
 
 /// 一组同类后端 + 当前启用项。VLM 与 LLM 复用同一结构。
@@ -85,6 +130,9 @@ pub struct BackendConfig {
     /// 最大生成 token（默认 2048）
     #[serde(default = "default_max_tokens")]
     pub max_tokens: u32,
+    /// 模型上下文窗口 token 数。Agent 自动压缩预算必须从这里读取，不能按模型名硬编码。
+    #[serde(default = "default_context_window")]
+    pub context_window: u32,
     /// 图像预处理：最长边缩放到该像素（None=不缩放）。由适配器层负责实际缩放。
     #[serde(default)]
     pub max_side: Option<u32>,
@@ -105,6 +153,9 @@ fn default_temperature() -> f32 {
 }
 fn default_max_tokens() -> u32 {
     2048
+}
+fn default_context_window() -> u32 {
+    128_000
 }
 
 impl BackendConfig {
@@ -201,5 +252,31 @@ chat_template_kwargs = { enable_thinking = false }
         assert_eq!(agnes.resolve_api_key().unwrap(), "sk-test");
         let eb = agnes.extra_body.as_ref().unwrap();
         assert_eq!(eb["chat_template_kwargs"]["enable_thinking"], false);
+    }
+
+    #[test]
+    fn perceive_config_parses_and_defaults_to_vlm() {
+        // 缺省 [perceive] 时应为 None（向后兼容旧配置）
+        let cfg: AgentConfig = toml::from_str(SAMPLE).unwrap();
+        assert!(cfg.perceive.is_none(), "缺省配置不应含 perceive");
+
+        // 显式配置 multimodal 模式 + 自定义最长边
+        let with_perceive =
+            format!("{SAMPLE}\n[perceive]\nmode = \"multimodal\"\nimage_max_side = 1024\n");
+        let cfg: AgentConfig = toml::from_str(&with_perceive).unwrap();
+        let p = cfg.perceive.expect("应解析出 perceive 配置");
+        assert_eq!(p.mode, VisionMode::Multimodal);
+        assert_eq!(p.image_max_side, Some(1024));
+
+        // 仅给 mode=vlm 缺失 image_max_side 时取默认 768
+        let vlm_only = format!("{SAMPLE}\n[perceive]\nmode = \"vlm\"\n");
+        let cfg: AgentConfig = toml::from_str(&vlm_only).unwrap();
+        let p = cfg.perceive.expect("应解析出 perceive 配置");
+        assert_eq!(p.mode, VisionMode::Vlm);
+        assert_eq!(
+            p.image_max_side,
+            Some(768),
+            "vlm 模式缺省 image_max_side 应为 768"
+        );
     }
 }

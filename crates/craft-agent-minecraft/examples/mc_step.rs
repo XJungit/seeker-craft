@@ -99,7 +99,9 @@ fn main() -> anyhow::Result<()> {
         let r = adapter.execute(Action::Look { dx: 400, dy: 0 })?;
         println!("  → {}", r.detail);
     } else {
-        println!("[mc_step] 只读模式：未执行任何鼠标/键盘动作。加 --aim <target> 测试对准挖矿，--act 测试 Look。");
+        println!(
+            "[mc_step] 只读模式：未执行任何鼠标/键盘动作。加 --aim <target> 测试对准挖矿，--act 测试 Look。"
+        );
     }
     Ok(())
 }

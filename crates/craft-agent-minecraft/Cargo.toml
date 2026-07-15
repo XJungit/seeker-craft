@@ -18,11 +18,18 @@ image = { workspace = true, optional = true }
 # VLM 检测坐标解析
 regex = "1"
 serde_json = "1"
+# 桥接 mod 结构化状态（perceive/action 用的 JSON 结构 derive）
+serde = { version = "1", features = ["derive"], optional = true }
+# 多模态直读：把截图 base64 内联为 data URI（仅 real 路径使用，故 optional）
+base64 = { version = "0.22", optional = true }
 
 [features]
 # 开启后接入真实 Minecraft：VLM/SoM 渲染(craft-agent-model/real) + xcap 截图 + enigo 键鼠。
 # 默认不开启 → 只编译纯函数（如 to_screen_coords），供离线单测与轻量 CI。
-real = ["dep:craft-agent-model", "craft-agent-model/real", "dep:xcap", "dep:enigo", "dep:image"]
+real = ["dep:craft-agent-model", "craft-agent-model/real", "dep:xcap", "dep:enigo", "dep:image", "dep:base64"]
+# 全量 mod 控制：进程内 Fabric mod 桥接（craft-agent-bridge），结构化状态感知 + 进程内动作，
+# 彻底移除 enigo 的 OS 级键鼠模拟。基于 real（复用 xcap 截图供 viewer + craft-agent-model/real 的 LLM 客户端）。
+mod-bridge = ["real", "dep:serde"]
 
 # 仅 Windows 编译：前台窗口接管（AttachThreadInput + SetForegroundWindow），
 # 确保 MC 在独占全屏/后台时收得到 enigo 合成输入（SendInput 只投前台窗口队列）。

@@ -1,7 +1,7 @@
 //! 离线测试的假适配器：不依赖任何游戏/显示，返回固定 WorldState。
 //!
 //! 用于在无 Minecraft 环境下验证主循环、类型系统与 trait 设计。
-//! 真实实现见后续 `MinecraftAdapter`（xcap + ort + VLM + enigo）。
+//! 真实实现见 `MinecraftModAdapter`（mod TCP 桥接 + 可选 VLM 视觉补充）。
 
 use crate::core::adapter::GameAdapter;
 use crate::core::types::{Action, Element, ExecResult, Screenshot, Target, WorldState};
