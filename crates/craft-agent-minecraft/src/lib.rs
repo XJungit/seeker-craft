@@ -33,6 +33,10 @@ pub mod task_base;
 #[cfg(feature = "mod-bridge")]
 pub mod combat_dsl;
 #[cfg(feature = "mod-bridge")]
+pub mod companion;
+#[cfg(feature = "mod-bridge")]
+pub mod guard;
+#[cfg(feature = "mod-bridge")]
 pub mod mindcraft_ext;
 #[cfg(feature = "mod-bridge")]
 pub mod tools_mod;
