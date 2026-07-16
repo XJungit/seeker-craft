@@ -5,6 +5,7 @@
 //!   - 结果精确反馈实际执行效果
 
 use crate::adapter_mod::MinecraftModAdapter;
+use crate::survival_decisions::{decide_threat_response, food_priority, FoodDecision, ThreatResponse};
 use base64::Engine as _;
 use craft_agent::core::adapter::GameAdapter;
 use craft_agent::core::tool::{GameTool, ToolEffects, ToolResult, ToolUpdateFn};
@@ -14,6 +15,104 @@ use serde_json::Value;
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
+
+/// 生存前置检查（借鉴 Numen 生存链优先级，在耗时工具前检查）。
+///
+/// 返回 Some(warning) 表示有紧急生存状态，应优先处理。
+/// 返回 None 表示状态正常，可继续执行工具。
+fn survival_precheck(
+    health: f32,
+    hunger: f32,
+    has_food: bool,
+    has_weapon: bool,
+    threat_present: bool,
+) -> Option<String> {
+    // 威胁检查（Numen MOB_DEFENSE 优先级 5）
+    match decide_threat_response(threat_present, health, has_weapon) {
+        ThreatResponse::Flee => {
+            return Some(format!(
+                "URGENT: health={:.0} threat nearby, FLEE recommended (use move_to to retreat)",
+                health
+            ));
+        }
+        ThreatResponse::Fight => {
+            // 有威胁但能打——不阻断，但给警告
+            // 不返回 Some，让工具继续执行
+        }
+        ThreatResponse::None => {}
+    }
+
+    // 进食检查（Numen FOOD_REGEN=4 / FOOD_HUNGER=3）
+    let (food_dec, _) = food_priority(hunger as u32, health, has_food);
+    match food_dec {
+        FoodDecision::Regen => {
+            return Some(format!(
+                "URGENT: health={:.0} hunger={:.0}, eat food NOW to regenerate health",
+                health, hunger
+            ));
+        }
+        FoodDecision::Hunger => {
+            return Some(format!(
+                "WARNING: hunger={:.0} very low, eat food soon",
+                hunger
+            ));
+        }
+        FoodDecision::Dormant => {}
+    }
+
+    None
+}
+
+/// 检查背包是否有食物。
+fn has_food_in_inventory(inventory: &[crate::bridge::InvSlot]) -> bool {
+    inventory.iter().any(|i| {
+        let id = i.id.to_lowercase();
+        id.contains("bread")
+            || id.contains("apple")
+            || id.contains("cooked")
+            || id.contains("steak")
+            || id.contains("porkchop")
+            || id.contains("mutton")
+            || id.contains("chicken")
+            || id.contains("carrot")
+            || id.contains("potato")
+            || id.contains("beetroot")
+            || id.contains("melon")
+            || id.contains("berry")
+            || id.contains("mushroom_stew")
+            || id.contains("rabbit_stew")
+    })
+}
+
+/// 检查背包是否有武器。
+fn has_weapon_in_inventory(inventory: &[crate::bridge::InvSlot]) -> bool {
+    inventory.iter().any(|i| {
+        let id = i.id.to_lowercase();
+        id.contains("sword") || id.contains("axe")
+    })
+}
+
+/// 检查附近是否有敌对实体。
+fn has_hostile_nearby(entities: &[crate::bridge::NearbyEntity]) -> bool {
+    entities.iter().any(|e| {
+        let t = e.r#type.to_lowercase();
+        t.contains("zombie")
+            || t.contains("skeleton")
+            || t.contains("creeper")
+            || t.contains("spider")
+            || t.contains("enderman")
+            || t.contains("witch")
+            || t.contains("blaze")
+            || t.contains("ghast")
+            || t.contains("pillager")
+            || t.contains("vindicator")
+            || t.contains("ravager")
+            || t.contains("phantom")
+            || t.contains("drowned")
+            || t.contains("husk")
+            || t.contains("stray")
+    })
+}
 
 // ═══════════════════════════════════════════════════════════════
 // Perceive — 游戏状态快照（<100ms，每轮自动注入）
@@ -131,6 +230,20 @@ impl GameTool for ModCollectTool {
         let want = args["count"].as_u64().unwrap_or(1).min(64) as u32;
         let mut adapter = self.adapter.borrow_mut();
         let st = adapter.reload()?;
+        // 生存前置检查（借鉴 Numen 生存链）：紧急状态优先处理，不执行采集
+        if let Some(warning) = survival_precheck(
+            st.health,
+            st.hunger,
+            has_food_in_inventory(&st.inventory),
+            has_weapon_in_inventory(&st.inventory),
+            has_hostile_nearby(&st.entities),
+        ) {
+            return Ok(ToolResult {
+                message: format!("collect ABORTED: {warning}"),
+                is_error: true,
+                images: vec![],
+            });
+        }
         let before: u32 = st
             .inventory
             .iter()
@@ -139,16 +252,19 @@ impl GameTool for ModCollectTool {
             .sum();
         let max_attempts = want.min(10).max(3);
         let mut got = before;
+        // Numen TargetSet 黑名单：不可达方块坐标拉黑，换下一个同类方块（CollectItems skip_target 模式）
+        let mut blacklisted: std::collections::HashSet<(i32, i32, i32)> = std::collections::HashSet::new();
         let mut consecutive_failures = 0;
         for attempt in 1..=max_attempts {
             if got >= before + want {
                 break;
             }
-            let Some((block, _)) = find_nearest(&adapter, target) else {
+            // 找最近方块时跳过黑名单（Numen TargetSet.pick 模式）
+            let Some((block, _)) = find_nearest_skipping(&adapter, target, &blacklisted) else {
                 let msg = if got > before {
-                    format!("collected {target}: {before}→{got} (no more nearby, tried {attempt})")
+                    format!("collected {target}: {before}→{got} (no more nearby, tried {attempt}, blacklisted {})", blacklisted.len())
                 } else {
-                    format!("collected {target}: {before}→{got} (no {target} found nearby)")
+                    format!("collected {target}: {before}→{got} (no {target} found nearby, blacklisted {})", blacklisted.len())
                 };
                 return Ok(ToolResult {
                     message: msg,
@@ -171,7 +287,11 @@ impl GameTool for ModCollectTool {
             let reached = ack.reached.unwrap_or(false);
             let final_dist = ack.final_dist.unwrap_or(999.0);
             if !reached && final_dist > 5.0 {
-                // 没到达且距离太远，dig_at 会失败，跳过这次
+                // 没到达 → 拉黑这个方块，换下一个（Numen skip_target 模式）
+                let bx = block.x.round() as i32;
+                let by = block.y.round() as i32;
+                let bz = block.z.round() as i32;
+                blacklisted.insert((bx, by, bz));
                 consecutive_failures += 1;
                 if consecutive_failures >= 3 {
                     break;
@@ -195,6 +315,8 @@ impl GameTool for ModCollectTool {
             consecutive_failures = if got > before + (attempt - 1) as u32 {
                 0
             } else {
+                // dig_at 没收获 → 也拉黑这个方块
+                blacklisted.insert((bx, by, bz));
                 consecutive_failures + 1
             };
             if consecutive_failures >= 3 {
@@ -202,15 +324,16 @@ impl GameTool for ModCollectTool {
             }
         }
         let actual = got.saturating_sub(before);
+        // Numen 尽力返回：收集到部分也算成功
         let msg = if actual > 0 {
             if actual >= want {
                 format!("collected {target}: {before}→{got} (+{actual}, wanted +{want})")
             } else {
-                format!("collected {target}: {before}→{got} (+{actual}, wanted +{want}, partial)")
+                format!("collected {target}: {before}→{got} (+{actual}, wanted +{want}, partial, blacklisted {})", blacklisted.len())
             }
         } else {
             format!(
-                "collected {target}: {before}→{got} (failed to collect any, max attempts reached)"
+                "collected {target}: {before}→{got} (failed to collect any, blacklisted {} blocks)", blacklisted.len()
             )
         };
         Ok(ToolResult {
@@ -350,9 +473,33 @@ impl GameTool for ModPlaceTool {
         let msg = if placed {
             format!("placed {item} at ({x},{y},{z})")
         } else {
-            format!(
-                "place FAILED: could not place {item} at ({x},{y},{z}) — check: item in inventory? valid surface nearby? distance <5m?"
-            )
+            // 借鉴 Numen 失败类型区分：用现有数据判断失败原因，给 LLM 精准恢复建议
+            match adapter.reload() {
+                Ok(st) => {
+                    let has_item = st.inventory.iter().any(|i| i.id.contains(item));
+                    let px = st.position[0];
+                    let py = st.position[1];
+                    let pz = st.position[2];
+                    let dist = ((x as f64 - px).powi(2) + (y as f64 - py).powi(2) + (z as f64 - pz).powi(2)).sqrt();
+                    if !has_item {
+                        format!(
+                            "place FAILED at ({x},{y},{z}): no {item} in inventory — collect/craft it first"
+                        )
+                    } else if dist > 5.5 {
+                        format!(
+                            "place FAILED at ({x},{y},{z}): too far ({:.1}m, max 5.5m) — move_to closer first",
+                            dist
+                        )
+                    } else {
+                        format!(
+                            "place FAILED at ({x},{y},{z}): no valid surface or line-of-sight blocked — try adjacent block or move to different angle"
+                        )
+                    }
+                }
+                Err(_) => format!(
+                    "place FAILED at ({x},{y},{z}): could not place {item} (state reload failed)"
+                ),
+            }
         };
         Ok(ToolResult {
             message: msg,
@@ -1240,6 +1387,38 @@ fn find_nearest(
         .nearby_blocks
         .iter()
         .filter(|b| b.id.contains(target))
+        .min_by(|a, b| {
+            a.dist
+                .partial_cmp(&b.dist)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })?;
+    let dx = block.x - st.position[0];
+    let dz = block.z - st.position[2];
+    let target_yaw = (-dx).atan2(dz).to_degrees();
+    let mut yaw_diff = target_yaw - st.yaw;
+    while yaw_diff > 180.0 {
+        yaw_diff -= 360.0;
+    }
+    while yaw_diff < -180.0 {
+        yaw_diff += 360.0;
+    }
+    Some((block.clone(), yaw_diff))
+}
+
+/// 找最近的同类方块，跳过黑名单（Numen TargetSet.pick 模式）。
+fn find_nearest_skipping(
+    adapter: &MinecraftModAdapter,
+    target: &str,
+    blacklist: &std::collections::HashSet<(i32, i32, i32)>,
+) -> Option<(crate::bridge::NearbyBlock, f64)> {
+    let st = adapter.reload().ok()?;
+    let block = st
+        .nearby_blocks
+        .iter()
+        .filter(|b| {
+            b.id.contains(target)
+                && !blacklist.contains(&(b.x.round() as i32, b.y.round() as i32, b.z.round() as i32))
+        })
         .min_by(|a, b| {
             a.dist
                 .partial_cmp(&b.dist)
