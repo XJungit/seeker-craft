@@ -21,6 +21,11 @@ __pycache__/
 .workbuddy/
 pi_agent_rust_study/
 
+# 参考项目克隆（学习用，非项目源码）
+.mindcraft-clone/
+.numen-clone/
+.touhou-clone/
+
 # ===== Fabric mod 构建产物（craft-agent-bridge）=====
 /mods/craft-agent-bridge/build/
 /mods/craft-agent-bridge/.gradle/
