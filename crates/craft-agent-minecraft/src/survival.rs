@@ -271,7 +271,7 @@ pub fn filter_by_score(candidates: Vec<MiningCandidate>, max_score: f64) -> Vec<
 /// - `is_in_ladder()`：6 类 alternative execution，可在 RecoveryLadder 内换策略重试
 /// - `is_kick_back()`：4 类 prerequisite gap，直接踢回 LLM 重新决策
 /// - INTERRUPTED / TIMED_OUT / UNSUPPORTED / UNKNOWN 是终态但不属于两类
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum FailureType {
     // ═══ InLadder（alternative execution，阶梯内换策略重试） ═══
     /// 视线被墙挡（可换 stance / 清遮挡）

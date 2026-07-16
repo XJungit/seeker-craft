@@ -186,6 +186,14 @@ pub struct TaskContext {
     pub player_health: f32,
     pub player_food: u32,
     pub player_pos: (f64, f64, f64),
+    /// 脚下方块坐标（slab-aware，用于 reached 判断）。
+    pub feet: (i32, i32, i32),
+    /// 是否在地面上（防 jump apex 误判 YLevel 到达）。
+    pub on_ground: bool,
+    /// 是否在水中（影响 settle 判断）。
+    pub in_water: bool,
+    /// 是否死亡/濒死。
+    pub player_dead: bool,
 }
 
 /// 反应式任务 trait（对齐 Numen CompanionTask）。
@@ -473,6 +481,246 @@ impl<T: Eq + std::hash::Hash + Clone> TargetSet<T> {
     /// 黑名单大小。
     pub fn excluded_count(&self) -> usize {
         self.excluded.len()
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// TaskRuntime — 反应式任务公共状态（Numen AbstractCompanionTask 字段）
+// ═══════════════════════════════════════════════════════════════
+
+/// 反应式任务运行时状态（对齐 Numen AbstractCompanionTask 的 pendingTerminal/failReason 字段）。
+///
+/// 具体任务通过组合持有此结构，用 `fail()`/`succeed()`/`cancelled()` 设置终态，
+/// `ReactiveTask::start()`/`tick()` 的 final 模板会检查 `pending_terminal`。
+#[derive(Debug, Clone, Default)]
+pub struct TaskRuntime {
+    /// 待处理的终态（None = 继续运行）。
+    pub pending_terminal: Option<TaskState>,
+    /// 失败原因（fail 时设置）。
+    pub fail_reason: Option<String>,
+    /// 失败类型（fail 时设置，用于 LLM 决策恢复策略）。
+    pub fail_type: Option<FailureType>,
+    /// 成功消息（succeed 时设置）。
+    pub success_message: Option<String>,
+}
+
+impl TaskRuntime {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 标记失败（Numen AbstractCompanionTask.fail）。
+    pub fn fail(&mut self, why: impl Into<String>, ft: FailureType) {
+        self.pending_terminal = Some(TaskState::Failed);
+        self.fail_reason = Some(why.into());
+        self.fail_type = Some(ft);
+    }
+
+    /// 标记成功（Numen AbstractCompanionTask.succeed，同 tick finalize）。
+    pub fn succeed(&mut self, msg: impl Into<String>) {
+        self.pending_terminal = Some(TaskState::Success);
+        self.success_message = Some(msg.into());
+    }
+
+    /// 标记取消。
+    pub fn cancelled(&mut self, msg: impl Into<String>) {
+        self.pending_terminal = Some(TaskState::Cancelled);
+        self.fail_reason = Some(msg.into());
+    }
+
+    /// 是否已设终态。
+    pub fn is_done(&self) -> bool {
+        self.pending_terminal.is_some()
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Nav 抽象 — 导航原语（Numen PlayerNav）
+// ═══════════════════════════════════════════════════════════════
+
+/// 导航状态（对齐 Numen PlayerNav.tick 返回值）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NavStatus {
+    /// 仍在规划/行走中。
+    Running,
+    /// 到达目标。
+    Arrived,
+    /// 规划/行进失败。
+    Failed,
+}
+
+/// 导航原语 trait（对齐 Numen PlayerNav）。
+///
+/// `tick()` 推进一帧，返回当前状态。`stop()` 清理 plan（suspend 不调 stop，保留 plan）。
+pub trait NavPrimitive {
+    fn tick(&mut self) -> NavStatus;
+    fn fail_type(&self) -> FailureType;
+    fn fail_reason(&self) -> &str;
+    /// 连续无进度 tick 数（用于 progress lease 判断）。
+    fn stall_ticks(&self) -> u32;
+    /// 完全停止（清理 plan）。suspend 故意不调这个。
+    fn stop(&mut self);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ReactiveTask — 反应式任务 final lifecycle 模板（Numen AbstractCompanionTask）
+// ═══════════════════════════════════════════════════════════════
+
+/// 反应式任务 trait（对齐 Numen AbstractCompanionTask 的 final lifecycle）。
+///
+/// **核心约束（Numen 边界红线）**：
+/// 1. reactive 层只恢复**同有界目标的执行**，永不扩大目标范围
+/// 2. prerequisite gap（NoMaterial/WrongTool/TargetLost/MinedOut）直接踢回 LLM
+/// 3. alternative execution（Occluded/BoxedIn/NoPath/OutOfReach/Hazard/NoSupport）在 ladder 内重试
+/// 4. suspend 只释放 body，保留 nav plan（resume 能直接继续）
+///
+/// 子类实现 `on_start/on_tick/on_cleanup/result_data`，`start/tick/build_result` 是 final 模板。
+pub trait ReactiveTask: Suspendable {
+    /// 取运行时状态的可变引用（组合模式，子类持有 TaskRuntime 字段）。
+    fn runtime_mut(&mut self) -> &mut TaskRuntime;
+    /// 取运行时状态的不可变引用。
+    fn runtime_ref(&self) -> &TaskRuntime;
+
+    /// 前置条件检查（Numen Precondition）。
+    /// 返回的每个 PreconditionFailure 都会直接 fail 任务（kick-back to LLM）。
+    fn preconditions(&self, _ctx: &TaskContext) -> Vec<PreconditionFailure> {
+        Vec::new()
+    }
+
+    /// 启动 hook（子类实现，不做 precondition 检查——模板已做）。
+    fn on_start(&mut self, _ctx: &TaskContext) {}
+
+    /// 每 tick 推进 hook（子类实现核心状态机）。
+    fn on_tick(&mut self, ctx: &mut TaskContext) -> TaskState;
+
+    /// 清理 hook（suspend 永远不调这个，只有终态后调）。
+    fn on_cleanup(&mut self) {}
+
+    /// 构建结果数据（附加到 TaskResult.message）。
+    fn result_data(&self) -> String {
+        String::new()
+    }
+
+    // ═══ final lifecycle 模板（不可重写） ═══
+
+    /// final 启动：preconditions → on_start → pending_terminal 检查。
+    fn start(&mut self, ctx: &TaskContext) -> TaskState {
+        for pc in self.preconditions(ctx) {
+            self.runtime_mut().fail(pc.message, pc.failure_type);
+            return TaskState::Failed;
+        }
+        self.on_start(ctx);
+        if let Some(t) = self.runtime_mut().pending_terminal {
+            return t;
+        }
+        TaskState::Running
+    }
+
+    /// final 推进：pending_terminal 检查 → on_tick。
+    fn tick(&mut self, ctx: &mut TaskContext) -> TaskState {
+        if let Some(t) = self.runtime_ref().pending_terminal {
+            return t;
+        }
+        self.on_tick(ctx)
+    }
+
+    /// final 构建结果（终态后调用）。
+    fn build_result(&self, final_state: TaskState) -> TaskResult {
+        let rt = self.runtime_ref();
+        match final_state {
+            TaskState::Success => {
+                let mut msg = rt.success_message.clone().unwrap_or_default();
+                let data = self.result_data();
+                if !data.is_empty() {
+                    if !msg.is_empty() {
+                        msg.push(' ');
+                    }
+                    msg.push_str(&data);
+                }
+                TaskResult::ok(msg)
+            }
+            TaskState::Failed => {
+                let msg = rt.fail_reason.clone().unwrap_or_default();
+                let ft = rt.fail_type.unwrap_or(FailureType::TargetLost);
+                TaskResult::fail(msg, ft)
+            }
+            TaskState::Timeout => TaskResult::timeout(
+                rt.fail_reason.clone().unwrap_or_else(|| "timeout".into()),
+            ),
+            TaskState::Cancelled => TaskResult::cancelled(
+                rt.fail_reason.clone().unwrap_or_else(|| "cancelled".into()),
+            ),
+            _ => TaskResult::ok("running".into()),
+        }
+    }
+
+    /// final 清理（终态后调用 on_cleanup）。
+    fn cleanup(&mut self) {
+        self.on_cleanup();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// GoToThenDoTask — 走过去再做一件事（Numen GoToThenDoTask）
+// ═══════════════════════════════════════════════════════════════
+
+/// "走到目标然后做一件 bounded 事"骨架（对齐 Numen GoToThenDoTask）。
+///
+/// 子类实现：`build_nav` / `reached` / `act` / `handle_nav_failure`，
+/// `on_start` 默认调 `build_nav` 设入 `nav`，`on_tick` 默认调 `goto_then_do_tick`。
+///
+/// **接缝**：`handle_nav_failure` 默认 give up，子类可重写挂 inline ladder
+/// （如 PlaceBlock 的 3-rung stance/dig 恢复）。
+pub trait GoToThenDoTask: ReactiveTask {
+    /// nav 字段的可变引用（子类持有 `nav: Option<Box<dyn NavPrimitive>>`）。
+    fn nav_mut(&mut self) -> &mut Option<Box<dyn NavPrimitive>>;
+
+    /// 构建导航（on_start 时调用一次）。
+    fn build_nav(&mut self) -> Option<Box<dyn NavPrimitive>>;
+
+    /// 是否已到达（act 前置条件）。
+    fn reached(&self) -> bool;
+
+    /// 到达后执行的动作（返回终态或 Running）。
+    fn act(&mut self) -> TaskState;
+
+    /// nav 失败时的恢复接缝（默认 give up，子类可挂 ladder）。
+    fn handle_nav_failure(&mut self, fail_type: FailureType, reason: &str) -> TaskState {
+        self.runtime_mut()
+            .fail(format!("nav failed: {}", reason), fail_type);
+        TaskState::Failed
+    }
+
+    /// 停止 nav（清理 plan）。
+    fn stop_nav(&mut self) {
+        if let Some(nav) = self.nav_mut() {
+            nav.stop();
+        }
+        *self.nav_mut() = None;
+    }
+
+    /// GoToThenDoTask 的默认 on_tick：reached? → act : nav.tick()。
+    fn goto_then_do_tick(&mut self, _ctx: &mut TaskContext) -> TaskState {
+        if self.reached() {
+            return self.act();
+        }
+        let status = if let Some(nav) = self.nav_mut() {
+            nav.tick()
+        } else {
+            self.runtime_mut()
+                .fail("navigation unavailable".to_string(), FailureType::NoPath);
+            return TaskState::Failed;
+        };
+        match status {
+            NavStatus::Running | NavStatus::Arrived => TaskState::Running,
+            NavStatus::Failed => {
+                let (ft, reason) = {
+                    let nav = self.nav_mut().as_ref().unwrap();
+                    (nav.fail_type(), nav.fail_reason().to_string())
+                };
+                self.handle_nav_failure(ft, &reason)
+            }
+        }
     }
 }
 
