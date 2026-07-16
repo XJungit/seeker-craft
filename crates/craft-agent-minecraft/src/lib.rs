@@ -25,22 +25,6 @@ pub mod survival;
 #[cfg(feature = "mod-bridge")]
 pub mod survival_decisions;
 #[cfg(feature = "mod-bridge")]
-pub mod damage_source;
-#[cfg(feature = "mod-bridge")]
-pub mod stamina;
-#[cfg(feature = "mod-bridge")]
-pub mod task_base;
-#[cfg(feature = "mod-bridge")]
-pub mod combat_dsl;
-#[cfg(feature = "mod-bridge")]
-pub mod companion;
-#[cfg(feature = "mod-bridge")]
-pub mod guard;
-#[cfg(feature = "mod-bridge")]
-pub mod mindcraft_ext;
-#[cfg(feature = "mod-bridge")]
-pub mod reactive_tasks;
-#[cfg(feature = "mod-bridge")]
 pub mod tools_mod;
 
 /// 点击/移动目标与窗口边缘的安全间距（像素）。MC 光标移出窗口会自暂停，所有坐标必须内缩。
