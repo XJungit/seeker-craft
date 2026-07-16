@@ -654,6 +654,31 @@ impl GameTool for ModAttackTool {
         match nearest {
             Some(ent) => {
                 let ty = ent.r#type.replace("minecraft:", "");
+
+                // 血量过低警告（借鉴 Numen FLEE_HEALTH=8）：health<=8 不应近战
+                if st.health <= 8.0 {
+                    return Ok(ToolResult {
+                        message: format!(
+                            "attack ABORTED: health={:.0} too low (≤8) — FLEE with move_to, eat food to heal first",
+                            st.health
+                        ),
+                        is_error: true,
+                        images: vec![],
+                    });
+                }
+
+                // creeper 警告：近战 creeper 极危险（爆炸伤害）
+                if ty == "creeper" {
+                    return Ok(ToolResult {
+                        message: format!(
+                            "WARNING: creeper at ({:.1},{:.1},{:.1}) dist={:.1}m — melee attack is RISKY (explosion). Recommended: shoot with bow, or hit-and-retreat (attack 1-2 hits then move_to away)",
+                            ent.x, ent.y, ent.z, ent.dist
+                        ),
+                        is_error: false,
+                        images: vec![],
+                    });
+                }
+
                 let weapon_priority = ["sword", "axe", "pickaxe", "shovel"];
                 let weapon_slot = weapon_priority.iter().find_map(|weapon| {
                     st.inventory
@@ -672,8 +697,8 @@ impl GameTool for ModAttackTool {
                 let _ack = adapter.attack(ticks)?;
                 Ok(ToolResult {
                     message: format!(
-                        "attacked {} at ({:.1},{:.1},{:.1}) dist={:.1}m",
-                        ty, ent.x, ent.y, ent.z, ent.dist
+                        "attacked {} at ({:.1},{:.1},{:.1}) dist={:.1}m health={:.0}",
+                        ty, ent.x, ent.y, ent.z, ent.dist, st.health
                     ),
                     is_error: false,
                     images: vec![],
