@@ -772,15 +772,25 @@ impl GameTool for ModMoveToTool {
                 x, y, z, dist
             )
         } else if stuck {
+            // 借鉴 Numen UnstuckDetector：stuck 时给具体恢复建议
+            // 而非笼统的 "obstacle"
             format!(
-                "move_to ({:.1},{:.1},{:.1}) stuck at {:.1}m (obstacle)",
+                "move_to ({:.1},{:.1},{:.1}) STUCK at {:.1}m — try: 1) press space to jump 2) mine obstacle with mine() 3) try intermediate coordinate 4) press w for 20 ticks then retry move_to",
                 x, y, z, dist
             )
         } else {
-            format!(
-                "move_to ({:.1},{:.1},{:.1}) timeout at {:.1}m",
-                x, y, z, dist
-            )
+            // timeout 时给距离让 LLM 知道还差多远
+            if dist > 20.0 {
+                format!(
+                    "move_to ({:.1},{:.1},{:.1}) TIMEOUT at {:.1}m (still very far) — try move_to intermediate point closer to target",
+                    x, y, z, dist
+                )
+            } else {
+                format!(
+                    "move_to ({:.1},{:.1},{:.1}) timeout at {:.1}m (close, try again or continue)",
+                    x, y, z, dist
+                )
+            }
         };
         Ok(ToolResult {
             message: msg,
@@ -936,6 +946,56 @@ impl GameTool for ModMineTool {
         _on_update: Option<ToolUpdateFn>,
     ) -> anyhow::Result<ToolResult> {
         let ticks = args["ticks"].as_u64().unwrap_or(140) as u32;
+        let mut adapter = self.adapter.borrow_mut();
+        // 借鉴 Numen BreakBlock 前置检查：执行前检查准星方块状态
+        let st = adapter.reload()?;
+        match &st.targeted_block {
+            None => {
+                return Ok(ToolResult {
+                    message: "mine ABORTED: no targeted block (look at a block first with look_at)".into(),
+                    is_error: true,
+                    images: vec![],
+                });
+            }
+            Some(tb) => {
+                // 距离检查（vanilla reach ~4.5m）
+                if tb.dist > 5.0 {
+                    return Ok(ToolResult {
+                        message: format!(
+                            "mine ABORTED: targeted block {:.1}m away (max 5m) — move_to closer first",
+                            tb.dist
+                        ),
+                        is_error: true,
+                        images: vec![],
+                    });
+                }
+                // 流体警告（Numen Hazard 前置）
+                let id = tb.id.to_lowercase();
+                if id.contains("water") || id.contains("lava") || id.contains("flow") {
+                    return Ok(ToolResult {
+                        message: format!(
+                            "mine ABORTED: targeted block is {} (fluid, cannot mine) — look at solid block",
+                            tb.id
+                        ),
+                        is_error: true,
+                        images: vec![],
+                    });
+                }
+                // 岩浆附近警告（project_memory 安全要求）
+                let lava_nearby = st.nearby_blocks.iter().any(|b| {
+                    let bid = b.id.to_lowercase();
+                    bid.contains("lava")
+                });
+                if lava_nearby {
+                    return Ok(ToolResult {
+                        message: "mine ABORTED: lava detected nearby — move away or block off lava first (safety)".into(),
+                        is_error: true,
+                        images: vec![],
+                    });
+                }
+            }
+        }
+        drop(adapter);
         let r = self.adapter.borrow_mut().execute(Action::Mine { ticks })?;
         Ok(ToolResult {
             message: r.detail,
@@ -1728,6 +1788,7 @@ impl GameTool for ModBuildTool {
         let mut placed = 0u32;
         let mut failed = 0u32;
         let mut consecutive_fail = 0u32;
+        let mut first_fail_reason: Option<String> = None;
         for step in &steps {
             match &step.action {
                 crate::blueprint::BuildAction::Place(item) => {
@@ -1749,6 +1810,24 @@ impl GameTool for ModBuildTool {
                         _ => {
                             failed += 1;
                             consecutive_fail += 1;
+                            // 借鉴 Numen PlaceBlock 失败诊断：记录首个失败原因
+                            if first_fail_reason.is_none() {
+                                let adapter = self.adapter.borrow();
+                                if let Ok(st) = adapter.reload() {
+                                    let has_item = st.inventory.iter().any(|i| i.id.contains(item));
+                                    let px = st.position[0];
+                                    let py = st.position[1];
+                                    let pz = st.position[2];
+                                    let dist = ((step.x as f64 - px).powi(2) + (step.y as f64 - py).powi(2) + (step.z as f64 - pz).powi(2)).sqrt();
+                                    first_fail_reason = Some(if !has_item {
+                                        format!("no {item} in inventory at ({},{},{})", step.x, step.y, step.z)
+                                    } else if dist > 5.5 {
+                                        format!("too far ({:.1}m) at ({},{},{})", dist, step.x, step.y, step.z)
+                                    } else {
+                                        format!("no surface at ({},{},{})", step.x, step.y, step.z)
+                                    });
+                                }
+                            }
                             if consecutive_fail >= 5 {
                                 break;
                             } // 连续失败 5 次停止
@@ -1764,6 +1843,9 @@ impl GameTool for ModBuildTool {
                         _ => {
                             failed += 1;
                             consecutive_fail += 1;
+                            if first_fail_reason.is_none() {
+                                first_fail_reason = Some(format!("dig failed at ({},{},{})", step.x, step.y, step.z));
+                            }
                             if consecutive_fail >= 5 {
                                 break;
                             }
@@ -1780,11 +1862,13 @@ impl GameTool for ModBuildTool {
             )
         } else if placed > 0 {
             format!(
-                "build {bp_name} at ({ox},{oy},{oz}) orient={orientation}: placed {placed}, failed {failed} (partial)"
+                "build {bp_name} at ({ox},{oy},{oz}) orient={orientation}: placed {placed}, failed {failed} (partial) — first failure: {}",
+                first_fail_reason.unwrap_or_else(|| "unknown".into())
             )
         } else {
             format!(
-                "build {bp_name} at ({ox},{oy},{oz}) orient={orientation}: all {failed} blocks failed"
+                "build {bp_name} at ({ox},{oy},{oz}) orient={orientation}: all {failed} blocks failed — first failure: {}",
+                first_fail_reason.unwrap_or_else(|| "unknown".into())
             )
         };
         Ok(ToolResult {
