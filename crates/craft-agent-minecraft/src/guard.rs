@@ -429,15 +429,19 @@ impl EffectManager {
     }
 
     /// 检查是否有某效果。
+    /// 永久 effect（duration_ticks == -1）视为一直存在。
     pub fn has_effect(&self, effect: StatusEffect) -> bool {
-        self.effects.iter().any(|e| e.effect == effect && e.duration_ticks > 0)
+        self.effects
+            .iter()
+            .any(|e| e.effect == effect && (e.duration_ticks > 0 || e.duration_ticks == -1))
     }
 
     /// 获取效果放大器（等级）。
+    /// 永久 effect（duration_ticks == -1）视为一直存在。
     pub fn get_amplifier(&self, effect: StatusEffect) -> Option<i32> {
         self.effects
             .iter()
-            .find(|e| e.effect == effect && e.duration_ticks > 0)
+            .find(|e| e.effect == effect && (e.duration_ticks > 0 || e.duration_ticks == -1))
             .map(|e| e.amplifier)
     }
 
@@ -471,6 +475,37 @@ impl EffectManager {
     pub fn on_kill_target(&mut self) {
         self.add_effect(StatusEffect::GradualHeal, 40, 3); // 40 tick, IV 级
         self.add_effect(StatusEffect::Speed, 100, 1);      // 100 tick, II 级
+    }
+
+    /// 计算伤害加成系数（酒狐 BattleContinuation：+100% 百分比伤害 modifier）。
+    ///
+    /// 持有 BattleContinuation effect 时返回 1.0（+100%），否则 0.0。
+    /// 攻击伤害 = base_damage * (1.0 + damage_modifier())。
+    pub fn damage_modifier(&self) -> f32 {
+        if self.has_effect(StatusEffect::BattleContinuation) {
+            1.0 // +100%
+        } else {
+            0.0
+        }
+    }
+
+    /// BloodLust HP 门控（酒狐 BloodLust：HP>50% 授予，HP<50% 清除）。
+    ///
+    /// BloodLust 是永久 effect（duration=-1），改变连招路径。
+    /// HP 高时授予，HP 低时清除——防止低血量时激进战斗。
+    pub fn update_blood_lust(&mut self, health_pct: f32) {
+        const BLOOD_LUST_THRESHOLD: f32 = 0.5;
+        if health_pct > BLOOD_LUST_THRESHOLD {
+            // HP>50% 授予（防重授予：已有则不重复添加）
+            if !self.has_effect(StatusEffect::BloodLust) {
+                self.add_effect(StatusEffect::BloodLust, -1, 0); // -1 = 永久
+            }
+        } else {
+            // HP<=50% 清除
+            if self.has_effect(StatusEffect::BloodLust) {
+                self.remove_effect(StatusEffect::BloodLust);
+            }
+        }
     }
 }
 
@@ -833,5 +868,69 @@ mod tests {
 
         mgr.add_effect(StatusEffect::StunImmunity, 100, 0);
         assert!(mgr.is_stun_immune());
+    }
+
+    #[test]
+    fn effect_manager_battle_continuation_damage_modifier() {
+        let mut mgr = EffectManager::new();
+        // 无 BattleContinuation → 0.0
+        assert_eq!(mgr.damage_modifier(), 0.0);
+
+        // 持有 BattleContinuation → +100%（1.0）
+        mgr.add_effect(StatusEffect::BattleContinuation, 100, 0);
+        assert_eq!(mgr.damage_modifier(), 1.0);
+
+        // 过期后 → 0.0
+        for _ in 0..100 {
+            mgr.tick();
+        }
+        assert_eq!(mgr.damage_modifier(), 0.0);
+    }
+
+    #[test]
+    fn effect_manager_blood_lust_hp_gating() {
+        let mut mgr = EffectManager::new();
+
+        // HP 60% > 50% → 授予 BloodLust（永久）
+        mgr.update_blood_lust(0.6);
+        assert!(mgr.has_effect(StatusEffect::BloodLust));
+
+        // 再次 HP 60% → 不重复添加（防重授予）
+        let count_before = mgr.effects.len();
+        mgr.update_blood_lust(0.6);
+        assert_eq!(mgr.effects.len(), count_before); // 数量不变
+
+        // HP 40% < 50% → 清除 BloodLust
+        mgr.update_blood_lust(0.4);
+        assert!(!mgr.has_effect(StatusEffect::BloodLust));
+
+        // HP 60% > 50% → 重新授予
+        mgr.update_blood_lust(0.6);
+        assert!(mgr.has_effect(StatusEffect::BloodLust));
+    }
+
+    #[test]
+    fn effect_manager_permanent_effect_survives_tick() {
+        let mut mgr = EffectManager::new();
+        // BloodLust 永久（duration=-1）
+        mgr.add_effect(StatusEffect::BloodLust, -1, 0);
+        assert!(mgr.has_effect(StatusEffect::BloodLust));
+
+        // tick 不应清除永久 effect
+        for _ in 0..1000 {
+            mgr.tick();
+        }
+        assert!(mgr.has_effect(StatusEffect::BloodLust));
+    }
+
+    #[test]
+    fn effect_manager_battle_continuation_damage_calc() {
+        let mut mgr = EffectManager::new();
+        mgr.add_effect(StatusEffect::BattleContinuation, 100, 0);
+
+        // 模拟伤害计算：base=10, modifier=1.0 → final=20
+        let base_damage: f32 = 10.0;
+        let final_damage = base_damage * (1.0 + mgr.damage_modifier());
+        assert!((final_damage - 20.0).abs() < 0.001);
     }
 }
