@@ -29,3 +29,5 @@ pi_agent_rust_study/
 /mods/craft-agent-bridge/build_log*.txt
 /mods/craft-agent-bridge/*.log
 /mods/craft-agent-bridge/javatest*
+
+compile-log.txt

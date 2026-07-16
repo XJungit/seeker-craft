@@ -308,10 +308,14 @@ impl Session {
             .path
             .clone()
             .context("session 未绑定路径，请先用 save_to 或 open")?;
-        if self.header_dirty || self.persisted_count == 0 {
-            self.full_rewrite(&path)?;
-        } else if self.persisted_count < self.entries.len() {
+        // 先增量追加新 entries（如果有）
+        if self.persisted_count < self.entries.len() {
             self.append_entries(&path)?;
+        }
+        // 再更新 header（如果 dirty）——只重写 header 行，不重写全部 entries
+        if self.header_dirty || self.persisted_count == 0 {
+            self.rewrite_header_only(&path)?;
+            self.header_dirty = false;
         }
         Ok(())
     }
@@ -357,6 +361,27 @@ impl Session {
         }
         f.flush()?;
         self.persisted_count = self.entries.len();
+        Ok(())
+    }
+
+    /// 只重写 header 行（第一行），保留已有 entries。
+    /// 比 full_rewrite 高效：不需要序列化全部 entries。
+    fn rewrite_header_only(&mut self, path: &Path) -> Result<()> {
+        if !path.exists() {
+            // 文件不存在时走 full_rewrite
+            return self.full_rewrite(path);
+        }
+        // 读取全部行，替换第一行
+        let content = std::fs::read_to_string(path)?;
+        let mut lines: Vec<&str> = content.lines().collect();
+        if lines.is_empty() {
+            return self.full_rewrite(path);
+        }
+        let new_header = serde_json::to_string(&self.header)?;
+        lines[0] = &new_header;
+        let tmp = tempfile_path(path);
+        std::fs::write(&tmp, lines.join("\n") + "\n")?;
+        replace_file(&tmp, path)?;
         Ok(())
     }
 
@@ -461,7 +486,8 @@ impl Session {
         self.entries.push(entry);
         self.leaf_id = Some(id.clone());
         self.header.current_leaf = Some(id);
-        // 首次落盘前无需额外标脏；文件已存在时 leaf 变化必须重写 header。
+        // 首次落盘前无需额外标脏；文件已存在时 leaf 变化需要更新 header。
+        // 但增量 append 时不需要全量重写——save() 会判断是否只追加了 entries。
         if touch_header || self.persisted_count > 0 {
             self.header_dirty = true;
         }

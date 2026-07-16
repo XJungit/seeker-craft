@@ -15,9 +15,13 @@ pub mod tools;
 
 #[cfg(feature = "mod-bridge")]
 pub mod adapter_mod;
+#[cfg(feature = "mod-bridge")]
+pub mod blueprint;
 /// MC 桥接 mod 适配器（全量 mod 控制，见 §"治本缺口"）。仅 `mod-bridge` 特性编译。
 #[cfg(feature = "mod-bridge")]
 pub mod bridge;
+#[cfg(feature = "mod-bridge")]
+pub mod survival;
 #[cfg(feature = "mod-bridge")]
 pub mod tools_mod;
 

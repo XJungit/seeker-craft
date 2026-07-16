@@ -178,7 +178,7 @@ pub fn spawn_agent_loop(
 /// Agent 主循环（阻塞运行在独立线程中）。
 fn run_agent(
     goal: &str,
-    max_steps: u32,
+    _max_steps: u32,
     session_path: &str,
     cfg_path: &str,
     use_vision: bool,
@@ -272,6 +272,9 @@ fn run_agent(
     });
 
     // 第一步: push goal message + run 1 turn
+    let _ = event_tx.send(AgentEvent::Log {
+        text: "🤔 正在思考...".into(),
+    });
     let log = agent.run(goal.to_string())?;
     for line in &log {
         let _ = event_tx.send(AgentEvent::Log { text: line.clone() });
@@ -286,7 +289,12 @@ fn run_agent(
     });
     if let Some(ref mut sess) = agent.session {
         let _ = std::fs::create_dir_all(Path::new(session_path).parent().unwrap_or(Path::new(".")));
-        let _ = sess.save_to(Path::new(session_path));
+        if let Err(e) = sess.save_to(Path::new(session_path)) {
+            let _ = event_tx.send(AgentEvent::Error {
+                message: format!("session 保存失败: {e}"),
+            });
+            eprintln!("[agent_loop] session save_to 失败: {e}");
+        }
     }
 
     loop {
@@ -323,12 +331,17 @@ fn run_agent(
         // 检查是否有运行时注入的新目标
         for new_goal in ctrl.drain_goals() {
             agent.queue_steering(format!("【目标更新】{new_goal}"));
+            // 设置 SelfPrompter 持续目标注入，每轮自动提醒 LLM
+            agent.set_self_prompt(&new_goal);
             let _ = event_tx.send(AgentEvent::Log {
-                text: format!("📋 目标已更新: {new_goal}"),
+                text: format!("📋 目标已更新 (SelfPrompter 已设置): {new_goal}"),
             });
         }
 
         // 单步执行
+        let _ = event_tx.send(AgentEvent::Log {
+            text: format!("🤔 第 {step} 步: 正在思考..."),
+        });
         let (step_log, should_continue) = agent.step()?;
         for line in &step_log {
             let _ = event_tx.send(AgentEvent::Log { text: line.clone() });
@@ -340,11 +353,17 @@ fn run_agent(
             detail: String::new(),
         });
 
-        // 保存 session
+        // 保存 session（走增量 append，避免每次全量重写）
         if let Some(ref mut sess) = agent.session {
-            let _ =
-                std::fs::create_dir_all(Path::new(session_path).parent().unwrap_or(Path::new(".")));
-            let _ = sess.save_to(Path::new(session_path));
+            if let Err(e) = sess.save() {
+                eprintln!("[agent_loop] session save 失败: {e}");
+                // save 失败时降级到 save_to 全量重写
+                if let Err(e2) = sess.save_to(Path::new(session_path)) {
+                    let _ = event_tx.send(AgentEvent::Error {
+                        message: format!("session 保存失败: {e2}"),
+                    });
+                }
+            }
         }
 
         if !should_continue {

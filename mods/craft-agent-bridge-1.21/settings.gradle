@@ -5,7 +5,7 @@ pluginManagement {
     }
     resolutionStrategy {
         eachPlugin {
-            if (requested.id.id == 'net.fabricmc.fabric-loom') {
+            if (requested.id.id == 'fabric-loom') {
                 useModule("net.fabricmc:fabric-loom:${requested.version}")
             }
         }

@@ -2,6 +2,7 @@
 
 use crate::core::message::{Message, Usage, system_chatml};
 use crate::core::prompt::{PromptBuilder, WorldInfo, WorldInfoLib, default_mc_world_info};
+use crate::core::session::SessionEntry as SessionFileEntry;
 use crate::core::session::{AgentSnapshot, Session};
 use crate::core::skill::SkillLibrary;
 use crate::core::tool::{ToolEffects, ToolRegistry, ToolResult, plan_tool_effect_batches};
@@ -9,8 +10,8 @@ use anyhow::Result;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // ── Provider ──
@@ -181,6 +182,15 @@ craft(item, count)
 place(item)
   Place block from hotbar at crosshair. Finds item in slots 1-9, switches, right-clicks. Look at target surface BEFORE calling.
 
+build(blueprint, x, y, z, orientation)
+  Build a structure from blueprint at world coords. Auto-generates steps layer-by-layer, calls place_at for each block. blueprint: "dirt_shelter"(3x3), "wood_house"(5x5), "stone_house"(5x5), "wall_3x3". orientation: 0-3. Check blueprints() for materials needed.
+
+blueprints()
+  List all available blueprints with materials requirements and current inventory status. Call before build().
+
+combat(mode, ticks)
+  Autonomous combat AI. mode: "melee"(zombies/spiders), "kite"(skeletons/creeper), "retreat"(flee). Auto-equips best weapon, auto-retreats when health<6 or creeper nearby. ticks: 200≈10s. Returns killed/retreated/timeout/no_target.
+
 ## Tool Reference — Utility
 
 equip(slot)
@@ -218,7 +228,7 @@ look_at(x, y, z)
   Snap crosshair to coords. Integer coords auto-center (+0.5). Force-refreshes raycast — returns what was actually hit. PREFER THIS over look().
 
 look(dx, dy)
-  Relative rotation. dx>0=right (300≈90°). dy>0=UP (sky), dy<0=DOWN (ground). Sensitivity 0.3°/unit. To look at ground: look(0,-65).
+  Relative rotation. dx>0=right (300≈90°). dy>0=DOWN (ground), dy<0=UP (sky). Sensitivity 0.3°/unit. To look at ground: look(0,65).
 
 press(keys, ticks)
   Hold key(s). w/a/s/d=walk, space=jump, shift=sneak, e=inventory, 1-9=hotbar. Walk ≈ ticks/15 blocks. Max 200 ticks.
@@ -266,14 +276,15 @@ goToRememberedPlace(name)
 
 ### Evening: build shelter before night
 1. collect("dirt", 30) or craft("oak_planks", 32)
-2. Build 3x3 box around yourself: look_at(ground at x,z) → place("dirt") → press("w",10) → repeat
+2. PREFER build("dirt_shelter", x, y, z, 0) — auto-builds 3x3 shelter at your position. Use blueprints() to check materials first.
 3. Or: digDown(3) → look_at(up) → place("dirt") — hide underground with block above
 4. If you have wood, craft("torch", 16) → place("torch") for light
 
 ### Night: stay safe or fight
 1. If shelter built: stay inside, craft items (tools, torches, furnace, chest)
-2. If hostile mobs nearby: equip sword slot → attack(60). If health < 8: moveAway(10) to flee
-3. Light prevents spawns: place torches every 5 blocks in dark areas
+2. If hostile mobs nearby: combat("melee", 200) for zombies/spiders, combat("kite", 200) for skeletons/creeper
+3. If health < 8: combat("retreat", 100) to flee, then consume food
+4. Light prevents spawns: place torches every 5 blocks in dark areas
 
 ### Mining cave exploration
 1. Find a cave entrance or digDown(5) to create shaft
@@ -300,7 +311,7 @@ goToRememberedPlace(name)
 7. Eat with consume() when hunger<15
 8. Every response MUST end with a tool call. Tool error→retry adjusted. No faking success.
 9. Prefer look_at(x,y,z) over look(dx,dy) — absolute coords are unambiguous.
-10. dy<0 = look DOWN. dy>0 = look UP (sky). NEVER use dy>0 to look at ground!
+10. dy>0 = look DOWN (ground). dy<0 = look UP (sky). NEVER use dy<0 to look at ground!
 
 ## Response Format
   collect("oak_log", 4) — GOOD
@@ -358,12 +369,18 @@ pub struct Agent {
     skill_lib: SkillLibrary,
     knowledge_bootstrapped: bool,
     obs_streak: u32,
+    /// SelfPrompter: 持续目标注入（参考 Mindcraft SelfPrompter），防止 LLM 偏离长期任务
+    self_prompt: Option<String>,
+    /// Modes: 反应系统触发计数（参考 Mindcraft modes.js），避免同模式连续注入
+    last_mode_trigger: u32,
     /// Session persistence
     pub session: Option<Session>,
     pending_checkpoint: bool,
     session_msg_offset: usize,
     /// Retry abort signal (shared with controller for instant stop)
     pub retry_abort: Arc<AtomicBool>,
+    /// 近期工具调用签名（name+args），用于检测死循环
+    recent_calls: std::collections::VecDeque<String>,
 }
 
 impl Agent {
@@ -385,15 +402,68 @@ impl Agent {
             skill_lib: SkillLibrary::new(20),
             knowledge_bootstrapped: false,
             obs_streak: 0,
+            self_prompt: None,
+            last_mode_trigger: 0,
             session: None,
             pending_checkpoint: false,
             session_msg_offset: 0,
             retry_abort: Arc::new(AtomicBool::new(false)),
+            recent_calls: std::collections::VecDeque::with_capacity(10),
         }
     }
 
     /// Attach session for persistence
     pub fn with_session(mut self, sess: Session) -> Self {
+        // 从 session 恢复状态
+        let messages = sess.messages_for_current_path();
+        if !messages.is_empty() {
+            self.session_msg_offset = messages.len();
+            self.messages = messages;
+        }
+
+        // 从最近的 checkpoint 恢复 summary/usage/turn/skills
+        let path = sess.entries_for_current_path();
+        for e in path.iter().rev() {
+            if let SessionFileEntry::Checkpoint(cp) = e {
+                self.previous_summary = cp.snapshot.previous_summary.clone();
+                self.usage = cp.snapshot.usage.clone();
+                self.turn = cp.snapshot.turn;
+                if let Some(skills_json) = &cp.snapshot.skills_json {
+                    if let Ok(skill_lib) =
+                        serde_json::from_str::<crate::core::skill::SkillLibrary>(skills_json)
+                    {
+                        self.skill_lib = skill_lib;
+                    }
+                }
+                break; // 只取最近一个 checkpoint
+            }
+        }
+
+        // 回放 WorldInfo entry 重建 world_info
+        for e in &path {
+            if let SessionFileEntry::WorldInfo(wi) = e {
+                match wi.action.as_str() {
+                    "add" => {
+                        if let Some(info) = &wi.info {
+                            self.world_info.add(info.clone());
+                        }
+                    }
+                    "remove" => {
+                        if let Some(id) = &wi.remove_id {
+                            self.world_info.remove_by_id(id);
+                        }
+                        if let Some(keys) = &wi.remove_keys {
+                            self.world_info.remove_by_keys(keys);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // 读取 knowledge_bootstrapped 标志
+        self.knowledge_bootstrapped = sess.header.knowledge_bootstrapped;
+
         self.session = Some(sess);
         self
     }
@@ -415,6 +485,81 @@ impl Agent {
         }
     }
 
+    /// 设置 SelfPrompter 持续目标（参考 Mindcraft SelfPrompter）。
+    /// 注入后每轮 auto_perceive 后自动追加目标提醒，防止 LLM 偏离长期任务。
+    pub fn set_self_prompt(&mut self, goal: impl Into<String>) {
+        self.self_prompt = Some(goal.into());
+    }
+
+    /// 清除 SelfPrompter 目标
+    pub fn clear_self_prompt(&mut self) {
+        self.self_prompt = None;
+    }
+
+    /// Modes 反应系统（参考 Mindcraft modes.js）。
+    /// 检查最新感知的游戏状态，返回需要紧急注入的指令。
+    /// 仅在同模式未连续触发时注入（避免重复打扰）。
+    fn check_modes(&mut self) -> Option<String> {
+        // 从最近 auto_perceive 提取关键状态
+        let perception = self.messages.iter().rev().find_map(|m| match m {
+            Message::User(u) if u.content.starts_with("【当前游戏状态") => {
+                Some(u.content.as_str())
+            }
+            _ => None,
+        })?;
+
+        // Mode: self_preservation — 血量低或饥饿低
+        // 注意：必须用 "Health: N/" 精确匹配，否则 "Health: 2" 会匹配 "Health: 20/20"
+        let health_low = (0..=5).any(|n| perception.contains(&format!("Health: {n}/")));
+        let hunger_low = (0..=5).any(|n| perception.contains(&format!("Hunger: {n}/")));
+        if health_low || hunger_low {
+            if self.last_mode_trigger != 1 {
+                self.last_mode_trigger = 1;
+                let action = if health_low {
+                    "血量危急！立即 combat(\"retreat\",100) 撤退，然后 consume 食物恢复。"
+                } else {
+                    "饥饿危急！立即 consume 食物（检查 HOTBAR 找食物）。"
+                };
+                return Some(format!("[MODE: self_preservation] {action}"));
+            }
+            return None;
+        }
+
+        // Mode: self_defense — 附近有敌对实体
+        let has_hostile = perception.contains("zombie")
+            || perception.contains("skeleton")
+            || perception.contains("creeper")
+            || perception.contains("spider")
+            || perception.contains("phantom")
+            || perception.contains("witch");
+        let has_creeper = perception.contains("creeper");
+        if has_hostile {
+            if self.last_mode_trigger != 2 {
+                self.last_mode_trigger = 2;
+                let action = if has_creeper {
+                    "苦力怕靠近！立即 combat(\"kite\",200) 风筝攻击，保持距离。"
+                } else {
+                    "敌对生物靠近！立即 combat(\"melee\",200) 近战攻击。"
+                };
+                return Some(format!("[MODE: self_defense] {action}"));
+            }
+            return None;
+        }
+
+        // Mode: unstuck — 连续纯观察 5+ 步
+        if self.obs_streak >= 5 && self.last_mode_trigger != 3 {
+            self.last_mode_trigger = 3;
+            return Some(format!(
+                "[MODE: unstuck] 已连续 {} 步纯观察！选一个完全不同的工具立即行动：collect, craft, build, combat, move_to — 不要再用 perceive/look。",
+                self.obs_streak
+            ));
+        }
+
+        // 状态恢复正常，重置触发计数
+        self.last_mode_trigger = 0;
+        None
+    }
+
     /// Build system prompt with layered prompt pipeline: identity -> role_desc -> scenario -> jailbreak
     fn build_context(&mut self) -> Context {
         let recent_perception = self
@@ -422,8 +567,13 @@ impl Agent {
             .iter()
             .rev()
             .find_map(|message| match message {
+                // 手动 perceive 调用的结果
                 Message::ToolResult(result) if result.tool_name == "perceive" => {
                     Some(result.content.as_str())
+                }
+                // auto_perceive 注入的 User 消息
+                Message::User(u) if u.content.starts_with("【当前游戏状态") => {
+                    Some(u.content.as_str())
                 }
                 _ => None,
             })
@@ -435,13 +585,13 @@ impl Agent {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_millis() as i64;
-        let skill_examples = self.skill_lib.to_examples(recent_perception, &self.config.prompt, 3, now_ms);
+        let skill_examples =
+            self.skill_lib
+                .to_examples(recent_perception, &self.config.prompt, 3, now_ms);
 
-        let mut jailbreak =
-            "自主行动。工具失败时调整参数重试——不准假装成功。".to_string();
+        let mut jailbreak = "自主行动。工具失败时调整参数重试——不准假装成功。".to_string();
         if !self.knowledge_bootstrapped {
-            jailbreak
-                .push_str(" 直接开始执行任务，不需要重新输入游戏知识。");
+            jailbreak.push_str(" 直接开始执行任务，不需要重新输入游戏知识。");
         }
         if self.obs_streak >= 5 {
             if self.obs_streak >= 10 {
@@ -486,8 +636,15 @@ impl Agent {
             + MC_KNOWLEDGE.len()
             + self.messages.iter().map(Self::msg_chars).sum::<usize>();
         let estimated = u32::try_from(chars / 3).unwrap_or(u32::MAX);
-        let measured = u32::try_from(self.usage.total_tokens).unwrap_or(u32::MAX);
-        estimated.max(measured)
+        // 不再用 max(estimated, measured)：压缩后 messages 已减少，但 measured 还是旧的大值，
+        // 会导致误判仍需压缩。改为 estimated 为主，measured 仅在 estimated 明显偏低时作下限。
+        let measured = u32::try_from(self.usage.total_tokens).unwrap_or(0);
+        // 若 estimated 远低于 measured（>2x），可能是中文 token 密度高，用 measured 兜底
+        if estimated * 2 < measured {
+            measured
+        } else {
+            estimated
+        }
     }
 
     fn msg_chars(m: &Message) -> usize {
@@ -528,7 +685,10 @@ impl Agent {
         self.retry_abort.store(false, Ordering::Relaxed);
         let mut all_logs = Vec::new();
         self.events.push(AgentEvent::AgentStart);
-        eprintln!("[DBG] continue_run: max_iterations={}", self.config.max_iterations);
+        eprintln!(
+            "[DBG] continue_run: max_iterations={}",
+            self.config.max_iterations
+        );
 
         for _ in 0..self.config.max_iterations {
             eprintln!("[DBG] continue_run: starting iteration");
@@ -583,12 +743,13 @@ impl Agent {
             if let Some(tool) = self.tools.get("perceive") {
                 match tool.execute("auto_perceive", serde_json::json!({}), None) {
                     Ok(result) => {
-                        let state_msg =
-                            format!("【当前游戏状态（自动注入）】\n{}", result.message);
+                        let state_msg = format!("【当前游戏状态（自动注入）】\n{}", result.message);
                         self.messages.retain(|m| {
                             !matches!(m, Message::User(u) if u.content.starts_with("【当前游戏状态"))
                         });
-                        self.messages.push(Message::user(state_msg));
+                        // 保留截图，让多模态 LLM 能看到画面
+                        self.messages
+                            .push(Message::user_with_images(state_msg, result.images));
                     }
                     Err(e) => {
                         eprintln!("[DBG] auto_perceive FAIL: {e}");
@@ -596,6 +757,18 @@ impl Agent {
                     }
                 }
             }
+        }
+
+        // Modes 反应系统：检查游戏状态，注入紧急指令（参考 Mindcraft modes.js）
+        if let Some(mode_msg) = self.check_modes() {
+            self.messages.push(Message::user(mode_msg.clone()));
+            log.push(format!("[t{turn}] {mode_msg}"));
+        }
+
+        // SelfPrompter：持续目标注入（参考 Mindcraft SelfPrompter），每轮提醒当前任务
+        if let Some(prompt) = &self.self_prompt {
+            self.messages
+                .push(Message::user(format!("[当前目标] {prompt}")));
         }
 
         let ctx = self.build_context();
@@ -608,8 +781,11 @@ impl Agent {
         } else {
             1
         };
-        eprintln!("[DBG] calling LLM ({msg_count} msgs, {tool_count} tools)...",
-            msg_count = ctx.messages.len(), tool_count = ctx.tools.len());
+        eprintln!(
+            "[DBG] calling LLM ({msg_count} msgs, {tool_count} tools)...",
+            msg_count = ctx.messages.len(),
+            tool_count = ctx.tools.len()
+        );
         for attempt in 1..=max_attempts {
             match self.provider.complete(&ctx.messages, &ctx.tools) {
                 Ok(resp) => {
@@ -634,9 +810,7 @@ impl Agent {
                                 final_error: Some(last_error.clone()),
                             });
                         }
-                        log.push(format!(
-                            "[t{turn}] LLM 错误 (第{attempt}次): {last_error}"
-                        ));
+                        log.push(format!("[t{turn}] LLM 错误 (第{attempt}次): {last_error}"));
                         break;
                     }
                     let delay_ms = self.config.retry.delay_ms(attempt);
@@ -653,6 +827,11 @@ impl Agent {
                         }
                         std::thread::sleep(std::time::Duration::from_millis(50));
                     }
+                    // abort 后跳出重试循环，不再发下一次请求
+                    if self.retry_abort.load(Ordering::Relaxed) {
+                        log.push(format!("[t{turn}] 用户中止重试"));
+                        break;
+                    }
                 }
             }
         }
@@ -667,13 +846,16 @@ impl Agent {
         };
 
         self.usage = response.usage.clone();
-        eprintln!("[DBG] LLM response: {} chars, {} tools", 
-            response.content.as_ref().map_or(0, |s| s.len()), response.tool_calls.len());
+        eprintln!(
+            "[DBG] LLM response: {} chars, {} tools",
+            response.content.as_ref().map_or(0, |s| s.len()),
+            response.tool_calls.len()
+        );
 
         // Track obs streak
         let calls = response.tool_calls.clone();
         if calls.is_empty() {
-            // LLM returned text-only — nudge if not at max
+            // LLM returned text-only — nudge to call a tool
             self.obs_streak += 1;
             self.events.push(AgentEvent::Assistant {
                 content: response.content.clone(),
@@ -682,20 +864,14 @@ impl Agent {
             });
             self.messages.push(Message::assistant_response(&response));
 
-            if self.turn >= self.config.max_iterations {
-                self.events.push(AgentEvent::TurnEnd { turn });
-                self.persist_turn()?;
-                return Ok((log, false));
-            } else {
-                let nudge = "【继续】你刚才只用了文字回复。必须调用一个工具。根据当前状态选一个工具立即行动，不要只用文字回复。".to_string();
-                self.messages.push(Message::user(nudge));
-                log.push(format!(
-                    "[t{turn}] 提醒: 纯文字回复，已注入续跑指令"
-                ));
-                self.events.push(AgentEvent::TurnEnd { turn });
-                self.persist_turn()?;
-                return Ok((log, true));
-            }
+            // 总是注入 nudge 并返回 true，由外层循环（viewer/continue_run）控制总步数
+            // 这避免了 max_iterations=1 时 nudge 失效的问题
+            let nudge = "【继续】你刚才只用了文字回复。必须调用一个工具。根据当前状态选一个工具立即行动，不要只用文字回复。".to_string();
+            self.messages.push(Message::user(nudge));
+            log.push(format!("[t{turn}] 提醒: 纯文字回复，已注入续跑指令"));
+            self.events.push(AgentEvent::TurnEnd { turn });
+            self.persist_turn()?;
+            return Ok((log, true));
         }
 
         // Track obs streak from tool names
@@ -708,6 +884,9 @@ impl Agent {
         // Update knowledge bootstrap flag after first successful tool call
         if !self.knowledge_bootstrapped {
             self.knowledge_bootstrapped = true;
+            if let Some(ref mut sess) = self.session {
+                sess.mark_header_dirty();
+            }
         }
 
         self.events.push(AgentEvent::Assistant {
@@ -716,6 +895,37 @@ impl Agent {
             calls: calls.iter().map(|tc| tc.name.clone()).collect(),
         });
         self.messages.push(Message::assistant_response(&response));
+
+        // ── 死循环检测：如果最近 6 次调用中有 4 次相同签名，注入打断指令 ──
+        let call_sig = calls
+            .iter()
+            .map(|tc| format!("{}|{}", tc.name, tc.arguments))
+            .collect::<Vec<_>>()
+            .join(";");
+        self.recent_calls.push_back(call_sig.clone());
+        if self.recent_calls.len() > 10 {
+            self.recent_calls.pop_front();
+        }
+        let repeat_count = self.recent_calls.iter().filter(|c| **c == call_sig).count();
+        if repeat_count >= 4 {
+            let nudge = format!(
+                "【死循环警告】你已连续 {repeat_count} 次执行相同操作 ({})。这表示当前方法不生效。请：\n\
+                 1. 检查 perceive 返回的状态，确认当前实际情况\n\
+                 2. 换一种完全不同的方法\n\
+                 3. 如果在建造，改用 build 蓝图工具而不是手动 place\n\
+                 4. 如果在采集，先 move_to 到新位置再 collect\n\
+                 5. 如果目标已达成，停止调用工具",
+                calls
+                    .iter()
+                    .map(|tc| tc.name.clone())
+                    .collect::<Vec<_>>()
+                    .join(",")
+            );
+            self.messages.push(Message::user(nudge));
+            log.push(format!(
+                "[t{turn}] 死循环检测: 相同调用重复 {repeat_count} 次，注入打断指令"
+            ));
+        }
 
         // Execute each tool call
         let effects: Vec<ToolEffects> = calls
@@ -732,15 +942,13 @@ impl Agent {
         for batch in &batches {
             for &idx in batch {
                 let tc = &calls[idx];
+                let call_id = tc.id.clone();
                 // Handle meta-tool: manage_knowledge
                 if tc.name == MANAGE_KNOWLEDGE {
                     let args = tc.arguments.clone();
                     let (msg, _is_err) = self.manage_knowledge(&args);
-                    self.messages.push(Message::tool_result(
-                        &format!("call_{turn}_{idx}"),
-                        &tc.name,
-                        &msg,
-                    ));
+                    self.messages
+                        .push(Message::tool_result(&call_id, &tc.name, &msg));
                     log.push(format!("[t{turn}] manage_knowledge -> {:.100}", msg));
                     continue;
                 }
@@ -750,7 +958,7 @@ impl Agent {
                 });
                 let args = tc.arguments.clone();
                 let result = match self.tools.get(&tc.name) {
-                    Some(tool) => tool.execute(&format!("call_{turn}_{idx}"), args, None),
+                    Some(tool) => tool.execute(&call_id, args, None),
                     None => Ok(ToolResult {
                         message: format!("Unknown tool: {}", tc.name),
                         is_error: true,
@@ -765,13 +973,15 @@ impl Agent {
                     name: tc.name.clone(),
                     is_error: is_err,
                 });
-                self.messages.push(Message::tool_result(
-                    &format!("call_{turn}_{idx}"),
-                    &tc.name,
-                    &msg,
-                ));
+                // 写入真实 is_error，让 LLM 能看到工具失败
+                let tool_msg = if is_err {
+                    Message::tool_error(&call_id, &tc.name, &msg)
+                } else {
+                    Message::tool_result(&call_id, &tc.name, &msg)
+                };
+                self.messages.push(tool_msg);
                 self.session_entries.push(SessionEntry {
-                    id: format!("call_{turn}_{idx}"),
+                    id: call_id.clone(),
                     parent_id: Some(format!("call_{turn}")),
                     turn,
                     tool: tc.name.clone(),
@@ -805,9 +1015,9 @@ impl Agent {
             let goal = self.config.prompt.as_str();
             let _ = self.skill_lib.extract_from_turn(&tool_names, goal, scene);
         }
-            self.events.push(AgentEvent::TurnEnd { turn });
-            self.persist_turn()?;
-            return Ok((log, true));
+        self.events.push(AgentEvent::TurnEnd { turn });
+        self.persist_turn()?;
+        return Ok((log, true));
     }
 
     fn persist_turn(&mut self) -> Result<()> {
@@ -860,12 +1070,16 @@ impl Agent {
                 let template = args["template"].as_str().unwrap_or("Detected {label}");
                 let id = args["id"].as_str().map(|s| s.to_string());
                 let wi = WorldInfo {
-                    keys,
+                    keys: keys.clone(),
                     template: template.to_string(),
                     priority: 0,
                     id: id.clone(),
                 };
-                self.world_info.add(wi);
+                self.world_info.add(wi.clone());
+                // 持久化到 session
+                if let Some(ref mut sess) = self.session {
+                    sess.append_world_info("add", Some(wi), None, None);
+                }
                 (
                     format!(
                         "Added knowledge entry (id={:?}). Total entries: {}",
@@ -877,18 +1091,24 @@ impl Agent {
             }
             "remove" => {
                 let before = self.world_info.len();
-                if let Some(id) = args["id"].as_str() {
-                    self.world_info.remove_by_id(id);
-                } else if let Some(keys) = args["keys"].as_array() {
-                    let ks: Vec<String> = keys
-                        .iter()
+                let remove_id = args["id"].as_str().map(|s| s.to_string());
+                let remove_keys: Option<Vec<String>> = args["keys"].as_array().map(|a| {
+                    a.iter()
                         .filter_map(|v| v.as_str().map(|s| s.to_lowercase()))
-                        .collect();
-                    self.world_info.remove_by_keys(&ks);
+                        .collect()
+                });
+                if let Some(id) = &remove_id {
+                    self.world_info.remove_by_id(id);
+                } else if let Some(keys) = &remove_keys {
+                    self.world_info.remove_by_keys(keys);
                 } else {
                     return ("remove needs 'id' or 'keys' parameter".into(), true);
                 }
                 let removed = before - self.world_info.len();
+                // 持久化到 session
+                if let Some(ref mut sess) = self.session {
+                    sess.append_world_info("remove", None, remove_id.clone(), remove_keys.clone());
+                }
                 (
                     format!(
                         "Removed {removed} entries. Total: {}",
@@ -918,6 +1138,29 @@ impl Agent {
             return Ok(());
         }
 
+        // 对齐切点到 turn 边界：如果切点处是 ToolResult（无对应 Assistant tool_call），
+        // 向前移到该 Assistant 之前
+        while cut < self.messages.len() {
+            let prev_is_assistant = self
+                .messages
+                .get(cut.wrapping_sub(1))
+                .map(|m| matches!(m, Message::Assistant(a) if !a.tool_calls.is_empty()))
+                .unwrap_or(false);
+            let cur_is_tool_result = self
+                .messages
+                .get(cut)
+                .map(|m| matches!(m, Message::ToolResult(_)))
+                .unwrap_or(false);
+            if cur_is_tool_result && !prev_is_assistant {
+                cut -= 1;
+            } else {
+                break;
+            }
+        }
+        if cut == 0 {
+            return Ok(()); // 无法找到安全切点
+        }
+
         let old: Vec<String> = self.messages[..cut]
             .iter()
             .map(Self::serialize_msg)
@@ -937,27 +1180,45 @@ impl Agent {
         let cm = vec![system_chatml(system), Message::user(prompt).to_chatml()];
         // Retry summarization too
         let summary = {
-            let mut result = None;
+            let mut result: Option<String> = None;
+            let mut last_err = None;
             for attempt in 1..=3 {
                 match self.provider.complete(&cm, &[]) {
                     Ok(resp) => {
-                        result = Some(
-                            resp.content
-                                .filter(|t| !t.trim().is_empty())
-                                .or_else(|| resp.reasoning.filter(|t| !t.trim().is_empty()))
-                                .unwrap_or_else(|| format!("{cut} messages compacted")),
-                        );
-                        break;
+                        if let Some(t) = resp.content.as_ref().filter(|t| !t.trim().is_empty()) {
+                            result = Some(t.clone());
+                        } else if let Some(t) =
+                            resp.reasoning.as_ref().filter(|t| !t.trim().is_empty())
+                        {
+                            result = Some(t.clone());
+                        } else {
+                            // 空响应，重试
+                            last_err = Some("empty response".into());
+                        }
+                        if result.is_some() {
+                            break;
+                        }
                     }
-                    Err(_) if attempt < 3 => {
-                        std::thread::sleep(std::time::Duration::from_millis(500 * attempt as u64));
-                    }
-                    Err(_) => {
-                        result = Some(format!("{cut} messages compacted"));
+                    Err(e) => {
+                        last_err = Some(format!("{e}"));
+                        if attempt < 3 {
+                            std::thread::sleep(std::time::Duration::from_millis(
+                                500 * attempt as u64,
+                            ));
+                        }
                     }
                 }
             }
-            result.unwrap_or_else(|| format!("{cut} messages compacted"))
+            match result {
+                Some(s) => s,
+                None => {
+                    // 压缩失败：不丢历史，直接返回错误让调用方决定
+                    return Err(anyhow::anyhow!(
+                        "compaction failed after 3 attempts: {}",
+                        last_err.unwrap_or_else(|| "unknown".into())
+                    ));
+                }
+            }
         };
 
         let recent: Vec<_> = self.messages.drain(cut..).collect();
@@ -969,6 +1230,8 @@ impl Agent {
         self.messages.extend(recent);
         self.previous_summary = Some(summary);
         self.pending_checkpoint = true;
+        // 压缩后清零 usage，避免旧 measured 值在下一轮 estimate 中导致误判振荡
+        self.usage = Usage::default();
         Ok(())
     }
 
@@ -1088,7 +1351,7 @@ mod tests {
     fn mc_knowledge_loaded() {
         assert!(MC_KNOWLEDGE.contains("collect"));
         assert!(MC_KNOWLEDGE.contains("craft"));
-        assert!(!MC_KNOWLEDGE.contains("Survival Strategy"));
+        assert!(MC_KNOWLEDGE.contains("Survival Strategy"));
     }
 
     #[test]
@@ -1100,7 +1363,7 @@ mod tests {
         );
         let ctx = agent.build_context();
         assert!(ctx.system_prompt.contains("You are a test bot"));
-        assert!(ctx.system_prompt.contains("工具参考"));
+        assert!(ctx.system_prompt.contains("Tool Reference"));
     }
 
     #[test]
@@ -1158,7 +1421,7 @@ mod tests {
         agent.obs_streak = 5;
         let guarded = agent.build_context();
         assert!(
-            guarded.system_prompt.contains("观察"),
+            guarded.system_prompt.contains("observing"),
             "obs_streak>=5 should inject hint"
         );
     }

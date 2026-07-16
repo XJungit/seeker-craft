@@ -77,6 +77,10 @@
   .tool .shotcap{color:var(--muted);font-size:11px;margin-top:4px}
   .knowledge{color:var(--yellow);font-size:12px;border:1px dashed var(--yellow);border-radius:8px;padding:6px 10px;opacity:.85}
   .empty{color:var(--muted);text-align:center;margin-top:40px}
+  .calls{margin-top:8px;display:flex;flex-direction:column;gap:6px}
+  .call{background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:6px 10px}
+  .call .cname{font-family:Menlo,monospace;font-weight:600;color:var(--accent);font-size:13px}
+  .call .cargs{margin:4px 0 0;white-space:pre-wrap;color:var(--muted);font-size:12px;font-family:Menlo,monospace}
 </style>
 </head>
 <body>
@@ -104,7 +108,7 @@
 </main>
 
 <script>
-const TOOLS = {perceive:"perceive",look:"look",mine:"mine",press:"press",visual_perceive:"visual_perceive",manage_knowledge:"manage_knowledge"};
+const TOOLS = {perceive:"perceive",look:"look",mine:"mine",press:"press",visual_perceive:"visual_perceive",manage_knowledge:"manage_knowledge",collect:"mine",craft:"press",place:"press",equip:"press",use_item:"press",attack:"mine",combat:"mine",move_to:"look",look_at:"look",search_block:"perceive",move_away:"look",dig_down:"mine",consume:"press",build:"press",blueprints:"perceive"};
 function esc(s){return String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
 function shortArgs(a){const s=typeof a=="string"?a:JSON.stringify(a);return s.length>120?s.slice(0,120)+" …":s}
 
@@ -177,7 +181,14 @@ function render(data){
       let h="";
       if(e.content)h+=`<div class="say">${esc(e.content)}</div>`;
       if(e.reasoning)h+=`<details class="reason" open><summary>🧠 推理链</summary><pre>${esc(e.reasoning)}</pre></details>`;
-      if(!e.content&&!e.reasoning)h+='<div class="say" style="color:var(--muted)">（仅工具调用）</div>';
+      if(e.tool_calls&&e.tool_calls.length){
+        h+='<div class="calls">';
+        for(const c of e.tool_calls){
+          h+=`<div class="call"><span class="cname">🔧 ${esc(c.name)}</span><pre class="cargs">${esc(shortArgs(c.args))}</pre></div>`;
+        }
+        h+='</div>';
+      }
+      if(!e.content&&!e.reasoning&&!(e.tool_calls&&e.tool_calls.length))h+='<div class="say" style="color:var(--muted)">（空回复）</div>';
       d.innerHTML=h;chat.appendChild(d)
     }else if(e.kind==="tool"){
       const d=document.createElement("div"),cls=TOOLS[e.name]||"";

@@ -14,16 +14,13 @@
 use crate::bridge::{McBridge, ModAck, ModCommand, ModState, NearbyBlock};
 use anyhow::{Context, Result, anyhow};
 use craft_agent::core::adapter::GameAdapter;
-use craft_agent::core::types::{Action, Direction, ExecResult, Screenshot, Target, WorldState};
+use craft_agent::core::types::{Action, ExecResult, Screenshot, Target, WorldState};
 use craft_agent_model::vision::VisionClient;
 use std::cell::RefCell;
 use std::thread;
 use std::time::Duration;
 
 use std::collections::HashMap;
-
-/// mine 默认 60 tick（3 秒）→ 木头破坏时间。
-const MINE_TICKS: u32 = 60;
 
 /// Minecraft 桥接 mod 适配器。
 pub struct MinecraftModAdapter {
@@ -35,6 +32,8 @@ pub struct MinecraftModAdapter {
     vision: Option<Box<dyn VisionClient>>,
     /// 位置记忆（rememberHere / goToRememberedPlace）
     saved_places: RefCell<HashMap<String, (f64, f64, f64)>>,
+    /// 行为模式开关（setMode）
+    modes: RefCell<HashMap<String, bool>>,
 }
 
 impl MinecraftModAdapter {
@@ -56,6 +55,7 @@ impl MinecraftModAdapter {
             last: RefCell::new(None),
             vision,
             saved_places: RefCell::new(HashMap::new()),
+            modes: RefCell::new(HashMap::new()),
         })
     }
 
@@ -102,33 +102,305 @@ impl MinecraftModAdapter {
         self.bridge.borrow_mut().is_alive()
     }
 
-    /// 右键点击（放置/使用/吃东西/开箱子）。ticks: 持续 tick，默认 5（约 0.25 秒）。
-    pub fn right_click(&self, ticks: u32) -> Result<()> {
-        self.bridge
-            .borrow_mut()
-            .send(ModCommand::RightClick { ticks })?;
-        Ok(())
+    /// 使用主手物品（吃东西/用桶/扔珍珠）。ticks: 长按时长（32≈1.6s 吃食物）。
+    pub fn use_item(&self, ticks: u32) -> Result<ModAck> {
+        self.bridge.borrow_mut().send(ModCommand::UseItem { ticks })
     }
 
-    /// 攻击最近实体（按住左键 ticks，默认 30 tick ≈ 1.5 秒）。
-    pub fn attack(&self, ticks: u32) -> Result<()> {
-        self.bridge
-            .borrow_mut()
-            .send(ModCommand::Attack { ticks })?;
-        Ok(())
+    /// 攻击最近敌对实体（mod 侧自动装备武器+朝向，单次攻击）。
+    /// ticks 仅用于 Rust 侧等待，mod 侧单次攻击。
+    pub fn attack(&self, ticks: u32) -> Result<ModAck> {
+        self.bridge.borrow_mut().send(ModCommand::Attack { ticks })
     }
 
-    /// 导航到世界坐标（mod 侧每 tick 重新计算朝向 + 前进，无振荡）。
-    pub fn move_to(&self, x: f64, y: f64, z: f64) -> Result<()> {
+    /// 导航到世界坐标（mod 侧主线程 tick 回调执行移动，轮询等待完成）。
+    /// 返回 ModAck（含 reached/final_dist/stuck，调用方应检查是否真正到达）。
+    pub fn move_to(&self, x: f64, y: f64, z: f64) -> Result<ModAck> {
         self.bridge
             .borrow_mut()
-            .send(ModCommand::MoveTo { x, y, z })?;
-        Ok(())
+            .send(ModCommand::MoveTo { x, y, z })
+    }
+
+    /// 精确放置方块到指定坐标（mod 侧 useItemOn，不依赖准星朝向）。
+    pub fn place_at(&self, x: i32, y: i32, z: i32, item: &str) -> Result<ModAck> {
+        self.bridge.borrow_mut().send(ModCommand::PlaceAt {
+            x,
+            y,
+            z,
+            item: item.into(),
+        })
+    }
+
+    /// 精确破坏指定坐标方块（mod 侧 destroyBlock，含掉落）。
+    pub fn dig_at(&self, x: i32, y: i32, z: i32) -> Result<ModAck> {
+        self.bridge.borrow_mut().send(ModCommand::DigAt { x, y, z })
+    }
+
+    /// 切换快捷栏选中格（mod 侧反射设置 Inventory.selected）。
+    pub fn select_slot(&self, slot: u32) -> Result<ModAck> {
+        self.bridge
+            .borrow_mut()
+            .send(ModCommand::SelectSlot { slot })
+    }
+
+    /// 从主背包移动物品到快捷栏（mod 侧直接交换槽位）。
+    pub fn move_to_hotbar(&self, item: &str) -> Result<ModAck> {
+        self.bridge
+            .borrow_mut()
+            .send(ModCommand::MoveToHotbar { item: item.into() })
+    }
+
+    /// 查询单个方块（Rust A* 寻路用）。
+    pub fn get_block(&self, x: i32, y: i32, z: i32) -> Result<ModAck> {
+        self.bridge
+            .borrow_mut()
+            .send(ModCommand::GetBlock { x, y, z })
+    }
+
+    /// 查询区域内所有非空方块（Rust A* 寻路用）。
+    pub fn get_blocks(
+        &self,
+        x1: i32,
+        y1: i32,
+        z1: i32,
+        x2: i32,
+        y2: i32,
+        z2: i32,
+    ) -> Result<ModAck> {
+        self.bridge.borrow_mut().send(ModCommand::GetBlocks {
+            x1,
+            y1,
+            z1,
+            x2,
+            y2,
+            z2,
+        })
+    }
+
+    /// 读取当前打开的容器/GUI内容（参考 Numen inspect_gui）。
+    pub fn inspect_gui(&self) -> Result<ModAck> {
+        self.bridge.borrow_mut().send(ModCommand::InspectGui)
+    }
+
+    /// 关闭当前打开的容器/GUI。
+    pub fn close_gui(&self) -> Result<ModAck> {
+        self.bridge.borrow_mut().send(ModCommand::CloseGui)
+    }
+
+    /// 在打开的容器中进行物品转移（Shift+路由或精确槽位移）。
+    /// moves: JSON 数组，每项 {from: int, to?: int|null, count?: int}
+    pub fn transfer(&self, moves: serde_json::Value) -> Result<ModAck> {
+        self.bridge
+            .borrow_mut()
+            .send(ModCommand::Transfer { moves })
+    }
+
+    /// 装备物品到指定槽位（支持盔甲/offhand/mainhand）。
+    /// slot: "mainhand" | "offhand" | "head" | "chest" | "legs" | "feet" | "auto"
+    pub fn equip_item(&self, item: &str, slot: Option<&str>) -> Result<ModAck> {
+        self.bridge.borrow_mut().send(ModCommand::EquipItem {
+            item: item.into(),
+            slot: slot.map(|s| s.into()),
+        })
+    }
+
+    /// 吃指定物品（自动切到快捷栏+useItem）。
+    pub fn eat_item(&self, item: &str, ticks: Option<u32>) -> Result<ModAck> {
+        self.bridge.borrow_mut().send(ModCommand::EatItem {
+            item: item.into(),
+            ticks,
+        })
+    }
+
+    /// 丢弃物品为地面实体（真正生成 ItemEntity，带拾取冷却）。
+    pub fn drop_items(&self, item: &str, num: u32) -> Result<ModAck> {
+        self.bridge.borrow_mut().send(ModCommand::DropItems {
+            item: item.into(),
+            num,
+        })
+    }
+
+    /// 等待指定秒数。
+    pub fn wait(&self, seconds: u32) -> Result<ModAck> {
+        self.bridge.borrow_mut().send(ModCommand::Wait { seconds })
+    }
+
+    /// 列出在线玩家（支持 goToPlayer/attackPlayer 基础）。
+    pub fn list_players(&self) -> Result<ModAck> {
+        self.bridge.borrow_mut().send(ModCommand::ListPlayers)
+    }
+
+    /// 按名字导航到指定玩家。
+    pub fn go_to_player(&self, player_name: &str, closeness: Option<f64>) -> Result<ModAck> {
+        self.bridge.borrow_mut().send(ModCommand::GoToPlayer {
+            player_name: player_name.into(),
+            closeness,
+        })
+    }
+
+    /// 攻击指定玩家。
+    pub fn attack_player(&self, player_name: &str, ticks: u32) -> Result<ModAck> {
+        self.bridge.borrow_mut().send(ModCommand::AttackPlayer {
+            player_name: player_name.into(),
+            ticks,
+        })
+    }
+
+    /// 给指定玩家物品。
+    pub fn give_player(&self, player_name: &str, item: &str, num: u32) -> Result<ModAck> {
+        self.bridge.borrow_mut().send(ModCommand::GivePlayer {
+            player_name: player_name.into(),
+            item: item.into(),
+            num,
+        })
+    }
+
+    /// 自动拾取附近掉落物（参考 Numen collect_items）。
+    pub fn collect_items(
+        &self,
+        item_ids: Vec<String>,
+        radius: f64,
+        max_count: u32,
+    ) -> Result<ModAck> {
+        self.bridge.borrow_mut().send(ModCommand::CollectItems {
+            item_ids,
+            radius,
+            max_count,
+        })
+    }
+
+    /// 停止所有当前动作（参考 mindcraft !stop）。
+    pub fn stop(&self) -> Result<ModAck> {
+        self.bridge.borrow_mut().send(ModCommand::Stop)
+    }
+
+    /// 设置持续目标（参考 mindcraft !goal）。
+    pub fn set_goal(&self, goal: &str) -> Result<ModAck> {
+        self.bridge
+            .borrow_mut()
+            .send(ModCommand::SetGoal { goal: goal.into() })
+    }
+
+    /// 获取当前持续目标。
+    pub fn get_goal(&self) -> Result<ModAck> {
+        self.bridge.borrow_mut().send(ModCommand::GetGoal)
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // 第三批方法（参考 mindcraft 41 actions + 14 queries）
+    // ══════════════════════════════════════════════════════════════
+
+    /// 持续跟随指定玩家（resume=true 模式）。
+    pub fn follow_player(&self, player_name: &str, follow_dist: Option<f64>) -> Result<ModAck> {
+        self.bridge.borrow_mut().send(ModCommand::FollowPlayer {
+            player_name: player_name.into(),
+            follow_dist,
+        })
+    }
+
+    /// 搜索 minecraft.wiki。
+    pub fn search_wiki(&self, query: &str) -> Result<ModAck> {
+        self.bridge.borrow_mut().send(ModCommand::SearchWiki {
+            query: query.into(),
+        })
+    }
+
+    /// 查询最近村民的交易列表。
+    pub fn villager_trades(&self, radius: Option<f64>) -> Result<ModAck> {
+        self.bridge
+            .borrow_mut()
+            .send(ModCommand::VillagerTrades { radius })
+    }
+
+    /// 与村民交易。
+    pub fn trade_with_villager(
+        &self,
+        index: u32,
+        count: Option<u32>,
+        radius: Option<f64>,
+    ) -> Result<ModAck> {
+        self.bridge
+            .borrow_mut()
+            .send(ModCommand::TradeWithVillager {
+                index,
+                count,
+                radius,
+            })
+    }
+
+    /// 看向指定玩家。
+    pub fn look_at_player(&self, player_name: &str) -> Result<ModAck> {
+        self.bridge.borrow_mut().send(ModCommand::LookAtPlayer {
+            player_name: player_name.into(),
+        })
+    }
+
+    /// 看向指定坐标。
+    pub fn look_at_position(&self, x: f64, y: f64, z: f64) -> Result<ModAck> {
+        self.bridge
+            .borrow_mut()
+            .send(ModCommand::LookAtPosition { x, y, z })
+    }
+
+    /// 右键激活指定坐标方块。
+    pub fn activate_block(&self, x: i32, y: i32, z: i32) -> Result<ModAck> {
+        self.bridge
+            .borrow_mut()
+            .send(ModCommand::ActivateBlock { x, y, z })
+    }
+
+    /// 对最近实体使用物品。
+    pub fn use_on_entity(&self, entity_type: &str, radius: Option<f64>) -> Result<ModAck> {
+        self.bridge.borrow_mut().send(ModCommand::UseOnEntity {
+            entity_type: entity_type.into(),
+            radius,
+        })
+    }
+
+    /// 清空对话历史（mod 侧 ack）。
+    pub fn clear_chat(&self) -> Result<ModAck> {
+        self.bridge.borrow_mut().send(ModCommand::ClearChat)
+    }
+
+    /// 激活最近的指定类型方块。
+    pub fn activate_nearest_block(&self, block_type: &str, radius: Option<f64>) -> Result<ModAck> {
+        self.bridge
+            .borrow_mut()
+            .send(ModCommand::ActivateNearestBlock {
+                block_type: block_type.into(),
+                radius,
+            })
+    }
+
+    /// 查询合成计划。
+    pub fn get_crafting_plan(&self, item: &str, count: u32) -> Result<ModAck> {
+        self.bridge.borrow_mut().send(ModCommand::GetCraftingPlan {
+            item: item.into(),
+            count,
+        })
+    }
+
+    /// 智能丢弃（moveAway + drop + goBack）。
+    pub fn discard_smart(&self, item: &str, num: u32) -> Result<ModAck> {
+        self.bridge.borrow_mut().send(ModCommand::DiscardSmart {
+            item: item.into(),
+            num,
+        })
+    }
+
+    /// 战斗 AI（mod 侧自主走位：melee/kite/retreat，含苦力怕后撤+濒死撤退）。
+    pub fn combat(&self, mode: &str, ticks: u32) -> Result<ModAck> {
+        self.bridge.borrow_mut().send(ModCommand::Combat {
+            mode: mode.into(),
+            ticks,
+        })
     }
 
     /// 精确看向世界坐标
     pub fn look_at(&self, x: f64, y: f64, z: f64) -> Result<()> {
-        self.bridge.borrow_mut().send(ModCommand::LookAt { x, y, z })?;
+        self.bridge
+            .borrow_mut()
+            .send(ModCommand::LookAt { x, y, z })?;
         Ok(())
     }
 
@@ -139,14 +411,19 @@ impl MinecraftModAdapter {
             let pos = (s.position[0], s.position[1], s.position[2]);
             self.saved_places.borrow_mut().insert(name.to_string(), pos);
             format!("saved '{name}' at ({:.1},{:.1},{:.1})", pos.0, pos.1, pos.2)
-        } else { format!("failed to save '{name}'") }
+        } else {
+            format!("failed to save '{name}'")
+        }
     }
 
     /// 去已记住的位置
     pub fn go_to_place(&self, name: &str) -> Result<String> {
         let pos = self.saved_places.borrow().get(name).cloned();
         match pos {
-            Some((x, y, z)) => { self.move_to(x, y, z)?; Ok(format!("moving to '{name}' ({:.1},{:.1},{:.1})", x, y, z)) }
+            Some((x, y, z)) => {
+                let _ = self.move_to(x, y, z)?;
+                Ok(format!("moving to '{name}' ({:.1},{:.1},{:.1})", x, y, z))
+            }
             None => Ok(format!("place '{name}' not found")),
         }
     }
@@ -154,8 +431,39 @@ impl MinecraftModAdapter {
     /// 列出所有已保存位置
     pub fn list_places(&self) -> String {
         let places = self.saved_places.borrow();
-        if places.is_empty() { "no saved places".into() }
-        else { places.iter().map(|(k, (x,y,z))| format!("  {k}: ({x:.0},{y:.0},{z:.0})")).collect::<Vec<_>>().join("\n") }
+        if places.is_empty() {
+            "no saved places".into()
+        } else {
+            places
+                .iter()
+                .map(|(k, (x, y, z))| format!("  {k}: ({x:.0},{y:.0},{z:.0})"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
+    }
+
+    /// 设置行为模式开关。
+    pub fn set_mode(&self, name: &str, on: bool) {
+        self.modes.borrow_mut().insert(name.to_string(), on);
+    }
+
+    /// 查询行为模式是否开启（默认 false）。
+    pub fn get_mode(&self, name: &str) -> bool {
+        *self.modes.borrow().get(name).unwrap_or(&false)
+    }
+
+    /// 列出所有模式及状态。
+    pub fn list_modes(&self) -> String {
+        let modes = self.modes.borrow();
+        if modes.is_empty() {
+            "no modes set (all default off)".into()
+        } else {
+            modes
+                .iter()
+                .map(|(k, v)| format!("  {k}: {v}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        }
     }
 
     /// 合成物品（调 mod 直接操作 Inventory 扣材料加结果，零视觉依赖）。
@@ -169,13 +477,19 @@ impl MinecraftModAdapter {
 
     /// 丢弃物品
     pub fn discard_item(&self, item: &str, num: u32) -> Result<()> {
-        self.bridge.borrow_mut().send(ModCommand::Discard { item: item.to_string(), num })?;
+        self.bridge.borrow_mut().send(ModCommand::Discard {
+            item: item.to_string(),
+            num,
+        })?;
         Ok(())
     }
 
     /// 烧制物品
     pub fn smelt_item(&self, item: &str, num: u32) -> Result<()> {
-        self.bridge.borrow_mut().send(ModCommand::Smelt { item: item.to_string(), num })?;
+        self.bridge.borrow_mut().send(ModCommand::Smelt {
+            item: item.to_string(),
+            num,
+        })?;
         Ok(())
     }
 
@@ -224,10 +538,19 @@ fn build_scene_desc(st: &ModState) -> String {
         "  Gamemode: {}  Dimension: {}  Biome: {}\n",
         st.gamemode, st.dimension, st.biome
     ));
+    // 时间 + 白天黑夜（MC 时间：0=日出6:00, 6000=正午12:00, 12000=日落18:00, 18000=午夜0:00）
+    let t = st.time % 24000;
+    let hour = ((t / 1000 + 6) % 24) as u32;
+    let minute = ((t % 1000) * 60 / 1000) as u32;
+    let phase = if t < 13000 { "day" } else { "night" };
+    s.push_str(&format!(
+        "  Time: {:02}:{:02} ({})  tick={}\n",
+        hour, minute, phase, t
+    ));
     s.push_str(&format!(
         "  Light: sky={}/15 block={}/15  Weather: rain={} thunder={}\n",
         st.sky_light, st.block_light, st.raining, st.thundering
-    )    );
+    ));
     if !st.effects.is_empty() {
         let fx: Vec<String> = st
             .effects
@@ -249,23 +572,45 @@ fn build_scene_desc(st: &ModState) -> String {
         .inventory
         .iter()
         .filter(|i| i.count > 0 && i.slot < 9)
-        .map(|i| format!("[{s}] {item}x{c}", s = i.slot + 1, item = i.id.replace("minecraft:", ""), c = i.count))
+        .map(|i| {
+            format!(
+                "[{s}] {item}x{c}",
+                s = i.slot + 1,
+                item = i.id.replace("minecraft:", ""),
+                c = i.count
+            )
+        })
         .collect();
     let main_inv: Vec<String> = st
         .inventory
         .iter()
         .filter(|i| i.count > 0 && i.slot >= 9)
-        .map(|i| format!("[{s}] {item}x{c}", s = i.slot, item = i.id.replace("minecraft:", ""), c = i.count))
+        .map(|i| {
+            format!(
+                "[{s}] {item}x{c}",
+                s = i.slot,
+                item = i.id.replace("minecraft:", ""),
+                c = i.count
+            )
+        })
         .collect();
     let hotbar_str = hotbar.join(", ");
     s.push_str(&format!(
         "HOTBAR (slot 1-9):  {}\n",
-        if hotbar.is_empty() { "(empty)" } else { &hotbar_str }
+        if hotbar.is_empty() {
+            "(empty)"
+        } else {
+            &hotbar_str
+        }
     ));
     let main_inv_str = main_inv.join(", ");
     s.push_str(&format!(
         "INVENTORY (slots 9-):  {}\n",
-        if main_inv.is_empty() { "(empty)" } else { &main_inv_str }
+        if main_inv.is_empty() {
+            "(empty)"
+        } else {
+            &main_inv_str
+        }
     ));
 
     // Find which hotbar slot is currently held
@@ -472,83 +817,89 @@ impl GameAdapter for MinecraftModAdapter {
                 let ack = self.bridge.borrow_mut().send(ModCommand::Look { dx, dy })?;
                 Ok(ack_to_result(ack, format!("look dx={dx} dy={dy}")))
             }
-            Action::Move { dir, ticks } => {
-                let d = match dir {
-                    Direction::Forward => "forward",
-                    Direction::Back => "back",
-                    Direction::Left => "left",
-                    Direction::Right => "right",
-                    Direction::Up => "up",
-                    Direction::Down => "down",
-                };
-                let ack = self.bridge.borrow_mut().send(ModCommand::Move {
-                    dir: d.to_string(),
-                    ticks,
-                })?;
-                Ok(ack_to_result(ack, format!("move {d} x{ticks}")))
-            }
-            Action::Press { keys, ticks } => {
-                let detail = format!("press {keys} x{ticks}");
-                let ack = self.bridge.borrow_mut().send(ModCommand::Press {
-                    keys: keys.clone(),
-                    ticks,
-                })?;
-                Ok(ack_to_result(ack, detail))
-            }
-            Action::Mine { ticks } => {
-                let ack = self.bridge.borrow_mut().send(ModCommand::Mine { ticks })?;
-                let detail = match (ack.logs_before, ack.logs_after) {
-                    (Some(b), Some(a)) if a > b => {
-                        format!("mine 成功，原木 +{}（{b}→{a}）", a - b)
-                    }
-                    (Some(b), Some(a)) => {
-                        format!("mine 完成但未增加原木（{b}→{a}，可能未对准方块或方块不可破坏）")
-                    }
-                    _ => "mine 完成（mod 未返回原木计数）".into(),
-                };
-                Ok(ack_to_result(ack, detail))
+            // ServerPlayer 架构移除了 KeyMapping 模拟的 Move/Press/Mine。
+            // 这些 Action 变体保留是为了兼容 core/types 的 Action 枚举，但实际调用时
+            // 返回错误，引导调用方使用对应的具体方法（move_to / select_slot / dig_at 等）。
+            Action::Move { dir, ticks } => Err(anyhow!(
+                "ServerPlayer 架构不支持相对移动 Action::Move({dir:?}, {ticks})；请用 move_to(x,y,z) 方法"
+            )),
+            Action::Press { keys, ticks } => Err(anyhow!(
+                "ServerPlayer 架构不支持按键模拟 Action::Press({keys}, {ticks})；请用具体方法：select_slot/use_item/dig_at 等"
+            )),
+            Action::Mine { ticks: _ } => {
+                // 基于准星指向方块调用 dig_at（mod 侧 destroyBlock 原生破坏）
+                let st = self.reload()?;
+                if let Some(tb) = &st.targeted_block {
+                    // 准星方块坐标 = 玩家眼睛位置 + 视线方向 * 距离，近似取整
+                    let px = st.position[0];
+                    let py = st.position[1] + 1.62; // 眼睛高度
+                    let pz = st.position[2];
+                    let yaw_rad = st.yaw.to_radians();
+                    let pitch_rad = st.pitch.to_radians();
+                    // MC yaw: 0=朝南(+z), 90=朝西(-x), 180=朝北(-z), 270=朝东(+x)
+                    // 视线方向
+                    let dx = -yaw_rad.sin() * pitch_rad.cos();
+                    let dy = -pitch_rad.sin();
+                    let dz = yaw_rad.cos() * pitch_rad.cos();
+                    let bx = (px + dx * tb.dist).round() as i32;
+                    let by = (py + dy * tb.dist).round() as i32;
+                    let bz = (pz + dz * tb.dist).round() as i32;
+                    let ack = self.bridge.borrow_mut().send(ModCommand::DigAt {
+                        x: bx,
+                        y: by,
+                        z: bz,
+                    })?;
+                    let broken = ack.broken.unwrap_or(false);
+                    let block_id = ack.block_id.clone().unwrap_or_default();
+                    let detail = if broken {
+                        format!("mine 成功，破坏 {} at ({bx},{by},{bz})", block_id)
+                    } else {
+                        format!("mine 未破坏方块 at ({bx},{by},{bz})（可能不可破坏或距离过远）")
+                    };
+                    Ok(ack_to_result(ack, detail))
+                } else {
+                    Err(anyhow!(
+                        "mine 失败：准星未指向任何方块（targeted_block 为空）"
+                    ))
+                }
             }
             Action::AimAndMine { target } => {
-                // 用最近匹配方块精确对准再挖（mod 进程内 look_at，不靠 VLM 猜）。
+                // 找最近匹配方块 → look_at 精确对准 → dig_at 原生破坏
                 let st = self.reload()?;
                 match nearest_block(&st, &target) {
                     Some(b) => {
+                        let bx = b.x.round() as i32;
+                        let by = b.y.round() as i32;
+                        let bz = b.z.round() as i32;
                         self.bridge.borrow_mut().send(ModCommand::LookAt {
                             x: b.x,
                             y: b.y + 0.5,
                             z: b.z,
                         })?;
                         thread::sleep(Duration::from_millis(180));
-                        let ack = self
-                            .bridge
-                            .borrow_mut()
-                            .send(ModCommand::Mine { ticks: MINE_TICKS })?;
-                        let detail = match (ack.logs_before, ack.logs_after) {
-                            (Some(bb), Some(aa)) if aa > bb => {
-                                format!("aim_and_mine 成功，{} 原木 +{}", target, aa - bb)
-                            }
-                            _ => format!(
-                                "aim_and_mine 已对准 {} 并挖 3s（未确认增加，可能还需走近）",
-                                target
-                            ),
+                        let ack = self.bridge.borrow_mut().send(ModCommand::DigAt {
+                            x: bx,
+                            y: by,
+                            z: bz,
+                        })?;
+                        let broken = ack.broken.unwrap_or(false);
+                        let block_id = ack.block_id.clone().unwrap_or_default();
+                        let detail = if broken {
+                            format!("aim_and_mine 成功，破坏 {} at ({bx},{by},{bz})", block_id)
+                        } else {
+                            format!(
+                                "aim_and_mine 已对准 {target} at ({bx},{by},{bz}) 但未破坏（可能需走近）"
+                            )
                         };
                         Ok(ack_to_result(ack, detail))
                     }
-                    None => {
-                        // 没有匹配方块 → 盲挖（保留行为，避免完全卡死）
-                        let ack = self
-                            .bridge
-                            .borrow_mut()
-                            .send(ModCommand::Mine { ticks: MINE_TICKS })?;
-                        Ok(ack_to_result(
-                            ack,
-                            format!("aim_and_mine 未找到匹配 '{target}'，盲挖 3s"),
-                        ))
-                    }
+                    None => Err(anyhow!(
+                        "aim_and_mine 失败：附近未找到匹配 '{target}' 的方块"
+                    )),
                 }
             }
             Action::Click { element_id } => Err(anyhow!(
-                "mod 模式无 2D 点击（element_id={element_id}）；改用 look/mine 操作 3D 世界"
+                "mod 模式无 2D 点击（element_id={element_id}）；改用 look/dig_at/place_at 操作 3D 世界"
             )),
         }
     }
