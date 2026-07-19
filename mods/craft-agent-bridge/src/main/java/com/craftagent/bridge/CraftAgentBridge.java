@@ -113,6 +113,8 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
@@ -223,7 +225,31 @@ implements ModInitializer {
     private static int autoSurviveCooldown;
     private static int autoSurviveAttackCd;
 
+    // ═════════════════════════════════════════════════════════════════════════
+    // 命令分派表（重构 performAction 的巨型 switch 用）：
+    // 每个命令 → 一个处理器方法，注册进 COMMAND_HANDLERS，performAction 优先查表。
+    // 表中没有的命令才回退到 legacy 的 switch（逐步迁移、随时可回退）。
+    // ═════════════════════════════════════════════════════════════════════════
+    @FunctionalInterface
+    private interface CommandHandler {
+        JsonObject handle(ServerPlayer player, ServerLevel level, JsonObject req);
+    }
+
+    private static final Map<String, CommandHandler> COMMAND_HANDLERS = new HashMap<>();
+
+    private void registerCommandHandlers() {
+        COMMAND_HANDLERS.put("look", this::actLook);
+        COMMAND_HANDLERS.put("look_abs", this::actLookAbs);
+        COMMAND_HANDLERS.put("look_at", this::actLookAt);
+        COMMAND_HANDLERS.put("dig_at", this::actDigAt);
+        COMMAND_HANDLERS.put("place_at", this::actPlaceAt);
+        COMMAND_HANDLERS.put("get_block", this::actGetBlock);
+        COMMAND_HANDLERS.put("get_blocks", this::actGetBlocks);
+        COMMAND_HANDLERS.put("clear_chat", this::actClearChat);
+    }
+
     public void onInitialize() {
+        registerCommandHandlers();
         Thread serverThread = new Thread(this::runServer, "craft-agent-bridge");
         serverThread.setDaemon(true);
         serverThread.start();
@@ -2049,84 +2075,14 @@ implements ModInitializer {
             return o;
         }
         ServerLevel level = player.level();
+        // 优先走命令分派表；表中无此命令再回退 legacy switch（逐步迁移）。
+        CommandHandler handler = COMMAND_HANDLERS.get(type);
+        if (handler != null) {
+            return handler.handle(player, level, req);
+        }
         JsonObject o = new JsonObject();
         o.addProperty("status", "ok");
         switch (type) {
-            case "look": {
-                int dx = req.has("dx") ? req.get("dx").getAsInt() : 0;
-                int dy = req.has("dy") ? req.get("dy").getAsInt() : 0;
-                float yaw = player.getYRot() - (float)dx * 0.3f;
-                float pitch = CraftAgentBridge.clamp(player.getXRot() + (float)dy * 0.3f, -90.0f, 90.0f);
-                player.setYRot(yaw);
-                player.setXRot(pitch);
-                o.addProperty("detail", "look dx=" + dx + " dy=" + dy);
-                return o;
-            }
-            case "look_abs": {
-                float yaw = req.has("yaw") ? req.get("yaw").getAsFloat() : player.getYRot();
-                float pitch = req.has("pitch") ? req.get("pitch").getAsFloat() : player.getXRot();
-                player.setYRot(yaw);
-                player.setXRot(CraftAgentBridge.clamp(pitch, -90.0f, 90.0f));
-                o.addProperty("detail", "look_abs yaw=" + yaw + " pitch=" + pitch);
-                return o;
-            }
-            case "look_at": {
-                double tx = req.get("x").getAsDouble();
-                double ty = req.get("y").getAsDouble();
-                double tz = req.get("z").getAsDouble();
-                Vec3 eye = player.getEyePosition();
-                double bx = Math.abs(tx % 1.0) < 0.01 ? tx + 0.5 : tx;
-                double by = Math.abs(ty % 1.0) < 0.01 ? ty + 0.5 : ty;
-                double bz = Math.abs(tz % 1.0) < 0.01 ? tz + 0.5 : tz;
-                double ddx = bx - eye.x;
-                double ddy = by - eye.y;
-                double ddz = bz - eye.z;
-                double len = Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
-                if (len < 0.001) return o;
-                float yaw = (float)Math.toDegrees(Math.atan2(-ddx, ddz));
-                float pitch = (float)Math.toDegrees(-Math.asin(CraftAgentBridge.clamp(ddy / len, -1.0, 1.0)));
-                player.setYRot(yaw);
-                player.setXRot(CraftAgentBridge.clamp(pitch, -90.0f, 90.0f));
-                o.addProperty("detail", "look_at(" + tx + "," + ty + "," + tz + ")");
-                return o;
-            }
-            case "dig_at": {
-                int tx = req.get("x").getAsInt();
-                int ty = req.get("y").getAsInt();
-                int tz = req.get("z").getAsInt();
-                BlockPos pos = new BlockPos(tx, ty, tz);
-                BlockState state = level.getBlockState(pos);
-                if (state.isAir()) {
-                    o.addProperty("broken", Boolean.valueOf(false));
-                    o.addProperty("detail", "dig_at: block is air");
-                    return o;
-                }
-                double dist = player.position().distanceTo(Vec3.atCenterOf((Vec3i)pos));
-                if (dist > 5.5) {
-                    o.addProperty("broken", Boolean.valueOf(false));
-                    o.addProperty("detail", "dig_at: too far (" + String.format("%.1f", dist) + "m)");
-                    return o;
-                }
-                String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
-                CraftAgentBridge.equipBestTool(player, blockId);
-                boolean ok = player.level().destroyBlock(pos, true);
-                player.containerMenu.broadcastChanges();
-                o.addProperty("broken", Boolean.valueOf(ok));
-                o.addProperty("block_id", blockId);
-                o.addProperty("detail", "dig_at " + tx + "," + ty + "," + tz + " (broken=" + ok + ", block=" + blockId + ")");
-                return o;
-            }
-            case "place_at": {
-                int tx = req.get("x").getAsInt();
-                int ty = req.get("y").getAsInt();
-                int tz = req.get("z").getAsInt();
-                String item = req.has("item") ? req.get("item").getAsString() : "dirt";
-                boolean placed = CraftAgentBridge.placeAt(player, level, tx, ty, tz, item);
-                player.containerMenu.broadcastChanges();
-                o.addProperty("placed", Boolean.valueOf(placed));
-                o.addProperty("detail", "place_at " + tx + "," + ty + "," + tz + " item=" + item + " (placed=" + placed + ")");
-                return o;
-            }
             case "debug_spawn": {
                 EntitySpawnRequest spawnReq;
                 String ent = req.has("entity") ? req.get("entity").getAsString().toLowerCase() : "zombie";
@@ -2585,41 +2541,6 @@ implements ModInitializer {
                 int smelted = CraftAgentBridge.smeltItem(player, item, num);
                 player.containerMenu.broadcastChanges();
                 o.addProperty("detail", "smelted " + smelted + " x " + item);
-                return o;
-            }
-            case "get_block": {
-                int x = req.get("x").getAsInt();
-                int y = req.get("y").getAsInt();
-                int z = req.get("z").getAsInt();
-                BlockState state = level.getBlockState(new BlockPos(x, y, z));
-                String id = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
-                o.addProperty("id", id);
-                o.addProperty("solid", Boolean.valueOf(!state.isAir() && !state.canBeReplaced()));
-                o.addProperty("air", Boolean.valueOf(state.isAir()));
-                return o;
-            }
-            case "get_blocks": {
-                int x1 = req.get("x1").getAsInt();
-                int y1 = req.get("y1").getAsInt();
-                int z1 = req.get("z1").getAsInt();
-                int x2 = req.get("x2").getAsInt();
-                int y2 = req.get("y2").getAsInt();
-                int z2 = req.get("z2").getAsInt();
-                JsonArray blocks = new JsonArray();
-                for (BlockPos bp : BlockPos.betweenClosed((int)x1, (int)y1, (int)z1, (int)x2, (int)y2, (int)z2)) {
-                    BlockState state = level.getBlockState(bp);
-                    if (state.isAir()) continue;
-                    String id = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
-                    JsonObject b = new JsonObject();
-                    b.addProperty("x", (Number)bp.getX());
-                    b.addProperty("y", (Number)bp.getY());
-                    b.addProperty("z", (Number)bp.getZ());
-                    b.addProperty("id", id);
-                    b.addProperty("solid", Boolean.valueOf(!state.canBeReplaced()));
-                    blocks.add((JsonElement)b);
-                }
-                o.add("blocks", (JsonElement)blocks);
-                o.addProperty("count", (Number)blocks.size());
                 return o;
             }
             case "inspect_gui": {
@@ -3231,10 +3152,6 @@ implements ModInitializer {
                 o.addProperty("detail", "wake (was sleeping=false)");
                 return o;
             }
-            case "clear_chat": {
-                o.addProperty("detail", "clear_chat: mod side ack, Rust side should clear history");
-                return o;
-            }
             case "activate_nearest_block": {
                 double radius = req.has("radius") ? req.get("radius").getAsDouble() : 5.0;
                 String blockType = req.has("block_type") ? req.get("block_type").getAsString() : "";
@@ -3441,6 +3358,149 @@ implements ModInitializer {
                 o.addProperty("detail", "\u672a\u77e5\u547d\u4ee4: " + type);
             }
         }
+        return o;
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // 命令处理器：从 performAction 的 switch case 抽出，逐个迁移到此。
+    // 约定：每个 act* 自建 o(status=ok)，返回 JsonObject；失败 addProperty("status","fail")。
+    // ═════════════════════════════════════════════════════════════════════════
+
+    private JsonObject actLook(ServerPlayer player, ServerLevel level, JsonObject req) {
+        JsonObject o = new JsonObject();
+        o.addProperty("status", "ok");
+        int dx = req.has("dx") ? req.get("dx").getAsInt() : 0;
+        int dy = req.has("dy") ? req.get("dy").getAsInt() : 0;
+        float yaw = player.getYRot() - (float) dx * 0.3f;
+        float pitch = CraftAgentBridge.clamp(player.getXRot() + (float) dy * 0.3f, -90.0f, 90.0f);
+        player.setYRot(yaw);
+        player.setXRot(pitch);
+        o.addProperty("detail", "look dx=" + dx + " dy=" + dy);
+        return o;
+    }
+
+    private JsonObject actLookAbs(ServerPlayer player, ServerLevel level, JsonObject req) {
+        JsonObject o = new JsonObject();
+        o.addProperty("status", "ok");
+        float yaw = req.has("yaw") ? req.get("yaw").getAsFloat() : player.getYRot();
+        float pitch = req.has("pitch") ? req.get("pitch").getAsFloat() : player.getXRot();
+        player.setYRot(yaw);
+        player.setXRot(CraftAgentBridge.clamp(pitch, -90.0f, 90.0f));
+        o.addProperty("detail", "look_abs yaw=" + yaw + " pitch=" + pitch);
+        return o;
+    }
+
+    private JsonObject actLookAt(ServerPlayer player, ServerLevel level, JsonObject req) {
+        JsonObject o = new JsonObject();
+        o.addProperty("status", "ok");
+        double tx = req.get("x").getAsDouble();
+        double ty = req.get("y").getAsDouble();
+        double tz = req.get("z").getAsDouble();
+        Vec3 eye = player.getEyePosition();
+        double bx = Math.abs(tx % 1.0) < 0.01 ? tx + 0.5 : tx;
+        double by = Math.abs(ty % 1.0) < 0.01 ? ty + 0.5 : ty;
+        double bz = Math.abs(tz % 1.0) < 0.01 ? tz + 0.5 : tz;
+        double ddx = bx - eye.x;
+        double ddy = by - eye.y;
+        double ddz = bz - eye.z;
+        double len = Math.sqrt(ddx * ddx + ddy * ddy + ddz * ddz);
+        if (len < 0.001) return o;
+        float yaw = (float) Math.toDegrees(Math.atan2(-ddx, ddz));
+        float pitch = (float) Math.toDegrees(-Math.asin(CraftAgentBridge.clamp(ddy / len, -1.0, 1.0)));
+        player.setYRot(yaw);
+        player.setXRot(CraftAgentBridge.clamp(pitch, -90.0f, 90.0f));
+        o.addProperty("detail", "look_at(" + tx + "," + ty + "," + tz + ")");
+        return o;
+    }
+
+    private JsonObject actDigAt(ServerPlayer player, ServerLevel level, JsonObject req) {
+        JsonObject o = new JsonObject();
+        o.addProperty("status", "ok");
+        int tx = req.get("x").getAsInt();
+        int ty = req.get("y").getAsInt();
+        int tz = req.get("z").getAsInt();
+        BlockPos pos = new BlockPos(tx, ty, tz);
+        BlockState state = level.getBlockState(pos);
+        if (state.isAir()) {
+            o.addProperty("broken", Boolean.valueOf(false));
+            o.addProperty("detail", "dig_at: block is air");
+            return o;
+        }
+        double dist = player.position().distanceTo(Vec3.atCenterOf((Vec3i) pos));
+        if (dist > 5.5) {
+            o.addProperty("broken", Boolean.valueOf(false));
+            o.addProperty("detail", "dig_at: too far (" + String.format("%.1f", dist) + "m)");
+            return o;
+        }
+        String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+        CraftAgentBridge.equipBestTool(player, blockId);
+        boolean ok = player.level().destroyBlock(pos, true);
+        player.containerMenu.broadcastChanges();
+        o.addProperty("broken", Boolean.valueOf(ok));
+        o.addProperty("block_id", blockId);
+        o.addProperty("detail", "dig_at " + tx + "," + ty + "," + tz + " (broken=" + ok + ", block=" + blockId + ")");
+        return o;
+    }
+
+    private JsonObject actPlaceAt(ServerPlayer player, ServerLevel level, JsonObject req) {
+        JsonObject o = new JsonObject();
+        o.addProperty("status", "ok");
+        int tx = req.get("x").getAsInt();
+        int ty = req.get("y").getAsInt();
+        int tz = req.get("z").getAsInt();
+        String item = req.has("item") ? req.get("item").getAsString() : "dirt";
+        boolean placed = CraftAgentBridge.placeAt(player, level, tx, ty, tz, item);
+        player.containerMenu.broadcastChanges();
+        o.addProperty("placed", Boolean.valueOf(placed));
+        o.addProperty("detail", "place_at " + tx + "," + ty + "," + tz + " item=" + item + " (placed=" + placed + ")");
+        return o;
+    }
+
+    private JsonObject actGetBlock(ServerPlayer player, ServerLevel level, JsonObject req) {
+        JsonObject o = new JsonObject();
+        o.addProperty("status", "ok");
+        int x = req.get("x").getAsInt();
+        int y = req.get("y").getAsInt();
+        int z = req.get("z").getAsInt();
+        BlockState state = level.getBlockState(new BlockPos(x, y, z));
+        String id = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+        o.addProperty("id", id);
+        o.addProperty("solid", Boolean.valueOf(!state.isAir() && !state.canBeReplaced()));
+        o.addProperty("air", Boolean.valueOf(state.isAir()));
+        return o;
+    }
+
+    private JsonObject actGetBlocks(ServerPlayer player, ServerLevel level, JsonObject req) {
+        JsonObject o = new JsonObject();
+        o.addProperty("status", "ok");
+        int x1 = req.get("x1").getAsInt();
+        int y1 = req.get("y1").getAsInt();
+        int z1 = req.get("z1").getAsInt();
+        int x2 = req.get("x2").getAsInt();
+        int y2 = req.get("y2").getAsInt();
+        int z2 = req.get("z2").getAsInt();
+        JsonArray blocks = new JsonArray();
+        for (BlockPos bp : BlockPos.betweenClosed((int) x1, (int) y1, (int) z1, (int) x2, (int) y2, (int) z2)) {
+            BlockState state = level.getBlockState(bp);
+            if (state.isAir()) continue;
+            String id = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
+            JsonObject b = new JsonObject();
+            b.addProperty("x", (Number) bp.getX());
+            b.addProperty("y", (Number) bp.getY());
+            b.addProperty("z", (Number) bp.getZ());
+            b.addProperty("id", id);
+            b.addProperty("solid", Boolean.valueOf(!state.canBeReplaced()));
+            blocks.add((JsonElement) b);
+        }
+        o.add("blocks", (JsonElement) blocks);
+        o.addProperty("count", (Number) blocks.size());
+        return o;
+    }
+
+    private JsonObject actClearChat(ServerPlayer player, ServerLevel level, JsonObject req) {
+        JsonObject o = new JsonObject();
+        o.addProperty("status", "ok");
+        o.addProperty("detail", "clear_chat: mod side ack, Rust side should clear history");
         return o;
     }
 
