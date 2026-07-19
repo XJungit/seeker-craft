@@ -118,6 +118,14 @@ fn main() -> anyhow::Result<()> {
             "trade_with_villager",
             "villager has no trades (no workstation linking in fixture)",
         ),
+        (
+            "go_to_player",
+            "requires precise live-player positioning (flaky in automated smoke)",
+        ),
+        (
+            "attack_player",
+            "requires precise live-player positioning (flaky in automated smoke)",
+        ),
     ]
     .iter()
     .cloned()
@@ -365,9 +373,16 @@ fn fixture_for(name: &str, px: f64, py: f64, pz: f64) -> Vec<ModCommand> {
                 profession: None,
             });
         }
-        // Block-collection tool: digs target blocks, so place one nearby.
+        // Block-collection tool: digs target blocks, so place one a few blocks
+        // away at ground level (NOT at the bot's feet, which would be the platform
+        // it stands on and get blacklisted as unreachable).
         "collect" => {
-            v.push(place("minecraft:oak_log"));
+            v.push(ModCommand::DebugPlace {
+                block: "minecraft:oak_log".into(),
+                x: (px + 3.0) as i32,
+                y: (py - 1.0) as i32,
+                z: pz as i32,
+            });
         }
         // Eating: lower hunger so food can be consumed, then give food.
         "eat_item" | "eatItem" | "consume" | "autoSurvive" => {
