@@ -21,6 +21,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
+// ── 工具类别子模块 ──
+pub mod agent_meta;
+pub use agent_meta::*;
+
 // ═══════════════════════════════════════════════════════════════
 // 生存层接线（批次 A）：把已写好但未接线的 survival.rs 子系统，
 // 通过装饰器统一包住所有工具，在工具执行后记录结构化失败 + 注入 survival notes。
@@ -4521,67 +4525,6 @@ impl GameTool for ModLookAbsTool {
 // ═══════════════════════════════════════════════════════════════
 // Agent-local tools（借鉴 Numen AgentTools 模式 —— 无需 mod 通信，本地执行）
 // ═══════════════════════════════════════════════════════════════
-
-pub struct NumenTodoWriteTool;
-impl GameTool for NumenTodoWriteTool {
-    fn name(&self) -> &str {
-        "todowrite"
-    }
-    fn description(&self) -> &str {
-        "Write a todo list for your next steps. Each todo must have: content (what to do), status (pending/in_progress/completed/cancelled), priority (high/medium/low). Keep EXACTLY ONE todo in_progress at a time. The list replaces ALL previous todos — send the full updated list each time. Usage: todowrite(todos=[{content:\"Mine iron\",status:\"in_progress\",priority:\"high\"},{content:\"Smelt ore\",status:\"pending\",priority:\"medium\"}])"
-    }
-    fn parameters(&self) -> Value {
-        use tool_args::schema;
-        schema::object()
-            .str_req("todos", "JSON array of todo objects: [{\"content\":\"...\",\"status\":\"pending|in_progress|completed|cancelled\",\"priority\":\"high|medium|low\"}]")
-            .finish()
-    }
-    fn effects(&self) -> ToolEffects {
-        ToolEffects::read()
-    }
-    fn execute(
-        &self,
-        _id: &str,
-        args: Value,
-        _on_update: Option<ToolUpdateFn>,
-    ) -> anyhow::Result<ToolResult> {
-        // 回显给 LLM，不做持久化（LLM 管理自己的 todo list）
-        let raw = serde_json::to_string_pretty(&args).unwrap_or_default();
-        Ok(ToolResult {
-            message: format!("todos updated. Current plan:\n{raw}"),
-            is_error: false,
-            images: vec![],
-        })
-    }
-}
-
-pub struct NumenStatusTool;
-impl GameTool for NumenStatusTool {
-    fn name(&self) -> &str {
-        "agent_status"
-    }
-    fn description(&self) -> &str {
-        "Report your current agent-internal status: mode flags, saved places, and active goals. No arguments needed. Usage: agent_status()"
-    }
-    fn parameters(&self) -> Value {
-        tool_args::schema::no_args()
-    }
-    fn effects(&self) -> ToolEffects {
-        ToolEffects::read()
-    }
-    fn execute(
-        &self,
-        _id: &str,
-        _args: Value,
-        _on_update: Option<ToolUpdateFn>,
-    ) -> anyhow::Result<ToolResult> {
-        Ok(ToolResult {
-            message: "agent_status: use perceive() for game state, list_modes()/savedPlaces()/get_goal() for specific info".into(),
-            is_error: false,
-            images: vec![],
-        })
-    }
-}
 
 // ═══════════════════════════════════════════════════════════════
 // 工厂
