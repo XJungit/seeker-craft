@@ -270,6 +270,14 @@ implements ModInitializer {
         COMMAND_HANDLERS.put("transfer", this::actTransfer);
         COMMAND_HANDLERS.put("equip_item", this::actEquipItem);
         COMMAND_HANDLERS.put("drop_items", this::actDropItems);
+        COMMAND_HANDLERS.put("list_players", this::actListPlayers);
+        COMMAND_HANDLERS.put("stop", this::actStop);
+        COMMAND_HANDLERS.put("set_goal", this::actSetGoal);
+        COMMAND_HANDLERS.put("get_goal", this::actGetGoal);
+        COMMAND_HANDLERS.put("search_wiki", this::actSearchWiki);
+        COMMAND_HANDLERS.put("look_at_player", this::actLookAtPlayer);
+        COMMAND_HANDLERS.put("look_at_position", this::actLookAtPosition);
+        COMMAND_HANDLERS.put("get_crafting_plan", this::actGetCraftingPlan);
     }
 
     public void onInitialize() {
@@ -2107,78 +2115,6 @@ implements ModInitializer {
         JsonObject o = new JsonObject();
         o.addProperty("status", "ok");
         switch (type) {
-            case "list_players": {
-                JsonArray players = new JsonArray();
-                for (ServerPlayer p : server.getPlayerList().getPlayers()) {
-                    JsonObject po = new JsonObject();
-                    po.addProperty("name", p.getName().getString());
-                    po.addProperty("uuid", p.getUUID().toString());
-                    po.add("position", (JsonElement)CraftAgentBridge.arr(p.getX(), p.getY(), p.getZ()));
-                    po.addProperty("dist", (Number)Math.sqrt(Math.pow(p.getX() - player.getX(), 2.0) + Math.pow(p.getY() - player.getY(), 2.0) + Math.pow(p.getZ() - player.getZ(), 2.0)));
-                    players.add((JsonElement)po);
-                }
-                o.add("players", (JsonElement)players);
-                o.addProperty("count", (Number)players.size());
-                o.addProperty("detail", "list_players: " + players.size() + " online");
-                return o;
-            }
-            case "stop": {
-                shouldStop = true;
-                moveTarget = null;
-                o.addProperty("detail", "stop: all actions cancelled");
-                return o;
-            }
-            case "set_goal": {
-                String goal;
-                String string = goal = req.has("goal") ? req.get("goal").getAsString() : "";
-                if (goal.isEmpty()) {
-                    currentGoal = null;
-                    o.addProperty("detail", "set_goal: cleared");
-                    return o;
-                }
-                currentGoal = goal;
-                o.addProperty("detail", "set_goal: " + goal);
-                return o;
-            }
-            case "get_goal": {
-                o.addProperty("goal", currentGoal != null ? currentGoal : "(none)");
-                o.addProperty("detail", "get_goal: " + (currentGoal != null ? currentGoal : "none"));
-                return o;
-            }
-            case "search_wiki": {
-                String query = req.has("query") ? req.get("query").getAsString() : "";
-                try {
-                    URL url = new URL("https://minecraft.wiki/w/" + URLEncoder.encode(query.replace(" ", "_"), "UTF-8"));
-                    HttpURLConnection conn = (HttpURLConnection)url.openConnection();
-                    conn.setRequestProperty("User-Agent", "Craft-Agent/1.0");
-                    conn.setConnectTimeout(5000);
-                    conn.setReadTimeout(10000);
-                    if (conn.getResponseCode() == 404) {
-                        o.addProperty("detail", "search_wiki: '" + query + "' not found on minecraft.wiki");
-                        return o;
-                    }
-                    try (BufferedReader wr = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8));){
-                        String line;
-                        StringBuilder sb = new StringBuilder();
-                        while ((line = wr.readLine()) != null) {
-                            sb.append(line).append("\n");
-                        }
-                        String html = sb.toString();
-                        Object text = html.replaceAll("<script[^>]*>[\\s\\S]*?</script>", "").replaceAll("<style[^>]*>[\\s\\S]*?</style>", "").replaceAll("<[^>]+>", " ").replaceAll("&amp;", "&").replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", "\"").replaceAll("&#39;", "'").replaceAll("\\s+", " ").trim();
-                        if (((String)text).length() > 2000) {
-                            text = ((String)text).substring(0, 2000) + "... [truncated]";
-                        }
-                        o.addProperty("content", (String)text);
-                        o.addProperty("detail", "search_wiki: " + query + " (" + ((String)text).length() + " chars)");
-                        return o;
-                    }
-                }
-                catch (Exception e5) {
-                    o.addProperty("status", "fail");
-                    o.addProperty("detail", "search_wiki error: " + e5.getMessage());
-                }
-                return o;
-            }
             case "villager_trades": {
                 double radius = req.has("radius") ? req.get("radius").getAsDouble() : 8.0;
                 Merchant nearest = null;
@@ -2288,41 +2224,6 @@ implements ModInitializer {
                 player.containerMenu.broadcastChanges();
                 o.addProperty("traded", (Number)traded);
                 o.addProperty("detail", "trade_with_villager: " + traded + " trades of index " + tradeIndex);
-                return o;
-            }
-            case "look_at_player": {
-                String targetName = req.has("player_name") ? req.get("player_name").getAsString() : "";
-                ServerPlayer target = null;
-                for (ServerPlayer p : server.getPlayerList().getPlayers()) {
-                    if (!p.getName().getString().equalsIgnoreCase(targetName)) continue;
-                    target = p;
-                    break;
-                }
-                if (target == null) {
-                    o.addProperty("status", "fail");
-                    o.addProperty("detail", "look_at_player: player '" + targetName + "' not found");
-                    return o;
-                }
-                double dx = target.getX() - player.getX();
-                double dy = target.getY() + (double)target.getEyeHeight() - (player.getY() + (double)player.getEyeHeight());
-                double dz = target.getZ() - player.getZ();
-                double horiz = Math.sqrt(dx * dx + dz * dz);
-                player.setYRot((float)Math.toDegrees(Math.atan2(-dx, dz)));
-                player.setXRot((float)Math.toDegrees(-Math.atan2(dy, horiz)));
-                o.addProperty("detail", "look_at_player: looking at " + targetName);
-                return o;
-            }
-            case "look_at_position": {
-                double tx = req.has("x") ? req.get("x").getAsDouble() : player.getX();
-                double ty = req.has("y") ? req.get("y").getAsDouble() : player.getY();
-                double tz = req.has("z") ? req.get("z").getAsDouble() : player.getZ();
-                double dx = tx - player.getX();
-                double dy = ty - (player.getY() + (double)player.getEyeHeight());
-                double dz = tz - player.getZ();
-                double horiz = Math.sqrt(dx * dx + dz * dz);
-                player.setYRot((float)Math.toDegrees(Math.atan2(-dx, dz)));
-                player.setXRot((float)Math.toDegrees(-Math.atan2(dy, horiz)));
-                o.addProperty("detail", "look_at_position: looking at (" + tx + "," + ty + "," + tz + ")");
                 return o;
             }
             case "activate_block": {
@@ -2542,27 +2443,6 @@ implements ModInitializer {
                 o.addProperty("y", (Number)nearest.getY());
                 o.addProperty("z", (Number)nearest.getZ());
                 o.addProperty("detail", "activate_nearest_block (" + nearest.getX() + "," + nearest.getY() + "," + nearest.getZ() + ") consumed=" + result.consumesAction());
-                return o;
-            }
-            case "get_crafting_plan": {
-                String targetItem = req.has("item") ? req.get("item").getAsString() : "";
-                int quantity = req.has("quantity") ? req.get("quantity").getAsInt() : 1;
-                Inventory inv = player.getInventory();
-                int have = 0;
-                for (int i = 0; i < inv.getContainerSize(); ++i) {
-                    String key7;
-                    ItemStack s = inv.getItem(i);
-                    if (s.isEmpty() || !(key7 = BuiltInRegistries.ITEM.getKey(s.getItem()).toString().toLowerCase()).contains(targetItem.toLowerCase())) continue;
-                    have += s.getCount();
-                }
-                if (have >= quantity) {
-                    o.addProperty("detail", "get_crafting_plan: already have " + have + " " + targetItem + " (need " + quantity + ")");
-                } else {
-                    o.addProperty("detail", "get_crafting_plan: have " + have + " " + targetItem + ", need " + quantity + " more. Use craft tool to make them.");
-                }
-                o.addProperty("have", (Number)have);
-                o.addProperty("need", (Number)quantity);
-                o.addProperty("missing", (Number)Math.max(0, quantity - have));
                 return o;
             }
             case "build_portal": {
@@ -3594,6 +3474,158 @@ implements ModInitializer {
         player.containerMenu.broadcastChanges();
         o.addProperty("dropped", (Number)dropped);
         o.addProperty("detail", "drop_items " + itemName + " x" + dropped + " (ItemEntity spawned)");
+        return o;
+    }
+
+    private JsonObject actListPlayers(ServerPlayer player, ServerLevel level, JsonObject req) {
+        JsonObject o = new JsonObject();
+        o.addProperty("status", "ok");
+        JsonArray players = new JsonArray();
+        for (ServerPlayer p : serverInstance.getPlayerList().getPlayers()) {
+            JsonObject po = new JsonObject();
+            po.addProperty("name", p.getName().getString());
+            po.addProperty("uuid", p.getUUID().toString());
+            po.add("position", (JsonElement)CraftAgentBridge.arr(p.getX(), p.getY(), p.getZ()));
+            po.addProperty("dist", (Number)Math.sqrt(Math.pow(p.getX() - player.getX(), 2.0) + Math.pow(p.getY() - player.getY(), 2.0) + Math.pow(p.getZ() - player.getZ(), 2.0)));
+            players.add((JsonElement)po);
+        }
+        o.add("players", (JsonElement)players);
+        o.addProperty("count", (Number)players.size());
+        o.addProperty("detail", "list_players: " + players.size() + " online");
+        return o;
+    }
+
+    private JsonObject actStop(ServerPlayer player, ServerLevel level, JsonObject req) {
+        JsonObject o = new JsonObject();
+        o.addProperty("status", "ok");
+        shouldStop = true;
+        moveTarget = null;
+        o.addProperty("detail", "stop: all actions cancelled");
+        return o;
+    }
+
+    private JsonObject actSetGoal(ServerPlayer player, ServerLevel level, JsonObject req) {
+        JsonObject o = new JsonObject();
+        o.addProperty("status", "ok");
+        String goal;
+        String string = goal = req.has("goal") ? req.get("goal").getAsString() : "";
+        if (goal.isEmpty()) {
+            currentGoal = null;
+            o.addProperty("detail", "set_goal: cleared");
+            return o;
+        }
+        currentGoal = goal;
+        o.addProperty("detail", "set_goal: " + goal);
+        return o;
+    }
+
+    private JsonObject actGetGoal(ServerPlayer player, ServerLevel level, JsonObject req) {
+        JsonObject o = new JsonObject();
+        o.addProperty("status", "ok");
+        o.addProperty("goal", currentGoal != null ? currentGoal : "(none)");
+        o.addProperty("detail", "get_goal: " + (currentGoal != null ? currentGoal : "none"));
+        return o;
+    }
+
+    private JsonObject actSearchWiki(ServerPlayer player, ServerLevel level, JsonObject req) {
+        JsonObject o = new JsonObject();
+        o.addProperty("status", "ok");
+        String query = req.has("query") ? req.get("query").getAsString() : "";
+        try {
+            URL url = new URL("https://minecraft.wiki/w/" + URLEncoder.encode(query.replace(" ", "_"), "UTF-8"));
+            HttpURLConnection conn = (HttpURLConnection)url.openConnection();
+            conn.setRequestProperty("User-Agent", "Craft-Agent/1.0");
+            conn.setConnectTimeout(5000);
+            conn.setReadTimeout(10000);
+            if (conn.getResponseCode() == 404) {
+                o.addProperty("detail", "search_wiki: '" + query + "' not found on minecraft.wiki");
+                return o;
+            }
+            try (BufferedReader wr = new BufferedReader(new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8));){
+                String line;
+                StringBuilder sb = new StringBuilder();
+                while ((line = wr.readLine()) != null) {
+                    sb.append(line).append("\n");
+                }
+                String html = sb.toString();
+                Object text = html.replaceAll("<script[^>]*>[\\s\\S]*?</script>", "").replaceAll("<style[^>]*>[\\s\\S]*?</style>", "").replaceAll("<[^>]+>", " ").replaceAll("&amp;", "&").replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&quot;", "\"").replaceAll("&#39;", "'").replaceAll("\\s+", " ").trim();
+                if (((String)text).length() > 2000) {
+                    text = ((String)text).substring(0, 2000) + "... [truncated]";
+                }
+                o.addProperty("content", (String)text);
+                o.addProperty("detail", "search_wiki: " + query + " (" + ((String)text).length() + " chars)");
+                return o;
+            }
+        }
+        catch (Exception e5) {
+            o.addProperty("status", "fail");
+            o.addProperty("detail", "search_wiki error: " + e5.getMessage());
+        }
+        return o;
+    }
+
+    private JsonObject actLookAtPlayer(ServerPlayer player, ServerLevel level, JsonObject req) {
+        JsonObject o = new JsonObject();
+        o.addProperty("status", "ok");
+        String targetName = req.has("player_name") ? req.get("player_name").getAsString() : "";
+        ServerPlayer target = null;
+        for (ServerPlayer p : serverInstance.getPlayerList().getPlayers()) {
+            if (!p.getName().getString().equalsIgnoreCase(targetName)) continue;
+            target = p;
+            break;
+        }
+        if (target == null) {
+            o.addProperty("status", "fail");
+            o.addProperty("detail", "look_at_player: player '" + targetName + "' not found");
+            return o;
+        }
+        double dx = target.getX() - player.getX();
+        double dy = target.getY() + (double)target.getEyeHeight() - (player.getY() + (double)player.getEyeHeight());
+        double dz = target.getZ() - player.getZ();
+        double horiz = Math.sqrt(dx * dx + dz * dz);
+        player.setYRot((float)Math.toDegrees(Math.atan2(-dx, dz)));
+        player.setXRot((float)Math.toDegrees(-Math.atan2(dy, horiz)));
+        o.addProperty("detail", "look_at_player: looking at " + targetName);
+        return o;
+    }
+
+    private JsonObject actLookAtPosition(ServerPlayer player, ServerLevel level, JsonObject req) {
+        JsonObject o = new JsonObject();
+        o.addProperty("status", "ok");
+        double tx = req.has("x") ? req.get("x").getAsDouble() : player.getX();
+        double ty = req.has("y") ? req.get("y").getAsDouble() : player.getY();
+        double tz = req.has("z") ? req.get("z").getAsDouble() : player.getZ();
+        double dx = tx - player.getX();
+        double dy = ty - (player.getY() + (double)player.getEyeHeight());
+        double dz = tz - player.getZ();
+        double horiz = Math.sqrt(dx * dx + dz * dz);
+        player.setYRot((float)Math.toDegrees(Math.atan2(-dx, dz)));
+        player.setXRot((float)Math.toDegrees(-Math.atan2(dy, horiz)));
+        o.addProperty("detail", "look_at_position: looking at (" + tx + "," + ty + "," + tz + ")");
+        return o;
+    }
+
+    private JsonObject actGetCraftingPlan(ServerPlayer player, ServerLevel level, JsonObject req) {
+        JsonObject o = new JsonObject();
+        o.addProperty("status", "ok");
+        String targetItem = req.has("item") ? req.get("item").getAsString() : "";
+        int quantity = req.has("quantity") ? req.get("quantity").getAsInt() : 1;
+        Inventory inv = player.getInventory();
+        int have = 0;
+        for (int i = 0; i < inv.getContainerSize(); ++i) {
+            String key7;
+            ItemStack s = inv.getItem(i);
+            if (s.isEmpty() || !(key7 = BuiltInRegistries.ITEM.getKey(s.getItem()).toString().toLowerCase()).contains(targetItem.toLowerCase())) continue;
+            have += s.getCount();
+        }
+        if (have >= quantity) {
+            o.addProperty("detail", "get_crafting_plan: already have " + have + " " + targetItem + " (need " + quantity + ")");
+        } else {
+            o.addProperty("detail", "get_crafting_plan: have " + have + " " + targetItem + ", need " + quantity + " more. Use craft tool to make them.");
+        }
+        o.addProperty("have", (Number)have);
+        o.addProperty("need", (Number)quantity);
+        o.addProperty("missing", (Number)Math.max(0, quantity - have));
         return o;
     }
 
