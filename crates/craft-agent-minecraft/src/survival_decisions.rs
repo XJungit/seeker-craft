@@ -127,8 +127,7 @@ pub mod unstuck_params {
 /// 滚动窗口记录 (x, z, trying)，仅当：
 /// 1. 窗口已满
 /// 2. trying 占比 ≥ 80%
-/// 3. 最大位移平方 < 0.75
-/// 才判定为卡住。
+/// 3. 最大位移平方 < 0.75 才判定为卡住。
 ///
 /// **关键性质**：idle body（无 locomotion 输入）永远不会被判为 stuck——
 /// trying 为 false 的 tick 不计入分子。
@@ -184,7 +183,8 @@ impl UnstuckDetector {
         if self.xs.len() < unstuck_params::WINDOW {
             return false;
         }
-        let required_trying = (unstuck_params::WINDOW as f64 * unstuck_params::TRYING_FRACTION).ceil() as usize;
+        let required_trying =
+            (unstuck_params::WINDOW as f64 * unstuck_params::TRYING_FRACTION).ceil() as usize;
         if self.trying_count < required_trying {
             return false;
         }
@@ -223,18 +223,30 @@ mod tests {
 
     #[test]
     fn threat_response_flee_when_low_health() {
-        assert_eq!(decide_threat_response(true, 4.0, true), ThreatResponse::Flee);
-        assert_eq!(decide_threat_response(true, 20.0, false), ThreatResponse::Flee);
+        assert_eq!(
+            decide_threat_response(true, 4.0, true),
+            ThreatResponse::Flee
+        );
+        assert_eq!(
+            decide_threat_response(true, 20.0, false),
+            ThreatResponse::Flee
+        );
     }
 
     #[test]
     fn threat_response_fight_when_healthy_and_armed() {
-        assert_eq!(decide_threat_response(true, 18.0, true), ThreatResponse::Fight);
+        assert_eq!(
+            decide_threat_response(true, 18.0, true),
+            ThreatResponse::Fight
+        );
     }
 
     #[test]
     fn threat_response_none_when_no_threat() {
-        assert_eq!(decide_threat_response(false, 4.0, false), ThreatResponse::None);
+        assert_eq!(
+            decide_threat_response(false, 4.0, false),
+            ThreatResponse::None
+        );
     }
 
     #[test]
@@ -288,7 +300,7 @@ mod tests {
     fn unstuck_detector_not_stuck_when_idle() {
         // 即便窗口满，trying=false 不应判卡住
         let mut d = UnstuckDetector::new();
-        for i in 0..40 {
+        for _ in 0..40 {
             d.record(0.0, 0.0, false);
         }
         assert!(!d.is_stuck(), "idle body should never be stuck");
@@ -340,6 +352,9 @@ mod tests {
         for i in 0..40 {
             d.record(0.0, 0.0, i % 2 == 0);
         }
-        assert!(!d.is_stuck(), "50% trying should not be stuck (threshold 80%)");
+        assert!(
+            !d.is_stuck(),
+            "50% trying should not be stuck (threshold 80%)"
+        );
     }
 }

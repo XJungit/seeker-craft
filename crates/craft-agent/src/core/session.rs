@@ -70,6 +70,7 @@ impl SessionHeader {
 pub enum SessionEntry {
     Message(MessageEntry),
     Checkpoint(CheckpointEntry),
+    Compaction(CompactionEntry),
     BranchSummary(BranchSummaryEntry),
     WorldInfo(WorldInfoEntry),
     Custom(CustomEntry),
@@ -80,6 +81,7 @@ impl SessionEntry {
         match self {
             Self::Message(e) => &e.id,
             Self::Checkpoint(e) => &e.id,
+            Self::Compaction(e) => &e.id,
             Self::BranchSummary(e) => &e.id,
             Self::WorldInfo(e) => &e.id,
             Self::Custom(e) => &e.id,
@@ -89,6 +91,7 @@ impl SessionEntry {
         match self {
             Self::Message(e) => e.parent_id.as_deref(),
             Self::Checkpoint(e) => e.parent_id.as_deref(),
+            Self::Compaction(e) => e.parent_id.as_deref(),
             Self::BranchSummary(e) => e.parent_id.as_deref(),
             Self::WorldInfo(e) => e.parent_id.as_deref(),
             Self::Custom(e) => e.parent_id.as_deref(),
@@ -108,7 +111,7 @@ pub struct MessageEntry {
     pub message: Message,
 }
 
-/// 检查点 entry（pi 无独立 Checkpoint，但 `CompactionEntry` + snapshot 思想同构）
+/// 检查点 entry（手动保存的可恢复点）
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub struct CheckpointEntry {
@@ -132,6 +135,25 @@ pub struct AgentSnapshot {
     /// 技能库 JSON（序列化的 SkillLibrary，加载时回放）
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skills_json: Option<String>,
+}
+
+/// 压缩 entry（与 pi `CompactionEntry` 同构，记录摘要和保留区间）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct CompactionEntry {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    pub timestamp: String,
+    /// LLM 生成的压缩摘要
+    pub summary: String,
+    /// 压缩后第一条保留的 entry id（之前的历史被摘要替代）
+    pub first_kept_entry_id: String,
+    /// 压缩前上下文 token 数
+    pub tokens_before: u64,
+    /// 可选元数据（如 readFiles / modifiedFiles）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
 }
 
 /// 分支摘要 entry（与 pi `BranchSummaryEntry` 同构，记录从哪个节点 fork）
@@ -335,10 +357,10 @@ impl Session {
         {
             let f = File::create(&tmp)?;
             let mut w = BufWriter::new(f);
-            w.write_all(serde_json::to_string(&self.header)?.as_bytes())?;
+            serde_json::to_writer(&mut w, &self.header)?;
             w.write_all(b"\n")?;
             for e in &self.entries {
-                w.write_all(serde_json::to_string(e)?.as_bytes())?;
+                serde_json::to_writer(&mut w, e)?;
                 w.write_all(b"\n")?;
             }
             w.flush()?;
@@ -352,12 +374,9 @@ impl Session {
     /// 增量追加：只写 `entries[persisted_count..]`（pi append_jsonl_entries_blocking）
     fn append_entries(&mut self, path: &Path) -> Result<()> {
         let mut f = std::fs::OpenOptions::new().append(true).open(path)?;
-        let mut buf = String::new();
         for e in &self.entries[self.persisted_count..] {
-            buf.clear();
-            buf.push_str(&serde_json::to_string(e)?);
-            buf.push('\n');
-            f.write_all(buf.as_bytes())?;
+            serde_json::to_writer(&mut f, e)?;
+            f.write_all(b"\n")?;
         }
         f.flush()?;
         self.persisted_count = self.entries.len();
@@ -407,6 +426,28 @@ impl Session {
             timestamp: now_ms(),
             label: label.into(),
             snapshot,
+        });
+        self.push_entry(entry, false);
+        id
+    }
+
+    /// 追加一个压缩 entry（与 pi `CompactionEntry` 同构）
+    pub fn append_compaction(
+        &mut self,
+        summary: String,
+        first_kept_entry_id: String,
+        tokens_before: u64,
+        details: Option<Value>,
+    ) -> String {
+        let id = gen_id();
+        let entry = SessionEntry::Compaction(CompactionEntry {
+            id: id.clone(),
+            parent_id: self.leaf_id.clone(),
+            timestamp: now_ms(),
+            summary,
+            first_kept_entry_id,
+            tokens_before,
+            details,
         });
         self.push_entry(entry, false);
         id

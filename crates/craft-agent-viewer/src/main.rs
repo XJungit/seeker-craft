@@ -23,11 +23,12 @@ use axum::{
 };
 use craft_agent::core::message::Message;
 use craft_agent::core::session::{SessionEntry, SessionHeader};
+use craft_agent_minecraft::bridge::ModState;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 use tokio_stream::StreamExt;
@@ -42,6 +43,8 @@ struct AppState {
     model_config_path: String,
     use_vision: bool,
     shots_dir: Option<PathBuf>,
+    /// 最后一次成功拉取的游戏状态（离线时回退显示）
+    last_state_cache: Mutex<Option<ModState>>,
 }
 
 #[tokio::main]
@@ -72,10 +75,10 @@ async fn main() -> anyhow::Result<()> {
                 i += if has_inline { 1 } else { 2 };
             }
             "--port" | "-p" => {
-                if let Some(v) = get_val() {
-                    if let Ok(p) = v.parse() {
-                        port = p;
-                    }
+                if let Some(v) = get_val()
+                    && let Ok(p) = v.parse()
+                {
+                    port = p;
                 }
                 i += if has_inline { 1 } else { 2 };
             }
@@ -86,10 +89,10 @@ async fn main() -> anyhow::Result<()> {
                 i += if has_inline { 1 } else { 2 };
             }
             "--steps" | "-n" => {
-                if let Some(v) = get_val() {
-                    if let Ok(n) = v.parse() {
-                        max_steps = n;
-                    }
+                if let Some(v) = get_val()
+                    && let Ok(n) = v.parse()
+                {
+                    max_steps = n;
                 }
                 i += if has_inline { 1 } else { 2 };
             }
@@ -131,6 +134,7 @@ async fn main() -> anyhow::Result<()> {
         model_config_path: config_path,
         use_vision,
         shots_dir,
+        last_state_cache: Mutex::new(None),
     });
 
     let app = Router::new()
@@ -143,6 +147,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/pause", post(api_pause))
         .route("/api/goal", post(api_goal))
         .route("/api/events", get(api_events))
+        .route("/api/game-state", get(api_game_state))
         .with_state(state.clone());
 
     let addr = format!("127.0.0.1:{port}");
@@ -153,7 +158,7 @@ async fn main() -> anyhow::Result<()> {
     } else {
         "无限循环".to_string()
     };
-    println!("   目标: {}", &state.controller.get_status().goal);
+    println!("   目标: {}", state.controller.get_status().goal);
     println!("   步数: {steps_text}");
     println!("   VLM: {}", if use_vision { "启用" } else { "关闭" });
     println!("   Session: {}", session_path.display());
@@ -222,6 +227,41 @@ async fn api_events(
         Err(_) => None,
     });
     Sse::new(stream)
+}
+
+// ── 游戏状态 API ──
+
+async fn api_game_state(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let adapter = state.controller.game_adapter.read().unwrap().clone();
+    if let Some(arc) = adapter
+        && let Ok(guard) = arc.lock()
+    {
+        // 先尝试缓存状态
+        if let Some(st) = guard.get_last_state() {
+            if let Ok(mut cache) = state.last_state_cache.lock() {
+                *cache = Some(st.clone());
+            }
+            return (StatusCode::OK, axum::Json(st)).into_response();
+        }
+        // 缓存为空时实时拉取（viewer 初始加载时缓存尚未填充）
+        if let Ok(st) = guard.reload() {
+            if let Ok(mut cache) = state.last_state_cache.lock() {
+                *cache = Some(st.clone());
+            }
+            return (StatusCode::OK, axum::Json(st)).into_response();
+        }
+    }
+    // 降级：返回缓存（如果有）
+    if let Ok(cache) = state.last_state_cache.lock()
+        && let Some(st) = cache.clone()
+    {
+        return (StatusCode::OK, axum::Json(st)).into_response();
+    }
+    (
+        StatusCode::OK,
+        axum::Json(serde_json::json!({"status":"not_connected"})),
+    )
+        .into_response()
 }
 
 // ── 现有仪表盘 API ──
@@ -297,6 +337,10 @@ fn build_view(path: &Path) -> anyhow::Result<Value> {
     let mut events: Vec<Value> = Vec::new();
     let mut tool_total: u32 = 0;
     let mut by_tool: BTreeMap<String, u32> = BTreeMap::new();
+    let mut total_input_tokens: u64 = 0;
+    let mut total_output_tokens: u64 = 0;
+    let mut checkpoints: Vec<Value> = Vec::new();
+    let mut branches: Vec<Value> = Vec::new();
 
     for l in lines {
         let t = l.trim();
@@ -307,42 +351,74 @@ fn build_view(path: &Path) -> anyhow::Result<Value> {
             continue;
         };
         match entry {
-            SessionEntry::Message(m) => match m.message {
-                Message::User(u) => events.push(json!({"kind":"user","content":u.content})),
-                Message::Assistant(a) => {
-                    let calls: Vec<Value> = a
-                        .tool_calls
-                        .iter()
-                        .map(|tc| {
-                            let args = if tc.arguments.is_null() {
-                                String::new()
-                            } else {
-                                serde_json::to_string_pretty(&tc.arguments).unwrap_or_default()
-                            };
-                            json!({"id":tc.id,"name":tc.name,"args":args})
-                        })
-                        .collect();
-                    events.push(json!({
-                        "kind":"assistant","content":a.content,
-                        "reasoning":a.reasoning,"tool_calls":calls
-                    }));
+            SessionEntry::Message(m) => {
+                let id = m.id;
+                let parent = m.parent_id;
+                match m.message {
+                    Message::User(u) => events.push(json!({
+                        "kind":"user","content":u.content, "id": id, "parent": parent
+                    })),
+                    Message::Assistant(a) => {
+                        total_input_tokens += a.usage.input_tokens;
+                        total_output_tokens += a.usage.output_tokens;
+                        let calls: Vec<Value> = a
+                            .tool_calls
+                            .iter()
+                            .map(|tc| {
+                                let args = if tc.arguments.is_null() {
+                                    String::new()
+                                } else {
+                                    serde_json::to_string_pretty(&tc.arguments).unwrap_or_default()
+                                };
+                                json!({"id":tc.id,"name":tc.name,"args":args})
+                            })
+                            .collect();
+                        events.push(json!({
+                            "kind":"assistant","content":a.content,
+                            "reasoning":a.reasoning,"tool_calls":calls,
+                            "usage": a.usage, "id": id, "parent": parent
+                        }));
+                    }
+                    Message::ToolResult(t) => {
+                        tool_total += 1;
+                        *by_tool.entry(t.tool_name.clone()).or_insert(0) += 1;
+                        let shot = if t.tool_name == "perceive" {
+                            extract_shot(&t.content, &shots_dir)
+                        } else {
+                            None
+                        };
+                        events.push(json!({
+                            "kind":"tool","call_id":t.tool_call_id,"name":t.tool_name,
+                            "content":t.content,"is_error":t.is_error,"shot":shot,
+                            "id": id, "parent": parent
+                        }));
+                    }
                 }
-                Message::ToolResult(t) => {
-                    tool_total += 1;
-                    *by_tool.entry(t.tool_name.clone()).or_insert(0) += 1;
-                    let shot = if t.tool_name == "perceive" {
-                        extract_shot(&t.content, &shots_dir)
-                    } else {
-                        None
-                    };
-                    events.push(json!({
-                        "kind":"tool","call_id":t.tool_call_id,"name":t.tool_name,
-                        "content":t.content,"is_error":t.is_error,"shot":shot
-                    }));
-                }
-            },
+            }
+            SessionEntry::Checkpoint(cp) => {
+                checkpoints.push(json!({
+                    "id": cp.id, "label": cp.label, "turn": cp.snapshot.turn,
+                    "input_tokens": cp.snapshot.usage.input_tokens,
+                    "output_tokens": cp.snapshot.usage.output_tokens,
+                    "messages": cp.snapshot.messages.len(),
+                }));
+                events.push(
+                    json!({"kind":"checkpoint","label":cp.label,"id":cp.id,"parent": cp.parent_id}),
+                );
+            }
+            SessionEntry::BranchSummary(bs) => {
+                branches.push(json!({
+                    "id": bs.id, "from_id": bs.from_id, "summary": bs.summary
+                }));
+                events.push(
+                    json!({"kind":"branch","from": bs.from_id, "summary": bs.summary, "id": bs.id}),
+                );
+            }
             SessionEntry::WorldInfo(w) => {
                 events.push(json!({"kind":"knowledge","action":w.action}))
+            }
+            SessionEntry::Compaction(comp) => {
+                events.push(json!({"kind":"compaction","summary":comp.summary,"tokens_before":comp.tokens_before}));
             }
             _ => {}
         }
@@ -358,6 +434,10 @@ fn build_view(path: &Path) -> anyhow::Result<Value> {
         "turns": turns,
         "tool_total": tool_total,
         "by_tool": by_tool,
+        "total_input_tokens": total_input_tokens,
+        "total_output_tokens": total_output_tokens,
+        "checkpoints": checkpoints,
+        "branches": branches,
         "events": events,
     }))
 }

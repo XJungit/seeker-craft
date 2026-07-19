@@ -8,6 +8,7 @@
 
 use anyhow::Result;
 use serde_json::Value;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 // ── 副作用位掩码 (pi tools.rs L36-155, 手写非 bitflags crate) ──
@@ -123,7 +124,7 @@ pub type ToolUpdateFn = Arc<dyn Fn(&str) + Send + Sync>;
 ///
 /// 新增工具: 写一个 struct + impl GameTool + 注册到 ToolRegistry。
 /// 不改 agent.rs, 不改 types.rs。
-pub trait GameTool {
+pub trait GameTool: Send + Sync {
     /// 工具名 (LLM function calling 中使用的 name)
     fn name(&self) -> &str;
 
@@ -177,29 +178,45 @@ pub trait GameTool {
 
 // ── ToolRegistry (pi tools.rs L2646) ──
 
-/// 工具注册表 (pi 风格: Vec<Box<dyn Tool>>)
+/// 工具注册表 — HashMap 索引 O(1) 查找
 pub struct ToolRegistry {
     tools: Vec<Box<dyn GameTool>>,
+    /// name → index 映射（register/extend/push 后重建）
+    index: HashMap<String, usize>,
+}
+
+fn build_index(tools: &[Box<dyn GameTool>]) -> HashMap<String, usize> {
+    tools
+        .iter()
+        .enumerate()
+        .map(|(i, t)| (t.name().to_string(), i))
+        .collect()
 }
 
 impl ToolRegistry {
     pub fn new() -> Self {
-        Self { tools: Vec::new() }
+        Self {
+            tools: Vec::new(),
+            index: HashMap::new(),
+        }
     }
 
     /// 注册一个工具
     pub fn register(&mut self, tool: Box<dyn GameTool>) {
         self.tools.push(tool);
+        self.index = build_index(&self.tools);
     }
 
     /// 追加一批工具 (pi: extend)
     pub fn extend(&mut self, others: Vec<Box<dyn GameTool>>) {
         self.tools.extend(others);
+        self.index = build_index(&self.tools);
     }
 
     /// 追加单个工具 (pi: push)
     pub fn push(&mut self, tool: Box<dyn GameTool>) {
         self.tools.push(tool);
+        self.index = build_index(&self.tools);
     }
 
     pub fn len(&self) -> usize {
@@ -210,11 +227,11 @@ impl ToolRegistry {
         self.tools.is_empty()
     }
 
-    /// 按名称查找工具 (pi: 线性 find, 无 HashMap 索引)
+    /// O(1) 按名称查找工具
     pub fn get(&self, name: &str) -> Option<&dyn GameTool> {
-        self.tools
-            .iter()
-            .find(|t| t.name() == name)
+        self.index
+            .get(name)
+            .and_then(|i| self.tools.get(*i))
             .map(AsRef::as_ref)
     }
 
@@ -226,6 +243,66 @@ impl ToolRegistry {
     /// 生成 OpenAI function calling 的工具定义数组
     pub fn to_openai_defs(&self) -> Vec<Value> {
         self.tools.iter().map(|t| t.to_openai_def()).collect()
+    }
+
+    /// 自动生成工具参考知识字符串（替代硬编码 MC_KNOWLEDGE 的工具部分）
+    /// 每个工具一行 `name(params) — description`
+    pub fn to_knowledge_string(&self) -> String {
+        if self.tools.is_empty() {
+            return String::new();
+        }
+        let mut lines = Vec::new();
+        // 按 group 分组展示
+        let groups = [
+            (
+                "High-Level",
+                &[
+                    "collect",
+                    "craft",
+                    "place",
+                    "build",
+                    "blueprints",
+                    "combat",
+                    "attack",
+                ] as &[&str],
+            ),
+            ("Utility", &["equip", "consume", "discard", "smeltItem"]),
+            (
+                "Navigation",
+                &["searchForBlock", "move_to", "moveAway", "digDown"],
+            ),
+            ("Aim", &["look_at", "look_at_player", "look_at_position"]),
+            ("Query", &["perceive", "visual_perceive", "savedPlaces"]),
+            ("Memory", &["rememberHere", "goToRememberedPlace"]),
+        ];
+        for (group_name, tool_names) in &groups {
+            let mut group_lines = Vec::new();
+            for name in *tool_names {
+                if let Some(tool) = self.get(name) {
+                    group_lines.push(format!("{}(...) — {}", tool.name(), tool.description()));
+                }
+            }
+            if !group_lines.is_empty() {
+                lines.push(String::new());
+                lines.push(format!("## {} Tools", group_name));
+                lines.extend(group_lines);
+            }
+        }
+        // 未分组的剩余工具
+        let all_grouped: std::collections::HashSet<&str> =
+            groups.iter().flat_map(|(_, ns)| *ns).copied().collect();
+        let ungrouped: Vec<String> = self
+            .tools
+            .iter()
+            .filter(|t| !all_grouped.contains(t.name()))
+            .map(|t| format!("{}(...) — {}", t.name(), t.description()))
+            .collect();
+        if !ungrouped.is_empty() {
+            lines.push(String::new());
+            lines.push("## Other Tools".to_string());
+            lines.extend(ungrouped);
+        }
+        lines.join("\n")
     }
 }
 

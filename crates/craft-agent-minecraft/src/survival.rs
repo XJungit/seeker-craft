@@ -44,7 +44,10 @@ pub enum SurvivalEvent {
     /// 自我保护触发（血量低于阈值）
     SelfPreservation { health: f32, trigger: String },
     /// 卡住自救（move_stuck 检测）
-    Unstuck { position: (f64, f64, f64), attempt: u32 },
+    Unstuck {
+        position: (f64, f64, f64),
+        attempt: u32,
+    },
     /// 自动进食（饥饿值低于阈值）
     AutoEat { hunger: u32, item: String },
     /// 自动防御（敌对实体接近）
@@ -54,9 +57,16 @@ pub enum SurvivalEvent {
     /// 自动拾取（掉落物接近）
     ItemCollecting { item: String, count: u32 },
     /// 自动放火把（亮度低于阈值）
-    TorchPlacing { position: (i32, i32, i32), light: u32 },
+    TorchPlacing {
+        position: (i32, i32, i32),
+        light: u32,
+    },
     /// 模式切换通知
-    ModeSwitch { from: String, to: String, reason: String },
+    ModeSwitch {
+        from: String,
+        to: String,
+        reason: String,
+    },
 }
 
 impl SurvivalEvent {
@@ -75,7 +85,10 @@ impl SurvivalEvent {
             Self::AutoEat { hunger, item } => {
                 format!("[survival] auto_eat: hunger={hunger} item={item}")
             }
-            Self::SelfDefense { entity_type, distance } => {
+            Self::SelfDefense {
+                entity_type,
+                distance,
+            } => {
                 format!("[survival] self_defense: entity={entity_type} dist={distance:.1}m")
             }
             Self::Retreat { health, from } => {
@@ -244,20 +257,33 @@ impl MiningCandidate {
         let distance = (dx * dx + dz * dz).sqrt();
         let depth = (player_y - y as f64).round() as i32;
         let score = Self::score(distance, depth);
-        Self { block_id, x, y, z, distance, depth, score }
+        Self {
+            block_id,
+            x,
+            y,
+            z,
+            distance,
+            depth,
+            score,
+        }
     }
 }
 
 /// 从候选列表中选出最优（评分最低）的方块。
 pub fn pick_best_candidate(candidates: Vec<MiningCandidate>) -> Option<MiningCandidate> {
     candidates.into_iter().min_by(|a, b| {
-        a.score.partial_cmp(&b.score).unwrap_or(std::cmp::Ordering::Equal)
+        a.score
+            .partial_cmp(&b.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
     })
 }
 
 /// 过滤掉评分过高的候选（避免挖太深的坑）。
 pub fn filter_by_score(candidates: Vec<MiningCandidate>, max_score: f64) -> Vec<MiningCandidate> {
-    candidates.into_iter().filter(|c| c.score <= max_score).collect()
+    candidates
+        .into_iter()
+        .filter(|c| c.score <= max_score)
+        .collect()
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -337,7 +363,10 @@ impl FailureType {
     pub fn is_terminal(&self) -> bool {
         matches!(
             self,
-            FailureType::Interrupted | FailureType::TimedOut | FailureType::Unsupported | FailureType::Unknown
+            FailureType::Interrupted
+                | FailureType::TimedOut
+                | FailureType::Unsupported
+                | FailureType::Unknown
         )
     }
 
@@ -350,10 +379,18 @@ impl FailureType {
             Self::OutOfReach => format!("Target too far ({context}) — moving closer"),
             Self::Hazard => format!("HAZARD: fluid/void near ({context}) — refusing to dig here"),
             Self::NoSupport => format!("No support face ({context}) — trying alternate stance"),
-            Self::NoMaterial => format!("CRITICAL: Missing material ({context}) — needs LLM to plan gathering"),
-            Self::WrongTool => format!("CRITICAL: Wrong tool ({context}) — needs LLM to plan crafting"),
-            Self::TargetLost => format!("CRITICAL: Target gone ({context}) — needs LLM to pick new target"),
-            Self::MinedOut => format!("CRITICAL: No targets in scan radius ({context}) — needs LLM to widen or stop"),
+            Self::NoMaterial => {
+                format!("CRITICAL: Missing material ({context}) — needs LLM to plan gathering")
+            }
+            Self::WrongTool => {
+                format!("CRITICAL: Wrong tool ({context}) — needs LLM to plan crafting")
+            }
+            Self::TargetLost => {
+                format!("CRITICAL: Target gone ({context}) — needs LLM to pick new target")
+            }
+            Self::MinedOut => format!(
+                "CRITICAL: No targets in scan radius ({context}) — needs LLM to widen or stop"
+            ),
             Self::Interrupted => format!("Interrupted by survival chain ({context})"),
             Self::TimedOut => format!("Timed out ({context}) — progress lease exhausted"),
             Self::Unsupported => format!("Unsupported task type ({context})"),
@@ -373,7 +410,12 @@ pub struct FailureRecord {
 
 impl FailureRecord {
     pub fn new(failure_type: FailureType, context: String) -> Self {
-        Self { failure_type, context, timestamp: Instant::now(), retry_count: 0 }
+        Self {
+            failure_type,
+            context,
+            timestamp: Instant::now(),
+            retry_count: 0,
+        }
     }
 
     /// 增加重试次数。
@@ -411,9 +453,9 @@ impl FailureTracker {
         let record = self
             .recent
             .entry(target_key.to_string())
-            .or_insert_with(|| FailureRecord::new(failure_type.clone(), context.clone()));
+            .or_insert_with(|| FailureRecord::new(failure_type, context.clone()));
         if record.failure_type != failure_type {
-            *record = FailureRecord::new(failure_type.clone(), context);
+            *record = FailureRecord::new(failure_type, context);
         } else {
             record.increment_retry();
         }
@@ -456,11 +498,23 @@ mod tests {
     #[test]
     fn survival_journal_ring_buffer() {
         let mut j = SurvivalJournal::new(3);
-        j.record(SurvivalEvent::AutoEat { hunger: 6, item: "bread".into() });
-        j.record(SurvivalEvent::SelfDefense { entity_type: "zombie".into(), distance: 3.0 });
-        j.record(SurvivalEvent::Unstuck { position: (1.0, 64.0, 2.0), attempt: 1 });
+        j.record(SurvivalEvent::AutoEat {
+            hunger: 6,
+            item: "bread".into(),
+        });
+        j.record(SurvivalEvent::SelfDefense {
+            entity_type: "zombie".into(),
+            distance: 3.0,
+        });
+        j.record(SurvivalEvent::Unstuck {
+            position: (1.0, 64.0, 2.0),
+            attempt: 1,
+        });
         assert_eq!(j.len(), 3);
-        j.record(SurvivalEvent::Retreat { health: 4.0, from: (1.0, 64.0, 2.0) });
+        j.record(SurvivalEvent::Retreat {
+            health: 4.0,
+            from: (1.0, 64.0, 2.0),
+        });
         assert_eq!(j.len(), 3);
         assert_eq!(j.total_events, 4);
         let rendered = j.render();
@@ -471,8 +525,14 @@ mod tests {
     #[test]
     fn survival_journal_drain_consumes() {
         let mut j = SurvivalJournal::new(6);
-        j.record(SurvivalEvent::AutoEat { hunger: 6, item: "bread".into() });
-        j.record(SurvivalEvent::SelfDefense { entity_type: "zombie".into(), distance: 3.0 });
+        j.record(SurvivalEvent::AutoEat {
+            hunger: 6,
+            item: "bread".into(),
+        });
+        j.record(SurvivalEvent::SelfDefense {
+            entity_type: "zombie".into(),
+            distance: 3.0,
+        });
         assert_eq!(j.len(), 2);
         let drained = j.drain();
         assert_eq!(drained.len(), 2);
@@ -485,7 +545,10 @@ mod tests {
     fn append_survival_notes_injects_and_drains() {
         let mut msg = String::from("collected 3 oak_log");
         let mut j = SurvivalJournal::new(6);
-        j.record(SurvivalEvent::SelfDefense { entity_type: "zombie".into(), distance: 3.0 });
+        j.record(SurvivalEvent::SelfDefense {
+            entity_type: "zombie".into(),
+            distance: 3.0,
+        });
         append_survival_notes(&mut msg, &mut j);
         assert!(msg.contains("meanwhile, my body handled on its own"));
         assert!(msg.contains("self_defense"));
@@ -494,14 +557,21 @@ mod tests {
         // 再次调用不应追加空内容（msg 长度不变）
         let len_before = msg.len();
         append_survival_notes(&mut msg, &mut j);
-        assert_eq!(msg.len(), len_before, "第二次调用（空 journal）不应追加任何内容");
+        assert_eq!(
+            msg.len(),
+            len_before,
+            "第二次调用（空 journal）不应追加任何内容"
+        );
     }
 
     #[test]
     fn mining_economics_penalizes_depth() {
         let shallow = MiningCandidate::new("coal_ore".into(), 0, 60, 0, 5.0, 64.0, 0.0);
         let deep = MiningCandidate::new("coal_ore".into(), 0, 40, 0, 5.0, 64.0, 0.0);
-        assert!(shallow.score < deep.score, "shallow should have lower score");
+        assert!(
+            shallow.score < deep.score,
+            "shallow should have lower score"
+        );
         assert!(
             deep.score - shallow.score > 3.0 * 20.0 - 0.1,
             "depth penalty should be ~3.0 * depth_diff"
@@ -529,14 +599,20 @@ mod tests {
         assert!(FailureType::Unknown.is_terminal());
         // in_ladder 和 kick_back 互斥
         for v in [
-            FailureType::Occluded, FailureType::BoxedIn, FailureType::NoPath,
-            FailureType::OutOfReach, FailureType::Hazard, FailureType::NoSupport,
+            FailureType::Occluded,
+            FailureType::BoxedIn,
+            FailureType::NoPath,
+            FailureType::OutOfReach,
+            FailureType::Hazard,
+            FailureType::NoSupport,
         ] {
             assert!(!v.is_kick_back() && !v.is_terminal());
         }
         for v in [
-            FailureType::NoMaterial, FailureType::WrongTool,
-            FailureType::TargetLost, FailureType::MinedOut,
+            FailureType::NoMaterial,
+            FailureType::WrongTool,
+            FailureType::TargetLost,
+            FailureType::MinedOut,
         ] {
             assert!(!v.is_in_ladder() && !v.is_terminal());
         }
@@ -552,7 +628,11 @@ mod tests {
         // 第 4 次应踢回
         assert!(t.record("oak_log", FailureType::NoPath, "blocked by dirt".into()));
         // kick_back 类型应立即踢回
-        assert!(t.record("diamond_ore", FailureType::NoMaterial, "need iron pickaxe".into()));
+        assert!(t.record(
+            "diamond_ore",
+            FailureType::NoMaterial,
+            "need iron pickaxe".into()
+        ));
     }
 
     #[test]

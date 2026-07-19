@@ -8,7 +8,16 @@
 //! 与 pi 的差异: pi 的 System 消息不单独存储, 我们用 system prompt 单独管理。
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Map, Value};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+#[inline]
+pub fn now_ms() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+}
 
 /// 对话中的一条消息
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,6 +35,9 @@ pub enum Message {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserMsg {
     pub content: String,
+    /// 毫秒时间戳（持久化/检索用，不发送给 LLM）
+    #[serde(default)]
+    pub timestamp: i64,
     /// 可选图像段：base64 data URI。非空时 `to_chatml` 把 `content` 改为
     /// `[{type:text},{type:image_url}]` 数组，让多模态 LLM 在 user 角色下看截图。
     /// 这是比挂在 tool 角色更通用、更可移植的做法（很多 OpenAI 兼容端只认
@@ -46,6 +58,13 @@ pub struct AssistantMsg {
     /// 工具调用列表
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_calls: Vec<ToolCall>,
+    /// 毫秒时间戳（持久化/检索用，不发送给 LLM）
+    #[serde(default)]
+    pub timestamp: i64,
+    /// 该条 assistant 消息产生时的 token 用量（来自 LLM 返回的 usage）。
+    /// 用于上下文压缩时的精确 token 估算（参考 pi_agent_rust 的 per-message usage）。
+    #[serde(default)]
+    pub usage: Usage,
 }
 
 /// 工具调用 (pi: ToolCall)
@@ -90,6 +109,12 @@ pub struct ToolResultMsg {
     /// 是否执行出错
     #[serde(default)]
     pub is_error: bool,
+    /// 毫秒时间戳（持久化/检索用，不发送给 LLM）
+    #[serde(default)]
+    pub timestamp: i64,
+    /// 可选结构化元数据（pi: ToolResultMessage.details）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub details: Option<Value>,
     /// 可选图像段：base64 data URI（如 `data:image/png;base64,...`）。
     /// 非空时 `to_chatml` 把 `content` 改为 `[{type:text},{type:image_url}]` 数组，
     /// 让多模态 LLM 直接看截图。旧版本 JSONL 无此字段也能反序列化（默认空）。
@@ -112,6 +137,7 @@ impl Message {
     pub fn user(content: impl Into<String>) -> Self {
         Self::User(UserMsg {
             content: content.into(),
+            timestamp: now_ms(),
             images: vec![],
         })
     }
@@ -121,6 +147,7 @@ impl Message {
     pub fn user_with_images(content: impl Into<String>, images: Vec<String>) -> Self {
         Self::User(UserMsg {
             content: content.into(),
+            timestamp: now_ms(),
             images,
         })
     }
@@ -130,6 +157,8 @@ impl Message {
             content: Some(content.into()),
             reasoning: None,
             tool_calls: vec![],
+            timestamp: now_ms(),
+            usage: Usage::default(),
         })
     }
 
@@ -146,6 +175,8 @@ impl Message {
                 name: name.into(),
                 arguments: args,
             }],
+            timestamp: now_ms(),
+            usage: Usage::default(),
         })
     }
 
@@ -155,6 +186,8 @@ impl Message {
             content: response.content.clone(),
             reasoning: response.reasoning.clone(),
             tool_calls: response.tool_calls.clone(),
+            timestamp: now_ms(),
+            usage: response.usage.clone(),
         })
     }
 
@@ -166,6 +199,8 @@ impl Message {
             content: Some(content.into()),
             reasoning: Some(reasoning.into()),
             tool_calls: vec![],
+            timestamp: now_ms(),
+            usage: Usage::default(),
         })
     }
 
@@ -179,6 +214,8 @@ impl Message {
             tool_name: name.into(),
             content: content.into(),
             is_error: false,
+            timestamp: now_ms(),
+            details: None,
             images: vec![],
         })
     }
@@ -196,6 +233,8 @@ impl Message {
             tool_name: name.into(),
             content: content.into(),
             is_error: false,
+            timestamp: now_ms(),
+            details: None,
             images,
         })
     }
@@ -210,6 +249,8 @@ impl Message {
             tool_name: name.into(),
             content: error.into(),
             is_error: true,
+            timestamp: now_ms(),
+            details: None,
             images: vec![],
         })
     }
@@ -222,85 +263,53 @@ impl Message {
     pub fn to_chatml(&self) -> Value {
         match self {
             Self::User(m) => {
-                let content = if m.images.is_empty() {
-                    serde_json::json!(m.content)
-                } else {
-                    let mut parts = vec![serde_json::json!({
-                        "type": "text",
-                        "text": m.content
-                    })];
-                    for img in &m.images {
-                        parts.push(serde_json::json!({
-                            "type": "image_url",
-                            "image_url": { "url": img }
-                        }));
-                    }
-                    serde_json::Value::Array(parts)
-                };
-                serde_json::json!({
-                    "role": "user",
-                    "content": content
-                })
+                let mut obj = Map::new();
+                obj.insert("role".into(), Value::String("user".into()));
+                obj.insert("content".into(), Value::String(m.content.clone()));
+                Value::Object(obj)
             }
             Self::Assistant(m) => {
-                // 推理链作为独立字段 reasoning_content 回传 (KEEP 策略)。
-                // DeepSeek/MiMo/MiniMax 在 Agent(工具调用) 场景要求回传 reasoning_content,
-                // 否则 400; 纯多轮场景忽略或保留均安全。因此不再把推理拼进 content。
-                let mut obj = serde_json::Map::new();
-                obj.insert("role".to_string(), serde_json::json!("assistant"));
+                let mut obj = Map::new();
+                obj.insert("role".into(), Value::String("assistant".into()));
                 obj.insert(
-                    "content".to_string(),
+                    "content".into(),
                     match &m.content {
-                        Some(c) => serde_json::json!(c),
-                        None => serde_json::Value::Null,
+                        Some(c) => Value::String(c.clone()),
+                        None => Value::Null,
                     },
                 );
                 if let Some(r) = &m.reasoning {
-                    obj.insert("reasoning_content".to_string(), serde_json::json!(r));
+                    obj.insert("reasoning_content".into(), Value::String(r.clone()));
                 }
                 if !m.tool_calls.is_empty() {
-                    obj.insert(
-                        "tool_calls".to_string(),
-                        serde_json::json!(
-                            m.tool_calls
-                                .iter()
-                                .map(|tc| serde_json::json!({
-                                    "id": tc.id,
-                                    "type": "function",
-                                    "function": {
-                                        "name": tc.name,
-                                        "arguments": tc.arguments.to_string()
-                                    }
-                                }))
-                                .collect::<Vec<_>>()
-                        ),
-                    );
+                    let calls: Vec<Value> = m
+                        .tool_calls
+                        .iter()
+                        .map(|tc| {
+                            let mut func = Map::new();
+                            func.insert("name".into(), Value::String(tc.name.clone()));
+                            func.insert(
+                                "arguments".into(),
+                                Value::String(tc.arguments.to_string()),
+                            );
+                            let mut call = Map::new();
+                            call.insert("id".into(), Value::String(tc.id.clone()));
+                            call.insert("type".into(), Value::String("function".into()));
+                            call.insert("function".into(), Value::Object(func));
+                            Value::Object(call)
+                        })
+                        .collect();
+                    obj.insert("tool_calls".into(), Value::Array(calls));
                 }
-                serde_json::Value::Object(obj)
+                Value::Object(obj)
             }
             Self::ToolResult(m) => {
-                let content = if m.images.is_empty() {
-                    serde_json::json!(m.content)
-                } else {
-                    // 多模态直读：content 必须是数组，首段文本 + 后续图像段。
-                    // 这是 OpenAI Chat Completions 工具结果支持的 image_url 格式。
-                    let mut parts = vec![serde_json::json!({
-                        "type": "text",
-                        "text": m.content
-                    })];
-                    for img in &m.images {
-                        parts.push(serde_json::json!({
-                            "type": "image_url",
-                            "image_url": { "url": img }
-                        }));
-                    }
-                    serde_json::Value::Array(parts)
-                };
-                serde_json::json!({
-                    "role": "tool",
-                    "tool_call_id": m.tool_call_id,
-                    "content": content
-                })
+                let content = Value::String(m.content.clone());
+                let mut obj = Map::new();
+                obj.insert("role".into(), Value::String("tool".into()));
+                obj.insert("tool_call_id".into(), Value::String(m.tool_call_id.clone()));
+                obj.insert("content".into(), content);
+                Value::Object(obj)
             }
         }
     }
@@ -327,20 +336,15 @@ mod tests {
     }
 
     #[test]
-    fn user_with_images_emits_image_url_segments() {
-        // 多模态 user 消息：content 应为数组，首段文本 + 一个 image_url 段。
+    fn user_with_images_strips_images_in_chatml() {
+        // 决策 LLM 不应收到图，to_chatml 应只保留文字。
         let msg = Message::user_with_images(
             "请直接看图回答",
             vec!["data:image/png;base64,CCCC".to_string()],
         );
         let chatml = msg.to_chatml();
         assert_eq!(chatml["role"], "user");
-        let content = chatml["content"].as_array().expect("content 应为数组");
-        assert_eq!(content.len(), 2, "文本段 + 图像段");
-        assert_eq!(content[0]["type"], "text");
-        assert_eq!(content[0]["text"], "请直接看图回答");
-        assert_eq!(content[1]["type"], "image_url");
-        assert_eq!(content[1]["image_url"]["url"], "data:image/png;base64,CCCC");
+        assert_eq!(chatml["content"], "请直接看图回答");
     }
 
     #[test]
@@ -362,8 +366,8 @@ mod tests {
     }
 
     #[test]
-    fn tool_result_with_images_emits_image_url_segments() {
-        // 多模态直读：content 应为数组，首段文本 + 一个 image_url 段。
+    fn tool_result_with_images_strips_images_in_chatml() {
+        // 决策 LLM 不应收到图，to_chatml 应只发文字。
         let msg = Message::tool_result_with_images(
             "call_2",
             "perceive",
@@ -373,12 +377,7 @@ mod tests {
         let chatml = msg.to_chatml();
         assert_eq!(chatml["role"], "tool");
         assert_eq!(chatml["tool_call_id"], "call_2");
-        let content = chatml["content"].as_array().expect("content 应为数组");
-        assert_eq!(content.len(), 2, "文本段 + 图像段");
-        assert_eq!(content[0]["type"], "text");
-        assert_eq!(content[0]["text"], "[截图已附上，请直接看图]");
-        assert_eq!(content[1]["type"], "image_url");
-        assert_eq!(content[1]["image_url"]["url"], "data:image/png;base64,AAAA");
+        assert_eq!(chatml["content"], "[截图已附上，请直接看图]");
     }
 
     #[test]

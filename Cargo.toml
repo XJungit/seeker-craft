@@ -63,3 +63,10 @@ windows-sys = { version = "0.61", features = [
 # 用 full 避免 axum 特性联合时缺功能编译失败（仅 viewer 依赖，开发期可接受）。
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
+
+# ===== 发布优化 =====
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+panic = "abort"

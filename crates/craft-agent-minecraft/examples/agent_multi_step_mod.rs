@@ -20,12 +20,11 @@ fn main() -> anyhow::Result<()> {
     use craft_agent_minecraft::tools_mod::create_mc_mod_tools;
     use craft_agent_model::config::AgentConfig as ModelConfig;
     use craft_agent_model::decision::real::OpenAiLlmClient;
+    use craft_agent_model::vision::VisionClient;
     use craft_agent_model::vision::real::OpenAiVisionClient;
     use serde_json::Value;
-    use std::cell::RefCell;
     use std::path::{Path, PathBuf};
-    use std::rc::Rc;
-    use std::sync::Arc;
+    use std::sync::{Arc, Mutex};
     use std::time::Instant;
 
     let _ = dotenvy::dotenv();
@@ -66,14 +65,14 @@ fn main() -> anyhow::Result<()> {
     let llm = Arc::new(OpenAiLlmClient::from_config(llm_backend)?);
 
     // VLM 视觉客户端（仅 --vision 时启用）
-    let vision: Option<Box<dyn craft_agent_model::vision::VisionClient>> = if use_vision {
+    let vision: Option<Arc<dyn VisionClient>> = if use_vision {
         let vlm_backend = model_cfg.vlm.active_backend()?;
         let vc = OpenAiVisionClient::from_config(vlm_backend)?;
         println!(
             "=== VLM 已启用: {}（仅在 visual_perceive 时调用） ===",
             vlm_backend.model
         );
-        Some(Box::new(vc))
+        Some(Arc::new(vc))
     } else {
         println!("=== VLM 未启用（加 --vision 可启用视觉补充） ===");
         None
@@ -91,7 +90,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     // 连接本机 MC 桥接 mod（MC 必须先启动并加载 craft-agent-bridge）。
-    let adapter = Rc::new(RefCell::new(MinecraftModAdapter::connect_with_vision(
+    let adapter = Arc::new(Mutex::new(MinecraftModAdapter::connect_with_vision(
         "127.0.0.1",
         DEFAULT_PORT,
         vision,
@@ -103,33 +102,40 @@ fn main() -> anyhow::Result<()> {
         perceive_cfg.image_max_side,
         shots_dir.clone(),
         use_vision,
+        None,
     ) {
         registry.register(tool);
     }
 
     let cw = llm_backend.context_window;
-    let reserve = (cw as f64 * 0.2) as u32;
-    let keep_recent = (cw as f64 * 0.2) as u32;
+    let reserve = (cw as f64 * 0.20) as u32;
+    let keep_recent = (cw as f64 * 0.60) as u32;
     let compaction = CompactionConfig {
         context_window: cw,
         reserve,
         keep_recent,
+        compaction_model: None,
+        compaction_provider: None,
+        compaction_thinking: false,
     };
 
     let mut system_prompt = String::from(
-        "你是 Minecraft AI 玩家，通过 MC 桥接 mod 精确控制角色。循环: perceive -> 思考 -> act -> perceive。\n\
-         感知 perceive 返回的是游戏结构化状态(精确物品栏数量/方块与生物的世界坐标与距离/玩家坐标朝向/血量饥饿)，直接据数据决策，不要靠看图猜。\n\
-         工具: perceive(读状态)/look(转视角,dx>0右转,dy>0低头)/press(按键,如 press w 走向目标)/mine(挖掘,返回是否真挖到原木)。",
+        "你是 Minecraft AI 玩家，通过服务端 mod 桥接（ServerPlayer 架构）精确控制角色。每轮会自动注入游戏状态（perceive），无需手动调用 perceive。\n\
+         感知返回的是结构化状态（精确物品栏数量/方块与生物的世界坐标与距离/玩家坐标朝向/血量饥饿），直接据数据决策，不要靠看图猜。\n\
+         核心工具: collect(target,count) 自动找→走→挖; move_to(x,y,z) 精确导航; look_at(x,y,z) 瞄准坐标; craft(item,count) 合成; place(item) 放置; combat(mode,ticks) 战斗。\n\
+         禁止调用 look(dx,dy)/press(keys)/mine(ticks)/craftable() —— 这些工具未注册，会返回 Unknown tool。",
     );
     if use_vision {
-        system_prompt.push_str(" visual_perceive(prompt)工具可截屏看图, 仅在需要识别UI界面/合成台/背包画面时使用, 平时用perceive(精确数据)即可。");
+        system_prompt.push_str(" visual_perceive(prompt) 工具可截屏看图，仅在需要识别 GUI 界面/合成台/背包画面时使用，平时用自动注入的 perceive 数据即可。");
     }
     system_prompt.push_str(
-        "\n采集木头标准流程: \u{2460}perceive 找到最近 oak_log/birch_log 的坐标与距离 \u{2461}look 对准 \u{2462}press w 走近直到距离<3米 \u{2463}mine 60ticks(3秒)挖原木 \u{2464}重复直到\u{2265}4原木 \u{2465}e开背包合成木板->工作台。\n\
-         你能在 mine 回执里确认是否挖到原木，据此判断是否要走近/再挖，不要原地反复 look。\n\
-         除非已合成工作台(物品栏出现 crafting_table 或已放置)，否则每个回合必须以 tool_call 收尾，不得只用文本结束。",
+        "\n采集木头标准流程: collect(\"oak_log\", 8) → craft(\"oak_planks\", 32) → craft(\"crafting_table\", 1) → look_at(脚下地面坐标) → place(\"crafting_table\")。\n\
+         collect 会自动找最近的目标方块、走过去、挖掘，回执里返回实际挖到的数量。如果数量不足，换个位置再 collect。\n\
+         除非已合成工作台（物品栏出现 crafting_table 或已放置），否则每个回合必须以 tool_call 收尾，不得只用文本结束。",
     );
-    let cfg = AgentConfig::new(system_prompt, max_iter).with_compaction(compaction);
+    let cfg = AgentConfig::new(system_prompt, max_iter)
+        .with_compaction(compaction)
+        .with_auto_perceive(true);
 
     let mut agent = match session_path {
         Some(p) => {

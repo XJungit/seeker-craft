@@ -1,5 +1,6 @@
 //! Minecraft 工具 — 每个工具自己完整执行
 
+use crate::tool_args;
 #[cfg(feature = "real")]
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use craft_agent::core::tool::{GameTool, ToolEffects, ToolResult, ToolUpdateFn};
@@ -9,17 +10,15 @@ use craft_agent_model::vision::VisionClient;
 use craft_agent_model::vision::real::downscale_png;
 use enigo::{Keyboard, Mouse};
 use serde_json::Value;
-use std::cell::Cell;
-use std::cell::RefCell;
 use std::path::PathBuf;
-use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::{Arc, Mutex};
 
 // ── Perceive ──
 
 pub struct PerceiveTool {
     vlm: Arc<dyn VisionClient>,
-    capture: Box<dyn Fn() -> anyhow::Result<Vec<u8>>>,
+    capture: Arc<dyn Fn() -> anyhow::Result<Vec<u8>> + Send + Sync>,
     /// 视觉后端模式：vlm=独立视觉模型转文字；multimodal=截图直传决策 LLM 由它看像素。
     mode: VisionMode,
     /// 多模态模式截图最长边（像素）；None=不缩放。
@@ -29,12 +28,12 @@ pub struct PerceiveTool {
     /// None 时不落盘（无 session 的纯内存运行 / 单测）。
     shots_dir: Option<PathBuf>,
     /// 截图序号计数器（内部可变，execute 用 &self）。
-    counter: Cell<u32>,
+    counter: AtomicU32,
 }
 impl PerceiveTool {
     pub fn new(
         vlm: Arc<dyn VisionClient>,
-        capture: Box<dyn Fn() -> anyhow::Result<Vec<u8>>>,
+        capture: Arc<dyn Fn() -> anyhow::Result<Vec<u8>> + Send + Sync>,
         mode: VisionMode,
         image_max_side: Option<u32>,
         shots_dir: Option<PathBuf>,
@@ -45,7 +44,7 @@ impl PerceiveTool {
             mode,
             image_max_side,
             shots_dir,
-            counter: Cell::new(0),
+            counter: AtomicU32::new(0),
         }
     }
 
@@ -53,8 +52,8 @@ impl PerceiveTool {
     /// 落盘失败只告警不致命，主流程继续。
     fn save_shot(&self, png: &[u8]) -> Option<String> {
         let dir = self.shots_dir.as_ref()?;
-        let n = self.counter.get() + 1;
-        self.counter.set(n);
+        let n = self.counter.load(Ordering::Relaxed) + 1;
+        self.counter.store(n, Ordering::Relaxed);
         let fname = format!("step-{n:03}.png");
         let rel = dir.join(&fname);
         let rel_str = rel.to_string_lossy().to_string();
@@ -81,7 +80,10 @@ impl GameTool for PerceiveTool {
         }
     }
     fn parameters(&self) -> Value {
-        serde_json::json!({"type":"object","properties":{"prompt":{"type":"string","description":"英文提示词, 如: Describe the Minecraft scene. List trees, stones, animals, monsters, water near the crosshair."}}})
+        use tool_args::schema;
+        schema::object()
+            .str_opt("prompt", "英文提示词, 如: Describe the Minecraft scene. List trees, stones, animals, monsters, water near the crosshair.", "")
+            .finish()
     }
     fn effects(&self) -> ToolEffects {
         ToolEffects::network()
@@ -92,7 +94,7 @@ impl GameTool for PerceiveTool {
         args: Value,
         _on_update: Option<ToolUpdateFn>,
     ) -> anyhow::Result<ToolResult> {
-        let png = (self.capture)()?;
+        let png = std::sync::Arc::new((self.capture)()?);
         match self.mode {
             VisionMode::Vlm => {
                 // 独立 VLM：截图 → 文字描述 → 文字进历史（决策 LLM 读不到图）。
@@ -118,7 +120,7 @@ impl GameTool for PerceiveTool {
                 // tool 角色，兼容性最好），决策 LLM 自己看像素。
                 let scaled = match self.image_max_side {
                     Some(ms) => downscale_png(&png, ms)?.0,
-                    None => png.clone(),
+                    None => png.to_vec(),
                 };
                 let data_uri = format!("data:image/png;base64,{}", STANDARD.encode(&scaled));
                 // 落盘=发给 LLM 的缩放后截图（与模型输入一致），便于事后逐张核对。
@@ -142,11 +144,11 @@ impl GameTool for PerceiveTool {
 // ── Press ──
 
 pub struct PressTool {
-    enigo: Rc<RefCell<enigo::Enigo>>,
-    focus: Box<dyn Fn()>,
+    enigo: Arc<Mutex<enigo::Enigo>>,
+    focus: Arc<dyn Fn() + Send + Sync>,
 }
 impl PressTool {
-    pub fn new(enigo: Rc<RefCell<enigo::Enigo>>, focus: Box<dyn Fn()>) -> Self {
+    pub fn new(enigo: Arc<Mutex<enigo::Enigo>>, focus: Arc<dyn Fn() + Send + Sync>) -> Self {
         Self { enigo, focus }
     }
 }
@@ -158,7 +160,11 @@ impl GameTool for PressTool {
         "按下按键。w/a/s/d=前/左/后/右移动(要采集必须 press w 走向目标才能 mine, 站在原地挖不到); space=跳; shift=潜行; e=开关背包/合成界面, 打开会遮挡视野, 除非要合成否则不要按 e, 严禁反复开关键(开→关→开是无效循环); 1-9=切换快捷栏; ctrl=疾跑; q=丢弃; f=切换主副手"
     }
     fn parameters(&self) -> Value {
-        serde_json::json!({"type":"object","properties":{"keys":{"type":"string","description":"按键字母, 如 w, space, e, shift, 1-9"},"ticks":{"type":"integer","description":"持续时间, 20≈1秒, 40≈2秒","default":20}},"required":["keys"]})
+        use tool_args::schema;
+        schema::object()
+            .str_req("keys", "按键字母, 如 w, space, e, shift, 1-9")
+            .int_opt("ticks", "持续时间, 20≈1秒, 40≈2秒", 20, 1, 200)
+            .finish()
     }
     fn effects(&self) -> ToolEffects {
         ToolEffects::write()
@@ -209,10 +215,10 @@ fn key_from_str(s: &str) -> Option<enigo::Key> {
 // ── Look ──
 
 pub struct LookTool {
-    focus: Box<dyn Fn()>,
+    focus: Arc<dyn Fn() + Send + Sync>,
 }
 impl LookTool {
-    pub fn new(focus: Box<dyn Fn()>) -> Self {
+    pub fn new(focus: Arc<dyn Fn() + Send + Sync>) -> Self {
         Self { focus }
     }
 }
@@ -224,7 +230,11 @@ impl GameTool for LookTool {
         "转动视角。dx>0右转(300≈90度), dy>0低头, dy<0抬头。"
     }
     fn parameters(&self) -> Value {
-        serde_json::json!({"type":"object","properties":{"dx":{"type":"integer"},"dy":{"type":"integer"}},"required":["dx","dy"]})
+        use tool_args::schema;
+        schema::object()
+            .int_req("dx", "水平转动: >0右转, <0左转 (300≈90度)", -3000, 3000)
+            .int_req("dy", "垂直转动: >0低头, <0抬头 (300≈90度)", -3000, 3000)
+            .finish()
     }
     fn effects(&self) -> ToolEffects {
         ToolEffects::read()
@@ -251,11 +261,11 @@ impl GameTool for LookTool {
 // ── Mine ──
 
 pub struct MineTool {
-    enigo: Rc<RefCell<enigo::Enigo>>,
-    focus: Box<dyn Fn()>,
+    enigo: Arc<Mutex<enigo::Enigo>>,
+    focus: Arc<dyn Fn() + Send + Sync>,
 }
 impl MineTool {
-    pub fn new(enigo: Rc<RefCell<enigo::Enigo>>, focus: Box<dyn Fn()>) -> Self {
+    pub fn new(enigo: Arc<Mutex<enigo::Enigo>>, focus: Arc<dyn Fn() + Send + Sync>) -> Self {
         Self { enigo, focus }
     }
 }
@@ -267,7 +277,10 @@ impl GameTool for MineTool {
         "按住左键挖掘。必须先: ①look 转向目标让准星对准 ②press w 走近直到准星压住树干(原地挖不到空气) ③再 mine。木头=60ticks(3秒), 石头=120ticks(6秒), 矿石=200ticks(10秒)。"
     }
     fn parameters(&self) -> Value {
-        serde_json::json!({"type":"object","properties":{"ticks":{"type":"integer","description":"挖掘时长, 20≈1秒","default":60}}})
+        use tool_args::schema;
+        schema::object()
+            .int_opt("ticks", "挖掘时长, 20≈1秒", 60, 1, 600)
+            .finish()
     }
     fn effects(&self) -> ToolEffects {
         ToolEffects::write()
@@ -300,13 +313,14 @@ impl GameTool for MineTool {
 
 /// 按住一个键盘按键，Drop 时自动 Release。
 struct KeyGuard {
-    enigo: Rc<RefCell<enigo::Enigo>>,
+    enigo: Arc<Mutex<enigo::Enigo>>,
     key: enigo::Key,
 }
 impl KeyGuard {
-    fn hold(enigo: Rc<RefCell<enigo::Enigo>>, key: enigo::Key) -> anyhow::Result<Self> {
+    fn hold(enigo: Arc<Mutex<enigo::Enigo>>, key: enigo::Key) -> anyhow::Result<Self> {
         enigo
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .key(key, enigo::Direction::Press)
             .map_err(|e| anyhow::anyhow!("按下按键失败: {e}"))?;
         Ok(Self { enigo, key })
@@ -316,20 +330,22 @@ impl Drop for KeyGuard {
     fn drop(&mut self) {
         let _ = self
             .enigo
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .key(self.key, enigo::Direction::Release);
     }
 }
 
 /// 按住一个鼠标按键，Drop 时自动 Release。
 struct MouseGuard {
-    enigo: Rc<RefCell<enigo::Enigo>>,
+    enigo: Arc<Mutex<enigo::Enigo>>,
     button: enigo::Button,
 }
 impl MouseGuard {
-    fn hold(enigo: Rc<RefCell<enigo::Enigo>>, button: enigo::Button) -> anyhow::Result<Self> {
+    fn hold(enigo: Arc<Mutex<enigo::Enigo>>, button: enigo::Button) -> anyhow::Result<Self> {
         enigo
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .button(button, enigo::Direction::Press)
             .map_err(|e| anyhow::anyhow!("按下鼠标失败: {e}"))?;
         Ok(Self { enigo, button })
@@ -339,7 +355,8 @@ impl Drop for MouseGuard {
     fn drop(&mut self) {
         let _ = self
             .enigo
-            .borrow_mut()
+            .lock()
+            .unwrap()
             .button(self.button, enigo::Direction::Release);
     }
 }
@@ -350,8 +367,8 @@ impl Drop for MouseGuard {
 ///
 /// 每个会发键鼠的工具都持有同一个 `focus` 回调：发输入前把 Minecraft 窗口抢回前台，
 /// 否则 enigo 的 SendInput 投不到 MC（终端前台时尤其明显）。focus 失败只告警不致命。
-fn make_focus() -> Box<dyn Fn()> {
-    Box::new(|| {
+fn make_focus() -> Arc<dyn Fn() + Send + Sync> {
+    Arc::new(|| {
         #[cfg(windows)]
         {
             if let Err(e) = crate::adapter::focus_minecraft() {
@@ -367,8 +384,8 @@ fn make_focus() -> Box<dyn Fn()> {
 
 pub fn create_mc_tools(
     vlm: Arc<dyn VisionClient>,
-    capture: Box<dyn Fn() -> anyhow::Result<Vec<u8>>>,
-    enigo: Rc<RefCell<enigo::Enigo>>,
+    capture: Arc<dyn Fn() -> anyhow::Result<Vec<u8>> + Send + Sync>,
+    enigo: Arc<Mutex<enigo::Enigo>>,
     perceive_mode: VisionMode,
     perceive_image_max_side: Option<u32>,
     shots_dir: Option<PathBuf>,
@@ -414,7 +431,7 @@ mod tests {
     #[test]
     fn multimodal_perceive_returns_inline_image() {
         // 多模态模式：截图应以 base64 data URI 内联返回，且经过最长边缩放。
-        let capture = Box::new(|| Ok(fake_png(200, 100)));
+        let capture = Arc::new(|| Ok(fake_png(200, 100)));
         let tool = PerceiveTool::new(
             Arc::new(FakeVlm),
             capture,
@@ -439,7 +456,7 @@ mod tests {
     #[test]
     fn vlm_perceive_returns_text_only_and_does_not_inline_image() {
         // vlm 模式：返回文字描述，不应带图像段。
-        let capture = Box::new(|| Ok(fake_png(200, 100)));
+        let capture = Arc::new(|| Ok(fake_png(200, 100)));
         let tool = PerceiveTool::new(Arc::new(FakeVlm), capture, VisionMode::Vlm, None, None);
         let res = tool.execute("c1", serde_json::json!({}), None).unwrap();
         assert!(!res.is_error);
@@ -450,11 +467,11 @@ mod tests {
     #[test]
     fn create_mc_tools_count_and_perceive_mode_passed() {
         // 工厂应产出 4 个工具，且 perceive 的 mode 透传进 PerceiveTool。
-        let capture = Box::new(|| Ok(fake_png(64, 64)));
+        let capture = Arc::new(|| Ok(fake_png(64, 64)));
         let tools = create_mc_tools(
             Arc::new(FakeVlm),
             capture,
-            Rc::new(RefCell::new(
+            Arc::new(Mutex::new(
                 enigo::Enigo::new(&enigo::Settings::default()).unwrap(),
             )),
             VisionMode::Multimodal,
@@ -470,7 +487,7 @@ mod tests {
         // 给定 shots_dir，多模态模式应把截图落盘为 step-001.png 并在 message 嵌入相对路径。
         let tmp = std::env::temp_dir().join(format!("ca_shot_test_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
-        let capture = Box::new(|| Ok(fake_png(200, 100)));
+        let capture = Arc::new(|| Ok(fake_png(200, 100)));
         let tool = PerceiveTool::new(
             Arc::new(FakeVlm),
             capture,
@@ -499,7 +516,7 @@ mod tests {
         // vlm 模式同样落盘（便于事后核对），且不返回图像段。
         let tmp = std::env::temp_dir().join(format!("ca_shot_test_vlm_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
-        let capture = Box::new(|| Ok(fake_png(120, 80)));
+        let capture = Arc::new(|| Ok(fake_png(120, 80)));
         let tool = PerceiveTool::new(
             Arc::new(FakeVlm),
             capture,

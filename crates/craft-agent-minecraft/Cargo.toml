@@ -6,8 +6,8 @@ edition.workspace = true
 [dependencies]
 # 核心抽象（types / GameAdapter / Action / WorldState）—— 单向依赖，core 不反向依赖本 crate
 craft-agent.workspace = true
-# 模型层（VisionClient / SoM）—— 仅在 real 路径需要；避免默认构建拉入 reqwest/imageproc
-craft-agent-model = { workspace = true, optional = true }
+# 模型层（VisionClient / SoM）—— builder / visual_perceive 都需要，默认只编译 mock
+craft-agent-model.workspace = true
 anyhow.workspace = true
 # 项目根 .env 自动加载（示例里用它把 MINICPM_API_KEY 等注入环境，与 setx 持久化互补）
 dotenvy.workspace = true
@@ -26,7 +26,7 @@ base64 = { version = "0.22", optional = true }
 [features]
 # 开启后接入真实 Minecraft：VLM/SoM 渲染(craft-agent-model/real) + xcap 截图 + enigo 键鼠。
 # 默认不开启 → 只编译纯函数（如 to_screen_coords），供离线单测与轻量 CI。
-real = ["dep:craft-agent-model", "craft-agent-model/real", "dep:xcap", "dep:enigo", "dep:image", "dep:base64"]
+real = ["craft-agent-model/real", "dep:xcap", "dep:enigo", "dep:image", "dep:base64", "dep:serde"]
 # 全量 mod 控制：进程内 Fabric mod 桥接（craft-agent-bridge），结构化状态感知 + 进程内动作，
 # 彻底移除 enigo 的 OS 级键鼠模拟。基于 real（复用 xcap 截图供 viewer + craft-agent-model/real 的 LLM 客户端）。
 mod-bridge = ["real", "dep:serde"]

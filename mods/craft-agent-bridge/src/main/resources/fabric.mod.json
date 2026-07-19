@@ -9,7 +9,7 @@
   "license": "MIT",
   "environment": "*",
   "entrypoints": {
-    "server": [
+    "main": [
       "com.craftagent.bridge.CraftAgentBridge"
     ]
   },

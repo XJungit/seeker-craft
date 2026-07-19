@@ -1,12 +1,21 @@
 //! 核心世界状态与动作定义（与 game-agent-design.md §4 对齐）
 
-use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 
-/// 截图像素（RGBA 原始字节）。
-///
-/// 核心层不耦合 `image` crate 版本，避免与 `xcap` 0.9 依赖的 `image` 0.24
-/// 产生版本冲突。接 `xcap` 时由适配器层负责把截图转成可用图像/做检测。
-pub type Screenshot = Vec<u8>;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+/// 截图像素（RGBA 原始字节）。Arc 使 WorldState 克隆零成本（O(1) refcount 而不拷贝 MB 级数据）。
+pub type Screenshot = Arc<Vec<u8>>;
+
+pub(crate) mod screenshot_serde {
+    use super::*;
+    pub fn serialize<S: Serializer>(v: &Arc<Vec<u8>>, s: S) -> Result<S::Ok, S::Error> {
+        v.as_ref().serialize(s)
+    }
+    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Arc<Vec<u8>>, D::Error> {
+        Vec::<u8>::deserialize(d).map(Arc::new)
+    }
+}
 
 /// 可交互元素（2D 界面，如背包/合成界面按钮）
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,6 +48,7 @@ pub struct WorldState {
     /// 血量/饥饿/背包等 HUD 视觉读取
     pub self_hint: String,
     /// 原始截图（RGBA）
+    #[serde(with = "screenshot_serde")]
     pub screenshot: Screenshot,
 }
 

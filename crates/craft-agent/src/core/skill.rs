@@ -139,6 +139,7 @@ impl Skill {
         self.hit_count += 1;
         self.last_used = now_ms;
     }
+    #[allow(dead_code)]
     fn mark_success(&mut self) {
         self.success_count += 1;
     }
@@ -222,7 +223,7 @@ impl SkillLibrary {
         goal: &str,
         limit: usize,
         now_ms: i64,
-    ) -> Vec<SkillMatch> {
+    ) -> Vec<SkillMatch<'_>> {
         let current = SceneFingerprint::from_scene(scene, goal);
         let mut scored: Vec<(usize, f64)> = self
             .skills
@@ -285,7 +286,7 @@ impl SkillLibrary {
         }
         let mut deduped: Vec<String> = Vec::new();
         for step in turn_log {
-            if deduped.last().map_or(true, |last| last != step) {
+            if deduped.last() != Some(step) {
                 deduped.push(step.clone());
             }
         }
@@ -435,7 +436,7 @@ mod tests {
         let scene = "HOTBAR\n  [1] stickx4\n  [2] coalx2\nNEARBY BLOCKS\n  oak_log";
         // Use different adjacent tools so dedup doesn't collapse them
         lib.extract_from_turn(&["collect".into(), "craft".into()], "make torches", scene);
-        assert!(lib.len() >= 1);
+        assert!(!lib.is_empty());
         let examples = lib.to_examples(scene, "make torches", 3, 1000);
         assert!(!examples.is_empty());
     }

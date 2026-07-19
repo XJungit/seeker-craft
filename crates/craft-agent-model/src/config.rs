@@ -27,7 +27,8 @@
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 /// perceive 工具的视觉后端模式。
 ///
@@ -81,6 +82,10 @@ pub struct AgentConfig {
     /// 可选；缺省视为 vlm，保持向后兼容。换模式只改本配置，无需重编译。
     #[serde(default)]
     pub perceive: Option<PerceiveConfig>,
+    /// 专用压缩模型后端组（可选）。不配则压缩复用主决策模型。
+    /// 例：用免费、512K 上下文的 agnes-2.0-flash 做压缩，隔离主模型、避免小模型卡死。
+    #[serde(default)]
+    pub compaction: Option<BackendGroup>,
 }
 
 /// 一组同类后端 + 当前启用项。VLM 与 LLM 复用同一结构。
@@ -181,13 +186,20 @@ impl BackendConfig {
 }
 
 impl AgentConfig {
-    /// 从 TOML 文件加载。
+    /// 从 TOML 文件加载（OnceLock 缓存，同一路径只解析一次）。
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
+        static CACHE: OnceLock<(PathBuf, AgentConfig)> = OnceLock::new();
         let path = path.as_ref();
+        if let Some(cached) = CACHE.get()
+            && cached.0 == path
+        {
+            return Ok(cached.1.clone());
+        }
         let text = std::fs::read_to_string(path)
             .with_context(|| format!("读取配置文件失败: {}", path.display()))?;
         let cfg: AgentConfig =
             toml::from_str(&text).with_context(|| format!("解析 TOML 失败: {}", path.display()))?;
+        CACHE.set((path.to_path_buf(), cfg.clone())).ok();
         Ok(cfg)
     }
 }

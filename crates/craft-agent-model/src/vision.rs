@@ -4,7 +4,7 @@ use anyhow::Result;
 use craft_agent::core::types::Screenshot;
 
 /// 视觉理解客户端接口
-pub trait VisionClient {
+pub trait VisionClient: Send + Sync {
     /// 通用视觉问答：**PNG 编码截图** + 任意文本 prompt → 模型文本回复。
     ///
     /// 这是核心方法；[`describe`] 是其便捷封装（固定"场景描述"prompt）。
@@ -248,7 +248,10 @@ mod tests {
     fn mock_vision_describes_marked_elements() {
         let v = MockVisionClient;
         let out = v
-            .describe(&vec![0u8; 16], "① crafting_table ② furnace")
+            .describe(
+                &std::sync::Arc::new(vec![0u8; 16]),
+                "① crafting_table ② furnace",
+            )
             .unwrap();
         assert!(out.contains("crafting_table"));
     }

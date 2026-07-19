@@ -11,13 +11,18 @@
 use anyhow::{Context, Result, anyhow};
 use serde::{Deserialize, Serialize};
 use std::io::{BufRead, BufReader, Write};
-use std::net::TcpStream;
+use std::net::{SocketAddr, TcpStream};
 use std::time::Duration;
 
 /// 桥接 mod 默认监听端口（避开 GameQuery 的 25566）。
 pub const DEFAULT_PORT: u16 = 25567;
 /// 动作超时：path_to 逐节点走（每节点 2s），长路径可能 60s+，给 90s 余量。
 const READ_TIMEOUT: Duration = Duration::from_secs(90);
+/// TCP 写入超时。
+const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+/// 重连基础退避（指数增长，上限 30s）。
+const BASE_BACKOFF_MS: u64 = 200;
+const MAX_BACKOFF_MS: u64 = 30_000;
 
 /// 物品栏槽位。
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -34,6 +39,13 @@ pub struct TargetedBlock {
     pub id: String,
     /// 玩家到方块中心的距离（米）。
     pub dist: f64,
+    /// 方块世界坐标（整数方块坐标，可直接传给 dig_at / place_at）。
+    #[serde(default)]
+    pub x: i32,
+    #[serde(default)]
+    pub y: i32,
+    #[serde(default)]
+    pub z: i32,
 }
 
 /// 附近实体（生物/掉落物/其他玩家）。
@@ -76,6 +88,9 @@ pub struct NearbyBlock {
     pub y: f64,
     pub z: f64,
     pub dist: f64,
+    /// 相对玩家的高度差（player.y - block.y）。正=方块在脚下，负=在头顶。缺失按 0。
+    #[serde(default)]
+    pub height_diff: f64,
 }
 
 /// mod 返回的游戏状态快照。
@@ -124,6 +139,18 @@ pub struct ModState {
     /// 主手物品 id（如 minecraft:wooden_pickaxe），缺失按 air。
     #[serde(default = "default_held_item")]
     pub held_item: String,
+    /// 最近威胁（敌对生物）聚合。缺失按 None。
+    #[serde(default)]
+    pub nearest_threat: Option<NearestThreat>,
+}
+
+/// 最近威胁聚合（帮 LLM 快速判断危险）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NearestThreat {
+    /// 实体注册表 id，如 `minecraft:zombie`。
+    pub r#type: String,
+    /// 距离（米）。
+    pub dist: f64,
 }
 
 fn default_held_item() -> String {
@@ -179,6 +206,17 @@ pub enum ModCommand {
     /// 从主背包移动物品到快捷栏（mod 侧直接交换槽位）。
     #[serde(rename = "move_to_hotbar")]
     MoveToHotbar { item: String },
+    /// 精确槽位移动物品（支持任意 from/to 槽位 + 可选 count 拆分）。
+    /// slot 索引：0-8=hotbar，9-35=main inventory。
+    /// count=None 时整组移动；count=Some(n) 时拆分 n 个到 to_slot。
+    /// 若 to_slot 已有不同物品，按 MC 规则交换；同物品则叠加。
+    #[serde(rename = "move_slot")]
+    MoveSlot {
+        from_slot: u32,
+        to_slot: u32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        count: Option<u32>,
+    },
     /// 使用主手物品（吃东西/用桶/扔珍珠等，mod 侧 useItem）。
     /// ticks: 长按时长（吃东西 32 tick ≈ 1.6s）。
     #[serde(rename = "use_item")]
@@ -226,6 +264,14 @@ pub enum ModCommand {
     /// 等待指定秒数。
     #[serde(rename = "wait")]
     Wait { seconds: u32 },
+    /// 原地垫方块脱困：在脚下放 blocks 并跳起，重复 count 次。
+    #[serde(rename = "pillar_up")]
+    PillarUp {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        count: Option<u32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        item: Option<String>,
+    },
     /// 列出在线玩家（支持 goToPlayer/attackPlayer 基础）。
     #[serde(rename = "list_players")]
     ListPlayers,
@@ -312,10 +358,88 @@ pub enum ModCommand {
     /// 智能丢弃（moveAway 5m + drop + goBack，参考 mindcraft !discard）。
     #[serde(rename = "discard_smart")]
     DiscardSmart { item: String, num: u32 },
+    // ═══ 第四批命令（附魔 + 维度传送） ═══
+    /// 附魔物品（消耗 XP 等级）。
+    #[serde(rename = "enchant")]
+    Enchant { item: String, levels: u32 },
+    /// 在当前坐标建造下界传送门。
+    #[serde(rename = "build_portal")]
+    BuildPortal,
+    /// 传送到指定维度（the_nether / the_end / overworld）。
+    #[serde(rename = "teleport_to")]
+    TeleportToDimension { dimension: String },
+    // ═══ 调试命令（smoke 测试造环境用，不暴露给 LLM） ═══
+    /// 在玩家前方生成实体/掉落物。entity: zombie/pig/cow/creeper/chicken/item/villager。
+    #[serde(rename = "debug_spawn")]
+    DebugSpawn {
+        entity: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        item: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        num: Option<u32>,
+        /// 仅 villager 用：职业名（farmer/librarian/...），设置后村民带职业+工作站。
+        #[serde(skip_serializing_if = "Option::is_none")]
+        profession: Option<String>,
+    },
+    /// 直接给玩家物品。
+    #[serde(rename = "debug_give")]
+    DebugGive { item: String, num: u32 },
+    /// 扣血。
+    #[serde(rename = "debug_damage")]
+    DebugDamage { amount: f32 },
+    /// 回血。
+    #[serde(rename = "debug_heal")]
+    DebugHeal { amount: f32 },
+    /// 清空背包 + 周围掉落物。
+    #[serde(rename = "debug_clear")]
+    DebugClear,
+    /// 在世界指定坐标放置方块（造 searchForBlock/chest/activate 测试环境）。
+    #[serde(rename = "debug_place")]
+    DebugPlace {
+        block: String,
+        x: i32,
+        y: i32,
+        z: i32,
+    },
+    /// 设置玩家饱食度（造 eat_item 测试环境：<满才能吃）。
+    #[serde(rename = "debug_food")]
+    DebugFood { level: i32 },
+    /// 程序化设置世界时间（night/day/noon/midnight 或 tick 数值），并暂停昼夜循环。
+    #[serde(rename = "debug_time")]
+    DebugTime { value: String },
+    /// 给玩家经验等级（造 enchant 测试环境）。
+    #[serde(rename = "debug_xp")]
+    DebugXp { levels: i32 },
+    /// 把指定真实玩家（按名，排除 bot）传送到 bot 前方，用于 *_player 工具测试。
+    #[serde(rename = "debug_teleport_player")]
+    DebugTeleportPlayer { name: String, dist: Option<f64> },
+    /// 把 bot（被控 fakePlayer）传送到干净地面，避免卡坑/水里导致摆位异常。
+    #[serde(rename = "debug_teleport_bot")]
+    DebugTeleportBot { x: Option<f64>, z: Option<f64> },
+    /// 绝对朝向（对齐 Mineflayer bot.look）。
+    #[serde(rename = "look_abs")]
+    LookAbs { yaw: f32, pitch: f32 },
+    /// 钓鱼（手持 fishing_rod 抛竿/收竿）。
+    #[serde(rename = "fish")]
+    Fish { ticks: u32 },
+    /// 骑乘控制：mount 最近的 rideable / dismount / steer 驾驶。
+    #[serde(rename = "ride")]
+    Ride {
+        action: String,
+        radius: Option<f64>,
+        left: Option<f64>,
+        forward: Option<f64>,
+    },
+    /// 睡觉跳夜（需要附近有床）。
+    #[serde(rename = "sleep")]
+    Sleep { radius: Option<f64> },
+    /// 醒来。
+    #[serde(rename = "wake")]
+    Wake,
 }
 
 /// mod 对动作命令的回执。
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct ModAck {
     /// `ok` / `fail`。
     pub status: String,
@@ -333,21 +457,28 @@ pub struct ModAck {
     /// place_at: 是否放置成功。
     #[serde(default)]
     pub placed: Option<bool>,
+    /// pillar_up: 实际放置的方块数。
+    #[serde(default)]
+    pub pillar_count: Option<u32>,
     /// dig_at: 是否破坏成功。
     #[serde(default)]
     pub broken: Option<bool>,
     /// dig_at: 破坏的方块 ID。
     #[serde(default)]
     pub block_id: Option<String>,
+    /// ride: 骑乘的实体类型。
+    #[serde(default)]
+    pub mounted: Option<String>,
     /// combat: 战斗结果 (killed/retreated/timeout/no_target)。
     #[serde(default)]
     pub result: Option<String>,
     /// combat: 目标实体类型。
     #[serde(default)]
     pub target: Option<String>,
-    /// select_slot: 实际选中的格 (0-8)。
+    /// select_slot: 实际选中的格 (0-8)。equip_item 复用此字段传装备槽名
+    /// (如 "mainhand")，故用 Value 兼容整数与字符串。
     #[serde(default)]
-    pub slot: Option<u32>,
+    pub slot: Option<serde_json::Value>,
     /// select_slot / use_item: 当前手持物品 ID。
     #[serde(default)]
     pub held_item: Option<String>,
@@ -439,71 +570,142 @@ pub struct ModAck {
     pub missing: Option<serde_json::Value>,
 }
 
-/// 本地桥接客户端。
+/// 本地桥接客户端（TCP 长连接复用）。
 pub struct McBridge {
     host: String,
     port: u16,
+    reader: Option<BufReader<TcpStream>>,
 }
 
 impl McBridge {
-    /// 存储连接参数（每次命令建立独立 TCP 连接，避免 BufReader 跨命令缓冲 bug）。
+    /// 建立 TCP 长连接（实际连接延迟到首次命令）。
     pub fn connect(host: &str, port: u16) -> Result<Self> {
-        // 验证可达性
-        let _ = TcpStream::connect((host, port)).with_context(|| {
-            format!("连接 MC 桥接 mod 失败 {host}:{port}（确认 MC 已启动且加载了 craft-agent-bridge，端口 {DEFAULT_PORT}）")
-        })?;
+        let addr: SocketAddr = format!("{}:{}", host, port)
+            .parse()
+            .with_context(|| format!("解析地址失败 {host}:{port}"))?;
+        // 验证可连接
+        let stream = TcpStream::connect_timeout(&addr, Duration::from_secs(5))
+            .with_context(|| format!("连接 MC 桥接 mod 超时 {host}:{port}（5s，确认 MC 已启动且加载了 craft-agent-bridge，端口 {DEFAULT_PORT}）"))?;
+        stream
+            .set_read_timeout(Some(READ_TIMEOUT))
+            .context("设置读超时失败")?;
+        stream
+            .set_write_timeout(Some(WRITE_TIMEOUT))
+            .context("设置写超时失败")?;
         Ok(Self {
             host: host.to_string(),
             port,
+            reader: Some(BufReader::new(stream)),
         })
     }
 
-    /// 重连 mod（MC 崩溃重启后恢复连接）。
+    /// 重连 mod（MC 崩溃重启后恢复连接），含指数退避。
+    /// `max_attempts`: 最多尝试次数（默认 5 次）。
     pub fn reconnect(&mut self) -> Result<()> {
-        // 用一次轻量请求验证连接
-        Self::send_one_shot(&serde_json::json!({"type": "state"}), &self.host, self.port)
-            .map(|_| ())
+        self.reconnect_with_backoff(5)
     }
 
-    /// 检查连接是否存活（发轻量 state 请求，如果失败返回 false）。
+    /// 带指数退避的重连。
+    pub fn reconnect_with_backoff(&mut self, max_attempts: u32) -> Result<()> {
+        let mut delay = BASE_BACKOFF_MS;
+        for attempt in 1..=max_attempts {
+            self.reader = None;
+            if self.connect_stream().is_err() {
+                if attempt == max_attempts {
+                    return Err(anyhow!(
+                        "重连失败（已尝试 {max_attempts} 次, 最后错误: 连接超时）"
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(delay));
+                delay = (delay * 2).min(MAX_BACKOFF_MS);
+                continue;
+            }
+            match self.try_ping() {
+                Ok(()) => return Ok(()),
+                Err(e) => {
+                    if attempt == max_attempts {
+                        return Err(anyhow!("重连失败（已尝试 {max_attempts} 次）: {e}"));
+                    }
+                    std::thread::sleep(Duration::from_millis(delay));
+                    delay = (delay * 2).min(MAX_BACKOFF_MS);
+                }
+            }
+        }
+        Err(anyhow!("重连失败（未进入尝试循环）"))
+    }
+
+    /// 检查连接是否存活。
     pub fn is_alive(&mut self) -> bool {
-        Self::send_one_shot(&serde_json::json!({"type": "state"}), &self.host, self.port).is_ok()
+        self.try_ping().is_ok()
+    }
+
+    /// 心跳 ping。
+    pub fn ping(&mut self) -> Result<()> {
+        self.try_ping()
+    }
+
+    /// 轻量连接检查。
+    fn try_ping(&mut self) -> Result<()> {
+        self.send_one_shot(&serde_json::json!({"type": "state"}))?;
+        Ok(())
     }
 
     /// 查询最新游戏状态快照。
     pub fn query_state(&mut self) -> Result<ModState> {
-        let line =
-            Self::send_one_shot(&serde_json::json!({"type": "state"}), &self.host, self.port)?;
+        let line = self.send_one_shot(&serde_json::json!({"type": "state"}))?;
         serde_json::from_str(&line).with_context(|| format!("解析 mod state 失败: {line}"))
     }
 
     /// 发送动作命令并等待回执。
     pub fn send(&mut self, cmd: ModCommand) -> Result<ModAck> {
-        let line = Self::send_one_shot(&serde_json::to_value(&cmd)?, &self.host, self.port)?;
+        let line = self.send_one_shot(&serde_json::to_value(&cmd)?)?;
         serde_json::from_str(&line).with_context(|| format!("解析 mod ack 失败: {line}"))
     }
 
-    /// 每次独立 TCP 连接发送+接收（避免 BufReader 跨命令缓冲 bug）。
-    fn send_one_shot(v: &serde_json::Value, host: &str, port: u16) -> Result<String> {
-        let mut stream = TcpStream::connect((host, port))
-            .with_context(|| format!("连接 MC 桥接 mod 失败 {host}:{port}"))?;
+    /// TCP 长连接发送+接收：复用连接，用 to_writer 避免中间 String。
+    fn send_one_shot(&mut self, v: &serde_json::Value) -> Result<String> {
+        if self.reader.is_none() {
+            self.connect_stream()?;
+        }
+        let result = self.send_raw(v);
+        if result.is_err() {
+            self.reader = None;
+            if self.connect_stream().is_ok() {
+                return self.send_raw(v);
+            }
+        }
+        result
+    }
+
+    /// 裸发送（无重连逻辑）。
+    fn send_raw(&mut self, v: &serde_json::Value) -> Result<String> {
+        let reader = self.reader.as_mut().unwrap();
+        let stream = reader.get_mut();
+        serde_json::to_writer(&mut *stream, v).context("序列化/发送命令到 mod 失败")?;
+        stream.write_all(b"\n").context("发送换行到 mod 失败")?;
+        stream.flush().context("flush 命令失败")?;
+        let mut buf = String::new();
+        reader
+            .read_line(&mut buf)
+            .context("读取 mod 响应失败（mod 可能已崩溃或卡住）")?;
+        Ok(buf.trim_end().to_string())
+    }
+
+    /// 建立新 TCP 连接，设置超时。
+    fn connect_stream(&mut self) -> Result<()> {
+        let addr: SocketAddr = format!("{}:{}", self.host, self.port)
+            .parse()
+            .with_context(|| format!("解析地址失败 {}:{}", self.host, self.port))?;
+        let stream = TcpStream::connect_timeout(&addr, Duration::from_secs(5))
+            .with_context(|| format!("连接 MC 桥接 mod 超时 {}:{}（5s）", self.host, self.port))?;
         stream
             .set_read_timeout(Some(READ_TIMEOUT))
             .context("设置读超时失败")?;
-        let mut s = serde_json::to_string(v).context("序列化命令失败")?;
-        s.push('\n');
         stream
-            .write_all(s.as_bytes())
-            .context("发送命令到 mod 失败")?;
-        stream.flush().context("flush 命令失败")?;
-        let mut buf = String::new();
-        let n = BufReader::new(&mut stream)
-            .read_line(&mut buf)
-            .context("读取 mod 响应失败（mod 可能已崩溃或卡住）")?;
-        if n == 0 {
-            return Err(anyhow!("mod 连接已关闭（MC 可能已退出）"));
-        }
-        Ok(buf.trim_end().to_string())
+            .set_write_timeout(Some(WRITE_TIMEOUT))
+            .context("设置写超时失败")?;
+        self.reader = Some(BufReader::new(stream));
+        Ok(())
     }
 }
 
@@ -536,7 +738,7 @@ mod tests {
             "yaw":90.0,"pitch":10.0,
             "health":20.0,"hunger":18.0,
             "inventory":[{"slot":0,"id":"minecraft:oak_log","count":4}],
-            "targeted_block":{"id":"minecraft:oak_log","dist":3.2},
+            "targeted_block":{"id":"minecraft:oak_log","dist":3.2,"x":4,"y":64,"z":2},
             "nearby_blocks":[{"id":"minecraft:birch_log","x":5.0,"y":64.0,"z":2.0,"dist":4.0}],
             "entities":[{"type":"minecraft:creeper","x":10.0,"y":64.0,"z":10.0,"dist":12.0,"health":20.0}],
             "time":1200,"dimension":"minecraft:overworld","biome":"minecraft:plains","gamemode":"survival"

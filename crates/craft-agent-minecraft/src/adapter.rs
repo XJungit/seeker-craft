@@ -15,6 +15,8 @@
 use crate::WINDOW_MARGIN;
 use crate::to_screen_coords;
 use anyhow::{Context, Result, anyhow};
+use std::sync::Arc;
+
 use craft_agent::core::adapter::GameAdapter;
 use craft_agent::core::types::{Action, Element, ExecResult, Screenshot, Target, WorldState};
 use craft_agent_model::som::render::render_marks;
@@ -32,7 +34,7 @@ const MINE_MS: u64 = 200;
 
 /// Minecraft 真机适配器。
 pub struct MinecraftAdapter {
-    vision: Box<dyn VisionClient>,
+    vision: Arc<dyn VisionClient>,
     enigo: Enigo,
     /// 全屏模式：capture 改用方法 C（主显示器整屏），无需按窗口标题查找。
     fullscreen: bool,
@@ -50,7 +52,7 @@ impl MinecraftAdapter {
     ///
     /// 会开启进程级 DPI 感知（enigo 鼠标 / xcap 窗口坐标同源走物理像素），
     /// 并创建 enigo（需 Windows 显示会话，否则报错）。
-    pub fn new(vision: Box<dyn VisionClient>) -> Result<Self> {
+    pub fn new(vision: Arc<dyn VisionClient>) -> Result<Self> {
         let _ = enigo::set_dpi_awareness();
         let enigo =
             Enigo::new(&Settings::default()).context("创建 enigo 失败（需 Windows 显示会话）")?;
@@ -66,7 +68,7 @@ impl MinecraftAdapter {
 
     /// 构造【全屏】适配器。capture 走方法 C（主显示器整屏），适配 MC 独占全屏，
     /// 消除窗口化的焦点/暂停/指针捕获问题（P1.5 端到端闭环推荐）。
-    pub fn new_fullscreen(vision: Box<dyn VisionClient>) -> Result<Self> {
+    pub fn new_fullscreen(vision: Arc<dyn VisionClient>) -> Result<Self> {
         let mut a = Self::new(vision)?;
         a.fullscreen = true;
         Ok(a)
@@ -106,9 +108,9 @@ impl MinecraftAdapter {
         image::DynamicImage::ImageRgba8(img)
             .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
             .context("编码截图 PNG 失败")?;
-        Ok(png)
+        Ok(Arc::new(png))
     }
-    pub fn capture_screen(&self) -> anyhow::Result<Vec<u8>> {
+    pub fn capture_screen(&self) -> anyhow::Result<Screenshot> {
         self.capture()
     }
 }
@@ -224,7 +226,7 @@ impl GameAdapter for MinecraftAdapter {
         image::DynamicImage::ImageRgba8(img)
             .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
             .context("编码截图 PNG 失败")?;
-        Ok(png)
+        Ok(Arc::new(png))
     }
 
     fn perceive(&self) -> Result<WorldState> {
@@ -479,11 +481,13 @@ impl GameAdapter for MinecraftAdapter {
 /// 从 VLM 回复中解析目标坐标
 fn parse_vlm_targets(reply: &str, screen_w: u32, screen_h: u32) -> Result<Vec<Target>> {
     let mut targets = Vec::new();
-    let re = regex::Regex::new(r"(?i)(tree|stone|water|animal|ore|grass|dirt|wood|sand|gravel)\b.*?(?:\(|（)\s*(\d+)\s*[,，]\s*(\d+)\s*(?:\)|）)")
-        .context("编译 VLM 检测正则失败")?;
+    static RE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+        regex::Regex::new(r"(?i)(tree|stone|water|animal|ore|grass|dirt|wood|sand|gravel)\b.*?(?:\(|（)\s*(\d+)\s*[,，]\s*(\d+)\s*(?:\)|）)")
+            .expect("编译 VLM 检测正则失败")
+    });
     let (screen_cx, screen_cy) = (screen_w as f32 / 2.0, screen_h as f32 / 2.0);
 
-    for cap in re.captures_iter(reply) {
+    for cap in RE.captures_iter(reply) {
         let raw_label = cap[1].trim().to_string();
         // 处理 "左侧大石头：stone" → 取英文部分，或全取
         let label = raw_label

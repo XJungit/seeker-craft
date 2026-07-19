@@ -11,7 +11,6 @@
   *{box-sizing:border-box;margin:0}
   html,body{height:100%;background:var(--bg);color:var(--text);
     font-family:-apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;font-size:14px}
-  /* ── 控制栏 ── */
   #ctl{border-bottom:1px solid var(--border);background:var(--panel);padding:8px 16px;
     display:flex;align-items:center;gap:10px;flex-wrap:wrap}
   #ctl h1{font-size:15px;font-weight:600;margin-right:12px;white-space:nowrap}
@@ -31,16 +30,14 @@
   .dot.st{background:var(--muted)}
   input.goal{border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:13px;
     background:var(--panel2);color:var(--text);width:220px}
-  /* ── 日志流 ── */
   #log{background:var(--panel2);border-bottom:1px solid var(--border);
     max-height:140px;overflow-y:auto;padding:8px 16px;font-family:Menlo,monospace;font-size:12px}
   #log .line{margin:2px 0;color:var(--muted)}
   #log .line.err{color:var(--err)}
   #log .line.step{color:var(--accent)}
   #log .line.done{color:var(--green);font-weight:600}
-  /* ── 双栏 ── */
   main{display:grid;grid-template-columns:1.05fr 0.95fr;gap:1px;background:var(--border);
-    height:calc(100vh - 193px)}
+    height:calc(100vh - 340px)}
   .col{background:var(--bg);overflow-y:auto;padding:14px}
   .col h2{font-size:12px;text-transform:uppercase;letter-spacing:.08em;
     color:var(--muted);margin:0 0 12px;position:sticky;top:-14px;background:var(--bg);padding:4px 0}
@@ -49,6 +46,8 @@
   .user .label{font-size:11px;color:var(--accent);font-weight:600;margin-bottom:4px}
   .asst{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:10px 12px}
   .asst .say{line-height:1.55;white-space:pre-wrap}
+  .asst .usage{font-size:11px;color:var(--muted);margin-top:6px;padding-top:6px;border-top:1px dashed var(--border);display:flex;gap:12px}
+  .asst .usage span{display:flex;align-items:center;gap:4px}
   details.reason{margin-top:8px;border-top:1px dashed var(--border);padding-top:6px}
   details.reason summary{cursor:pointer;color:var(--muted);font-size:12px}
   details.reason pre{margin:6px 0 0;white-space:pre-wrap;color:#aab4c5;font-size:12.5px;line-height:1.5}
@@ -76,46 +75,114 @@
   .tool .shot{max-width:100%;border-radius:6px;border:1px solid var(--border);cursor:zoom-in;display:block;background:#000}
   .tool .shotcap{color:var(--muted);font-size:11px;margin-top:4px}
   .knowledge{color:var(--yellow);font-size:12px;border:1px dashed var(--yellow);border-radius:8px;padding:6px 10px;opacity:.85}
+  .checkpoint{background:linear-gradient(135deg,#1d3528,#162c22);border:1px solid #3ddc84;border-radius:8px;padding:8px 12px;margin-bottom:10px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .checkpoint .cp-icon{color:var(--green);font-size:16px}
+  .checkpoint .cp-label{font-weight:600;color:var(--green)}
+  .checkpoint .cp-info{font-size:12px;color:var(--muted);display:flex;gap:10px;flex-wrap:wrap}
+  .checkpoint .cp-btn{font-size:11px;padding:3px 10px;margin-left:auto}
+  .branch{background:linear-gradient(135deg,#2d2835,#221c2a);border:1px solid var(--purple);border-radius:8px;padding:8px 12px;margin-bottom:10px;display:flex;align-items:center;gap:8px}
+  .branch .br-icon{color:var(--purple);font-size:14px}
+  .branch .br-text{font-size:12px;color:var(--muted)}
+  .compaction{background:linear-gradient(135deg,#2a2a20,#222216);border:1px dashed var(--orange);border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:12px;color:var(--yellow)}
   .empty{color:var(--muted);text-align:center;margin-top:40px}
   .calls{margin-top:8px;display:flex;flex-direction:column;gap:6px}
   .call{background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:6px 10px}
   .call .cname{font-family:Menlo,monospace;font-weight:600;color:var(--accent);font-size:13px}
   .call .cargs{margin:4px 0 0;white-space:pre-wrap;color:var(--muted);font-size:12px;font-family:Menlo,monospace}
+  #stTools{min-width:30px}
+  #totalTokens{font-size:11px}
+  #toolStats{width:100%;margin-top:8px;display:flex;flex-wrap:wrap;gap:4px}
+  #toolStats .ts{font-size:11px;padding:2px 8px;border-radius:4px;background:var(--panel2);border:1px solid var(--border)}
+  #toolStats .ts b{color:var(--accent)}
+  /* 游戏状态面板 */
+  #game-state{border-bottom:1px solid var(--border);background:var(--panel);padding:8px 16px;display:flex;gap:16px;flex-wrap:wrap;align-items:stretch;font-size:12px;min-height:100px}
+  .gs-section{display:flex;flex-direction:column;gap:4px}
+  .gs-section label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:600}
+  .gs-bar-row{display:flex;align-items:center;gap:8px}
+  .gs-bar{width:100px;height:10px;background:var(--panel2);border-radius:5px;overflow:hidden;position:relative}
+  .gs-bar-fill{height:100%;border-radius:5px;transition:width .5s ease}
+  .gs-bar-fill.health{background:linear-gradient(90deg,#e74c3c,#3ddc84)}
+  .gs-bar-fill.hunger{background:linear-gradient(90deg,#e67e22,#f1c40f)}
+  .gs-bar-fill.xp{background:linear-gradient(90deg,#2ecc71,#1abc9c)}
+  .gs-bar-text{position:absolute;right:4px;top:50%;transform:translateY(-50%);font-size:9px;color:#fff;font-weight:700;text-shadow:0 0 3px #000}
+  .gs-info{display:flex;gap:8px;flex-wrap:wrap}
+  .gs-info span{color:var(--muted)}
+  .gs-info b{color:var(--text)}
+  /* 背包网格 */
+  .gs-inv{display:flex;flex-direction:column;gap:2px}
+  .gs-inv-row{display:flex;gap:2px}
+  .gs-slot{width:32px;height:32px;background:var(--panel2);border:1px solid var(--border);border-radius:4px;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:9px;color:var(--muted);position:relative;overflow:hidden}
+  .gs-slot.has{color:var(--text);border-color:var(--accent)}
+  .gs-slot .count{font-size:8px;color:var(--muted);position:absolute;bottom:1px;right:2px}
+  .gs-slot .id{font-size:6px;color:var(--muted);position:absolute;top:1px;left:2px;overflow:hidden;text-overflow:ellipsis;max-width:28px;white-space:nowrap}
+  .gs-slot.hotbar{border-color:var(--green)}
+  .gs-slot.selected{border-color:var(--accent);background:var(--panel2);box-shadow:0 0 6px var(--accent)}
+  .gs-slot.empty{opacity:.4}
+  .gs-effect{display:inline-block;padding:2px 6px;border-radius:4px;background:var(--panel2);border:1px solid var(--border);font-size:10px;color:var(--muted)}
 </style>
 </head>
 <body>
-<!-- ── 控制栏 ── -->
 <div id="ctl">
-  <span style="font-weight:600;margin-right:8px">🎮 Agent</span>
+  <span style="font-weight:600;margin-right:8px">Craft-Agent</span>
   <input class="goal" id="goalInput" placeholder="目标（如：收集木头做工作台）" />
-  <button class="btn" style="background:var(--accent);border-color:var(--accent);color:#fff" onclick="doGoal()" title="运行时动态修改目标">📋 发送目标</button>
-  <span class="badge">步数限制 <input type="number" id="stepInput" value="0" min="0" max="9999" style="width:50px;background:transparent;border:0;color:var(--text);font-size:12px;text-align:center" title="0=无限循环" /><b>（0=无限）</b></span>
-  <button class="btn start" id="btnStart" onclick="doStart()" title="启动 Agent 循环">▶ 启动</button>
-  <button class="btn pause" id="btnPause" onclick="doPause()" disabled title="暂停/恢复">⏸ 暂停</button>
-  <button class="btn stop" id="btnStop" onclick="doStop()" disabled title="停止运行">⏹ 停止</button>
+  <button class="btn" style="background:var(--accent);border-color:var(--accent);color:#fff" onclick="doGoal()">发送目标</button>
+  <span class="badge">步数 <input type="number" id="stepInput" value="0" min="0" max="9999" style="width:50px;background:transparent;border:0;color:var(--text);font-size:12px;text-align:center" title="0=无限循环" /><b>（0=无限）</b></span>
+  <button class="btn start" id="btnStart" onclick="doStart()">启动</button>
+  <button class="btn pause" id="btnPause" onclick="doPause()" disabled>暂停</button>
+  <button class="btn stop" id="btnStop" onclick="doStop()" disabled>停止</button>
   <span class="badge">状态 <b id="stStatus">就绪</b> <span class="dot st" id="dotStatus"></span></span>
-  <span class="badge" style="margin-left:auto">轮次 <b id="stTurns">0</b></span>
-  <span class="badge">工具调用 <b id="stTools">0</b></span>
+  <span class="badge">轮次 <b id="stTurns">0</b></span>
+  <span class="badge">工具 <b id="stTools">0</b></span>
+  <span class="badge" id="totalTokens" style="font-family:Menlo,monospace">▲0 ▼0</span>
 </div>
 
-<!-- ── 实时日志 ── -->
-<div id="log"><div class="line" style="color:var(--muted)">等待启动…（输入目标，点击 ▶ 启动）</div></div>
+<div id="log"><div class="line" style="color:var(--muted)">等待启动…（输入目标，点击启动）</div></div>
 
-<!-- ── 仪表盘双栏 ── -->
+<div id="game-state">
+  <div class="gs-section" id="gs-vitals">
+    <label>状态</label>
+    <div class="gs-bar-row"><span>❤</span><div class="gs-bar"><div class="gs-bar-fill health" style="width:0%"></div><span class="gs-bar-text">0/20</span></div></div>
+    <div class="gs-bar-row"><span>🍖</span><div class="gs-bar"><div class="gs-bar-fill hunger" style="width:0%"></div><span class="gs-bar-text">0/20</span></div></div>
+    <div class="gs-bar-row"><span>✦</span><div class="gs-bar"><div class="gs-bar-fill xp" style="width:0%"></div><span class="gs-bar-text">Lv.0</span></div></div>
+  </div>
+  <div class="gs-section" id="gs-location">
+    <label>位置</label>
+    <div class="gs-info">
+      <span>坐标 <b id="gs-pos">-</b></span>
+      <span>维度 <b id="gs-dim">-</b></span>
+      <span>生物群系 <b id="gs-biome">-</b></span>
+      <span>模式 <b id="gs-gm">-</b></span>
+      <span>朝向 <b id="gs-yaw">-</b></span>
+      <span>俯仰 <b id="gs-pitch">-</b></span>
+    </div>
+    <div class="gs-info">
+      <span>光照 <b id="gs-light">-</b></span>
+      <span>天气 <b id="gs-weather">-</b></span>
+      <span>时间 <b id="gs-time">-</b></span>
+      <span id="gs-effects"></span>
+    </div>
+  </div>
+  <div class="gs-section" id="gs-hotbar">
+    <label>快捷栏</label>
+    <div class="gs-inv" id="gs-hotbar-grid"></div>
+  </div>
+  <div class="gs-section" id="gs-inventory">
+    <label>背包</label>
+    <div class="gs-inv" id="gs-inv-grid"></div>
+  </div>
+</div>
+
 <main>
   <section class="col"><h2>对话历史</h2><div id="chat"></div></section>
   <section class="col"><h2>工具调用与结果</h2><div id="tools"></div></section>
 </main>
 
 <script>
-const TOOLS = {perceive:"perceive",look:"look",mine:"mine",press:"press",visual_perceive:"visual_perceive",manage_knowledge:"manage_knowledge",collect:"mine",craft:"press",place:"press",equip:"press",use_item:"press",attack:"mine",combat:"mine",move_to:"look",look_at:"look",search_block:"perceive",move_away:"look",dig_down:"mine",consume:"press",build:"press",blueprints:"perceive"};
+const TOOLS = {perceive:"perceive",look:"look",mine:"mine",press:"press",visual_perceive:"visual_perceive",manage_knowledge:"manage_knowledge",collect:"collect",craft:"craft",place:"place",equip:"equip",use_item:"use_item",attack:"attack",combat:"combat",move_to:"move_to",look_at:"look_at",search_block:"search_block",move_away:"move_away",dig_down:"dig_down",consume:"consume",build:"build",blueprints:"blueprints"};
 function esc(s){return String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
 function shortArgs(a){const s=typeof a=="string"?a:JSON.stringify(a);return s.length>120?s.slice(0,120)+" …":s}
 
-// ── 控制按钮 ──
 async function doStart(){
-  const goal=document.getElementById("goalInput").value||"收集木头做工作台";
-  const max=parseInt(document.getElementById("stepInput").value)||40;
   const r=await fetch("/api/start",{method:"POST"});
   const j=await r.json();
   if(!j.ok) alert("启动失败: "+(j.error||"未知错误"));
@@ -125,26 +192,21 @@ async function doPause(){await fetch("/api/pause",{method:"POST"})}
 async function doGoal(){
   const goal=document.getElementById("goalInput").value;
   if(!goal) return alert("请输入目标");
-  const r=await fetch("/api/goal",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({goal})});
-  const j=await r.json();
-  if(!j.ok) alert("发送失败: "+(j.error||""));
+  await fetch("/api/goal",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({goal})});
 }
 
-// ── 按钮状态同步 ──
 setInterval(async()=>{
   try{const r=await fetch("/api/status");const s=await r.json();
     const running=s.running,paused=s.paused;
     const start=document.getElementById("btnStart"),pause=document.getElementById("btnPause"),stop=document.getElementById("btnStop");
     start.disabled=running;stop.disabled=!running;pause.disabled=!running;
-    pause.textContent=paused?"▶ 继续":"⏸ 暂停";
-    const dot=document.getElementById("dotStatus");
+    pause.textContent=paused?"继续":"暂停";
     document.getElementById("stStatus").textContent=running?(paused?"暂停中":"运行中"):"就绪";
-    dot.className="dot "+(running?(paused?"pa":"go"):"st");
+    document.getElementById("dotStatus").className="dot "+(running?(paused?"pa":"go"):"st");
     document.getElementById("stTurns").textContent=s.step??0;
   }catch(e){}
 },500);
 
-// ── SSE 实时日志 ──
 const logEl=document.getElementById("log");
 function addLog(text,cls){
   const d=document.createElement("div");d.className="line"+(cls?" "+cls:"");d.textContent=text;
@@ -155,38 +217,45 @@ const evtSource=new EventSource("/api/events");
 evtSource.onmessage=function(e){
   try{const d=JSON.parse(e.data);
     if(d.kind==="log") addLog(d.text);
-    else if(d.kind==="step") addLog(`📍 第${d.step}步: ${d.action}`,"step");
-    else if(d.kind==="done") addLog(`✅ ${d.reason}`,"done");
-    else if(d.kind==="error") addLog(`❌ ${d.message}`,"err");
+    else if(d.kind==="step") addLog(`第${d.step}步: ${d.action}`,"step");
+    else if(d.kind==="done") addLog(d.reason,"done");
+    else if(d.kind==="error") addLog(d.message,"err");
   }catch(_){}
 };
 
-// ── 仪表盘轮询（增量渲染，不闪烁） ──
 let lastEventCount = 0;
 function render(data){
   document.getElementById("stTools").textContent=data.tool_total??0;
+  const tot = document.getElementById("totalTokens");
+  tot.innerHTML = `<span style="color:var(--accent)">▲${data.total_input_tokens||0}</span> <span style="color:var(--green)">▼${data.total_output_tokens||0}</span>`;
+
   const events=data.events||[];
   if(!events.length && lastEventCount===0){
-    document.getElementById("chat").innerHTML='<div class="empty">暂无数据</div>';return
+    document.getElementById("chat").innerHTML='<div class="empty">暂无数据</div>';
+    document.getElementById("tools").innerHTML='<div class="empty">暂无数据</div>';
+    lastEventCount=0;
+    return
   }
-  // 只渲染新增的事件，不清空已有的 DOM
   const chat=document.getElementById("chat"),tools=document.getElementById("tools");
   for(let i=lastEventCount;i<events.length;i++){
     const e=events[i];
     if(e.kind==="user"){
       const d=document.createElement("div");d.className="ev user";
-      d.innerHTML=`<div class="label">🎯 目标</div><div>${esc(e.content)}</div>`;chat.appendChild(d)
+      d.innerHTML=`<div class="label">目标</div><div>${esc(e.content)}</div>`;chat.appendChild(d)
     }else if(e.kind==="assistant"){
       const d=document.createElement("div");d.className="ev asst";
       let h="";
       if(e.content)h+=`<div class="say">${esc(e.content)}</div>`;
-      if(e.reasoning)h+=`<details class="reason" open><summary>🧠 推理链</summary><pre>${esc(e.reasoning)}</pre></details>`;
+      if(e.reasoning)h+=`<details class="reason" open><summary>推理链</summary><pre>${esc(e.reasoning)}</pre></details>`;
       if(e.tool_calls&&e.tool_calls.length){
         h+='<div class="calls">';
         for(const c of e.tool_calls){
-          h+=`<div class="call"><span class="cname">🔧 ${esc(c.name)}</span><pre class="cargs">${esc(shortArgs(c.args))}</pre></div>`;
+          h+=`<div class="call"><span class="cname">${esc(c.name)}</span><pre class="cargs">${esc(shortArgs(c.args))}</pre></div>`;
         }
         h+='</div>';
+      }
+      if(e.usage){
+        h+=`<div class="usage"><span>▲${e.usage.input_tokens||0}</span><span>▼${e.usage.output_tokens||0}</span></div>`;
       }
       if(!e.content&&!e.reasoning&&!(e.tool_calls&&e.tool_calls.length))h+='<div class="say" style="color:var(--muted)">（空回复）</div>';
       d.innerHTML=h;chat.appendChild(d)
@@ -197,17 +266,198 @@ function render(data){
       d.innerHTML=`<div class="head"><span class="name">${esc(e.name)}</span>`+
         (e.is_error?`<span class="err-tag">出错</span>`:"")+
         `</div>`+(e.content?`<details class="res" open><summary>结果（${len}字符）</summary><pre>${esc(e.content)}</pre></details>`:"")+
-        (e.shot?`<a class="shotlink" href="/api/shot/${encodeURIComponent(e.shot)}" target="_blank"><img class="shot" src="/api/shot/${encodeURIComponent(e.shot)}" loading="lazy" /></a><div class="shotcap">📷 ${esc(e.shot)}</div>`:"");
+        (e.shot?`<a class="shotlink" href="/api/shot/${encodeURIComponent(e.shot)}" target="_blank"><img class="shot" src="/api/shot/${encodeURIComponent(e.shot)}" loading="lazy" /></a><div class="shotcap">${esc(e.shot)}</div>`:"");
       tools.appendChild(d)
+    }else if(e.kind==="checkpoint"){
+      const d=document.createElement("div");d.className="ev checkpoint";
+      d.innerHTML=`<span class="cp-icon">保存点</span><span class="cp-label">${esc(e.label)}</span>`+
+        (e.turn!==undefined?`<span class="cp-info">第 ${e.turn} 轮</span>`:"")+
+        (e.input_tokens!==undefined?`<span class="cp-info">▲${e.input_tokens} ▼${e.output_tokens}</span>`:"")+
+        (e.messages!==undefined?`<span class="cp-info">${e.messages} 条消息</span>`:"");
+      chat.appendChild(d)
+    }else if(e.kind==="branch"){
+      const d=document.createElement("div");d.className="ev branch";
+      d.innerHTML=`<span class="br-icon">分叉</span><span class="br-text">从 ${esc(e.from)} 分叉: ${esc(e.summary)}</span>`;
+      chat.appendChild(d)
+    }else if(e.kind==="compaction"){
+      const d=document.createElement("div");d.className="ev compaction";
+      d.textContent=`压缩: ${e.summary||''}（压缩前 ${e.tokens_before||0} tokens）`;
+      chat.appendChild(d)
     }else if(e.kind==="knowledge"){
       const d=document.createElement("div");d.className="ev knowledge";
-      d.textContent="📚 知识库变更："+(e.action||"");tools.appendChild(d)
+      d.textContent="知识库变更："+(e.action||"");tools.appendChild(d)
     }
   }
   lastEventCount=events.length;
+
+  if(data.by_tool){
+    const ts=document.getElementById("toolStats");
+    if(!ts){
+      const s=document.createElement("div");s.id="toolStats";
+      tools.parentNode.insertBefore(s,tools);
+    }
+    const el=document.getElementById("toolStats")||tools.parentNode.querySelector("#toolStats");
+    if(el){
+      el.innerHTML=Object.entries(data.by_tool).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<span class="ts">${esc(k)} <b>${v}</b></span>`).join("");
+    }
+  }
 }
 async function poll(){try{const r=await fetch("/api/session",{cache:"no-store"});if(r.ok)render(await r.json())}catch(_){}setTimeout(poll,1000)}
 poll();
+
+// 游戏状态面板
+const INV_ITEM_COLORS={
+  "minecraft:air":"transparent",
+  "dirt":"#8B6B4D","stone":"#7F7F7F","cobblestone":"#7A7A7A","bedrock":"#3C3C3C",
+  "oak_log":"#6B4226","oak_planks":"#B0783E","dark_oak_log":"#3C2415","spruce_log":"#4A3520","birch_log":"#C4B48A",
+  "iron_ore":"#D4AF37","coal_ore":"#2C2C2C","diamond_ore":"#4AE0E0",
+  "iron_ingot":"#D4AF37","gold_ingot":"#FFD700","diamond":"#4AE0E0",
+  "crafting_table":"#8B4513","furnace":"#5C5C5C","chest":"#C4792A",
+  "cooked_beef":"#B5651D","bread":"#D4A047","apple":"#FF2D2D",
+  "shield":"#C0C0C0",
+  "iron_sword":"#D4D4D4","iron_pickaxe":"#D4D4D4","iron_axe":"#D4D4D4","iron_shovel":"#D4D4D4","iron_hoe":"#D4D4D4",
+  "diamond_sword":"#4AE0E0","diamond_pickaxe":"#4AE0E0","diamond_axe":"#4AE0E0","diamond_shovel":"#4AE0E0","diamond_hoe":"#4AE0E0",
+  "wooden_pickaxe":"#B0783E","wooden_axe":"#B0783E","wooden_shovel":"#B0783E","wooden_sword":"#B0783E",
+  "stone_pickaxe":"#7F7F7F","stone_axe":"#7F7F7F","stone_shovel":"#7F7F7F","stone_sword":"#7F7F7F",
+  "wooden_helmet":"#B0783E","wooden_chestplate":"#B0783E","wooden_leggings":"#B0783E","wooden_boots":"#B0783E",
+  "iron_helmet":"#D4D4D4","iron_chestplate":"#D4D4D4","iron_leggings":"#D4D4D4","iron_boots":"#D4D4D4",
+  "diamond_helmet":"#4AE0E0","diamond_chestplate":"#4AE0E0","diamond_leggings":"#4AE0E0","diamond_boots":"#4AE0E0",
+  "torch":"#FFB347","stick":"#B0783E","flint_and_steel":"#7F7F7F",
+  "feather":"#F5F5DC","string":"#C0C0C0","bone":"#E8E0C8",
+  "arrow":"#B5651D","bow":"#8B6B4D",
+  "water_bucket":"#4A90D9","lava_bucket":"#FF4500","bucket":"#7F7F7F",
+  "glass":"#ADD8E6","sand":"#E8D5A0","gravel":"#8C8C8C","obsidian":"#1C0954",
+};
+function invColor(id){
+  if(!id)return"transparent";
+  const base=id.split(":")[1]||id;
+  return INV_ITEM_COLORS[base]||INV_ITEM_COLORS[id]||"#3A3A4A";
+}
+function invEmoji(id){
+  if(!id)return"";
+  const base=id.split(":")[1]||id;
+  const map={
+    "iron_sword":"🗡","diamond_sword":"🗡","stone_sword":"🗡","wooden_sword":"🗡",
+    "iron_pickaxe":"⛏","diamond_pickaxe":"⛏","stone_pickaxe":"⛏","wooden_pickaxe":"⛏",
+    "iron_axe":"🪓","diamond_axe":"🪓","stone_axe":"🪓","wooden_axe":"🪓",
+    "iron_shovel":"🫴","diamond_shovel":"🫴",
+    "shield":"🛡",
+    "oak_log":"🪵","spruce_log":"🪵","birch_log":"🪵","dark_oak_log":"🪵",
+    "oak_planks":"🟫","spruce_planks":"🟫","birch_planks":"🟫",
+    "crafting_table":"🔨","furnace":"🔥","chest":"📦",
+    "cobblestone":"🪨","stone":"🪨","dirt":"🟤","sand":"🟡","gravel":"🔘","bedrock":"⬛",
+    "iron_ore":"⛏","coal_ore":"⛏","diamond_ore":"💎",
+    "iron_ingot":"🔩","gold_ingot":"🥇","diamond":"💎",
+    "cooked_beef":"🥩","bread":"🍞","apple":"🍎",
+    "torch":"🔥","flint_and_steel":"🔪","stick":"🥢",
+    "bow":"🏹","arrow":"➡",
+    "water_bucket":"💧","lava_bucket":"🌋","bucket":"🪣",
+    "glass":"🪟",
+    "obsidian":"⬛",
+    "iron_helmet":"🪖","diamond_helmet":"🪖",
+    "iron_chestplate":"👕","diamond_chestplate":"👕",
+    "feather":"🪶","string":"🧵","bone":"🦴",
+  };
+  return map[base]||map[id]||"";
+}
+function renderInvCell(slot,isHotbar,selectedSlot){
+  const div=document.createElement("div");
+  const cls=["gs-slot"];
+  if(isHotbar)cls.push("hotbar");
+  if(slot.slot===selectedSlot)cls.push("selected");
+  else if(!slot.id||slot.id==="minecraft:air"||slot.id.endsWith("air"))cls.push("empty");
+  else cls.push("has");
+  div.className=cls.join(" ");
+  if(slot.id&&slot.id!=="minecraft:air"&&!slot.id.endsWith("air")){
+    const em=invEmoji(slot.id);
+    div.innerHTML=em?`<span style="font-size:14px">${em}</span>`:`<span style="font-size:10px">${slot.id.split(":")[1]?.slice(0,4)||"?"}</span>`;
+    if(slot.count>1)div.innerHTML+=`<span class="count">${slot.count}</span>`;
+    div.style.borderColor=invColor(slot.id);
+  }else{
+    div.textContent="";
+  }
+  return div;
+}
+function buildInvGrid(inv,selectedSlot){
+  const hotbarEl=document.getElementById("gs-hotbar-grid");
+  const invEl=document.getElementById("gs-inv-grid");
+  hotbarEl.innerHTML="";invEl.innerHTML="";
+  const hotbarSlots=inv?.filter(s=>s.slot<9)||[];
+  const invSlots=inv?.filter(s=>s.slot>=9)||[];
+  // 快捷栏：9格一行
+  const hRow=document.createElement("div");hRow.className="gs-inv-row";
+  for(let i=0;i<9;i++){
+    const slot=hotbarSlots.find(s=>s.slot===i)||{slot:i,id:"",count:0};
+    hRow.appendChild(renderInvCell(slot,true,selectedSlot));
+  }
+  hotbarEl.appendChild(hRow);
+  // 背包：9列，3行
+  for(let row=0;row<3;row++){
+    const rDiv=document.createElement("div");rDiv.className="gs-inv-row";
+    for(let col=0;col<9;col++){
+      const idx=9+row*9+col;
+      const slot=invSlots.find(s=>s.slot===idx)||{slot:idx,id:"",count:0};
+      rDiv.appendChild(renderInvCell(slot,false,selectedSlot));
+    }
+    invEl.appendChild(rDiv);
+  }
+}
+function formatPos(pos){
+  if(!pos)return"-";
+  if(!Array.isArray(pos))return"-";
+  try{return pos.map(v=>+v.toFixed(1)).join(", ")}catch(e){return"-"}
+}
+async function pollGameState(){
+  try{
+    const r=await fetch("/api/game-state",{cache:"no-store"});
+    if(!r.ok)return;
+    const st=await r.json();
+    if(!st||st.status==="not_connected"){
+      document.getElementById("gs-pos").textContent="未连接";
+      return;
+    }
+    // 血量
+    const hp=st.health??0;
+    document.querySelector("#gs-vitals .gs-bar-fill.health").style.width=Math.min(100,hp/20*100)+"%";
+    document.querySelector("#gs-vitals .gs-bar-fill.health").parentNode.querySelector(".gs-bar-text").textContent=hp.toFixed(1)+"/20";
+    // 饥饿
+    const hg=st.hunger??0;
+    document.querySelector("#gs-vitals .gs-bar-fill.hunger").style.width=Math.min(100,hg/20*100)+"%";
+    document.querySelector("#gs-vitals .gs-bar-fill.hunger").parentNode.querySelector(".gs-bar-text").textContent=hg.toFixed(1)+"/20";
+    // 经验
+    const xpLv=st.experience_level??0;
+    const xpPct=st.experience_progress??0;
+    document.querySelector("#gs-vitals .gs-bar-fill.xp").style.width=Math.min(100,xpPct*100)+"%";
+    document.querySelector("#gs-vitals .gs-bar-fill.xp").parentNode.querySelector(".gs-bar-text").textContent="Lv."+xpLv;
+    // 位置
+    document.getElementById("gs-pos").textContent=formatPos(st.position);
+    document.getElementById("gs-yaw").textContent=(st.yaw??0).toFixed(1)+"°";
+    document.getElementById("gs-pitch").textContent=(st.pitch??0).toFixed(1)+"°";
+    document.getElementById("gs-dim").textContent=st.dimension?(st.dimension.includes(":")?st.dimension.split(":").pop()?.replace(/[\]\)]/g,""):st.dimension):"-";
+    document.getElementById("gs-biome").textContent=st.biome?.split(".").pop()||"-";
+    document.getElementById("gs-gm").textContent=st.gamemode||"-";
+    // 环境
+    const sl=st.sky_light??0,bl=st.block_light??0;
+    document.getElementById("gs-light").textContent="天"+sl+"/方"+bl;
+    const rain=st.raining?"🌧":"☀";
+    const thunder=st.thundering?"⚡":"";
+    document.getElementById("gs-weather").textContent=rain+thunder||"-";
+    document.getElementById("gs-time").textContent=st.time!=null?Math.floor(st.time/24000)+"d":"-";
+    // 效果
+    const effEl=document.getElementById("gs-effects");
+    if(st.effects?.length){
+      effEl.innerHTML="效果: "+st.effects.map(e=>`<span class="gs-effect">${e.id.split(":").pop()} ${e.amplifier+1}</span>`).join(" ");
+    }else{
+      effEl.innerHTML="";
+    }
+    // 背包
+    if(st.inventory){
+      buildInvGrid(st.inventory,st.held_item&&st.held_item!=="minecraft:air"?st.selected_slot??0:null);
+    }
+  }catch(_){}
+  setTimeout(pollGameState,2000);
+}
+pollGameState();
 </script>
 </body>
 </html>

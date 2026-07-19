@@ -49,12 +49,23 @@ pub fn extract_json(text: &str) -> Result<Value> {
     if let Ok(v) = serde_json::from_str::<Value>(t) {
         return Ok(v);
     }
-    // 取第一个 { 到第一个 } 之间的内容（多个 JSON | 分隔时只取第一个）
-    if let Some(s) = t.find('{')
-        && let Some(e) = t[s..].find('}')
-        && let Ok(v) = serde_json::from_str::<Value>(&t[s..=s + e])
-    {
-        return Ok(v);
+    // 取第一个 { 到匹配的 } 之间的内容（支持嵌套）
+    if let Some(s) = t.find('{') {
+        let mut depth = 0i32;
+        for (i, c) in t[s..].char_indices() {
+            match c {
+                '{' => depth += 1,
+                '}' => depth -= 1,
+                _ => {}
+            }
+            if depth == 0 {
+                let e = s + i;
+                if let Ok(v) = serde_json::from_str::<Value>(&t[s..=e]) {
+                    return Ok(v);
+                }
+                break;
+            }
+        }
     }
     serde_json::from_str::<Value>(t)
         .map_err(|e| anyhow!("无法从 LLM 输出解析 JSON: {e}；原文: {text}"))
@@ -415,7 +426,7 @@ mod tests {
                 offset_from_crosshair: (12, -3),
             }],
             self_hint: "血量满，快捷栏有斧头".into(),
-            screenshot: vec![],
+            screenshot: std::sync::Arc::new(vec![]),
         }
     }
 

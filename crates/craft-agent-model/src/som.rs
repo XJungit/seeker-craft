@@ -31,7 +31,11 @@ pub fn parse_mark_id(resp: &str) -> Option<u32> {
         }
     }
     // 再匹配普通阿拉伯数字（取第一个连续数字串）
-    let digits: String = resp.chars().filter(|c| c.is_ascii_digit()).collect();
+    let digits: String = resp
+        .chars()
+        .skip_while(|c| !c.is_ascii_digit())
+        .take_while(|c| c.is_ascii_digit())
+        .collect();
     digits.parse::<u32>().ok()
 }
 
@@ -199,7 +203,7 @@ mod tests {
     fn select_uses_vlm_and_parses_id() {
         // MockVisionClient::chat 返回含 "2"
         let v = MockVisionClient;
-        let id = select_mark_id(&v, &vec![0u8; 16], "砍木头").unwrap();
+        let id = select_mark_id(&v, &std::sync::Arc::new(vec![0u8; 16]), "砍木头").unwrap();
         assert_eq!(id, 2);
     }
 

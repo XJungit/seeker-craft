@@ -7,6 +7,10 @@ JSON 行协议驱动它——**不抢鼠标键盘、可后台运行**，根治�
 
 这是 B 全量 mod 控制方案：感知和动作都走 mod，enigo 的 OS 级键鼠模拟被整个移除（enigo 路径仍保留作 `real` 特性，互不影响）。
 
+> ⚠️ 构建环境已升级。当前使用 Minecraft **26.2** + **JDK 25**。
+> 本章节保留原始 1.21.11 + JDK 21 文档以供参考。
+> 最新版本要求见 [`mods/craft-agent-bridge/README.md`](../../mods/craft-agent-bridge/README.md)。
+
 ## 一、前置条件（你的机器，Java 21）
 
 - Minecraft **1.21.11**（Java 版）

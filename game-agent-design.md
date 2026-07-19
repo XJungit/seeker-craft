@@ -1,7 +1,12 @@
 # 通用游戏 Agent 框架 — 方案设计（纯视觉路线）
 
-> 版本：v0.3 ｜ 日期：2026-07-12 ｜ 状态：方案设计（待确认后进入 Phase 0）
-> 首落场景：Minecraft ｜ 路线：**VLM 识别 → LLM 决策 → 键鼠控制**（纯视觉，不碰游戏 API/内存）
+> ⚠️ **本文档描述的是早期纯视觉路线设计（截图+VLM+键鼠）。**
+> 项目当前路线已转向 **mod-bridge 优先**（Fabric mod TCP 桥接，结构化感知+精确执行），
+> `real` 纯视觉路径保留作备用。具体实现请参考 [`ARCHITECTURE.md`](./ARCHITECTURE.md) 和 [`docs/tutorials/`](./docs/tutorials/)。
+> 本文保留作为历史设计参考。
+
+> 版本：v0.4 ｜ 日期：2026-07-16 ｜ 状态：⚠️ **部分过时，保留作历史参考**
+> 首落场景：Minecraft ｜ 路线：**mod-bridge 结构化控制 + 可选 VLM 视觉补充**，同时保留 real 真机路径
 > **主语言：Rust**（ML 推理走 ONNX Runtime；VLM/LLM 走 HTTP API）｜ 前瞻预留：世界模型 / 具身智能
 
 ---
@@ -62,7 +67,7 @@
     1. `enigo::set_dpi_awareness()` 后，**xcap 窗口坐标 = 物理像素**，enigo `Abs` 绝对坐标也走物理像素 → 二者同源，**直接用、不乘 scale_factor**（曾误 ×1.5 导致裁切/定位整体偏移，已废弃）。
     2. **MC 窗口化下，OS 光标移出 MC 窗口 → MC 自动暂停弹菜单**。所有点击目标必须钳制在窗口内、留 ~20px 安全边距，绝不主动移出；MC 主动暂停用 ESC 键而非移出光标。
 
-## 0.7 工程结构（Cargo workspace · 2026-07-13 结构复审）
+## 0.7 工程结构（Cargo workspace · 2026-07-16 结构复审）
 
 单一 workspace，根 `Cargo.toml` 用 `[workspace]` + `[workspace.dependencies]` 统一管理：
 
@@ -74,8 +79,13 @@ Craft-Agent/
 ├── config/agent.toml          # 多后端配置（VLM/LLM，一键切 active）
 ├── crates/
 │   ├── craft-agent/           # 核心：通用抽象（types / GameAdapter / Agent 主循环）
-│   └── craft-agent-model/     # 模型客户端层：vision(VLM) + decision(LLM)，OpenAI 兼容多后端
-└── phase0_verify/enigo_mc_test/  # Phase 0 真机验证脚手架（截图/键鼠），纳入 workspace
+│   ├── craft-agent-model/     # 模型客户端层：vision(VLM) + decision(LLM)，OpenAI 兼容多后端
+│   ├── craft-agent-minecraft/# MC 适配器：mod-bridge + real 双路径工具集
+│   └── craft-agent-viewer/    # 运行可视化（session JSONL -> Web 仪表盘）
+├── mods/
+│   ├── craft-agent-bridge/           # MC Fabric mod（Java）
+│   └── craft-agent-bridge-1.21/      # MC 1.21 兼容分支
+└── references/                # 参考项目源码（不参与主工程构建）
 ```
 
 - **命名**：`craft-agent-model` 原名 `craft-agent-vlm`，因 `decision.rs`(LLM) 加入后名不副实而改名；命名应涵盖当前全部职责，而非最初单一职责。

@@ -10,7 +10,7 @@
 
 #[cfg(feature = "real")]
 pub mod adapter;
-#[cfg(feature = "real")]
+#[cfg(all(feature = "real", not(feature = "mod-bridge")))]
 pub mod tools;
 
 #[cfg(feature = "mod-bridge")]
@@ -24,8 +24,13 @@ pub mod bridge;
 pub mod survival;
 #[cfg(feature = "mod-bridge")]
 pub mod survival_decisions;
+#[cfg(any(feature = "mod-bridge", feature = "real"))]
+pub mod tool_args;
 #[cfg(feature = "mod-bridge")]
 pub mod tools_mod;
+
+#[cfg(any(feature = "mod-bridge", feature = "real"))]
+pub mod builder;
 
 /// 点击/移动目标与窗口边缘的安全间距（像素）。MC 光标移出窗口会自暂停，所有坐标必须内缩。
 pub const WINDOW_MARGIN: i32 = 20;

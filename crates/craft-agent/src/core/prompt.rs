@@ -156,6 +156,21 @@ impl WorldInfo {
         self.keys.iter().any(|k| lower.contains(k))
     }
 
+    /// 从感知文本中找到第一个包含任一关键词的行（保留原文，含坐标/距离信息）。
+    /// 用于把真实的方块/实体信息填入提示，而非占位符 "当前场景"。
+    pub fn find_match_line(&self, text: &str) -> Option<String> {
+        if self.keys.is_empty() {
+            return None;
+        }
+        for line in text.lines() {
+            let lower = line.to_lowercase();
+            if self.keys.iter().any(|k| lower.contains(k)) {
+                return Some(line.trim().to_string());
+            }
+        }
+        None
+    }
+
     /// 用目标信息填充模板
     pub fn render(&self, label: &str, offset_x: i32, offset_y: i32) -> String {
         self.template
@@ -203,6 +218,8 @@ impl WorldInfoLib {
     }
 
     /// 对任意感知文本做关键词扫描，按优先级去重并限制字符预算。
+    /// 从文本里提取匹配关键词的实际行（含坐标）作为 label，
+    /// 让提示携带真实位置信息而非占位符。
     pub fn scan_text(&self, text: &str, char_budget: usize) -> Vec<String> {
         let mut matched: Vec<&WorldInfo> =
             self.entries.iter().filter(|e| e.matches(text)).collect();
@@ -210,7 +227,11 @@ impl WorldInfoLib {
         let mut used = 0usize;
         let mut hints = Vec::new();
         for entry in matched {
-            let rendered = entry.render("当前场景", 0, 0);
+            // 从原文中找到第一个包含该条目任一关键词的行，用作 label
+            let label = entry
+                .find_match_line(text)
+                .unwrap_or_else(|| "当前场景".to_string());
+            let rendered = entry.render(&label, 0, 0);
             if hints.contains(&rendered) {
                 continue;
             }
@@ -252,29 +273,53 @@ impl Default for WorldInfoLib {
 
 /// Minecraft 场景的默认 World Info 库
 ///
-/// 注入的提示必须引用真实工具名（perceive/look/press/mine），
-/// 不能用已被 `craft-agent-minecraft::tools` 取代的旧名（aim_and_mine/move_forward）。
+/// {label} 会被替换为 perceive 文本中匹配关键词的那一行（含方块名、坐标、距离）。
+/// mod-bridge 路径下 offset_x/offset_y 无意义（用世界坐标 move_to），已从模板移除。
 pub fn default_mc_world_info() -> WorldInfoLib {
     let mut lib = WorldInfoLib::new();
     lib.add(WorldInfo::new(
-        vec!["tree".into(), "oak".into(), "橡树".into(), "树".into()],
-        "Wood source nearby: {label} (offset {offset_x},{offset_y}). Use collect() to gather.",
+        vec![
+            "tree".into(),
+            "oak".into(),
+            "birch".into(),
+            "橡树".into(),
+            "树".into(),
+        ],
+        "Wood source: {label}. Use collect(\"oak_log\", N) to gather.",
     ));
     lib.add(WorldInfo::new(
-        vec!["stone".into(), "石头".into()],
-        "Stone source nearby: {label} (offset {offset_x},{offset_y}). Use collect() with a pickaxe equipped.",
+        vec!["stone".into(), "石头".into(), "cobblestone".into()],
+        "Stone source: {label}. Use collect(\"stone\", N) with a pickaxe equipped.",
     ));
     lib.add(WorldInfo::new(
-        vec!["ore".into(), "coal".into(), "iron".into(), "矿石".into()],
-        "Ore detected: {label} (offset {offset_x},{offset_y}). Mine with appropriate pickaxe.",
+        vec![
+            "ore".into(),
+            "coal".into(),
+            "iron".into(),
+            "copper".into(),
+            "矿石".into(),
+        ],
+        "Ore detected: {label}. Mine with appropriate pickaxe via collect().",
     ));
     lib.add(WorldInfo::new(
-        vec!["water".into(), "水".into()],
-        "Water nearby: {label} (offset {offset_x},{offset_y}). Avoid drowning.",
+        vec!["water".into(), "水".into(), "lava".into(), "岩浆".into()],
+        "Hazard: {label}. Avoid drowning/burning.",
     ));
     lib.add(WorldInfo::new(
         vec!["creeper".into(), "zombie".into(), "skeleton".into(), "spider".into()],
-        "Hostile mob nearby: {label} (offset {offset_x},{offset_y}). Attack or flee based on health and equipment.",
+        "Hostile mob: {label}. Use combat(mode, ticks) — melee for zombie/spider, kite for skeleton/creeper.",
+    ));
+    lib.add(WorldInfo::new(
+        vec![
+            "cow".into(),
+            "pig".into(),
+            "sheep".into(),
+            "chicken".into(),
+            "牛".into(),
+            "猪".into(),
+            "羊".into(),
+        ],
+        "Food source: {label}. move_to(coords) then attack(60) to hunt for food.",
     ));
     lib
 }
