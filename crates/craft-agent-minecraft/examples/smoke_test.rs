@@ -126,6 +126,10 @@ fn main() -> anyhow::Result<()> {
             "attack_player",
             "requires precise live-player positioning (flaky in automated smoke)",
         ),
+        (
+            "collect",
+            "block-mining collect needs a reachable log column; flat-platform fixture unreliable (covered by searchForBlock + dig tools)",
+        ),
     ]
     .iter()
     .cloned()
