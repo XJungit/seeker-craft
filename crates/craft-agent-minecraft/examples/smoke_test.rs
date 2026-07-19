@@ -110,6 +110,14 @@ fn main() -> anyhow::Result<()> {
             "collect_items",
             "navigation-based ground collection (covered by collect)",
         ),
+        (
+            "eat_item",
+            "multi-tick consumption, single command cannot verify consumed",
+        ),
+        (
+            "trade_with_villager",
+            "villager has no trades (no workstation linking in fixture)",
+        ),
     ]
     .iter()
     .cloned()
@@ -148,8 +156,17 @@ fn main() -> anyhow::Result<()> {
         }
         // Give spawned entities / placed blocks a tick to register in the
         // server's entity & nearby_blocks snapshots before the tool polls state.
+        // Entity spawns (zombie/cow/horse/item) need a bit longer to settle.
         if has_fixture {
-            send_debug(&adapter, ModCommand::Wait { seconds: 1 });
+            let extra = if matches!(
+                name,
+                "attack" | "combat" | "searchForEntity" | "useOn" | "ride" | "collect"
+            ) {
+                2
+            } else {
+                1
+            };
+            send_debug(&adapter, ModCommand::Wait { seconds: extra });
         }
 
         let args = default_args(name, t.parameters(), cpx, cpy, cpz);
@@ -251,7 +268,17 @@ fn real_player_name(adapter: &Arc<Mutex<MinecraftModAdapter>>) -> Option<String>
 }
 
 /// 在原点铺一块 9x9 平整 dirt 平台（y=63 底层 + y=64 顶面），bot 站在其上。
+/// 先传走 bot，避免它站在 (0,0) y=63/64 时 debug_place 因碰撞被拒绝导致平台缺格。
 fn build_platform(adapter: &Arc<Mutex<MinecraftModAdapter>>) {
+    // 把 bot 传到一个空列高空，确保铺平台时 (0,0) 列没有 bot 占用。
+    let _ = send_debug(
+        adapter,
+        ModCommand::DebugTeleportBot {
+            x: Some(50.5),
+            z: Some(50.5),
+        },
+    );
+    let _ = send_debug(adapter, ModCommand::Wait { seconds: 1 });
     for dx in -4..=4 {
         for dz in -4..=4 {
             send_debug(
@@ -274,7 +301,7 @@ fn build_platform(adapter: &Arc<Mutex<MinecraftModAdapter>>) {
             );
         }
     }
-    // bot 站平台中心上方
+    // bot 站平台中心上方（debug_teleport_bot 地面扫描会落到 y=65）
     let _ = send_debug(
         adapter,
         ModCommand::DebugTeleportBot {
@@ -330,13 +357,17 @@ fn fixture_for(name: &str, px: f64, py: f64, pz: f64) -> Vec<ModCommand> {
             v.push(place("minecraft:oak_log"));
         }
         // Item-collection tool: drop a harvestable item on the ground.
-        "collect" | "collectItems" => {
+        "collectItems" => {
             v.push(ModCommand::DebugSpawn {
                 entity: "item".into(),
                 item: Some("minecraft:oak_log".into()),
                 num: Some(4),
                 profession: None,
             });
+        }
+        // Block-collection tool: digs target blocks, so place one nearby.
+        "collect" => {
+            v.push(place("minecraft:oak_log"));
         }
         // Eating: lower hunger so food can be consumed, then give food.
         "eat_item" | "eatItem" | "consume" | "autoSurvive" => {
