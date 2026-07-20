@@ -247,6 +247,7 @@ implements ModInitializer {
         COMMAND_HANDLERS.put("debug_time", DebugController::actDebugTime);
         COMMAND_HANDLERS.put("debug_teleport_player", DebugController::actDebugTeleportPlayer);
         COMMAND_HANDLERS.put("debug_teleport_bot", DebugController::actDebugTeleportBot);
+        COMMAND_HANDLERS.put("debug_set_fixture", DebugController::actDebugSetFixture);
         COMMAND_HANDLERS.put("attack", InteractionController::actAttack);
         COMMAND_HANDLERS.put("enchant", ContainerController::actEnchant);
         COMMAND_HANDLERS.put("select_slot", ContainerController::actSelectSlot);

@@ -4,6 +4,7 @@ import com.google.gson.JsonObject;
 import java.util.Optional;
 import java.util.Set;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Holder;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
@@ -23,6 +24,7 @@ import net.minecraft.world.item.trading.ItemCost;
 import net.minecraft.world.item.trading.MerchantOffer;
 import net.minecraft.world.item.trading.MerchantOffers;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.ServerLevelAccessor;
 import net.minecraft.world.effect.MobEffectInstance;
@@ -265,6 +267,205 @@ public class DebugController {
         tgt.setXRot(0.0f);
         System.out.println("[TP-DIAG] " + name + " -> (" + String.format("%.1f,%.1f,%.1f", tx, ty, tz) + ") botAt=(" + String.format("%.1f,%.1f,%.1f", player.getX(), player.getY(), player.getZ()) + ")");
         o.addProperty("detail", "debug_teleport_player " + name + " -> (" + String.format("%.1f,%.1f,%.1f", tx, ty, tz) + ") near bot");
+        return o;
+    }
+
+    public static JsonObject actDebugSetFixture(ServerPlayer player, ServerLevel level, JsonObject req) {
+        JsonObject o = new JsonObject();
+        o.addProperty("status", "ok");
+        String fixture = req.has("fixture") ? req.get("fixture").getAsString().toLowerCase() : "platform";
+        StringBuilder detail = new StringBuilder();
+
+        // ── 1. Clear inventory + monsters + drops ──
+        player.getInventory().clearContent();
+        AABB global = AABB.ofSize(new Vec3(0.0, 64.0, 0.0), 100000.0, 100000.0, 100000.0);
+        for (Entity e : level.getEntities(null, global)) {
+            if (e instanceof ItemEntity || e instanceof Monster) e.discard();
+        }
+        detail.append("cleared ");
+
+        // ── 2. Build 9×9 dirt platform at origin (y=63,64) ──
+        BlockState dirt = Blocks.DIRT.defaultBlockState();
+        for (int dx = -4; dx <= 4; dx++) {
+            for (int dz = -4; dz <= 4; dz++) {
+                level.setBlock(new BlockPos(dx, 63, dz), dirt, 3);
+                level.setBlock(new BlockPos(dx, 64, dz), dirt, 3);
+            }
+        }
+        detail.append("platform ");
+
+        // ── 3. Cancel movement + teleport bot to origin ──
+        CraftAgentBridge.moveTarget = null;
+        CraftAgentBridge.moveWaypoints = null;
+        CraftAgentBridge.moveTicksLeft = 0;
+        CraftAgentBridge.moveReached = false;
+        player.teleportTo(level, 0.5, 65.0, 0.5, Set.of(), 0.0f, 0.0f, true);
+        player.setYRot(0.0f);
+        player.setXRot(0.0f);
+        detail.append("bot@origin ");
+
+        // ── 4. Give baseline oak_log x16 ──
+        var oakItem = BuiltInRegistries.ITEM.get(Identifier.fromNamespaceAndPath("minecraft", "oak_log"));
+        if (oakItem.isPresent()) {
+            player.getInventory().add(new ItemStack((ItemLike)((Holder.Reference)oakItem.get()).value(), 16));
+        }
+        detail.append("+oak_log");
+
+        // ── 5. Per-fixture setup ──
+        // Helper: spawn entity at fixed offset
+        java.util.function.BiConsumer<String, BlockPos> spawnEntity = (entityType, pos) -> {
+            var eth = BuiltInRegistries.ENTITY_TYPE.get(Identifier.fromNamespaceAndPath("minecraft", entityType));
+            if (eth.isEmpty()) return;
+            EntityType<?> et = (EntityType<?>) ((Holder.Reference<?>) eth.get()).value();
+            Entity e = et.spawn(level, null, pos, EntitySpawnReason.COMMAND, true, false);
+            if (e == null) {
+                e = et.create(level, new EntitySpawnRequest(EntitySpawnReason.COMMAND, true));
+                if (e != null) { e.setPos(pos.getX(), pos.getY(), pos.getZ()); level.addFreshEntity(e); }
+            }
+            if (e instanceof Mob m) {
+                m.finalizeSpawn(level, level.getCurrentDifficultyAt(pos), EntitySpawnReason.COMMAND, null);
+                m.setPersistenceRequired();
+                m.setNoAi(false);
+                m.addEffect(new MobEffectInstance(MobEffects.FIRE_RESISTANCE, 999999, 0, false, false));
+            }
+        };
+
+        // Helper: place block at offset
+        java.util.function.BiConsumer<String, BlockPos> placeBlock = (blockId, pos) -> {
+            var bHolder = BuiltInRegistries.BLOCK.get(Identifier.fromNamespaceAndPath("minecraft", blockId));
+            if (bHolder.isPresent()) {
+                level.setBlock(pos, ((Block) ((Holder.Reference<?>) bHolder.get()).value()).defaultBlockState(), 3);
+            }
+        };
+
+        // Helper: give item
+        java.util.function.BiConsumer<String, Integer> giveItem = (itemId, num) -> {
+            var iHolder = BuiltInRegistries.ITEM.get(Identifier.fromNamespaceAndPath("minecraft", itemId));
+            if (iHolder.isPresent()) {
+                player.getInventory().add(new ItemStack((ItemLike)((Holder.Reference)iHolder.get()).value(), num));
+            }
+        };
+
+        switch (fixture) {
+            case "platform" -> {}
+            case "attack", "combat", "searchForEntity", "nearestEntity" -> {
+                CraftAgentBridge.serverInstance.getCommands().performPrefixedCommand(
+                    CraftAgentBridge.serverInstance.createCommandSourceStack(), "time set night");
+                CraftAgentBridge.serverInstance.getCommands().performPrefixedCommand(
+                    CraftAgentBridge.serverInstance.createCommandSourceStack(), "gamerule doDaylightCycle false");
+                spawnEntity.accept("zombie", new BlockPos(0, 66, 3));
+                detail.append(" +zombie");
+            }
+            case "searchForBlock" -> {
+                placeBlock.accept("oak_log", new BlockPos(1, 64, 0));
+                detail.append(" +oak_log_block");
+            }
+            case "collectItems" -> {
+                var iHolder = BuiltInRegistries.ITEM.get(Identifier.fromNamespaceAndPath("minecraft", "oak_log"));
+                if (iHolder.isPresent()) {
+                    ItemStack stack = new ItemStack((ItemLike)((Holder.Reference)iHolder.get()).value(), 4);
+                    level.addFreshEntity(new ItemEntity(level, 1.5, 66.0, 0.5, stack));
+                    detail.append(" +dropped_item");
+                }
+            }
+            case "collect" -> {
+                placeBlock.accept("oak_log", new BlockPos(3, 64, 0));
+                detail.append(" +oak_log@3,64,0");
+            }
+            case "eat_item", "eatItem", "consume", "autoSurvive" -> {
+                player.getFoodData().setFoodLevel(5);
+                giveItem.accept("apple", 4);
+                detail.append(" +apple");
+            }
+            case "craft", "craftingPlan", "equip", "equipItem", "discard", "discardSmart",
+                 "move_slot", "moveSlot", "move_to_hotbar", "selectSlot", "select_slot",
+                 "use_item", "useItem", "inspectGui", "inspect_gui", "closeGui", "close_gui" -> {
+                detail.append(" (baseline ok)");
+            }
+            case "place" -> {
+                giveItem.accept("dirt", 16);
+                detail.append(" +dirt");
+            }
+            case "clearFurnace", "smelt" -> {
+                placeBlock.accept("furnace", new BlockPos(1, 64, 0));
+                giveItem.accept("iron_ore", 4);
+                detail.append(" +furnace+ore");
+            }
+            case "enchant" -> {
+                player.giveExperienceLevels(30);
+                giveItem.accept("diamond_sword", 1);
+                detail.append(" +xp+sword");
+            }
+            case "chest", "transfer" -> {
+                placeBlock.accept("chest", new BlockPos(1, 64, 0));
+                detail.append(" +chest");
+            }
+            case "activate_nearest_block" -> {
+                placeBlock.accept("crafting_table", new BlockPos(1, 64, 0));
+                detail.append(" +crafting_table");
+            }
+            case "useOn", "use_on_entity" -> {
+                spawnEntity.accept("cow", new BlockPos(1, 65, 2));
+                detail.append(" +cow");
+            }
+            case "digDown" -> {
+                for (int depth = 0; depth < 8; depth++) {
+                    int dy = 63 - depth;
+                    for (int ox = -1; ox <= 1; ox++)
+                        for (int oz = -1; oz <= 1; oz++)
+                            level.setBlock(new BlockPos(ox, dy, oz), dirt, 3);
+                }
+                detail.append(" +dig_pillar");
+            }
+            case "ride" -> {
+                spawnEntity.accept("horse", new BlockPos(1, 65, 3));
+                detail.append(" +horse");
+            }
+            case "fish" -> {
+                giveItem.accept("fishing_rod", 1);
+                detail.append(" +fishing_rod");
+            }
+            case "sleep", "goToBed" -> {
+                CraftAgentBridge.serverInstance.getCommands().performPrefixedCommand(
+                    CraftAgentBridge.serverInstance.createCommandSourceStack(), "time set night");
+                CraftAgentBridge.serverInstance.getCommands().performPrefixedCommand(
+                    CraftAgentBridge.serverInstance.createCommandSourceStack(), "gamerule doDaylightCycle false");
+                placeBlock.accept("red_bed", new BlockPos(1, 64, 1));
+                detail.append(" +bed");
+            }
+            case "villager_trades", "trade_with_villager" -> {
+                var eth = BuiltInRegistries.ENTITY_TYPE.get(Identifier.fromNamespaceAndPath("minecraft", "villager"));
+                if (eth.isPresent()) {
+                    EntityType<?> et = (EntityType<?>) ((Holder.Reference<?>) eth.get()).value();
+                    Entity e = et.spawn(level, null, new BlockPos(2, 65, 2), EntitySpawnReason.COMMAND, true, false);
+                    if (e == null) {
+                        e = et.create(level, new EntitySpawnRequest(EntitySpawnReason.COMMAND, true));
+                        if (e != null) { e.setPos(2, 65, 2); level.addFreshEntity(e); }
+                    }
+                    if (e instanceof Mob m) {
+                        m.finalizeSpawn(level, level.getCurrentDifficultyAt(new BlockPos(2, 65, 2)), EntitySpawnReason.COMMAND, null);
+                        m.setPersistenceRequired(); m.setNoAi(false);
+                    }
+                    if (e instanceof Villager v) {
+                        MerchantOffers offers = new MerchantOffers();
+                        offers.add(new MerchantOffer(new ItemCost(Items.EMERALD, 1), new ItemStack(Items.BOOK, 1), 5, 5, 0.05f));
+                        offers.add(new MerchantOffer(new ItemCost(Items.EMERALD, 1), new ItemStack(Items.WHEAT, 4), 5, 5, 0.05f));
+                        v.setOffers(offers);
+                        giveItem.accept("emerald", 16);
+                        detail.append(" +villager_trades");
+                    }
+                }
+            }
+            case "build_portal" -> {
+                giveItem.accept("obsidian", 14);
+                giveItem.accept("flint_and_steel", 1);
+                detail.append(" +portal_mat");
+            }
+            default -> detail.append(" (no extra fixture)");
+        }
+
+        player.containerMenu.broadcastChanges();
+        o.addProperty("detail", "fixture " + fixture + ": " + detail);
         return o;
     }
 

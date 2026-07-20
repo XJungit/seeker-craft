@@ -416,6 +416,10 @@ pub enum ModCommand {
     /// 把 bot（被控 fakePlayer）传送到干净地面，避免卡坑/水里导致摆位异常。
     #[serde(rename = "debug_teleport_bot")]
     DebugTeleportBot { x: Option<f64>, z: Option<f64> },
+    /// 一键搭建完整测试环境（替代 ~170 次 debug_place/spawn/give）。
+    /// fixture: tool name like "platform" / "attack" / "combat" / "digDown" / ...
+    #[serde(rename = "debug_set_fixture")]
+    DebugSetFixture { fixture: String },
     /// 绝对朝向（对齐 Mineflayer bot.look）。
     #[serde(rename = "look_abs")]
     LookAbs { yaw: f32, pitch: f32 },
