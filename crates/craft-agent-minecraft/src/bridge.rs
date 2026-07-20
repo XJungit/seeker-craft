@@ -576,9 +576,9 @@ pub struct ModAck {
     /// villager_trades: 村民职业。
     #[serde(default)]
     pub villager_profession: Option<String>,
-    /// villager_trades: 村民实体 id（Java 字段 `villager_id`）。
+    /// villager_trades: 村民实体 id（Java 字段 `villager_id`，整型）。
     #[serde(default)]
-    pub villager_id: Option<String>,
+    pub villager_id: Option<i32>,
     /// villager_trades: 村民实体类型（Java 字段 `villager_type`）。
     #[serde(default)]
     pub villager_type: Option<String>,
