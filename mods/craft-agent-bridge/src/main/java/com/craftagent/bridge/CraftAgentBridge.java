@@ -475,7 +475,7 @@ implements ModInitializer {
                     ItemStack stack = player.getInventory().getItem(slot);
                     if (stack.isEmpty() || !(itemId = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString()).contains("dirt") && !itemId.contains("cobblestone") && !itemId.contains("stone") && !itemId.contains("planks") && !itemId.contains("log") && !itemId.contains("sand") && !itemId.contains("gravel") && !itemId.contains("deepslate")) continue;
                     player.getInventory().setSelectedSlot(slot);
-                    CraftAgentBridge.placeAt(player, level, below.getX(), below.getY(), below.getZ(), itemId);
+                    InventoryHelper.placeAt(player, level, below.getX(), below.getY(), below.getZ(), itemId);
                     player.setDeltaMovement(player.getDeltaMovement().x, 0.42, player.getDeltaMovement().z);
                     noProgressTicks = 0;
                     System.out.println("[cab-move] AUTO PILLAR at " + below.getX() + "," + below.getY() + "," + below.getZ());
@@ -512,7 +512,7 @@ implements ModInitializer {
             if (!(e instanceof LivingEntity)) continue;
             LivingEntity le = (LivingEntity)e;
             String tn = BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).getPath();
-            if (!CraftAgentBridge.isHostile(tn) || !((d = (double)e.distanceTo((Entity)player)) < minDist)) continue;
+            if (!InventoryHelper.isHostile(tn) || !((d = (double)e.distanceTo((Entity)player)) < minDist)) continue;
             minDist = d;
             threat = le;
         }
@@ -552,7 +552,7 @@ implements ModInitializer {
             }
         }
         if (threat != null && hp > 6.0f) {
-            CraftAgentBridge.equipBestWeapon(player);
+            InventoryHelper.equipBestWeapon(player);
             double dist = threat.distanceTo((Entity)player);
             player.lookAt(EntityAnchorArgument.Anchor.EYES, threat.position().add(0.0, 1.0, 0.0));
             if (dist <= 4.0 && autoSurviveAttackCd <= 0) {
@@ -1300,7 +1300,7 @@ implements ModInitializer {
                         break;
                     }
                     if (target != null && target.isAlive() && (double)p.distanceTo(target) <= 5.0) {
-                        CraftAgentBridge.equipBestWeapon(p);
+                        InventoryHelper.equipBestWeapon(p);
                         double dx = target.getX() - p.getX();
                         double dy = target.getY() + (double)target.getEyeHeight() * 0.5 - (p.getY() + (double)p.getEyeHeight());
                         double dz = target.getZ() - p.getZ();
@@ -1475,7 +1475,7 @@ implements ModInitializer {
                     if (!(e instanceof LivingEntity)) continue;
                     LivingEntity le = (LivingEntity)e;
                     String tn = BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).getPath();
-                    if (!CraftAgentBridge.isHostile(tn) || !((d = (double)e.distanceTo((Entity)p)) < minDist)) continue;
+                    if (!InventoryHelper.isHostile(tn) || !((d = (double)e.distanceTo((Entity)p)) < minDist)) continue;
                     minDist = d;
                     target = le;
                 }
@@ -1609,12 +1609,12 @@ implements ModInitializer {
                         if (!(e instanceof LivingEntity)) continue;
                         LivingEntity le = (LivingEntity)e;
                         String tn = BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).getPath();
-                        if (!CraftAgentBridge.isHostile(tn) || !((d = (double)e.distanceTo((Entity)p)) < minDist)) continue;
+                        if (!InventoryHelper.isHostile(tn) || !((d = (double)e.distanceTo((Entity)p)) < minDist)) continue;
                         minDist = d;
                         target = le;
                     }
                     if (target != null && minDist <= 5.0) {
-                        CraftAgentBridge.equipBestWeapon(p);
+                        InventoryHelper.equipBestWeapon(p);
                         p.lookAt(EntityAnchorArgument.Anchor.EYES, target.position().add(0.0, 1.0, 0.0));
                         p.attack(target);
                         p.containerMenu.broadcastChanges();
@@ -1813,7 +1813,7 @@ implements ModInitializer {
                 return false;
             }
             ServerLevel lvl = p.level();
-            if (CraftAgentBridge.placeAt(p, lvl, (below = p.blockPosition().below()).getX(), below.getY(), below.getZ(), item)) {
+            if (InventoryHelper.placeAt(p, lvl, (below = p.blockPosition().below()).getX(), below.getY(), below.getZ(), item)) {
                 p.setDeltaMovement(p.getDeltaMovement().x, 0.42, p.getDeltaMovement().z);
                 return true;
             }
@@ -2105,7 +2105,7 @@ implements ModInitializer {
             return o;
         }
         String blockId = BuiltInRegistries.BLOCK.getKey(state.getBlock()).toString();
-        CraftAgentBridge.equipBestTool(player, blockId);
+        InventoryHelper.equipBestTool(player, blockId);
         boolean ok = player.level().destroyBlock(pos, true);
         player.containerMenu.broadcastChanges();
         o.addProperty("broken", Boolean.valueOf(ok));
@@ -2121,7 +2121,7 @@ implements ModInitializer {
         int ty = req.get("y").getAsInt();
         int tz = req.get("z").getAsInt();
         String item = req.has("item") ? req.get("item").getAsString() : "dirt";
-        boolean placed = CraftAgentBridge.placeAt(player, level, tx, ty, tz, item);
+        boolean placed = InventoryHelper.placeAt(player, level, tx, ty, tz, item);
         player.containerMenu.broadcastChanges();
         o.addProperty("placed", Boolean.valueOf(placed));
         o.addProperty("detail", "place_at " + tx + "," + ty + "," + tz + " item=" + item + " (placed=" + placed + ")");
@@ -2467,7 +2467,7 @@ implements ModInitializer {
             if (!(e4 instanceof LivingEntity)) continue;
             LivingEntity le = (LivingEntity)e4;
             String tn = BuiltInRegistries.ENTITY_TYPE.getKey(e4.getType()).getPath();
-            if (!CraftAgentBridge.isHostile(tn) || !((d = (double)e4.distanceTo((Entity)player)) < minDist)) continue;
+            if (!InventoryHelper.isHostile(tn) || !((d = (double)e4.distanceTo((Entity)player)) < minDist)) continue;
             minDist = d;
             target = le;
         }
@@ -2475,7 +2475,7 @@ implements ModInitializer {
             o.addProperty("detail", "attack: no hostile entity nearby");
             return o;
         }
-        CraftAgentBridge.equipBestWeapon(player);
+        InventoryHelper.equipBestWeapon(player);
         player.lookAt(EntityAnchorArgument.Anchor.EYES, target.position().add(0.0, 1.0, 0.0));
         player.attack(target);
         player.containerMenu.broadcastChanges();
@@ -2673,7 +2673,7 @@ implements ModInitializer {
         o.addProperty("status", "ok");
         String item = req.get("item").getAsString();
         int num = req.has("num") ? req.get("num").getAsInt() : 1;
-        int discarded = CraftAgentBridge.discardItem(player, item, num);
+        int discarded = InventoryHelper.discardItem(player, item, num);
         player.containerMenu.broadcastChanges();
         o.addProperty("detail", "discarded " + discarded + " x " + item);
         return o;
@@ -3487,7 +3487,7 @@ implements ModInitializer {
             }
             BlockPos framePos = new BlockPos(bx, by, bz);
             BlockState existing = level.getBlockState(framePos);
-            if (!existing.isAir() || !CraftAgentBridge.placeAt(player, level, bx, by, bz, search)) continue;
+            if (!existing.isAir() || !InventoryHelper.placeAt(player, level, bx, by, bz, search)) continue;
             ++placed;
         }
         if (placed < 10) {
@@ -3572,80 +3572,7 @@ implements ModInitializer {
         return o;
     }
 
-    private static boolean placeAt(ServerPlayer player, ServerLevel level, int x, int y, int z, String itemName) {
-        Block b;
-        Direction[] dirOrder;
-        String key;
-        ItemStack s;
-        int i;
-        double dist = player.position().distanceTo(Vec3.atCenterOf((Vec3i)new BlockPos(x, y, z)));
-        if (dist > 5.5) {
-            return false;
-        }
-        Inventory inv = player.getInventory();
-        int slot = -1;
-        String search = itemName.replace("minecraft:", "").toLowerCase();
-        for (i = 0; i < 9; ++i) {
-            s = inv.getItem(i);
-            if (s.isEmpty() || !(key = BuiltInRegistries.ITEM.getKey(s.getItem()).toString().toLowerCase()).contains(search)) continue;
-            slot = i;
-            break;
-        }
-        if (slot == -1) {
-            for (i = 9; i < inv.getContainerSize(); ++i) {
-                s = inv.getItem(i);
-                if (s.isEmpty() || !(key = BuiltInRegistries.ITEM.getKey(s.getItem()).toString().toLowerCase()).contains(search)) continue;
-                slot = i;
-                break;
-            }
-            if (slot == -1) {
-                return false;
-            }
-            int dstSlot = 0;
-            for (int i2 = 0; i2 < 9; ++i2) {
-                if (!inv.getItem(i2).isEmpty()) continue;
-                dstSlot = i2;
-                break;
-            }
-            ItemStack tmp = inv.getItem(dstSlot);
-            inv.setItem(dstSlot, inv.getItem(slot));
-            inv.setItem(slot, tmp);
-            slot = dstSlot;
-        }
-        inv.setSelectedSlot(slot);
-        player.containerMenu.broadcastChanges();
-        BlockPos pos = new BlockPos(x, y, z);
-        BlockPos playerPos = player.blockPosition();
-        for (Direction dir : dirOrder = new Direction[]{Direction.UP, Direction.NORTH, Direction.SOUTH, Direction.EAST, Direction.WEST, Direction.DOWN}) {
-            BlockPos neighbor = pos.relative(dir);
-            BlockState ns = level.getBlockState(neighbor);
-            boolean isPlayerAnchor = neighbor.equals(playerPos);
-            if ((ns.isAir() || !ns.isSolid()) && !isPlayerAnchor) continue;
-            BlockHitResult hit = new BlockHitResult(Vec3.atCenterOf((Vec3i)pos), dir.getOpposite(), neighbor, false);
-            if (!player.gameMode.useItemOn(player, (Level)level, player.getMainHandItem(), InteractionHand.MAIN_HAND, hit).consumesAction()) continue;
-            return true;
-        }
-        ItemStack held = player.getMainHandItem();
-        if (!held.isEmpty() && (b = Block.byItem((Item)held.getItem())) != null && b != Blocks.AIR) {
-            level.setBlock(pos, b.defaultBlockState(), 3);
-            held.shrink(1);
-            if (held.isEmpty()) {
-                inv.setItem(slot, ItemStack.EMPTY);
-            }
-            player.containerMenu.broadcastChanges();
-            return true;
-        }
-        return false;
-    }
 
-    private static boolean isHostile(String typeName) {
-        String[] hostile;
-        for (String h : hostile = new String[]{"zombie", "skeleton", "creeper", "spider", "phantom", "witch", "enderman", "blaze", "ghast", "slime", "magma_cube", "pillager", "vindicator", "evoker", "ravager", "hoglin", "piglin", "zoglin", "warden", "wither", "dragon"}) {
-            if (!typeName.contains(h)) continue;
-            return true;
-        }
-        return false;
-    }
 
     private static CombatResult combat(ServerPlayer player, ServerLevel level, String mode, int maxTicks) {
         CombatResult cr = new CombatResult();
@@ -3660,7 +3587,7 @@ implements ModInitializer {
                 if (!(e instanceof LivingEntity)) continue;
                 LivingEntity le = (LivingEntity)e;
                 String tn = BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).getPath();
-                if (!CraftAgentBridge.isHostile(tn) || !((d = (double)e.distanceTo((Entity)player)) < minDist)) continue;
+                if (!InventoryHelper.isHostile(tn) || !((d = (double)e.distanceTo((Entity)player)) < minDist)) continue;
                 minDist = d;
                 target = le;
             }
@@ -3691,7 +3618,7 @@ implements ModInitializer {
                 cr.result = "retreated";
                 break;
             }
-            CraftAgentBridge.equipBestWeapon(player);
+            InventoryHelper.equipBestWeapon(player);
             player.lookAt(EntityAnchorArgument.Anchor.EYES, target.position().add(0.0, 1.0, 0.0));
             if (dist > 4.0) {
                 float yaw = (float)Math.toDegrees(Math.atan2(-(target.getX() - player.getX()), target.getZ() - player.getZ()));
@@ -3727,307 +3654,195 @@ implements ModInitializer {
         return cr;
     }
 
-    private static void equipBestWeapon(ServerPlayer player) {
-        Inventory inv = player.getInventory();
-        int best = -1;
-        double bestDmg = -1.0;
-        for (int i = 0; i < 9; ++i) {
-            String key;
-            ItemStack s = inv.getItem(i);
-            if (s.isEmpty() || !(key = BuiltInRegistries.ITEM.getKey(s.getItem()).toString()).contains("sword") && (!key.contains("axe") || key.contains("pickaxe"))) continue;
-            double dmg = 4.0;
-            if (key.contains("diamond")) {
-                dmg = 8.0;
-            } else if (key.contains("iron")) {
-                dmg = 6.0;
-            } else if (key.contains("stone")) {
-                dmg = 5.0;
-            }
-            if (key.contains("sword")) {
-                dmg += 1.0;
-            }
-            if (!(dmg > bestDmg)) continue;
-            bestDmg = dmg;
-            best = i;
-        }
-        if (best >= 0) {
-            inv.setSelectedSlot(best);
-            player.containerMenu.broadcastChanges();
-        }
-    }
 
-    private static void equipBestTool(ServerPlayer player, String blockId) {
-        int tier;
-        int i;
-        String toolType;
-        String b = blockId.toLowerCase();
-        if (b.contains("stone") || b.contains("cobble") || b.contains("ore") || b.contains("obsidian") || b.contains("granite") || b.contains("diorite") || b.contains("andesite") || b.contains("basalt") || b.contains("bricks") || b.contains("netherrack")) {
-            toolType = "pickaxe";
-        } else if (b.contains("log") || b.contains("planks") || b.contains("wood") || b.contains("leaves") || b.contains("crafting_table") || b.contains("chest") || b.contains("bookshelf")) {
-            toolType = "axe";
-        } else if (b.contains("dirt") || b.contains("grass") || b.contains("sand") || b.contains("gravel") || b.contains("snow") || b.contains("clay") || b.contains("podzol") || b.contains("mycelium")) {
-            toolType = "shovel";
-        } else {
-            return;
-        }
-        Inventory inv = player.getInventory();
-        int best = -1;
-        int bestTier = -1;
-        for (i = 0; i < 9; ++i) {
-            tier = CraftAgentBridge.toolTier(inv.getItem(i), toolType);
-            if (tier <= bestTier) continue;
-            bestTier = tier;
-            best = i;
-        }
-        if (bestTier <= 0) {
-            for (i = 9; i < inv.getContainerSize(); ++i) {
-                tier = CraftAgentBridge.toolTier(inv.getItem(i), toolType);
-                if (tier <= bestTier) continue;
-                int dstSlot = 0;
-                for (int j = 0; j < 9; ++j) {
-                    if (!inv.getItem(j).isEmpty()) continue;
-                    dstSlot = j;
-                    break;
-                }
-                ItemStack tmp = inv.getItem(dstSlot);
-                inv.setItem(dstSlot, inv.getItem(i));
-                inv.setItem(i, tmp);
-                best = dstSlot;
-                bestTier = tier;
-                break;
-            }
-        }
-        if (best >= 0 && bestTier > 0) {
-            inv.setSelectedSlot(best);
-            player.containerMenu.broadcastChanges();
-        }
-    }
-
-    private static int toolTier(ItemStack stack, String toolType) {
-        if (stack.isEmpty()) {
-            return 0;
-        }
-        String key = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString().toLowerCase();
-        if (!key.contains(toolType)) {
-            return 0;
-        }
-        if (key.contains("diamond")) {
-            return 4;
-        }
-        if (key.contains("iron")) {
-            return 3;
-        }
-        if (key.contains("stone")) {
-            return 2;
-        }
-        if (key.contains("wooden") || key.contains("wood")) {
-            return 1;
-        }
-        return 0;
-    }
 
     private static int craftItem(ServerPlayer player, String targetId, int want) {
         Inventory inv = player.getInventory();
         int crafted = 0;
         String t = targetId.toLowerCase();
-        if (t.contains("planks") && CraftAgentBridge.countItem(inv, "log") > 0) {
+        if (t.contains("planks") && InventoryHelper.countItem(inv, "log") > 0) {
             for (String log : new String[]{"oak_log", "birch_log", "spruce_log", "jungle_log", "acacia_log", "dark_oak_log", "mangrove_log", "cherry_log"}) {
-                while (crafted < want && CraftAgentBridge.countItem(inv, log) > 0) {
-                    CraftAgentBridge.removeItem(inv, log, 1);
+                while (crafted < want && InventoryHelper.countItem(inv, log) > 0) {
+                    InventoryHelper.removeItem(inv, log, 1);
                     String plank = log.replace("_log", "_planks");
-                    CraftAgentBridge.addItem(inv, plank, 4);
+                    InventoryHelper.addItem(inv, plank, 4);
                     crafted += 4;
                 }
             }
         }
         if (t.contains("stick")) {
-            while (crafted < want && CraftAgentBridge.countItem(inv, "planks") >= 2) {
-                CraftAgentBridge.removeItem(inv, "planks", 2);
-                CraftAgentBridge.addItem(inv, "stick", 4);
+            while (crafted < want && InventoryHelper.countItem(inv, "planks") >= 2) {
+                InventoryHelper.removeItem(inv, "planks", 2);
+                InventoryHelper.addItem(inv, "stick", 4);
                 crafted += 4;
             }
         }
         if (t.contains("crafting_table")) {
-            while (crafted < want && CraftAgentBridge.countItem(inv, "planks") >= 4) {
-                CraftAgentBridge.removeItem(inv, "planks", 4);
-                CraftAgentBridge.addItem(inv, "crafting_table", 1);
+            while (crafted < want && InventoryHelper.countItem(inv, "planks") >= 4) {
+                InventoryHelper.removeItem(inv, "planks", 4);
+                InventoryHelper.addItem(inv, "crafting_table", 1);
                 ++crafted;
             }
         }
         if (t.contains("wooden_pickaxe") || t.contains("wooden_axe")) {
-            while (crafted < want && CraftAgentBridge.countItem(inv, "planks") >= 3 && CraftAgentBridge.countItem(inv, "stick") >= 2) {
-                CraftAgentBridge.removeItem(inv, "planks", 3);
-                CraftAgentBridge.removeItem(inv, "stick", 2);
-                CraftAgentBridge.addItem(inv, t.contains("pickaxe") ? "wooden_pickaxe" : "wooden_axe", 1);
+            while (crafted < want && InventoryHelper.countItem(inv, "planks") >= 3 && InventoryHelper.countItem(inv, "stick") >= 2) {
+                InventoryHelper.removeItem(inv, "planks", 3);
+                InventoryHelper.removeItem(inv, "stick", 2);
+                InventoryHelper.addItem(inv, t.contains("pickaxe") ? "wooden_pickaxe" : "wooden_axe", 1);
                 ++crafted;
             }
         }
         if (t.contains("wooden_sword")) {
-            while (crafted < want && CraftAgentBridge.countItem(inv, "planks") >= 2 && CraftAgentBridge.countItem(inv, "stick") >= 1) {
-                CraftAgentBridge.removeItem(inv, "planks", 2);
-                CraftAgentBridge.removeItem(inv, "stick", 1);
-                CraftAgentBridge.addItem(inv, "wooden_sword", 1);
+            while (crafted < want && InventoryHelper.countItem(inv, "planks") >= 2 && InventoryHelper.countItem(inv, "stick") >= 1) {
+                InventoryHelper.removeItem(inv, "planks", 2);
+                InventoryHelper.removeItem(inv, "stick", 1);
+                InventoryHelper.addItem(inv, "wooden_sword", 1);
                 ++crafted;
             }
         }
         if (t.contains("wooden_shovel")) {
-            while (crafted < want && CraftAgentBridge.countItem(inv, "planks") >= 1 && CraftAgentBridge.countItem(inv, "stick") >= 2) {
-                CraftAgentBridge.removeItem(inv, "planks", 1);
-                CraftAgentBridge.removeItem(inv, "stick", 2);
-                CraftAgentBridge.addItem(inv, "wooden_shovel", 1);
+            while (crafted < want && InventoryHelper.countItem(inv, "planks") >= 1 && InventoryHelper.countItem(inv, "stick") >= 2) {
+                InventoryHelper.removeItem(inv, "planks", 1);
+                InventoryHelper.removeItem(inv, "stick", 2);
+                InventoryHelper.addItem(inv, "wooden_shovel", 1);
                 ++crafted;
             }
         }
         if (t.contains("stone_pickaxe") || t.contains("stone_axe")) {
-            while (crafted < want && CraftAgentBridge.countItem(inv, "cobblestone") >= 3 && CraftAgentBridge.countItem(inv, "stick") >= 2) {
-                CraftAgentBridge.removeItem(inv, "cobblestone", 3);
-                CraftAgentBridge.removeItem(inv, "stick", 2);
-                CraftAgentBridge.addItem(inv, t.contains("pickaxe") ? "stone_pickaxe" : "stone_axe", 1);
+            while (crafted < want && InventoryHelper.countItem(inv, "cobblestone") >= 3 && InventoryHelper.countItem(inv, "stick") >= 2) {
+                InventoryHelper.removeItem(inv, "cobblestone", 3);
+                InventoryHelper.removeItem(inv, "stick", 2);
+                InventoryHelper.addItem(inv, t.contains("pickaxe") ? "stone_pickaxe" : "stone_axe", 1);
                 ++crafted;
             }
         }
         if (t.contains("stone_sword")) {
-            while (crafted < want && CraftAgentBridge.countItem(inv, "cobblestone") >= 2 && CraftAgentBridge.countItem(inv, "stick") >= 1) {
-                CraftAgentBridge.removeItem(inv, "cobblestone", 2);
-                CraftAgentBridge.removeItem(inv, "stick", 1);
-                CraftAgentBridge.addItem(inv, "stone_sword", 1);
+            while (crafted < want && InventoryHelper.countItem(inv, "cobblestone") >= 2 && InventoryHelper.countItem(inv, "stick") >= 1) {
+                InventoryHelper.removeItem(inv, "cobblestone", 2);
+                InventoryHelper.removeItem(inv, "stick", 1);
+                InventoryHelper.addItem(inv, "stone_sword", 1);
                 ++crafted;
             }
         }
         if (t.contains("torch")) {
-            while (crafted < want && CraftAgentBridge.countItem(inv, "stick") >= 1 && CraftAgentBridge.countItem(inv, "coal") >= 1) {
-                CraftAgentBridge.removeItem(inv, "stick", 1);
-                CraftAgentBridge.removeItem(inv, "coal", 1);
-                CraftAgentBridge.addItem(inv, "torch", 4);
+            while (crafted < want && InventoryHelper.countItem(inv, "stick") >= 1 && InventoryHelper.countItem(inv, "coal") >= 1) {
+                InventoryHelper.removeItem(inv, "stick", 1);
+                InventoryHelper.removeItem(inv, "coal", 1);
+                InventoryHelper.addItem(inv, "torch", 4);
                 crafted += 4;
             }
         }
         if (t.contains("furnace")) {
-            while (crafted < want && CraftAgentBridge.countItem(inv, "cobblestone") >= 8) {
-                CraftAgentBridge.removeItem(inv, "cobblestone", 8);
-                CraftAgentBridge.addItem(inv, "furnace", 1);
+            while (crafted < want && InventoryHelper.countItem(inv, "cobblestone") >= 8) {
+                InventoryHelper.removeItem(inv, "cobblestone", 8);
+                InventoryHelper.addItem(inv, "furnace", 1);
                 ++crafted;
             }
         }
         if (t.contains("chest")) {
-            while (crafted < want && CraftAgentBridge.countItem(inv, "planks") >= 8) {
-                CraftAgentBridge.removeItem(inv, "planks", 8);
-                CraftAgentBridge.addItem(inv, "chest", 1);
+            while (crafted < want && InventoryHelper.countItem(inv, "planks") >= 8) {
+                InventoryHelper.removeItem(inv, "planks", 8);
+                InventoryHelper.addItem(inv, "chest", 1);
                 ++crafted;
             }
         }
         if (t.contains("iron_pickaxe") || t.contains("iron_axe")) {
-            while (crafted < want && CraftAgentBridge.countItem(inv, "iron_ingot") >= 3 && CraftAgentBridge.countItem(inv, "stick") >= 2) {
-                CraftAgentBridge.removeItem(inv, "iron_ingot", 3);
-                CraftAgentBridge.removeItem(inv, "stick", 2);
-                CraftAgentBridge.addItem(inv, t.contains("pickaxe") ? "iron_pickaxe" : "iron_axe", 1);
+            while (crafted < want && InventoryHelper.countItem(inv, "iron_ingot") >= 3 && InventoryHelper.countItem(inv, "stick") >= 2) {
+                InventoryHelper.removeItem(inv, "iron_ingot", 3);
+                InventoryHelper.removeItem(inv, "stick", 2);
+                InventoryHelper.addItem(inv, t.contains("pickaxe") ? "iron_pickaxe" : "iron_axe", 1);
                 ++crafted;
             }
         }
         if (t.contains("iron_sword")) {
-            while (crafted < want && CraftAgentBridge.countItem(inv, "iron_ingot") >= 2 && CraftAgentBridge.countItem(inv, "stick") >= 1) {
-                CraftAgentBridge.removeItem(inv, "iron_ingot", 2);
-                CraftAgentBridge.removeItem(inv, "stick", 1);
-                CraftAgentBridge.addItem(inv, "iron_sword", 1);
+            while (crafted < want && InventoryHelper.countItem(inv, "iron_ingot") >= 2 && InventoryHelper.countItem(inv, "stick") >= 1) {
+                InventoryHelper.removeItem(inv, "iron_ingot", 2);
+                InventoryHelper.removeItem(inv, "stick", 1);
+                InventoryHelper.addItem(inv, "iron_sword", 1);
                 ++crafted;
             }
         }
         if (t.contains("diamond_pickaxe") || t.contains("diamond_axe")) {
-            while (crafted < want && CraftAgentBridge.countItem(inv, "diamond") >= 3 && CraftAgentBridge.countItem(inv, "stick") >= 2) {
-                CraftAgentBridge.removeItem(inv, "diamond", 3);
-                CraftAgentBridge.removeItem(inv, "stick", 2);
-                CraftAgentBridge.addItem(inv, t.contains("pickaxe") ? "diamond_pickaxe" : "diamond_axe", 1);
+            while (crafted < want && InventoryHelper.countItem(inv, "diamond") >= 3 && InventoryHelper.countItem(inv, "stick") >= 2) {
+                InventoryHelper.removeItem(inv, "diamond", 3);
+                InventoryHelper.removeItem(inv, "stick", 2);
+                InventoryHelper.addItem(inv, t.contains("pickaxe") ? "diamond_pickaxe" : "diamond_axe", 1);
                 ++crafted;
             }
         }
         if (t.contains("diamond_sword")) {
-            while (crafted < want && CraftAgentBridge.countItem(inv, "diamond") >= 2 && CraftAgentBridge.countItem(inv, "stick") >= 1) {
-                CraftAgentBridge.removeItem(inv, "diamond", 2);
-                CraftAgentBridge.removeItem(inv, "stick", 1);
-                CraftAgentBridge.addItem(inv, "diamond_sword", 1);
+            while (crafted < want && InventoryHelper.countItem(inv, "diamond") >= 2 && InventoryHelper.countItem(inv, "stick") >= 1) {
+                InventoryHelper.removeItem(inv, "diamond", 2);
+                InventoryHelper.removeItem(inv, "stick", 1);
+                InventoryHelper.addItem(inv, "diamond_sword", 1);
                 ++crafted;
             }
         }
         if (t.contains("iron_helmet")) {
-            while (crafted < want && CraftAgentBridge.countItem(inv, "iron_ingot") >= 5) {
-                CraftAgentBridge.removeItem(inv, "iron_ingot", 5);
-                CraftAgentBridge.addItem(inv, "iron_helmet", 1);
+            while (crafted < want && InventoryHelper.countItem(inv, "iron_ingot") >= 5) {
+                InventoryHelper.removeItem(inv, "iron_ingot", 5);
+                InventoryHelper.addItem(inv, "iron_helmet", 1);
                 ++crafted;
             }
         }
         if (t.contains("iron_chestplate")) {
-            while (crafted < want && CraftAgentBridge.countItem(inv, "iron_ingot") >= 8) {
-                CraftAgentBridge.removeItem(inv, "iron_ingot", 8);
-                CraftAgentBridge.addItem(inv, "iron_chestplate", 1);
+            while (crafted < want && InventoryHelper.countItem(inv, "iron_ingot") >= 8) {
+                InventoryHelper.removeItem(inv, "iron_ingot", 8);
+                InventoryHelper.addItem(inv, "iron_chestplate", 1);
                 ++crafted;
             }
         }
         if (t.contains("iron_leggings")) {
-            while (crafted < want && CraftAgentBridge.countItem(inv, "iron_ingot") >= 7) {
-                CraftAgentBridge.removeItem(inv, "iron_ingot", 7);
-                CraftAgentBridge.addItem(inv, "iron_leggings", 1);
+            while (crafted < want && InventoryHelper.countItem(inv, "iron_ingot") >= 7) {
+                InventoryHelper.removeItem(inv, "iron_ingot", 7);
+                InventoryHelper.addItem(inv, "iron_leggings", 1);
                 ++crafted;
             }
         }
         if (t.contains("iron_boots")) {
-            while (crafted < want && CraftAgentBridge.countItem(inv, "iron_ingot") >= 4) {
-                CraftAgentBridge.removeItem(inv, "iron_ingot", 4);
-                CraftAgentBridge.addItem(inv, "iron_boots", 1);
+            while (crafted < want && InventoryHelper.countItem(inv, "iron_ingot") >= 4) {
+                InventoryHelper.removeItem(inv, "iron_ingot", 4);
+                InventoryHelper.addItem(inv, "iron_boots", 1);
                 ++crafted;
             }
         }
         if (t.contains("diamond_helmet")) {
-            while (crafted < want && CraftAgentBridge.countItem(inv, "diamond") >= 5) {
-                CraftAgentBridge.removeItem(inv, "diamond", 5);
-                CraftAgentBridge.addItem(inv, "diamond_helmet", 1);
+            while (crafted < want && InventoryHelper.countItem(inv, "diamond") >= 5) {
+                InventoryHelper.removeItem(inv, "diamond", 5);
+                InventoryHelper.addItem(inv, "diamond_helmet", 1);
                 ++crafted;
             }
         }
         if (t.contains("diamond_chestplate")) {
-            while (crafted < want && CraftAgentBridge.countItem(inv, "diamond") >= 8) {
-                CraftAgentBridge.removeItem(inv, "diamond", 8);
-                CraftAgentBridge.addItem(inv, "diamond_chestplate", 1);
+            while (crafted < want && InventoryHelper.countItem(inv, "diamond") >= 8) {
+                InventoryHelper.removeItem(inv, "diamond", 8);
+                InventoryHelper.addItem(inv, "diamond_chestplate", 1);
                 ++crafted;
             }
         }
         if (t.contains("diamond_leggings")) {
-            while (crafted < want && CraftAgentBridge.countItem(inv, "diamond") >= 7) {
-                CraftAgentBridge.removeItem(inv, "diamond", 7);
-                CraftAgentBridge.addItem(inv, "diamond_leggings", 1);
+            while (crafted < want && InventoryHelper.countItem(inv, "diamond") >= 7) {
+                InventoryHelper.removeItem(inv, "diamond", 7);
+                InventoryHelper.addItem(inv, "diamond_leggings", 1);
                 ++crafted;
             }
         }
         if (t.contains("diamond_boots")) {
-            while (crafted < want && CraftAgentBridge.countItem(inv, "diamond") >= 4) {
-                CraftAgentBridge.removeItem(inv, "diamond", 4);
-                CraftAgentBridge.addItem(inv, "diamond_boots", 1);
+            while (crafted < want && InventoryHelper.countItem(inv, "diamond") >= 4) {
+                InventoryHelper.removeItem(inv, "diamond", 4);
+                InventoryHelper.addItem(inv, "diamond_boots", 1);
                 ++crafted;
             }
         }
         if (t.contains("shield")) {
-            while (crafted < want && CraftAgentBridge.countItem(inv, "planks") >= 6 && CraftAgentBridge.countItem(inv, "iron_ingot") >= 1) {
-                CraftAgentBridge.removeItem(inv, "planks", 6);
-                CraftAgentBridge.removeItem(inv, "iron_ingot", 1);
-                CraftAgentBridge.addItem(inv, "shield", 1);
+            while (crafted < want && InventoryHelper.countItem(inv, "planks") >= 6 && InventoryHelper.countItem(inv, "iron_ingot") >= 1) {
+                InventoryHelper.removeItem(inv, "planks", 6);
+                InventoryHelper.removeItem(inv, "iron_ingot", 1);
+                InventoryHelper.addItem(inv, "shield", 1);
                 ++crafted;
             }
         }
         return crafted;
-    }
-
-    private static int discardItem(ServerPlayer player, String itemId, int num) {
-        Inventory inv = player.getInventory();
-        int discarded = 0;
-        String search = itemId.toLowerCase();
-        for (int i = 0; i < inv.getContainerSize() && discarded < num; ++i) {
-            String key;
-            ItemStack s = inv.getItem(i);
-            if (s.isEmpty() || !(key = BuiltInRegistries.ITEM.getKey(s.getItem()).toString().toLowerCase()).contains(search)) continue;
-            int take = Math.min(s.getCount(), num - discarded);
-            s.shrink(take);
-            discarded += take;
-        }
-        return discarded;
     }
 
     private static int smeltItem(ServerPlayer player, String itemId, int num) {
@@ -4051,10 +3866,10 @@ implements ModInitializer {
         if (output == null) {
             return 0;
         }
-        while (smelted < num && CraftAgentBridge.countItem(inv, input) >= 1 && CraftAgentBridge.countItem(inv, "coal") >= 1) {
-            CraftAgentBridge.removeItem(inv, input, 1);
-            CraftAgentBridge.removeItem(inv, "coal", 1);
-            CraftAgentBridge.addItem(inv, output, 1);
+        while (smelted < num && InventoryHelper.countItem(inv, input) >= 1 && InventoryHelper.countItem(inv, "coal") >= 1) {
+            InventoryHelper.removeItem(inv, input, 1);
+            InventoryHelper.removeItem(inv, "coal", 1);
+            InventoryHelper.addItem(inv, output, 1);
             ++smelted;
         }
         return smelted;
@@ -4083,50 +3898,6 @@ implements ModInitializer {
 
     private static double clamp(double v, double lo, double hi) {
         return Math.max(lo, Math.min(hi, v));
-    }
-
-    private static int countItem(Inventory inv, String id) {
-        String search = id.toLowerCase();
-        int n = 0;
-        for (int i = 0; i < inv.getContainerSize(); ++i) {
-            String key;
-            ItemStack s = inv.getItem(i);
-            if (s.isEmpty() || !(key = BuiltInRegistries.ITEM.getKey(s.getItem()).toString().toLowerCase()).endsWith(":" + search) && (search.contains(":") || !key.contains(search))) continue;
-            n += s.getCount();
-        }
-        return n;
-    }
-
-    private static void addItem(Inventory inv, String id, int count) {
-        Item target;
-        Item exact = null;
-        Item fallback = null;
-        String search = id.toLowerCase();
-        for (Item item : BuiltInRegistries.ITEM) {
-            String key = BuiltInRegistries.ITEM.getKey(item).toString().toLowerCase();
-            if (key.endsWith(":" + search)) {
-                exact = item;
-                break;
-            }
-            if (fallback != null || !key.contains(search) || key.contains("sticky")) continue;
-            fallback = item;
-        }
-        Item item = target = exact != null ? exact : fallback;
-        if (target != null) {
-            inv.add(new ItemStack(target, count));
-        }
-    }
-
-    private static void removeItem(Inventory inv, String id, int count) {
-        String search = id.toLowerCase();
-        for (int i = 0; i < inv.getContainerSize() && count > 0; ++i) {
-            String key;
-            ItemStack s = inv.getItem(i);
-            if (s.isEmpty() || !(key = BuiltInRegistries.ITEM.getKey(s.getItem()).toString().toLowerCase()).endsWith(":" + search) && !key.contains(search)) continue;
-            int take = Math.min(s.getCount(), count);
-            s.shrink(take);
-            count -= take;
-        }
     }
 
     static {
