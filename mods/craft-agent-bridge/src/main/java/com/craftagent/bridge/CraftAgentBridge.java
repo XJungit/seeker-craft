@@ -213,7 +213,7 @@ implements ModInitializer {
     private static volatile boolean shouldStop;
     private static volatile String currentGoal;
     static volatile boolean fakePlayerSpawning;
-    private static final Set<String> BLOCK_WHITELIST;
+    static final Set<String> BLOCK_WHITELIST;
     private static int autoSurviveCooldown;
     private static int autoSurviveAttackCd;
 
@@ -665,7 +665,7 @@ implements ModInitializer {
         String type;
         String string = type = req.has("type") ? req.get("type").getAsString() : "";
         if ("state".equals(type)) {
-            return CraftAgentBridge.runOnServerThread(this::buildState);
+            return CraftAgentBridge.runOnServerThread(StateBuilder::buildState);
         }
         if ("move_to".equals(type)) {
             return this.performMoveTo(req);
@@ -1848,164 +1848,6 @@ implements ModInitializer {
         return o;
     }
 
-    private JsonObject buildState() {
-        JsonObject o = new JsonObject();
-        MinecraftServer server = serverInstance;
-        if (server == null) {
-            o.addProperty("status", "fail");
-            o.addProperty("detail", "\u670d\u52a1\u5668\u672a\u5c31\u7eea");
-            return o;
-        }
-        ServerPlayer player = FakePlayerManager.getFirstPlayer(server);
-        if (player == null) {
-            o.addProperty("status", "fail");
-            o.addProperty("detail", "\u6ca1\u6709\u5728\u7ebf\u73a9\u5bb6\uff08\u8bf7\u5148\u8fdb\u5165\u4e16\u754c\uff09");
-            return o;
-        }
-        ServerLevel level = player.level();
-        Vec3 pos = player.position();
-        o.add("position", (JsonElement)CraftAgentBridge.arr(pos.x, pos.y, pos.z));
-        o.addProperty("yaw", (Number)Float.valueOf(player.getYRot()));
-        o.addProperty("pitch", (Number)Float.valueOf(player.getXRot()));
-        o.addProperty("health", (Number)Float.valueOf(player.getHealth()));
-        o.addProperty("hunger", (Number)player.getFoodData().getFoodLevel());
-        o.addProperty("gamemode", player.gameMode.getGameModeForPlayer().getName());
-        o.addProperty("time", (Number)level.getOverworldClockTime());
-        o.addProperty("dimension", level.dimension().toString());
-        o.addProperty("biome", level.getBiomeManager().getBiome(player.blockPosition()).unwrapKey().map(k -> k.identifier().toString()).orElse("?"));
-        long time = level.getOverworldClockTime() % 24000L;
-        int hour = (int)((time / 1000L + 6L) % 24L);
-        int minute = (int)(time % 1000L * 60L / 1000L);
-        boolean isDay = time < 12000L || time >= 23000L;
-        o.addProperty("time_str", String.format("%02d:%02d (%s)", hour, minute, isDay ? "day" : "night"));
-        Vec3 vel = player.getDeltaMovement();
-        o.add("velocity", (JsonElement)CraftAgentBridge.arr(vel.x, vel.y, vel.z));
-        JsonArray effects = new JsonArray();
-        for (MobEffectInstance me : player.getActiveEffects()) {
-            MobEffect effect = (MobEffect)me.getEffect().value();
-            String id = BuiltInRegistries.MOB_EFFECT.getKey(effect).toString();
-            JsonObject eo = new JsonObject();
-            eo.addProperty("id", id);
-            eo.addProperty("amplifier", (Number)me.getAmplifier());
-            eo.addProperty("duration", (Number)me.getDuration());
-            effects.add((JsonElement)eo);
-        }
-        o.add("effects", (JsonElement)effects);
-        o.addProperty("experience_level", (Number)player.experienceLevel);
-        o.addProperty("experience_progress", (Number)Float.valueOf(player.experienceProgress));
-        o.addProperty("raining", Boolean.valueOf(level.isRaining()));
-        o.addProperty("thundering", Boolean.valueOf(level.isThundering()));
-        BlockPos pp = player.blockPosition();
-        int skyLight = level.getLightEngine().getLayerListener(LightLayer.SKY).getLightValue(pp);
-        int blockLight = level.getLightEngine().getLayerListener(LightLayer.BLOCK).getLightValue(pp);
-        o.addProperty("sky_light", (Number)skyLight);
-        o.addProperty("block_light", (Number)blockLight);
-        JsonArray inv = new JsonArray();
-        Inventory inventory = player.getInventory();
-        int size = inventory.getContainerSize();
-        for (int i = 0; i < size; ++i) {
-            ItemStack stack = inventory.getItem(i);
-            if (stack.isEmpty()) continue;
-            String id = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString();
-            JsonObject s = new JsonObject();
-            s.addProperty("slot", (Number)i);
-            s.addProperty("id", id);
-            s.addProperty("count", (Number)stack.getCount());
-            inv.add((JsonElement)s);
-        }
-        o.add("inventory", (JsonElement)inv);
-        ItemStack held = player.getMainHandItem();
-        int selectedSlot = inventory.getSelectedSlot();
-        o.addProperty("held_item", held.isEmpty() ? "minecraft:air" : BuiltInRegistries.ITEM.getKey(held.getItem()).toString());
-        o.addProperty("selected_slot", (Number)selectedSlot);
-        HitResult hit = player.pick(6.0, 0.0f, false);
-        if (hit != null && hit.getType() == HitResult.Type.BLOCK) {
-            BlockPos bp = ((BlockHitResult)hit).getBlockPos();
-            BlockState bs = level.getBlockState(bp);
-            String id = BuiltInRegistries.BLOCK.getKey(bs.getBlock()).toString();
-            double dist = player.position().distanceTo(Vec3.atCenterOf((Vec3i)bp));
-            JsonObject tb = new JsonObject();
-            tb.addProperty("id", id);
-            tb.addProperty("dist", (Number)dist);
-            tb.addProperty("x", (Number)bp.getX());
-            tb.addProperty("y", (Number)bp.getY());
-            tb.addProperty("z", (Number)bp.getZ());
-            o.add("targeted_block", (JsonElement)tb);
-        } else {
-            o.add("targeted_block", null);
-        }
-        JsonArray blocks = new JsonArray();
-        BlockPos pc = player.blockPosition();
-        for (BlockPos bp : BlockPos.betweenClosed((int)(pc.getX() - 16), (int)(pc.getY() - 16), (int)(pc.getZ() - 16), (int)(pc.getX() + 16), (int)(pc.getY() + 16), (int)(pc.getZ() + 16))) {
-            String id;
-            BlockState bs = level.getBlockState(bp);
-            if (bs.isAir() || !CraftAgentBridge.matchesWhitelist(id = BuiltInRegistries.BLOCK.getKey(bs.getBlock()).toString())) continue;
-            double dist = player.position().distanceTo(Vec3.atCenterOf((Vec3i)bp));
-            JsonObject b = new JsonObject();
-            b.addProperty("id", id);
-            b.addProperty("x", (Number)bp.getX());
-            b.addProperty("y", (Number)bp.getY());
-            b.addProperty("z", (Number)bp.getZ());
-            b.addProperty("dist", (Number)dist);
-            b.addProperty("height_diff", (Number)(player.getY() - (double)bp.getY()));
-            blocks.add((JsonElement)b);
-        }
-        o.add("nearby_blocks", (JsonElement)blocks);
-        JsonArray ents = new JsonArray();
-        AABB scanArea = AABB.ofSize((Vec3)player.position(), (double)32.0, (double)32.0, (double)32.0);
-        for (Entity e : level.getEntities((Entity)player, scanArea)) {
-            float f;
-            if (e == player) continue;
-            String tid = BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString();
-            Vec3 ep = e.position();
-            double dist = player.distanceTo(e);
-            JsonObject en = new JsonObject();
-            en.addProperty("type", tid);
-            en.addProperty("x", (Number)ep.x);
-            en.addProperty("y", (Number)ep.y);
-            en.addProperty("z", (Number)ep.z);
-            en.addProperty("dist", (Number)dist);
-            if (e instanceof LivingEntity) {
-                LivingEntity le = (LivingEntity)e;
-                f = le.getHealth();
-            } else {
-                f = 0.0f;
-            }
-            float hp = f;
-            en.addProperty("health", (Number)Float.valueOf(hp));
-            ents.add((JsonElement)en);
-        }
-        o.add("entities", (JsonElement)ents);
-        String nearestThreatType = null;
-        double nearestThreatDist = Double.MAX_VALUE;
-        for (Entity e : level.getEntities((Entity)player, scanArea)) {
-            double d;
-            if (e == player || !(e instanceof Mob)) continue;
-            Mob mob = (Mob)e;
-            boolean hostile = e instanceof Monster;
-            if (!hostile && mob.getTarget() == player) {
-                hostile = true;
-            }
-            if (!hostile || !((d = (double)player.distanceTo(e)) < nearestThreatDist)) continue;
-            nearestThreatDist = d;
-            nearestThreatType = BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).toString();
-        }
-        if (nearestThreatType != null) {
-            JsonObject nt = new JsonObject();
-            nt.addProperty("type", nearestThreatType);
-            nt.addProperty("dist", (Number)nearestThreatDist);
-            o.add("nearest_threat", (JsonElement)nt);
-        } else {
-            o.add("nearest_threat", null);
-        }
-        o.addProperty("status", "ok");
-        return o;
-    }
-
-    /*
-     * Enabled force condition propagation
-     * Lifted jumps to return sites
-     */
     private JsonObject performAction(String type, JsonObject req) {
         MinecraftServer server = serverInstance;
         if (server == null) {
@@ -3656,16 +3498,7 @@ implements ModInitializer {
 
 
 
-    private static boolean matchesWhitelist(String id) {
-        String lower = id.toLowerCase();
-        for (String k : BLOCK_WHITELIST) {
-            if (!lower.contains(k)) continue;
-            return true;
-        }
-        return false;
-    }
-
-    private static JsonArray arr(double x, double y, double z) {
+    static JsonArray arr(double x, double y, double z) {
         JsonArray a = new JsonArray();
         a.add((Number)x);
         a.add((Number)y);
