@@ -346,9 +346,10 @@ public class DebugController {
             }
         };
 
+        // Note: fixture is already lowercased above, so all case labels are lowercase.
         switch (fixture) {
             case "platform" -> {}
-            case "attack", "combat", "searchForEntity", "nearestEntity" -> {
+            case "attack", "combat", "searchforentity", "nearestentity" -> {
                 CraftAgentBridge.serverInstance.getCommands().performPrefixedCommand(
                     CraftAgentBridge.serverInstance.createCommandSourceStack(), "time set night");
                 CraftAgentBridge.serverInstance.getCommands().performPrefixedCommand(
@@ -356,11 +357,11 @@ public class DebugController {
                 spawnEntity.accept("zombie", new BlockPos(0, 66, 3));
                 detail.append(" +zombie");
             }
-            case "searchForBlock" -> {
+            case "searchforblock" -> {
                 placeBlock.accept("oak_log", new BlockPos(1, 64, 0));
                 detail.append(" +oak_log_block");
             }
-            case "collectItems" -> {
+            case "collectitems" -> {
                 var iHolder = BuiltInRegistries.ITEM.get(Identifier.fromNamespaceAndPath("minecraft", "oak_log"));
                 if (iHolder.isPresent()) {
                     ItemStack stack = new ItemStack((ItemLike)((Holder.Reference)iHolder.get()).value(), 4);
@@ -372,21 +373,21 @@ public class DebugController {
                 placeBlock.accept("oak_log", new BlockPos(3, 64, 0));
                 detail.append(" +oak_log@3,64,0");
             }
-            case "eat_item", "eatItem", "consume", "autoSurvive" -> {
+            case "eat_item", "eatitem", "consume", "autosurvive" -> {
                 player.getFoodData().setFoodLevel(5);
                 giveItem.accept("apple", 4);
                 detail.append(" +apple");
             }
-            case "craft", "craftingPlan", "equip", "equipItem", "discard", "discardSmart",
-                 "move_slot", "moveSlot", "move_to_hotbar", "selectSlot", "select_slot",
-                 "use_item", "useItem", "inspectGui", "inspect_gui", "closeGui", "close_gui" -> {
+            case "craft", "craftingplan", "equip", "equipitem", "discard", "discardsmart",
+                 "move_slot", "moveslot", "move_to_hotbar", "selectslot", "select_slot",
+                 "use_item", "useitem", "inspectgui", "inspect_gui", "closegui", "close_gui" -> {
                 detail.append(" (baseline ok)");
             }
             case "place" -> {
                 giveItem.accept("dirt", 16);
                 detail.append(" +dirt");
             }
-            case "clearFurnace", "smelt" -> {
+            case "clearfurnace", "smelt" -> {
                 placeBlock.accept("furnace", new BlockPos(1, 64, 0));
                 giveItem.accept("iron_ore", 4);
                 detail.append(" +furnace+ore");
@@ -404,11 +405,11 @@ public class DebugController {
                 placeBlock.accept("crafting_table", new BlockPos(1, 64, 0));
                 detail.append(" +crafting_table");
             }
-            case "useOn", "use_on_entity" -> {
+            case "useon", "use_on_entity" -> {
                 spawnEntity.accept("cow", new BlockPos(1, 65, 2));
                 detail.append(" +cow");
             }
-            case "digDown" -> {
+            case "digdown" -> {
                 for (int depth = 0; depth < 8; depth++) {
                     int dy = 63 - depth;
                     for (int ox = -1; ox <= 1; ox++)
@@ -425,7 +426,7 @@ public class DebugController {
                 giveItem.accept("fishing_rod", 1);
                 detail.append(" +fishing_rod");
             }
-            case "sleep", "goToBed" -> {
+            case "sleep", "gotobed" -> {
                 CraftAgentBridge.serverInstance.getCommands().performPrefixedCommand(
                     CraftAgentBridge.serverInstance.createCommandSourceStack(), "time set night");
                 CraftAgentBridge.serverInstance.getCommands().performPrefixedCommand(
