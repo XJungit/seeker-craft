@@ -372,7 +372,7 @@ impl GameTool for ModSearchWikiTool {
     ) -> anyhow::Result<ToolResult> {
         let q = args["query"].as_str().unwrap_or("");
         let ack = self.adapter.lock_adapter()?.search_wiki(q)?;
-        let text = ack.wiki_text.unwrap_or(ack.detail);
+        let text = ack.content.unwrap_or(ack.detail);
         Ok(ToolResult {
             message: text,
             is_error: ack.status == "fail",

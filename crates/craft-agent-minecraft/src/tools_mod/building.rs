@@ -572,7 +572,7 @@ impl GameTool for ModGetCraftingPlanTool {
         "get_crafting_plan"
     }
     fn description(&self) -> &str {
-        "Get crafting plan: how many you have + what's missing. item: target item. count: how many to craft. Returns have_count and missing materials list."
+        "Get crafting plan: how many you have + what's missing. item: target item. count: how many to craft. Returns have/need/missing quantities."
     }
     fn parameters(&self) -> Value {
         schema::object()
@@ -596,16 +596,14 @@ impl GameTool for ModGetCraftingPlanTool {
             .lock()
             .unwrap()
             .get_crafting_plan(item, count)?;
-        let have = ack.have_count.unwrap_or(0);
+        let have = ack.have.unwrap_or(0);
+        let need = ack.need.unwrap_or(count);
         let missing = ack
             .missing
             .map(|m| m.to_string())
-            .unwrap_or_else(|| "[]".into());
+            .unwrap_or_else(|| "0".into());
         Ok(ToolResult {
-            message: format!(
-                "have {} of {}: {} | missing: {}",
-                have, count, item, missing
-            ),
+            message: format!("have {have} of {count} {item}: need {need} | missing: {missing}",),
             is_error: ack.status == "fail",
             images: vec![],
         })

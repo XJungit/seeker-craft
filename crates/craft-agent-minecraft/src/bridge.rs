@@ -488,6 +488,21 @@ pub struct ModAck {
     /// move_to_hotbar: 移动到的快捷栏格 (0-8)。
     #[serde(default)]
     pub hotbar_slot: Option<u32>,
+    /// move_slot: 源槽位（Java 字段 `from_slot`）。
+    #[serde(default)]
+    pub from_slot: Option<u32>,
+    /// move_slot: 目标槽位（Java 字段 `to_slot`）。
+    #[serde(default)]
+    pub to_slot: Option<u32>,
+    /// move_slot: 移动的物项数量（Java 字段 `count`）。
+    #[serde(default)]
+    pub move_count: Option<u32>,
+    /// move_slot: 源物品 id（Java 字段 `from_item`）。
+    #[serde(default)]
+    pub from_item: Option<String>,
+    /// move_slot: 目标物品 id（Java 字段 `to_item`）。
+    #[serde(default)]
+    pub to_item: Option<String>,
     /// craft: 合成的数量。
     #[serde(default)]
     pub crafted: Option<u32>,
@@ -545,15 +560,24 @@ pub struct ModAck {
     /// follow_player: 是否在跟随中。
     #[serde(default)]
     pub following: Option<bool>,
-    /// search_wiki: 搜索结果文本。
+    /// follow_player: 实际跟随的 tick 数（Java 字段 `followed_ticks`）。
     #[serde(default)]
-    pub wiki_text: Option<String>,
+    pub followed_ticks: Option<u32>,
+    /// search_wiki: 搜索结果文本（Java 字段 `content`；`wiki_text` 为兼容别名）。
+    #[serde(default, alias = "wiki_text")]
+    pub content: Option<String>,
     /// villager_trades: 交易列表 JSON。
     #[serde(default)]
     pub trades: Option<serde_json::Value>,
     /// villager_trades: 村民职业。
     #[serde(default)]
     pub villager_profession: Option<String>,
+    /// villager_trades: 村民实体 id（Java 字段 `villager_id`）。
+    #[serde(default)]
+    pub villager_id: Option<String>,
+    /// villager_trades: 村民实体类型（Java 字段 `villager_type`）。
+    #[serde(default)]
+    pub villager_type: Option<String>,
     /// trade_with_villager: 实际交易次数。
     #[serde(default)]
     pub traded: Option<u32>,
@@ -562,10 +586,13 @@ pub struct ModAck {
     pub activated: Option<bool>,
     #[serde(default)]
     pub interacted: Option<bool>,
-    /// get_crafting_plan: 已有数量。
+    /// get_crafting_plan: 已有数量（Java 字段 `have`）。
     #[serde(default)]
-    pub have_count: Option<u32>,
-    /// get_crafting_plan: 缺失材料 JSON。
+    pub have: Option<u32>,
+    /// get_crafting_plan: 还需数量（Java 字段 `need`）。
+    #[serde(default)]
+    pub need: Option<u32>,
+    /// get_crafting_plan: 缺失数量（Java 字段 `missing`，整数）。
     #[serde(default)]
     pub missing: Option<serde_json::Value>,
 }
