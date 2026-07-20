@@ -92,12 +92,10 @@
 package com.craftagent.bridge;
 
 import com.craftagent.bridge.AStar;
-import com.craftagent.bridge.FakeClientConnection;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.mojang.authlib.GameProfile;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
@@ -129,24 +127,19 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Holder;
 import net.minecraft.core.Registry;
-import net.minecraft.core.UUIDUtil;
 import net.minecraft.core.Vec3i;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.registries.Registries;
-import net.minecraft.network.Connection;
 import net.minecraft.network.protocol.Packet;
-import net.minecraft.network.protocol.PacketFlow;
 import net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundRotateHeadPacket;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.ResourceKey;
 import net.minecraft.server.MinecraftServer;
-import net.minecraft.server.level.ClientInformation;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.server.network.CommonListenerCookie;
-import net.minecraft.server.players.NameAndId;
+
 import net.minecraft.tags.FluidTags;
 import net.minecraft.util.RandomSource;
 import net.minecraft.world.InteractionHand;
@@ -184,7 +177,6 @@ import net.minecraft.world.item.trading.ItemCost;
 import net.minecraft.world.item.trading.Merchant;
 import net.minecraft.world.item.trading.MerchantOffer;
 import net.minecraft.world.item.trading.MerchantOffers;
-import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.ItemLike;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.LightLayer;
@@ -205,8 +197,8 @@ implements ModInitializer {
     public static final int PORT = 25567;
     private static final int SCAN_RADIUS = 16;
     private static final Gson GSON;
-    private static volatile MinecraftServer serverInstance;
-    private static volatile EntityPlayerMPFake fakePlayer;
+    static volatile MinecraftServer serverInstance;
+    static volatile FakePlayerManager.EntityPlayerMPFake fakePlayer;
     private static volatile double[] moveTarget;
     private static volatile int moveTicksLeft;
     private static volatile boolean moveReached;
@@ -220,7 +212,7 @@ implements ModInitializer {
     private static volatile boolean moveSprinting;
     private static volatile boolean shouldStop;
     private static volatile String currentGoal;
-    private static volatile boolean fakePlayerSpawning;
+    static volatile boolean fakePlayerSpawning;
     private static final Set<String> BLOCK_WHITELIST;
     private static int autoSurviveCooldown;
     private static int autoSurviveAttackCd;
@@ -307,7 +299,7 @@ implements ModInitializer {
                 catch (InterruptedException e) {
                     Thread.currentThread().interrupt();
                 }
-                CraftAgentBridge.createFakePlayer();
+                FakePlayerManager.createFakePlayer();
             });
         });
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
@@ -327,7 +319,7 @@ implements ModInitializer {
         if (moveWaypoints == null) {
             return;
         }
-        ServerPlayer player = CraftAgentBridge.getFirstPlayer(server);
+        ServerPlayer player = FakePlayerManager.getFirstPlayer(server);
         if (player == null) {
             moveWaypoints = null;
             return;
@@ -369,14 +361,14 @@ implements ModInitializer {
     }
 
     private void onEndServerTick(MinecraftServer server) {
-        ServerPlayer survPlayer = CraftAgentBridge.getFirstPlayer(server);
+        ServerPlayer survPlayer = FakePlayerManager.getFirstPlayer(server);
         if (survPlayer != null) {
             CraftAgentBridge.autoSurvive(survPlayer, server);
         }
         if (moveWaypoints == null) {
             return;
         }
-        ServerPlayer player = CraftAgentBridge.getFirstPlayer(server);
+        ServerPlayer player = FakePlayerManager.getFirstPlayer(server);
         if (player == null) {
             moveWaypoints = null;
             return;
@@ -572,99 +564,11 @@ implements ModInitializer {
         }
     }
 
-    private static ServerPlayer getFirstPlayer(MinecraftServer server) {
-        if (fakePlayer != null && (fakePlayer.isDeadOrDying() || !fakePlayer.isAlive())) {
-            System.out.println("[craft-agent-bridge] fakePlayer dead, reviving...");
-            CraftAgentBridge.removeFakePlayer();
-            CraftAgentBridge.createFakePlayer();
-            if (fakePlayer != null) {
-                fakePlayer.setHealth(20.0f);
-                ServerPlayer real = null;
-                for (ServerPlayer p : server.getPlayerList().getPlayers()) {
-                    if (p == fakePlayer) continue;
-                    real = p;
-                    break;
-                }
-                if (real != null) {
-                    int gy = (int)real.getY();
-                    fakePlayer.teleportTo(real.level(), real.getX(), gy + 1, real.getZ() + 1.0, Set.of(), 0.0f, 0.0f, true);
-                }
-            }
-        }
-        if (fakePlayer != null) {
-            return fakePlayer;
-        }
-        List players = server.getPlayerList().getPlayers();
-        return players.isEmpty() ? null : (ServerPlayer)players.get(0);
+    static ServerPlayer getFirstPlayer(MinecraftServer server) {
+        return FakePlayerManager.getFirstPlayer(server);
     }
 
-    private static EntityPlayerMPFake getFakePlayer() {
-        return fakePlayer;
-    }
 
-    /*
-     * WARNING - Removed try catching itself - possible behaviour change.
-     */
-    private static boolean createFakePlayer() {
-        MinecraftServer server = serverInstance;
-        if (server == null) {
-            return false;
-        }
-        if (fakePlayer != null) {
-            return true;
-        }
-        if (fakePlayerSpawning) {
-            return false;
-        }
-        fakePlayerSpawning = true;
-        try {
-            ServerLevel level = server.getLevel(Level.OVERWORLD);
-            if (level == null) {
-                level = ((ServerPlayer)server.getPlayerList().getPlayers().get(0)).level();
-            }
-            String username = "CraftAgent";
-            GameProfile profile = UUIDUtil.createOfflineProfile((String)username);
-            ClientInformation clientInfo = ClientInformation.createDefault();
-            EntityPlayerMPFake fake = new EntityPlayerMPFake(server, level, profile, clientInfo);
-            server.getPlayerList().placeNewPlayer((Connection)new FakeClientConnection(PacketFlow.SERVERBOUND), (ServerPlayer)fake, new CommonListenerCookie(profile, 0, clientInfo, false));
-            server.getPlayerList().op(new NameAndId(profile));
-            fake.teleportTo(level, 0.5, 64.0, 0.5, Set.of(), 0.0f, 0.0f, true);
-            fake.setHealth(20.0f);
-            fake.unsetRemovedPublic();
-            fake.getAttribute(Attributes.STEP_HEIGHT).setBaseValue((double)0.6f);
-            fake.gameMode.changeGameModeForPlayer(GameType.SURVIVAL);
-            server.getPlayerList().broadcastAll((Packet)new ClientboundRotateHeadPacket((Entity)fake, (byte)(fake.yHeadRot * 256.0f / 360.0f)), level.dimension());
-            server.getPlayerList().broadcastAll((Packet)ClientboundEntityPositionSyncPacket.of((Entity)fake), level.dimension());
-            server.getPlayerList().broadcastAll((Packet)new ClientboundPlayerInfoUpdatePacket(ClientboundPlayerInfoUpdatePacket.Action.ADD_PLAYER, (ServerPlayer)fake));
-            fakePlayer = fake;
-            System.out.println("[craft-agent-bridge] Fake player created: " + username + " at (0.5, 64.0, 0.5)");
-            boolean bl = true;
-            return bl;
-        }
-        catch (Exception e) {
-            System.err.println("[craft-agent-bridge] Failed to create fake player: " + e.getMessage());
-            e.printStackTrace();
-            fakePlayer = null;
-            boolean bl = false;
-            return bl;
-        }
-        finally {
-            fakePlayerSpawning = false;
-        }
-    }
-
-    private static void removeFakePlayer() {
-        if (fakePlayer == null) {
-            return;
-        }
-        try {
-            fakePlayer.kill(fakePlayer.level());
-        }
-        catch (Exception e) {
-            System.err.println("[craft-agent-bridge] Error removing fake player: " + e.getMessage());
-        }
-        fakePlayer = null;
-    }
 
     private static JsonObject runOnServerThread(Supplier<JsonObject> task) {
         MinecraftServer server = serverInstance;
@@ -830,7 +734,7 @@ implements ModInitializer {
         moveTarget = new double[]{tx, ty, tz};
         moveStuckCounter = 0;
         ServerLevel level = CraftAgentBridge.onServer(() -> {
-            ServerPlayer p = CraftAgentBridge.getFirstPlayer(serverInstance);
+            ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
             return p != null ? p.level() : null;
         });
         if (level == null) {
@@ -840,7 +744,7 @@ implements ModInitializer {
         }
         BlockPos targetPos = BlockPos.containing((double)tx, (double)(ty + 1.0), (double)tz);
         BlockPos fromPos = CraftAgentBridge.onServer(() -> {
-            ServerPlayer p = CraftAgentBridge.getFirstPlayer(serverInstance);
+            ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
             return p != null ? p.blockPosition() : targetPos;
         });
         moveWaypoints = AStar.findPath(level, Vec3.atCenterOf((Vec3i)fromPos), Vec3.atCenterOf((Vec3i)targetPos));
@@ -939,7 +843,7 @@ implements ModInitializer {
         moveTarget = targetPos;
         moveStuckCounter = 0;
         ServerLevel level = CraftAgentBridge.onServer(() -> {
-            ServerPlayer p = CraftAgentBridge.getFirstPlayer(serverInstance);
+            ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
             return p != null ? p.level() : null;
         });
         if (level == null) {
@@ -949,7 +853,7 @@ implements ModInitializer {
         }
         BlockPos targetBlockPos = BlockPos.containing((double)targetPos[0], (double)targetPos[1], (double)targetPos[2]);
         BlockPos fromPos = CraftAgentBridge.onServer(() -> {
-            ServerPlayer p = CraftAgentBridge.getFirstPlayer(serverInstance);
+            ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
             return p != null ? p.blockPosition() : targetBlockPos;
         });
         moveWaypoints = AStar.findPath(level, Vec3.atCenterOf((Vec3i)fromPos), Vec3.atCenterOf((Vec3i)targetBlockPos));
@@ -1031,7 +935,7 @@ implements ModInitializer {
             return o;
         }
         double[] myPos = CraftAgentBridge.onServer(() -> {
-            ServerPlayer p = CraftAgentBridge.getFirstPlayer(serverInstance);
+            ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
             if (p == null) {
                 return null;
             }
@@ -1064,7 +968,7 @@ implements ModInitializer {
         }
         String search = giveItem.replace("minecraft:", "").toLowerCase();
         int dropped = CraftAgentBridge.onServer(() -> {
-            ServerPlayer p = CraftAgentBridge.getFirstPlayer(serverInstance);
+            ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
             if (p == null) {
                 return 0;
             }
@@ -1101,7 +1005,7 @@ implements ModInitializer {
         int num = req.has("num") ? req.get("num").getAsInt() : 1;
         String search = itemName.replace("minecraft:", "").toLowerCase();
         double[] startData = CraftAgentBridge.onServer(() -> {
-            ServerPlayer p = CraftAgentBridge.getFirstPlayer(serverInstance);
+            ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
             if (p == null) {
                 return null;
             }
@@ -1136,7 +1040,7 @@ implements ModInitializer {
             }
         }
         int dropped = CraftAgentBridge.onServer(() -> {
-            ServerPlayer p = CraftAgentBridge.getFirstPlayer(serverInstance);
+            ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
             if (p == null) {
                 return 0;
             }
@@ -1208,7 +1112,7 @@ implements ModInitializer {
             }
             int[] collectedThisLoop = new int[]{0};
             CraftAgentBridge.onServer(() -> {
-                ServerPlayer p = CraftAgentBridge.getFirstPlayer(serverInstance);
+                ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
                 if (p == null) {
                     return null;
                 }
@@ -1241,7 +1145,7 @@ implements ModInitializer {
                 continue;
             }
             double[] itemInfo = CraftAgentBridge.onServer(() -> {
-                ServerPlayer p = CraftAgentBridge.getFirstPlayer(serverInstance);
+                ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
                 if (p == null) {
                     return null;
                 }
@@ -1277,7 +1181,7 @@ implements ModInitializer {
             double nz = itemInfo[2];
             double minDist = itemInfo[3];
             if (minDist > 1.2 && (myPos = CraftAgentBridge.onServer(() -> {
-                ServerPlayer p = CraftAgentBridge.getFirstPlayer(serverInstance);
+                ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
                 if (p == null) {
                     return null;
                 }
@@ -1344,7 +1248,7 @@ implements ModInitializer {
                 break;
             }
             double[] info = CraftAgentBridge.onServer(() -> {
-                ServerPlayer p = CraftAgentBridge.getFirstPlayer(serverInstance);
+                ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
                 if (p == null) {
                     return null;
                 }
@@ -1385,7 +1289,7 @@ implements ModInitializer {
             if (attackCooldown <= 0) {
                 boolean[] hit = new boolean[]{false};
                 CraftAgentBridge.onServer(() -> {
-                    ServerPlayer p = CraftAgentBridge.getFirstPlayer(serverInstance);
+                    ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
                     if (p == null) {
                         return null;
                     }
@@ -1474,7 +1378,7 @@ implements ModInitializer {
                 return null;
             });
             if (targetPos == null || (myPos = CraftAgentBridge.onServer(() -> {
-                ServerPlayer p = CraftAgentBridge.getFirstPlayer(serverInstance);
+                ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
                 if (p == null) {
                     return null;
                 }
@@ -1558,7 +1462,7 @@ implements ModInitializer {
             }
             String[] tType = new String[]{""};
             double[] info = CraftAgentBridge.onServer(() -> {
-                ServerPlayer p = CraftAgentBridge.getFirstPlayer(serverInstance);
+                ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
                 if (p == null) {
                     return null;
                 }
@@ -1597,7 +1501,7 @@ implements ModInitializer {
                 double len2;
                 result = "retreated";
                 double[] myPos2 = CraftAgentBridge.onServer(() -> {
-                    ServerPlayer p = CraftAgentBridge.getFirstPlayer(serverInstance);
+                    ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
                     if (p == null) {
                         return null;
                     }
@@ -1622,7 +1526,7 @@ implements ModInitializer {
             boolean isCreeper = targetType.contains("creeper");
             if (isCreeper && dist < 6.0 && !mode.equals("retreat")) {
                 double[] myPos3 = CraftAgentBridge.onServer(() -> {
-                    ServerPlayer p = CraftAgentBridge.getFirstPlayer(serverInstance);
+                    ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
                     if (p == null) {
                         return null;
                     }
@@ -1646,7 +1550,7 @@ implements ModInitializer {
             }
             if (mode.equals("retreat")) {
                 double[] myPos4 = CraftAgentBridge.onServer(() -> {
-                    ServerPlayer p = CraftAgentBridge.getFirstPlayer(serverInstance);
+                    ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
                     if (p == null) {
                         return null;
                     }
@@ -1692,7 +1596,7 @@ implements ModInitializer {
             if (attackCooldown <= 0) {
                 boolean[] killed = new boolean[]{false};
                 CraftAgentBridge.onServer(() -> {
-                    ServerPlayer p = CraftAgentBridge.getFirstPlayer(serverInstance);
+                    ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
                     if (p == null) {
                         return null;
                     }
@@ -1729,7 +1633,7 @@ implements ModInitializer {
                 --attackCooldown;
             }
             if (mode.equals("kite") && attackCooldown > 5 && (myPos = CraftAgentBridge.onServer(() -> {
-                ServerPlayer p = CraftAgentBridge.getFirstPlayer(serverInstance);
+                ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
                 if (p == null) {
                     return null;
                 }
@@ -1779,7 +1683,7 @@ implements ModInitializer {
         boolean[] consumed = new boolean[]{false};
         String[] itemId = new String[]{""};
         CraftAgentBridge.onServer(() -> {
-            ServerPlayer p = CraftAgentBridge.getFirstPlayer(serverInstance);
+            ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
             if (p == null) {
                 return null;
             }
@@ -1825,7 +1729,7 @@ implements ModInitializer {
         boolean[] found = new boolean[]{false};
         boolean[] consumed = new boolean[]{false};
         CraftAgentBridge.onServer(() -> {
-            ServerPlayer p = CraftAgentBridge.getFirstPlayer(serverInstance);
+            ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
             if (p == null) {
                 return null;
             }
@@ -1875,7 +1779,7 @@ implements ModInitializer {
                 // empty catch block
             }
             CraftAgentBridge.onServer(() -> {
-                ServerPlayer p = CraftAgentBridge.getFirstPlayer(serverInstance);
+                ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
                 if (p != null) {
                     p.containerMenu.broadcastChanges();
                 }
@@ -1901,7 +1805,7 @@ implements ModInitializer {
         int placed = 0;
         for (int i = 0; i < count && (ok = CraftAgentBridge.onServer(() -> {
             BlockPos below;
-            ServerPlayer p = CraftAgentBridge.getFirstPlayer(serverInstance);
+            ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
             if (p == null) {
                 return false;
             }
@@ -1952,7 +1856,7 @@ implements ModInitializer {
             o.addProperty("detail", "\u670d\u52a1\u5668\u672a\u5c31\u7eea");
             return o;
         }
-        ServerPlayer player = CraftAgentBridge.getFirstPlayer(server);
+        ServerPlayer player = FakePlayerManager.getFirstPlayer(server);
         if (player == null) {
             o.addProperty("status", "fail");
             o.addProperty("detail", "\u6ca1\u6709\u5728\u7ebf\u73a9\u5bb6\uff08\u8bf7\u5148\u8fdb\u5165\u4e16\u754c\uff09");
@@ -2110,7 +2014,7 @@ implements ModInitializer {
             o.addProperty("detail", "\u670d\u52a1\u5668\u672a\u5c31\u7eea");
             return o;
         }
-        ServerPlayer player = CraftAgentBridge.getFirstPlayer(server);
+        ServerPlayer player = FakePlayerManager.getFirstPlayer(server);
         if (player == null) {
             JsonObject o = new JsonObject();
             o.addProperty("status", "fail");
@@ -4249,31 +4153,6 @@ implements ModInitializer {
         }
         autoSurviveCooldown = 0;
         autoSurviveAttackCd = 0;
-    }
-
-    public static class EntityPlayerMPFake
-    extends ServerPlayer {
-        public EntityPlayerMPFake(MinecraftServer server, ServerLevel worldIn, GameProfile profile, ClientInformation cli) {
-            super(server, worldIn, profile, cli);
-        }
-
-        public void tick() {
-            if (this.level().getServer().getTickCount() % 10 == 0) {
-                this.connection.resetPosition();
-                this.level().getChunkSource().move((ServerPlayer)this);
-            }
-            try {
-                super.tick();
-                this.doTick();
-            }
-            catch (NullPointerException nullPointerException) {
-                // empty catch block
-            }
-        }
-
-        public void unsetRemovedPublic() {
-            super.unsetRemoved();
-        }
     }
 
     private static class CombatResult {
