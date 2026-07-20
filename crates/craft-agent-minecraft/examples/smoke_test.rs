@@ -83,44 +83,14 @@ fn main() -> anyhow::Result<()> {
     let mut skipped = 0usize;
     let mut passed = 0usize;
 
-    // Tools that cannot be meaningfully verified in a single-player world via
-    // debug fixtures (need a 2nd human player, a levelled villager, open terrain
-    // for a 4x5 portal, or multi-tick consumption). Skipped but still reported.
     // SKIP 仅保留「单人世界 + debug fixture 确实无法造出环境」的工具。
+    // 目前已修复：collect/build/transfer/eat_item/collect_items/trade_with_villager/
+    // build_portal/go_to_player/attack_player（均已添加 mod 侧 fixture 支持）。
     // 注意：键名必须与工具 name() 完全一致（全为 snake_case）。
-    let destructive: HashMap<&str, &str> = [
-        ("transfer", "requires an open container GUI across tools"),
-        ("build_portal", "needs open 4x5 space (terrain-dependent)"),
-        ("build", "large structure placement, terrain-dependent"),
-        ("teleport_to", "dimension change is disruptive"),
-        (
-            "collect_items",
-            "navigation-based ground collection (covered by collect)",
-        ),
-        (
-            "eat_item",
-            "multi-tick consumption, single command cannot verify consumed",
-        ),
-        (
-            "trade_with_villager",
-            "villager has no trades (no workstation linking in fixture)",
-        ),
-        (
-            "go_to_player",
-            "requires precise live-player positioning (flaky in automated smoke)",
-        ),
-        (
-            "attack_player",
-            "requires precise live-player positioning (flaky in automated smoke)",
-        ),
-        (
-            "collect",
-            "block-mining collect needs a reachable log column; flat-platform fixture unreliable (covered by searchForBlock + dig tools)",
-        ),
-    ]
-    .iter()
-    .cloned()
-    .collect();
+    let destructive: HashMap<&str, &str> = [("teleport_to", "dimension change is disruptive")]
+        .iter()
+        .cloned()
+        .collect();
 
     for t in tools.iter() {
         let name = t.name();
@@ -265,8 +235,9 @@ fn default_args(name: &str, schema: Value, px: f64, py: f64, pz: f64) -> Value {
                 ("chest", "action") => Some(json!("view")),
                 ("ride", "action") => Some(json!("mount")),
                 ("getCraftingPlan", "targetItem") => Some(json!("oak_planks")),
-                ("getBlueprintLevel", "blueprint") => Some(json!("dirt_shelter")),
+                ("getBlueprintLevel", "blueprint") | ("build", "blueprint") => Some(json!("dirt_shelter")),
                 ("collect_items", "item_ids") => Some(json!(["oak_log"])),
+                ("transfer", "moves") => Some(json!([{"from": 54, "to": 0}])),
                 _ => None,
             };
             if let Some(ov) = override_val {

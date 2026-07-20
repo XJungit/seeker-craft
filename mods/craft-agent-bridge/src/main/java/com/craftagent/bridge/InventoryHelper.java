@@ -24,7 +24,7 @@ public class InventoryHelper {
 
     public static boolean placeAt(ServerPlayer player, ServerLevel level, int x, int y, int z, String itemName) {
         double dist = player.position().distanceTo(Vec3.atCenterOf(new BlockPos(x, y, z)));
-        if (dist > 5.5) {
+        if (dist > 8.0) {
             return false;
         }
         Inventory inv = player.getInventory();

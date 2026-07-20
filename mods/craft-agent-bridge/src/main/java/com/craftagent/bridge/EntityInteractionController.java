@@ -23,6 +23,8 @@ import net.minecraft.world.item.trading.Merchant;
 import net.minecraft.world.item.trading.MerchantOffer;
 import net.minecraft.world.item.trading.MerchantOffers;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.BedBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BedPart;
@@ -350,7 +352,27 @@ public class EntityInteractionController {
             }
             BlockPos framePos = new BlockPos(bx, by, bz);
             BlockState existing = level.getBlockState(framePos);
-            if (!existing.isAir() || !InventoryHelper.placeAt(player, level, bx, by, bz, search)) continue;
+            if (!existing.isAir()) continue;
+            // Direct setBlock: bypass placeAt's useItemOn distance check in MC 26.2
+            Block heldBlock = Block.byItem(player.getMainHandItem().getItem());
+            if (heldBlock == null || heldBlock == Blocks.AIR) {
+                // find obsidian in inventory
+                boolean found = false;
+                for (int si = 0; si < player.getInventory().getContainerSize(); si++) {
+                    ItemStack s = player.getInventory().getItem(si);
+                    if (s.isEmpty()) continue;
+                    Block b = Block.byItem(s.getItem());
+                    if (b == null || b == Blocks.AIR) continue;
+                    String key = BuiltInRegistries.BLOCK.getKey(b).toString().toLowerCase();
+                    if (!key.contains(search)) continue;
+                    player.getInventory().setSelectedSlot(si);
+                    found = true;
+                    break;
+                }
+                if (!found) continue;
+            }
+            level.setBlock(framePos, Blocks.OBSIDIAN.defaultBlockState(), 3);
+            player.getMainHandItem().shrink(1);
             ++placed;
         }
         if (placed < 10) {

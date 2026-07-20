@@ -23,8 +23,10 @@ import net.minecraft.world.item.Items;
 import net.minecraft.world.item.trading.ItemCost;
 import net.minecraft.world.item.trading.MerchantOffer;
 import net.minecraft.world.item.trading.MerchantOffers;
+import net.minecraft.world.MenuProvider;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.ServerLevelAccessor;
 import net.minecraft.world.effect.MobEffectInstance;
@@ -294,7 +296,8 @@ public class DebugController {
         }
         detail.append("platform ");
 
-        // ── 3. Cancel movement + teleport bot to origin ──
+        // ── 3. Cancel movement + stop flags + teleport bot to origin ──
+        CraftAgentBridge.shouldStop = false;
         CraftAgentBridge.moveTarget = null;
         CraftAgentBridge.moveWaypoints = null;
         CraftAgentBridge.moveTicksLeft = 0;
@@ -361,17 +364,27 @@ public class DebugController {
                 placeBlock.accept("oak_log", new BlockPos(1, 64, 0));
                 detail.append(" +oak_log_block");
             }
-            case "collectitems" -> {
+            case "collectitems", "collect_items" -> {
                 var iHolder = BuiltInRegistries.ITEM.get(Identifier.fromNamespaceAndPath("minecraft", "oak_log"));
                 if (iHolder.isPresent()) {
                     ItemStack stack = new ItemStack((ItemLike)((Holder.Reference)iHolder.get()).value(), 4);
-                    level.addFreshEntity(new ItemEntity(level, 1.5, 66.0, 0.5, stack));
+                    level.addFreshEntity(new ItemEntity(level, 0.5, 65.0, 0.5, stack));
                     detail.append(" +dropped_item");
                 }
             }
             case "collect" -> {
-                placeBlock.accept("oak_log", new BlockPos(3, 64, 0));
-                detail.append(" +oak_log@3,64,0");
+                // Build a 4-block-tall oak_log column for the collect/mining tool
+                for (int h = 0; h < 4; h++) {
+                    level.setBlock(new BlockPos(3, 64 + h, 0), Blocks.OAK_LOG.defaultBlockState(), 3);
+                }
+                detail.append(" +log_column");
+            }
+            case "build" -> {
+                // Give materials for common blueprints (dirt_shelter needs ~30 dirt)
+                giveItem.accept("dirt", 64);
+                giveItem.accept("oak_log", 64);
+                giveItem.accept("cobblestone", 64);
+                detail.append(" +build_mats");
             }
             case "eat_item", "eatitem", "consume", "autosurvive" -> {
                 player.getFoodData().setFoodLevel(5);
@@ -399,7 +412,13 @@ public class DebugController {
             }
             case "chest", "transfer" -> {
                 placeBlock.accept("chest", new BlockPos(1, 64, 0));
-                detail.append(" +chest");
+                BlockEntity be = level.getBlockEntity(new BlockPos(1, 64, 0));
+                if (be instanceof MenuProvider mp) {
+                    player.openMenu(mp);
+                    detail.append(" +opened_chest_gui");
+                } else {
+                    detail.append(" +chest(no_gui)");
+                }
             }
             case "activate_nearest_block" -> {
                 placeBlock.accept("crafting_table", new BlockPos(1, 64, 0));
@@ -460,7 +479,20 @@ public class DebugController {
             case "build_portal" -> {
                 giveItem.accept("obsidian", 14);
                 giveItem.accept("flint_and_steel", 1);
-                detail.append(" +portal_mat");
+                // Creative mode: infinite reach so portal builder can place top blocks
+                CraftAgentBridge.serverInstance.getCommands().performPrefixedCommand(
+                    CraftAgentBridge.serverInstance.createCommandSourceStack(),
+                    "gamemode creative CraftAgent");
+                detail.append(" +portal_mat+creative");
+            }
+            case "go_to_player", "attack_player" -> {
+                for (ServerPlayer p : CraftAgentBridge.serverInstance.getPlayerList().getPlayers()) {
+                    if (!p.getUUID().equals(player.getUUID())) {
+                        p.teleportTo(level, 3.0, 65.0, 0.5, Set.of(), 0.0f, 0.0f, true);
+                        detail.append(" +real_player_teleported");
+                        break;
+                    }
+                }
             }
             default -> detail.append(" (no extra fixture)");
         }

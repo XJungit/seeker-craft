@@ -1,0 +1,10 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "lsp": {
+    "jdtls": {
+      "env": {
+        "JAVA_HOME": "C:\\Users\\xj\\AppData\\Roaming\\.minecraft\\runtime\\java-runtime-epsilon"
+      }
+    }
+  }
+}
