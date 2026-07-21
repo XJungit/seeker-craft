@@ -512,77 +512,119 @@ implements ModInitializer {
     }
 
     private static void autoSurvive(ServerPlayer player, MinecraftServer server) {
-        double dz;
-        double dx;
-        double len;
         if (--autoSurviveCooldown > 0) {
-            if (autoSurviveAttackCd > 0) {
-                --autoSurviveAttackCd;
-            }
+            if (autoSurviveAttackCd > 0) --autoSurviveAttackCd;
             return;
         }
         autoSurviveCooldown = 20;
-        if (autoSurviveAttackCd > 0) {
-            --autoSurviveAttackCd;
-        }
+        if (autoSurviveAttackCd > 0) --autoSurviveAttackCd;
+
         ServerLevel level = player.level();
         float hp = player.getHealth();
-        LivingEntity threat = null;
-        double minDist = Double.MAX_VALUE;
-        AABB area = AABB.ofSize((Vec3)player.position(), (double)16.0, (double)16.0, (double)16.0);
-        for (Entity e : level.getEntities((Entity)player, area)) {
-            double d;
-            if (!(e instanceof LivingEntity)) continue;
-            LivingEntity le = (LivingEntity)e;
-            String tn = BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).getPath();
-            if (!InventoryHelper.isHostile(tn) || !((d = (double)e.distanceTo((Entity)player)) < minDist)) continue;
-            minDist = d;
-            threat = le;
-        }
         float hunger = player.getFoodData().getFoodLevel();
-        if (hunger < 10.0f) {
-            for (int slot = 0; slot < player.getInventory().getContainerSize(); ++slot) {
-                int useSlot;
-                String id;
-                ItemStack s = player.getInventory().getItem(slot);
-                if (s.isEmpty() || !(id = BuiltInRegistries.ITEM.getKey(s.getItem()).toString().toLowerCase()).contains("apple") && !id.contains("bread") && !id.contains("cooked") && !id.contains("beef") && !id.contains("pork") && !id.contains("chicken") && !id.contains("fish") && !id.contains("potato") && !id.contains("carrot") && !id.contains("mutton") && !id.contains("rabbit") && !id.contains("melon") && !id.contains("berry") && !id.contains("stew") && !id.contains("cookie") && !id.contains("golden") && !id.contains("honey") && !id.contains("pumpkin")) continue;
-                int n = useSlot = slot < 9 ? slot : 0;
+        Inventory inv = player.getInventory();
+
+        // ── 1. Auto-eat when hungry ──
+        if (hunger < 12.0f) {
+            for (int slot = 0; slot < inv.getContainerSize(); slot++) {
+                ItemStack s = inv.getItem(slot);
+                if (s.isEmpty()) continue;
+                String id = BuiltInRegistries.ITEM.getKey(s.getItem()).toString().toLowerCase();
+                if (!id.contains("apple") && !id.contains("bread") && !id.contains("cooked")
+                    && !id.contains("beef") && !id.contains("pork") && !id.contains("chicken")
+                    && !id.contains("fish") && !id.contains("potato") && !id.contains("carrot")
+                    && !id.contains("mutton") && !id.contains("rabbit") && !id.contains("melon")
+                    && !id.contains("berry") && !id.contains("stew") && !id.contains("cookie")
+                    && !id.contains("golden") && !id.contains("honey") && !id.contains("pumpkin"))
+                    continue;
+                int useSlot = slot < 9 ? slot : 0;
                 if (slot >= 9) {
-                    ItemStack tmp = player.getInventory().getItem(0);
-                    player.getInventory().setItem(0, player.getInventory().getItem(slot));
-                    player.getInventory().setItem(slot, tmp);
+                    ItemStack tmp = inv.getItem(0);
+                    inv.setItem(0, inv.getItem(slot));
+                    inv.setItem(slot, tmp);
                 }
-                player.getInventory().setSelectedSlot(useSlot);
-                player.startUsingItem(InteractionHand.MAIN_HAND);
-                player.containerMenu.broadcastChanges();
-                System.out.println("[cab-survive] AUTO EAT " + id + " (hunger=" + hunger + ")");
+                inv.setSelectedSlot(useSlot);
+                if (player.gameMode.useItem(player, level, player.getMainHandItem(), InteractionHand.MAIN_HAND).consumesAction()) {
+                    System.out.println("[cab-survive] AUTO EAT " + id + " (hunger=" + hunger + ")");
+                }
                 return;
             }
         }
-        if (hp <= 6.0f && threat != null && (len = Math.sqrt((dx = player.getX() - threat.getX()) * dx + (dz = player.getZ() - threat.getZ()) * dz)) > 0.01) {
-            double fleeX = player.getX() + dx / len * 8.0;
-            double fleeZ = player.getZ() + dz / len * 8.0;
-            if (moveWaypoints == null) {
-                moveReached = false;
-                moveStuck = false;
-                moveStuckCounter = 0;
-                moveTicksLeft = 100;
-                moveTarget = new double[]{fleeX, player.getY(), fleeZ};
-                moveWaypoints = new ArrayList<Vec3>();
-                moveWaypoints.add(Vec3.atCenterOf((Vec3i)BlockPos.containing((double)fleeX, (double)player.getY(), (double)fleeZ)));
-                moveCurrentWpIndex = 0;
-                System.out.println("[cab-survive] AUTO FLEE from threat at dist=" + String.format("%.1f", minDist));
+
+        // ── 2. Find nearest threat ──
+        LivingEntity threat = null;
+        double minDist = Double.MAX_VALUE;
+        AABB area = AABB.ofSize(player.position(), 16, 16, 16);
+        for (Entity e : level.getEntities(player, area)) {
+            if (!(e instanceof LivingEntity)) continue;
+            LivingEntity le = (LivingEntity) e;
+            String tn = BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).getPath();
+            if (!InventoryHelper.isHostile(tn)) continue;
+            double d = e.distanceTo(player);
+            if (d < minDist) {
+                minDist = d;
+                threat = le;
             }
         }
+
+        // ── 3. Auto-equip armor when combat or low health ──
+        if ((threat != null && minDist < 10) || hp < 10.0f) {
+            tryEquipArmor(player);
+        }
+
+        // ── 4. Auto-flee when critical health ──
+        if (hp <= 6.0f && threat != null) {
+            double dx = player.getX() - threat.getX();
+            double dz = player.getZ() - threat.getZ();
+            double len = Math.sqrt(dx * dx + dz * dz);
+            if (len > 0.01 && !com.craftagent.bridge.pathing.PlayerNavManager.get().isActive()) {
+                double fleeX = player.getX() + dx / len * 12.0;
+                double fleeZ = player.getZ() + dz / len * 12.0;
+                com.craftagent.bridge.pathing.PlayerNavManager.get().navigateTo(fleeX, player.getY(), fleeZ);
+                System.out.println("[cab-survive] AUTO FLEE from " + BuiltInRegistries.ENTITY_TYPE.getKey(threat.getType()).getPath()
+                    + " dist=" + String.format("%.1f", minDist) + " hp=" + String.format("%.1f", hp));
+            }
+            return;
+        }
+
+        // ── 5. Auto-attack when safe ──
         if (threat != null && hp > 6.0f) {
             InventoryHelper.equipBestWeapon(player);
-            double dist = threat.distanceTo((Entity)player);
+            double dist = threat.distanceTo(player);
             player.lookAt(EntityAnchorArgument.Anchor.EYES, threat.position().add(0.0, 1.0, 0.0));
             if (dist <= 4.0 && autoSurviveAttackCd <= 0) {
-                player.attack((Entity)threat);
+                player.attack(threat);
                 player.containerMenu.broadcastChanges();
                 autoSurviveAttackCd = 10;
-                System.out.println("[cab-survive] AUTO ATTACK " + BuiltInRegistries.ENTITY_TYPE.getKey(threat.getType()).getPath() + " dist=" + String.format("%.1f", dist) + " hp=" + String.format("%.1f", Float.valueOf(hp)));
+                System.out.println("[cab-survive] AUTO ATTACK "
+                    + BuiltInRegistries.ENTITY_TYPE.getKey(threat.getType()).getPath()
+                    + " dist=" + String.format("%.1f", dist) + " hp=" + String.format("%.1f", hp));
+            } else if (dist > 4.0 && !com.craftagent.bridge.pathing.PlayerNavManager.get().isActive()) {
+                com.craftagent.bridge.pathing.PlayerNavManager.get().navigateTo(threat.getX(), threat.getY(), threat.getZ());
+            }
+        }
+    }
+
+    private static void tryEquipArmor(ServerPlayer player) {
+        Inventory inv = player.getInventory();
+        // armor slots in container: 36=boots, 37=leggings, 38=chestplate, 39=helmet
+        int[] containerSlots = {39, 38, 37, 36};
+        String[] armorTypes = {"helmet", "chestplate", "leggings", "boots"};
+        for (int ai = 0; ai < armorTypes.length; ai++) {
+            if (!inv.getItem(containerSlots[ai]).isEmpty()) continue;
+            String search = armorTypes[ai];
+            for (int slot = 0; slot < inv.getContainerSize(); slot++) {
+                ItemStack s = inv.getItem(slot);
+                if (s.isEmpty()) continue;
+                String id = BuiltInRegistries.ITEM.getKey(s.getItem()).toString().toLowerCase();
+                if (id.contains("minecraft:iron_" + search) || id.contains("minecraft:diamond_" + search)
+                    || id.contains("minecraft:golden_" + search) || id.contains("minecraft:chainmail_" + search)
+                    || id.contains("minecraft:leather_" + search) || id.contains("minecraft:turtle_" + search)) {
+                    inv.setItem(containerSlots[ai], s.copy());
+                    inv.setItem(slot, ItemStack.EMPTY);
+                    System.out.println("[cab-survive] AUTO EQUIP " + id);
+                    break;
+                }
             }
         }
     }
