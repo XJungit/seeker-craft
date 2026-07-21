@@ -287,6 +287,8 @@ implements ModInitializer {
         COMMAND_HANDLERS.put("goal_status", MetaController::actGoalStatus);
         COMMAND_HANDLERS.put("collect", CollectController::actCollect);
         COMMAND_HANDLERS.put("collect_status", CollectController::actCollectStatus);
+        COMMAND_HANDLERS.put("combat", CombatController::actCombat);
+        COMMAND_HANDLERS.put("combat_status", CombatController::actCombatStatus);
     }
 
     public void onInitialize() {
@@ -371,6 +373,7 @@ implements ModInitializer {
         com.craftagent.bridge.pathing.PlayerNavManager.get().tick();
         GoalEngine.get().tick();
         CollectController.get().tick();
+        CombatController.get().tick();
         if (moveWaypoints == null) {
             return;
         }
@@ -773,9 +776,6 @@ implements ModInitializer {
         }
         if ("follow_player".equals(type)) {
             return MovementController.performFollowPlayer(req);
-        }
-        if ("combat".equals(type)) {
-            return MovementController.performCombat(req);
         }
         if ("use_item".equals(type)) {
             return MovementController.performUseItem(req);

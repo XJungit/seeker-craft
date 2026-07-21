@@ -597,6 +597,7 @@ pub fn create_mc_mod_tools(
     tools.push(Box::new(ModMoveSlotTool::new(adapter.clone())));
     tools.push(Box::new(ModUseItemTool::new(adapter.clone())));
     tools.push(Box::new(ModCombatTool::new(adapter.clone())));
+    tools.push(Box::new(ModCombatStatusTool::new(adapter.clone())));
     tools.push(Box::new(ModLookAtTool::new(adapter.clone())));
     tools.push(Box::new(ModSearchBlockTool::new(adapter.clone())));
     tools.push(Box::new(ModMoveAwayTool::new(adapter.clone())));

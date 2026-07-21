@@ -21,7 +21,7 @@ impl GameTool for ModCombatTool {
         "combat"
     }
     fn description(&self) -> &str {
-        "Autonomous combat AI: mod-side targeting + movement + attacks. melee=aggressive (zombies/spiders), kite=hit-and-run (skeletons/creepers), retreat=flee. Auto-equips best weapon, auto-retreats from creepers and health<6. Returns killed/retreated/timeout/no_target. Usage: combat(mode=\"melee\", ticks=200)"
+        "Autonomous combat: Mod finds nearest hostile → navigates → attacks with player.attack() (vanilla hit detection). melee=aggressive, kite=hit-and-run, retreat=flee. Auto-equips best weapon. Runs in background — non-blocking. Use combat_status to check progress. Returns killed/retreated/timeout/no_target. Usage: combat(mode=\"melee\", ticks=200)"
     }
     fn parameters(&self) -> Value {
         schema::object()
@@ -50,33 +50,51 @@ impl GameTool for ModCombatTool {
         let mode = args["mode"].as_str().unwrap_or("melee");
         let ticks = args["ticks"].as_u64().unwrap_or(200).min(500) as u32;
         let adapter = self.adapter.lock_adapter()?;
-        match adapter.combat(mode, ticks) {
-            Ok(ack) => {
-                let result = ack.result.unwrap_or_else(|| "unknown".into());
-                let target = ack.target.unwrap_or_else(|| "none".into());
-                let msg = match result.as_str() {
-                    "killed" => format!("combat {mode}: killed {target}"),
-                    "retreated" => {
-                        format!("combat {mode}: retreated from {target} (low health or creeper)")
-                    }
-                    "timeout" => {
-                        format!("combat {mode}: timeout after {ticks} ticks fighting {target}")
-                    }
-                    "no_target" => format!("combat {mode}: no hostile entities nearby"),
-                    _ => format!("combat {mode}: {result} target={target}"),
-                };
-                Ok(ToolResult {
-                    message: msg,
-                    is_error: result == "no_target",
-                    images: vec![],
-                })
-            }
-            Err(e) => Ok(ToolResult {
-                message: format!("combat {mode}: error: {e}"),
-                is_error: true,
-                images: vec![],
-            }),
-        }
+        let ack = adapter.combat_start(mode, ticks)?;
+        Ok(ToolResult {
+            message: format!(
+                "combat {} for {} ticks started: {}",
+                mode, ticks, ack.detail
+            ),
+            is_error: ack.status != "ok",
+            images: vec![],
+        })
+    }
+}
+
+pub struct ModCombatStatusTool {
+    adapter: Arc<Mutex<MinecraftModAdapter>>,
+}
+impl ModCombatStatusTool {
+    pub fn new(a: Arc<Mutex<MinecraftModAdapter>>) -> Self {
+        Self { adapter: a }
+    }
+}
+impl GameTool for ModCombatStatusTool {
+    fn name(&self) -> &str {
+        "combat_status"
+    }
+    fn description(&self) -> &str {
+        "Check the status of active combat. Returns current state (running/idle) with target info. Use after combat() to check progress."
+    }
+    fn parameters(&self) -> Value {
+        schema::no_args()
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::read()
+    }
+    fn execute(
+        &self,
+        _id: &str,
+        _args: Value,
+        _on_update: Option<ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let ack = self.adapter.lock_adapter()?.combat_status()?;
+        Ok(ToolResult {
+            message: ack.detail,
+            is_error: false,
+            images: vec![],
+        })
     }
 }
 

@@ -188,9 +188,6 @@ pub enum ModCommand {
     /// 攻击最近敌对实体（单次攻击，mod 侧自动装备武器+朝向）。
     #[serde(rename = "attack")]
     Attack { ticks: u32 },
-    /// 战斗 AI（melee/kite/retreat，mod 侧自主走位）。
-    #[serde(rename = "combat")]
-    Combat { mode: String, ticks: u32 },
     /// 合成物品：mod 侧直接操作 Inventory 扣材料加结果，零视觉依赖。
     #[serde(rename = "craft")]
     Craft { item: String, count: u32 },
@@ -394,6 +391,12 @@ pub enum ModCommand {
     /// 查询采集控制器状态。
     #[serde(rename = "collect_status")]
     CollectStatus,
+    /// 战斗控制器：Mod 侧自动找目标→攻击→撤退。mode: melee/kite/retreat。
+    #[serde(rename = "combat")]
+    Combat { mode: String, ticks: u32 },
+    /// 查询战斗控制器状态。
+    #[serde(rename = "combat_status")]
+    CombatStatus,
     // ═══ 调试命令（smoke 测试造环境用，不暴露给 LLM） ═══
     /// 在玩家前方生成实体/掉落物。entity: zombie/pig/cow/creeper/chicken/item/villager。
     #[serde(rename = "debug_spawn")]
