@@ -24,6 +24,7 @@ public class PlayerNav {
     private static final int MAX_REPLANS = 5;
     private static final int NODES_PER_TICK = 2000;
     private static final double GOAL_MOVED_SQR = 16.0;
+    private static final int INITIAL_FALL_SCAN = 128;
     private BlockPos lastGoalCenter;
 
     public PlayerNav(ServerPlayer player, Supplier<NavGoal> goalSupplier, double speed) {
@@ -66,13 +67,14 @@ public class PlayerNav {
                 failReason = "stuck_after_" + replans + "_replans";
                 return status;
             }
-        } else {
-            // No executor — start fresh search
-            startFreshSearch();
-            return Status.RUNNING;
         }
 
-        // Advance current search
+        // No executor running — start or continue A* search
+        if (currentSearch == null && executor == null) {
+            startFreshSearch();
+        }
+
+        // Advance current search (same tick if we just started it)
         if (currentSearch != null) {
             AStarSearch.State s = currentSearch.step(NODES_PER_TICK);
             if (s == AStarSearch.State.FOUND) {
@@ -110,20 +112,36 @@ public class PlayerNav {
         NavGoal goal = goalSupplier.get();
         lastGoalCenter = goal.center();
         ServerLevel level = (ServerLevel) player.level();
-        BlockPos feet = player.blockPosition();
-
-        BlockPos startPos = findValidStart(level, feet);
-        if (startPos == null) startPos = feet;
 
         searchContext = NavContext.forSearch(level, player.getInventory());
+
+        BlockPos feet = player.blockPosition();
+        BlockPos startPos = findValidStart(level, feet);
+        if (startPos == null) {
+            // Deep scan for ground below the bot (up to 128 blocks down)
+            int landingY = Integer.MIN_VALUE;
+            for (int dy = 0; dy >= -INITIAL_FALL_SCAN; dy--) {
+                BlockPos p = new BlockPos(feet.getX(), feet.getY() + dy, feet.getZ());
+                if (searchContext.isStandable(p)) {
+                    landingY = feet.getY() + dy;
+                    break;
+                }
+            }
+            if (landingY != Integer.MIN_VALUE) {
+                startPos = new BlockPos(feet.getX(), landingY, feet.getZ());
+            } else {
+                startPos = feet;
+            }
+        }
+
         currentSearch = new AStarSearch(searchContext, startPos, goal, 30000);
     }
 
     private BlockPos findValidStart(ServerLevel level, BlockPos pos) {
-        if (searchContext != null && searchContext.isStandable(pos)) return pos;
+        if (searchContext.isStandable(pos)) return pos;
         for (int dy = 0; dy >= -5; dy--) {
             BlockPos p = new BlockPos(pos.getX(), pos.getY() + dy, pos.getZ());
-            if (searchContext != null && searchContext.isStandable(p)) return p;
+            if (searchContext.isStandable(p)) return p;
         }
         return null;
     }

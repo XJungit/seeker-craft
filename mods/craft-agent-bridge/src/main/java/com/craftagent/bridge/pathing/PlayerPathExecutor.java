@@ -1,7 +1,6 @@
 package com.craftagent.bridge.pathing;
 
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Vec3i;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
@@ -23,11 +22,14 @@ public class PlayerPathExecutor {
     private int index;
     private int ticksOnCurrent;
     private int ticksSinceProgress;
-    private BlockPos lastProgressPos;
+    private Vec3 lastProgressPos;
     private boolean stuckWarned;
+    private boolean jumpedThisTick;
     private static final int STUCK_WARN_TICKS = 40;
-    private static final int STUCK_REPLAN_TICKS = 80;
-    private static final double PROGRESS_THRESHOLD_SQ = 0.25;
+    private static final int STUCK_REPLAN_TICKS = 100;
+    private static final double PROGRESS_THRESHOLD_SQ = 0.5;
+    private static final double ARRIVAL_HORIZ_SQ = 0.8 * 0.8;
+    private static final double ARRIVAL_VERT = 1.2;
 
     public PlayerPathExecutor(ServerPlayer player, Path path, Supplier<NavContext> ctxSupplier) {
         this.player = player;
@@ -36,7 +38,7 @@ public class PlayerPathExecutor {
         this.index = 0;
         this.ticksOnCurrent = 0;
         this.ticksSinceProgress = 0;
-        this.lastProgressPos = player.blockPosition();
+        this.lastProgressPos = player.position();
     }
 
     public Status tick() {
@@ -46,13 +48,14 @@ public class PlayerPathExecutor {
         NavContext ctx = ctxSupplier.get();
 
         Movement movement = path.movements.get(index);
-        BlockPos feet = player.blockPosition();
+        Vec3 pos = player.position();
+        jumpedThisTick = false;
 
-        // Check progress
-        double distSq = feet.distSqr(lastProgressPos);
+        // Progress tracking using actual position
+        double distSq = pos.distanceToSqr(lastProgressPos);
         if (distSq > PROGRESS_THRESHOLD_SQ) {
             ticksSinceProgress = 0;
-            lastProgressPos = feet;
+            lastProgressPos = pos;
         } else {
             ticksSinceProgress++;
         }
@@ -79,6 +82,10 @@ public class PlayerPathExecutor {
         }
 
         Vec3 target = Vec3.atCenterOf(movement.dest);
+        double hDistSq = Math.pow(pos.x - target.x, 2) + Math.pow(pos.z - target.z, 2);
+        double vDist = Math.abs(pos.y - target.y);
+        boolean nearHoriz = hDistSq < ARRIVAL_HORIZ_SQ;
+        boolean nearVert = vDist < ARRIVAL_VERT;
 
         switch (movement.kind) {
             case TRAVERSE:
@@ -88,9 +95,15 @@ public class PlayerPathExecutor {
             case ASCEND:
                 driveToward(target, true);
                 if (player.horizontalCollision && player.onGround()) {
-                    player.setDeltaMovement(player.getDeltaMovement().x, 0.42, player.getDeltaMovement().z);
+                    player.jumpFromGround();
+                    jumpedThisTick = true;
                 }
-                break;
+                if (nearHoriz && nearVert) {
+                    advance();
+                    return Status.RUNNING;
+                }
+                ticksOnCurrent++;
+                return Status.RUNNING;
             case DESCEND:
                 driveToward(target, true);
                 break;
@@ -99,7 +112,8 @@ public class PlayerPathExecutor {
             case PILLAR:
                 driveToward(target, false);
                 if (player.onGround()) {
-                    player.setDeltaMovement(player.getDeltaMovement().x, 0.42, player.getDeltaMovement().z);
+                    player.jumpFromGround();
+                    jumpedThisTick = true;
                     autoPlace(movement.toPlace);
                 }
                 break;
@@ -113,7 +127,8 @@ public class PlayerPathExecutor {
             case PARKOUR:
                 driveToward(target, true);
                 if (player.onGround()) {
-                    player.setDeltaMovement(player.getDeltaMovement().x, 0.42, player.getDeltaMovement().z);
+                    player.jumpFromGround();
+                    jumpedThisTick = true;
                 }
                 player.setSprinting(true);
                 break;
@@ -121,9 +136,8 @@ public class PlayerPathExecutor {
 
         ticksOnCurrent++;
 
-        // Check if arrived at current movement dest
-        double distToDest = Math.sqrt(feet.distSqr(movement.dest));
-        if (distToDest < 1.5) {
+        // Arrival check: near horizontally AND near vertically
+        if (nearHoriz && nearVert) {
             advance();
             return Status.RUNNING;
         }
@@ -147,31 +161,27 @@ public class PlayerPathExecutor {
 
     private void driveToward(Vec3 target, boolean sprint) {
         double ddx = target.x - player.getX();
-        double ddy = target.y - player.getY();
         double ddz = target.z - player.getZ();
         double horiz = Math.sqrt(ddx * ddx + ddz * ddz);
-        if (horiz < 0.01) return;
-
+        if (horiz < 0.01) {
+            player.zza = 0;
+            player.xxa = 0;
+            return;
+        }
         float yaw = (float) Math.toDegrees(Math.atan2(-ddx, ddz));
         player.setYRot(yaw);
         player.yHeadRot = yaw;
 
-        boolean inWater = player.isInWater();
-        if (inWater) {
-            player.zza = 1.0f;
-            double vy = ddy > 0.2 ? 0.35 : (ddy < -0.2 ? -0.35 : 0.0);
-            player.setDeltaMovement(player.getDeltaMovement().x, vy, player.getDeltaMovement().z);
-            return;
-        }
+        // Set input values (for aiStep processing)
+        player.zza = sprint ? 1.3f : 1.0f;
+        player.setSprinting(sprint);
 
-        if (player.onGround()) {
-            player.zza = sprint ? 1.3f : 1.0f;
-            player.setSprinting(sprint);
-        }
-        double speed = 0.3;
+        // Direct velocity for fake player (no client input)
+        double speed = sprint ? 0.35 : 0.25;
         double nx = ddx / horiz;
         double nz = ddz / horiz;
-        player.setDeltaMovement(nx * speed, player.getDeltaMovement().y, nz * speed);
+        double vy = jumpedThisTick ? player.getDeltaMovement().y : player.getDeltaMovement().y;
+        player.setDeltaMovement(nx * speed, vy, nz * speed);
     }
 
     private void autoPlace(BlockPos target) {
@@ -217,7 +227,7 @@ public class PlayerPathExecutor {
         index++;
         ticksOnCurrent = 0;
         stuckWarned = false;
-        lastProgressPos = player.blockPosition();
+        lastProgressPos = player.position();
     }
 
     public void stop() {
