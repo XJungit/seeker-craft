@@ -368,6 +368,16 @@ pub enum ModCommand {
     /// 传送到指定维度（the_nether / the_end / overworld）。
     #[serde(rename = "teleport_to")]
     TeleportToDimension { dimension: String },
+    /// 新寻路系统：异步 A* + 8 种 movement（traverse/ascend/descend/pillar/digDown/parkour/diagonal）。
+    /// 每 tick 执行，auto-replan，auto-dig，auto-place。
+    #[serde(rename = "nav_to")]
+    NavTo { x: f64, y: f64, z: f64 },
+    /// 停止新寻路系统。
+    #[serde(rename = "nav_stop")]
+    NavStop,
+    /// 查询新寻路系统状态。
+    #[serde(rename = "nav_status")]
+    NavStatus,
     // ═══ 调试命令（smoke 测试造环境用，不暴露给 LLM） ═══
     /// 在玩家前方生成实体/掉落物。entity: zombie/pig/cow/creeper/chicken/item/villager。
     #[serde(rename = "debug_spawn")]

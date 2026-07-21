@@ -46,22 +46,25 @@ impl GameTool for ModMoveToTool {
         let x = args["x"].as_f64().unwrap_or(0.0);
         let y = args["y"].as_f64().unwrap_or(0.0);
         let z = args["z"].as_f64().unwrap_or(0.0);
-        let adapter = self.adapter.lock_adapter()?;
-        // 快速检查：已在目标位置则直接返回成功，省掉 A* 规划 + TCP 往返
-        let cur = adapter.reload()?;
-        let dx = cur.position[0] - x;
-        let dy = cur.position[1] - y;
-        let dz = cur.position[2] - z;
-        if dx * dx + dy * dy + dz * dz < 0.25 {
-            return Ok(ToolResult {
-                message: format!("move_to ({:.1},{:.1},{:.1}) already at target", x, y, z),
-                is_error: false,
-                images: vec![],
-            });
-        }
 
-        // 首次尝试直达目标
-        let ack = adapter.move_to(x, y, z)?;
+        // 阶段1：获取初始状态 + 快速检查（锁释放后不再持有）
+        let (cur_pos, ack) = {
+            let adapter = self.adapter.lock_adapter()?;
+            let cur = adapter.reload()?;
+            let dx = cur.position[0] - x;
+            let dy = cur.position[1] - y;
+            let dz = cur.position[2] - z;
+            if dx * dx + dy * dy + dz * dz < 0.25 {
+                return Ok(ToolResult {
+                    message: format!("move_to ({:.1},{:.1},{:.1}) already at target", x, y, z),
+                    is_error: false,
+                    images: vec![],
+                });
+            }
+            let ack = adapter.move_to(x, y, z)?;
+            (cur.position, ack)
+        };
+
         let reached = ack.reached.unwrap_or(false);
         let dist = ack.final_dist.unwrap_or(0.0);
         let stuck = ack.stuck.unwrap_or(false);
@@ -69,7 +72,7 @@ impl GameTool for ModMoveToTool {
         // 卡住/过远 → 自动用中间点重规划（Numen 风格 recover，无需 LLM 介入）。
         // 最多三级中间点：先试 1/2 中点，再试 1/4 与 3/4 递进。
         if needs_midpoint_retry(reached, stuck, dist) {
-            let (cx, cy, cz) = (cur.position[0], cur.position[1], cur.position[2]);
+            let (cx, cy, cz) = (cur_pos[0], cur_pos[1], cur_pos[2]);
             for step in midpoint_fractions() {
                 let mx = cx + (x - cx) * step;
                 let my = cy + (y - cy) * step;
@@ -81,7 +84,14 @@ impl GameTool for ModMoveToTool {
                     return Ok(format_move_result(&fack, x, y, z, "via midpoint"));
                 }
             }
-            // 中间点也失败：返回原 stuck 信息（让 LLM 决定挖/垫脚）
+            // 中间点也失败：尝试一次自动 pillar_up 脱困 + 重试
+            let padapter = self.adapter.lock_adapter()?;
+            let _ = padapter.pillar_up(Some(1), Some("dirt"));
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            let rack = padapter.move_to(x, y, z)?;
+            if rack.reached.unwrap_or(false) || !rack.stuck.unwrap_or(true) {
+                return Ok(format_move_result(&rack, x, y, z, "after pillar"));
+            }
             return Ok(format_move_result(&ack, x, y, z, ""));
         }
 
@@ -397,6 +407,133 @@ impl GameTool for ModDigDownTool {
                 start_y, final_st.position[1]
             ),
             is_error: dug == 0,
+            images: vec![],
+        })
+    }
+}
+
+/// 新寻路系统（Numen 风格）：异步 A* + TRAVERSE/ASCEND/DESCEND/PILLAR/DIG_DOWN/PARKOUR/DIAGONAL。
+/// 服务端每 tick 自动推进，auto-replan，auto-dig 挡路方块，auto-place 垫脚。
+/// 不阻塞——立即返回导航已启动状态。调用 nav_stop 停止。
+/// 状态可通过 nav_status 查询。
+pub struct ModNavToTool {
+    adapter: Arc<Mutex<MinecraftModAdapter>>,
+}
+impl ModNavToTool {
+    pub fn new(a: Arc<Mutex<MinecraftModAdapter>>) -> Self {
+        Self { adapter: a }
+    }
+}
+impl GameTool for ModNavToTool {
+    fn name(&self) -> &str {
+        "nav_to"
+    }
+    fn description(&self) -> &str {
+        "Navigate to world coordinates using advanced A* pathfinding (Numen-style). Supports auto-dig, auto-pillar, diagonal, parkour. Runs in background — non-blocking. Use nav_status to check progress, nav_stop to cancel. Prefer this over move_to for complex terrain."
+    }
+    fn parameters(&self) -> Value {
+        schema::object()
+            .num_req("x", "Target X world coordinate")
+            .num_req("y", "Target Y")
+            .num_req("z", "Target Z world coordinate")
+            .finish()
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _id: &str,
+        args: Value,
+        _on_update: Option<ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let x = args["x"].as_f64().unwrap_or(0.0);
+        let y = args["y"].as_f64().unwrap_or(0.0);
+        let z = args["z"].as_f64().unwrap_or(0.0);
+        let adapter = self.adapter.lock_adapter()?;
+        let ack = adapter.nav_to(x, y, z)?;
+        Ok(ToolResult {
+            message: format!(
+                "nav_to ({:.1},{:.1},{:.1}) started: {}",
+                x, y, z, ack.detail
+            ),
+            is_error: ack.status != "ok",
+            images: vec![],
+        })
+    }
+}
+
+/// 查询新寻路系统状态。
+pub struct ModNavStatusTool {
+    adapter: Arc<Mutex<MinecraftModAdapter>>,
+}
+impl ModNavStatusTool {
+    pub fn new(a: Arc<Mutex<MinecraftModAdapter>>) -> Self {
+        Self { adapter: a }
+    }
+}
+impl GameTool for ModNavStatusTool {
+    fn name(&self) -> &str {
+        "nav_status"
+    }
+    fn description(&self) -> &str {
+        "Check the status of the active A* pathfinding navigation. Returns current state (running/arrived/failed/idle) with remaining moves and replan count. Use after nav_to to check progress."
+    }
+    fn parameters(&self) -> Value {
+        schema::object().finish()
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::read()
+    }
+    fn execute(
+        &self,
+        _id: &str,
+        _args: Value,
+        _on_update: Option<ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let adapter = self.adapter.lock_adapter()?;
+        let ack = adapter.nav_status()?;
+        Ok(ToolResult {
+            message: format!("nav_status: {}", ack.detail),
+            is_error: false,
+            images: vec![],
+        })
+    }
+}
+
+/// 停止新寻路系统。
+pub struct ModNavStopTool {
+    adapter: Arc<Mutex<MinecraftModAdapter>>,
+}
+impl ModNavStopTool {
+    pub fn new(a: Arc<Mutex<MinecraftModAdapter>>) -> Self {
+        Self { adapter: a }
+    }
+}
+impl GameTool for ModNavStopTool {
+    fn name(&self) -> &str {
+        "nav_stop"
+    }
+    fn description(&self) -> &str {
+        "Stop the active A* pathfinding navigation immediately."
+    }
+    fn parameters(&self) -> Value {
+        schema::object().finish()
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _id: &str,
+        _args: Value,
+        _on_update: Option<ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let adapter = self.adapter.lock_adapter()?;
+        let ack = adapter.nav_stop()?;
+        Ok(ToolResult {
+            message: format!("nav_stop: {}", ack.detail),
+            is_error: false,
             images: vec![],
         })
     }

@@ -797,7 +797,11 @@ pub fn create_mc_mod_tools(
     // 附魔 + 维度传送（末影龙通关路线）
     tools.push(Box::new(ModEnchantTool::new(adapter.clone())));
     tools.push(Box::new(ModBuildPortalTool::new(adapter.clone())));
-    tools.push(Box::new(ModTeleportToDimensionTool::new(adapter)));
+    tools.push(Box::new(ModTeleportToDimensionTool::new(adapter.clone())));
+    // 新寻路系统（Numen 风格：异步 A* + 8种 movement）
+    tools.push(Box::new(ModNavToTool::new(adapter.clone())));
+    tools.push(Box::new(ModNavStatusTool::new(adapter.clone())));
+    tools.push(Box::new(ModNavStopTool::new(adapter)));
     // Agent-local tools（Numen 风格：无需 mod 通信）
     tools.push(Box::new(NumenTodoWriteTool));
     tools.push(Box::new(NumenStatusTool));

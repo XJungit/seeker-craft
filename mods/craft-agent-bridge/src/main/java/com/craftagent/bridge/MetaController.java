@@ -160,4 +160,30 @@ public class MetaController {
         o.addProperty("detail", "teleport_to " + dimension + " at (" + String.format("%.1f", tx) + "," + String.format("%.1f", ty) + "," + String.format("%.1f", tz) + ")");
         return o;
     }
+
+    static JsonObject actNavTo(ServerPlayer player, ServerLevel level, JsonObject req) {
+        JsonObject o = new JsonObject();
+        o.addProperty("status", "ok");
+        double tx = req.get("x").getAsDouble();
+        double ty = req.get("y").getAsDouble();
+        double tz = req.get("z").getAsDouble();
+        com.craftagent.bridge.pathing.PlayerNavManager.get().navigateTo(tx, ty, tz);
+        o.addProperty("detail", "nav_to (" + String.format("%.1f", tx) + "," + String.format("%.1f", ty) + "," + String.format("%.1f", tz) + ") started");
+        return o;
+    }
+
+    static JsonObject actNavStatus(ServerPlayer player, ServerLevel level, JsonObject req) {
+        JsonObject o = new JsonObject();
+        o.addProperty("status", "ok");
+        o.addProperty("detail", com.craftagent.bridge.pathing.PlayerNavManager.get().statusString());
+        return o;
+    }
+
+    static JsonObject actNavStop(ServerPlayer player, ServerLevel level, JsonObject req) {
+        JsonObject o = new JsonObject();
+        com.craftagent.bridge.pathing.PlayerNavManager.get().stop();
+        o.addProperty("status", "ok");
+        o.addProperty("detail", "nav stopped");
+        return o;
+    }
 }

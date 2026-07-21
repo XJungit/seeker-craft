@@ -194,6 +194,22 @@ impl MinecraftModAdapter {
         self.lock_bridge()?.send(ModCommand::MoveTo { x, y, z })
     }
 
+    /// 新寻路系统：异步 A*，8 种 movement，auto-replan，auto-dig。
+    /// 不阻塞——立即返回，由 mod 侧每 tick 执行。
+    pub fn nav_to(&self, x: f64, y: f64, z: f64) -> Result<ModAck> {
+        self.lock_bridge()?.send(ModCommand::NavTo { x, y, z })
+    }
+
+    /// 停止新寻路系统。
+    pub fn nav_stop(&self) -> Result<ModAck> {
+        self.lock_bridge()?.send(ModCommand::NavStop)
+    }
+
+    /// 查询新寻路系统状态。
+    pub fn nav_status(&self) -> Result<ModAck> {
+        self.lock_bridge()?.send(ModCommand::NavStatus)
+    }
+
     /// 精确放置方块到指定坐标（mod 侧 useItemOn，不依赖准星朝向）。
     pub fn place_at(&self, x: i32, y: i32, z: i32, item: &str) -> Result<ModAck> {
         self.lock_bridge()?.send(ModCommand::PlaceAt {

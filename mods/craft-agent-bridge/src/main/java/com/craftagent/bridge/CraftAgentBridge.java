@@ -195,7 +195,7 @@ implements ModInitializer {
     public static final int PORT = 25567;
     private static final int SCAN_RADIUS = 16;
     private static final Gson GSON;
-    static volatile MinecraftServer serverInstance;
+    public static volatile MinecraftServer serverInstance;
     static volatile FakePlayerManager.EntityPlayerMPFake fakePlayer;
     static volatile double[] moveTarget;
     static volatile int moveTicksLeft;
@@ -280,6 +280,9 @@ implements ModInitializer {
         COMMAND_HANDLERS.put("activate_nearest_block", InteractionController::actActivateNearestBlock);
         COMMAND_HANDLERS.put("build_portal", EntityInteractionController::actBuildPortal);
         COMMAND_HANDLERS.put("teleport_to", MetaController::actTeleportTo);
+        COMMAND_HANDLERS.put("nav_to", MetaController::actNavTo);
+        COMMAND_HANDLERS.put("nav_status", MetaController::actNavStatus);
+        COMMAND_HANDLERS.put("nav_stop", MetaController::actNavStop);
     }
 
     public void onInitialize() {
@@ -360,6 +363,7 @@ implements ModInitializer {
         if (survPlayer != null) {
             CraftAgentBridge.autoSurvive(survPlayer, server);
         }
+        com.craftagent.bridge.pathing.PlayerNavManager.get().tick();
         if (moveWaypoints == null) {
             return;
         }
@@ -460,7 +464,7 @@ implements ModInitializer {
             moveStuckCounter = 0;
             moveStuck = false;
         }
-        if (noProgressTicks >= 15 && player.onGround()) {
+        if (noProgressTicks >= 10 && player.onGround()) {
             BlockPos below = player.blockPosition().below();
             ServerLevel level = player.level();
             BlockState bs = level.getBlockState(below);
@@ -473,9 +477,32 @@ implements ModInitializer {
                     InventoryHelper.placeAt(player, level, below.getX(), below.getY(), below.getZ(), itemId);
                     player.setDeltaMovement(player.getDeltaMovement().x, 0.42, player.getDeltaMovement().z);
                     noProgressTicks = 0;
+                    moveStuckCounter = 0;
+                    moveStuck = false;
                     System.out.println("[cab-move] AUTO PILLAR at " + below.getX() + "," + below.getY() + "," + below.getZ());
                     break;
                 }
+            }
+        }
+        if (noProgressTicks >= 12 && player.horizontalCollision && player.onGround()) {
+            ServerLevel level = player.level();
+            float pyaw = player.getYRot();
+            double rad = Math.toRadians(pyaw);
+            int dx = (int)Math.round(-Math.sin(rad));
+            int dz = (int)Math.round(Math.cos(rad));
+            BlockPos base = player.blockPosition();
+            BlockPos[] targets = new BlockPos[]{base.offset(dx, 0, dz), base.offset(dx, 1, dz), base.offset(dx, -1, dz)};
+            for (BlockPos target : targets) {
+                BlockState front = level.getBlockState(target);
+                if (front.isAir() || front.canBeReplaced() || front.getBlock() == Blocks.BEDROCK) continue;
+                InventoryHelper.equipBestTool(player, BuiltInRegistries.BLOCK.getKey(front.getBlock()).toString());
+                boolean ok = level.destroyBlock(target, true);
+                if (!ok) continue;
+                noProgressTicks = 0;
+                moveStuckCounter = 0;
+                moveStuck = false;
+                System.out.println("[cab-move] AUTO DIG at " + target.getX() + "," + target.getY() + "," + target.getZ() + " (" + BuiltInRegistries.BLOCK.getKey(front.getBlock()).getPath() + ")");
+                break;
             }
         }
         if (moveTicksLeft % 20 == 0) {
