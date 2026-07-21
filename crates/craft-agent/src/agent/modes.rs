@@ -49,7 +49,7 @@ impl Agent {
         if self.obs_streak >= 5 && self.last_mode_trigger != 3 {
             self.last_mode_trigger = 3;
             return Some(format!(
-                "[MODE: unstuck] 已连续 {} 步纯观察！选一个完全不同的工具立即行动：collect, craft, build, combat, move_to — 不要再用 perceive/look。",
+                "[MODE: unstuck] 已连续 {} 步纯观察！选一个完全不同的工具立即行动：nav_to, collect, craft, build, combat — 不要再用 perceive/look。",
                 self.obs_streak
             ));
         }

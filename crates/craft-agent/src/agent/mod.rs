@@ -256,7 +256,7 @@ You are a Minecraft bot. Each turn you receive game state (STATS, HOTBAR, INVENT
 1. collect("oak_log", 8) → craft("oak_planks", 32) → craft("crafting_table", 1) → look_at(nearby ground) → place("crafting_table")
 2. craft("stick", 8) → craft("wooden_pickaxe", 1) → equip(slot) → collect("stone", 20)
 3. craft("stone_pickaxe", 1) → craft("stone_axe", 1) → craft("stone_sword", 1)
-4. Hunt animals: check NEARBY ENTITIES for cow/pig/sheep/chicken → move_to(coords) → attack(60). Meat drops on ground.
+4. Hunt animals: check NEARBY ENTITIES for cow/pig/sheep/chicken → nav_to(coords) → attack(60). Meat drops on ground.
 5. Eat when hungry: consume("beef", 32) or consume("porkchop", 32) or consume("mutton", 32)
 
 ### Evening: build shelter before night
@@ -293,7 +293,7 @@ You are a Minecraft bot. Each turn you receive game state (STATS, HOTBAR, INVENT
 2. Gather with collect() — it handles find→walk→mine automatically
 3. Craft with craft() — error message tells you missing materials
 4. Place with place() — call look_at(x,y,z) first to aim at surface
-5. Navigate with move_to(x,y,z) — use NEARBY BLOCKS coords
+5. Navigate with nav_to(x,y,z) — use NEARBY BLOCKS coords
 6. Fight with combat(mode, ticks) or attack(ticks); flee with moveAway() if health<8
 7. Eat with consume() when hunger<15 — but NEVER eat rotten_flesh (causes hunger effect)
 8. Every response MUST end with a tool call. Tool error→retry with adjusted params. No faking success.
@@ -302,7 +302,7 @@ You are a Minecraft bot. Each turn you receive game state (STATS, HOTBAR, INVENT
 ## Response Format
   collect("oak_log", 4) — GOOD
   craft("oak_planks", 8) — GOOD
-  move_to(120, 64, -45) — GOOD
+  nav_to(120, 64, -45) — GOOD
   "I should collect wood" — BAD (text-only)
   "Need to look around first" — BAD (text-only)
 "#;
@@ -747,7 +747,7 @@ impl Agent {
                  1. 检查 perceive 返回的状态，确认当前实际情况\n\
                  2. 换一种完全不同的方法\n\
                  3. 如果在建造，改用 build 蓝图工具而不是手动 place\n\
-                 4. 如果在采集，先 move_to 到新位置再 collect\n\
+                 4. 如果在采集，先 nav_to 到新位置再 collect\n\
                  5. 如果目标已达成，停止调用工具",
                 calls
                     .iter()

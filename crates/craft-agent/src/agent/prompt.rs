@@ -54,7 +54,7 @@ impl Agent {
 
         if self.obs_streak >= 5 {
             if self.obs_streak >= 10 {
-                parts.push("【循环警告】你已经连续观察 10+ 步没有实际行动！STOP repeating the same action. Pick a COMPLETELY DIFFERENT tool RIGHT NOW — collect, craft, build, combat, move_to — anything but what you've been doing.".to_string());
+                parts.push("【循环警告】你已经连续观察 10+ 步没有实际行动！STOP repeating the same action. Pick a COMPLETELY DIFFERENT tool RIGHT NOW — nav_to, collect, craft, build, combat — anything but what you've been doing.".to_string());
             } else {
                 parts.push(format!(
                     "【观察提醒】已连续 {} 步纯观察。选一个工具立即行动。",
@@ -78,7 +78,7 @@ impl Agent {
         }
         if self.obs_streak >= 5 {
             if self.obs_streak >= 10 {
-                parts.push("【关键警告】你已经循环了 10+ 步！STOP repeating the same action. Pick a COMPLETELY DIFFERENT tool RIGHT NOW — collect, craft, build, combat, move_to — anything but what you've been doing.".to_string());
+                parts.push("【关键警告】你已经循环了 10+ 步！STOP repeating the same action. Pick a COMPLETELY DIFFERENT tool RIGHT NOW — nav_to, collect, craft, build, combat — anything but what you've been doing.".to_string());
             } else {
                 parts.push(format!(
                     "【观察提醒】已连续 {} 步纯观察。选一个工具立即行动。",

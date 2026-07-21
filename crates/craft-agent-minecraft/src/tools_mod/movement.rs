@@ -429,7 +429,7 @@ impl GameTool for ModNavToTool {
         "nav_to"
     }
     fn description(&self) -> &str {
-        "Navigate to world coordinates using advanced A* pathfinding (Numen-style). Supports auto-dig, auto-pillar, diagonal, parkour. Runs in background — non-blocking. Use nav_status to check progress, nav_stop to cancel. Prefer this over move_to for complex terrain."
+        "Navigate to world coordinates using advanced A* pathfinding. Supports auto-dig, auto-pillar, diagonal movement, swimming, and jumping. Runs in background — non-blocking. Use nav_status to check progress, nav_stop to cancel. This is the ONLY navigation tool — use this instead of move_to. Usage: nav_to(x=12, y=64, z=8)"
     }
     fn parameters(&self) -> Value {
         schema::object()
