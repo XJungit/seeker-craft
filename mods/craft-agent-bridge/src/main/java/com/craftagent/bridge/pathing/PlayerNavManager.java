@@ -60,7 +60,7 @@ public class PlayerNavManager {
         if (nav == null) return "idle";
         switch (nav.status()) {
             case RUNNING: return "running (replans=" + nav.replans() + ", remaining="
-                + (nav.executor() != null ? nav.executor().remainingMovements() : "?") + ")";
+                + (nav.executor() != null ? nav.executor().remaining() : "?") + ")";
             case ARRIVED: return "arrived";
             case FAILED: return "failed: " + nav.failReason();
             case IDLE: return "idle";

@@ -3,8 +3,7 @@ package com.craftagent.bridge.pathing;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
-import net.minecraft.world.entity.player.Inventory;
-import com.craftagent.bridge.CraftAgentBridge;
+import java.util.List;
 import java.util.function.Supplier;
 
 public class PlayerNav {
@@ -12,45 +11,25 @@ public class PlayerNav {
 
     private final ServerPlayer player;
     private final Supplier<NavGoal> goalSupplier;
-    private final double speed;
-    private NavContext searchContext;
     private PlayerPathExecutor executor;
-    private AStarSearch currentSearch;
-    private AStarSearch precomputeSearch;
-    private Path precomputedPath;
     private Status status = Status.IDLE;
     private int replans;
     private String failReason;
+    private BlockPos targetPos;
     private static final int MAX_REPLANS = 5;
-    private static final int NODES_PER_TICK = 2000;
-    private static final double GOAL_MOVED_SQR = 16.0;
-    private static final int INITIAL_FALL_SCAN = 128;
-    private BlockPos lastGoalCenter;
 
     public PlayerNav(ServerPlayer player, Supplier<NavGoal> goalSupplier, double speed) {
         this.player = player;
         this.goalSupplier = goalSupplier;
-        this.speed = speed;
     }
 
     public Status tick() {
         if (status == Status.IDLE) return Status.IDLE;
 
-        NavGoal goal = goalSupplier.get();
-
-        // Check if goal moved
-        if (lastGoalCenter != null && goal.center() != null
-            && goal.center().distSqr(lastGoalCenter) > GOAL_MOVED_SQR) {
-            replan("goal_moved");
-            lastGoalCenter = goal.center();
-            return Status.RUNNING;
-        }
-
-        // Tick current executor
         if (executor != null) {
             PlayerPathExecutor.Status execStatus = executor.tick();
             if (execStatus == PlayerPathExecutor.Status.ARRIVED) {
-                if (goal.isAt(player.blockPosition()) || executor.remainingMovements() == 0) {
+                if (executor.remaining() == 0 || goalSupplier.get().isAt(player.blockPosition())) {
                     status = Status.ARRIVED;
                     stop();
                     return status;
@@ -69,93 +48,38 @@ public class PlayerNav {
             }
         }
 
-        // No executor running — start or continue A* search
-        if (currentSearch == null && executor == null) {
+        if (executor == null) {
             startFreshSearch();
-        }
-
-        // Advance current search (same tick if we just started it)
-        if (currentSearch != null) {
-            AStarSearch.State s = currentSearch.step(NODES_PER_TICK);
-            if (s == AStarSearch.State.FOUND) {
-                Path path = currentSearch.result();
-                if (path != null && !path.movements.isEmpty()) {
-                    NavContext execCtx = NavContext.forExecution(
-                        (ServerLevel) player.level(), player.getInventory());
-                    executor = new PlayerPathExecutor(player, path, () -> execCtx);
-                    currentSearch = null;
-                }
-            } else if (s == AStarSearch.State.FAILED) {
-                failReason = "no_path";
-                status = Status.FAILED;
-                return status;
-            }
-        }
-
-        // Precompute next path if near end of current
-        if (executor != null && executor.remainingMovements() <= 3 && precomputedPath == null) {
-            maybePrecompute();
-        }
-        if (precomputeSearch != null) {
-            AStarSearch.State s = precomputeSearch.step(NODES_PER_TICK);
-            if (s == AStarSearch.State.FOUND) {
-                precomputedPath = precomputeSearch.result();
-                precomputeSearch = null;
-            }
         }
 
         return Status.RUNNING;
     }
 
     private void startFreshSearch() {
-        cancelSearch();
+        if (executor != null) executor.stop();
+        executor = null;
+
         NavGoal goal = goalSupplier.get();
-        lastGoalCenter = goal.center();
-        ServerLevel level = (ServerLevel) player.level();
-
-        searchContext = NavContext.forSearch(level, player.getInventory());
-
-        BlockPos feet = player.blockPosition();
-        BlockPos startPos = findValidStart(level, feet);
-        if (startPos == null) {
-            // Deep scan for ground below the bot (up to 128 blocks down)
-            int landingY = Integer.MIN_VALUE;
-            for (int dy = 0; dy >= -INITIAL_FALL_SCAN; dy--) {
-                BlockPos p = new BlockPos(feet.getX(), feet.getY() + dy, feet.getZ());
-                if (searchContext.isStandable(p)) {
-                    landingY = feet.getY() + dy;
-                    break;
-                }
-            }
-            if (landingY != Integer.MIN_VALUE) {
-                startPos = new BlockPos(feet.getX(), landingY, feet.getZ());
-            } else {
-                startPos = feet;
-            }
+        targetPos = goal.center();
+        if (targetPos == null) {
+            status = Status.FAILED;
+            failReason = "no_goal";
+            return;
         }
 
-        currentSearch = new AStarSearch(searchContext, startPos, goal, searchContext.maxNodes);
-    }
-
-    private BlockPos findValidStart(ServerLevel level, BlockPos pos) {
-        if (searchContext.isStandable(pos)) return pos;
-        for (int dy = 0; dy >= -5; dy--) {
-            BlockPos p = new BlockPos(pos.getX(), pos.getY() + dy, pos.getZ());
-            if (searchContext.isStandable(p)) return p;
-        }
-        return null;
-    }
-
-    private void maybePrecompute() {
-        if (executor == null || executor.path() == null || executor.path().movements.isEmpty()) return;
-        Movement lastMove = executor.path().movements.get(executor.path().movements.size() - 1);
-        if (lastMove == null) return;
-        BlockPos from = lastMove.dest;
-        NavGoal goal = goalSupplier.get();
-        if (goal.isAt(from)) return;
         ServerLevel level = (ServerLevel) player.level();
-        NavContext preCtx = NavContext.forSearch(level, player.getInventory());
-        precomputeSearch = new AStarSearch(preCtx, from, goal, preCtx.maxNodes);
+        List<BlockPos> waypoints = VanillaPathfinder.findPath(level, player, targetPos);
+        if (waypoints == null || waypoints.isEmpty()) {
+            if (goal.isAt(player.blockPosition())) {
+                status = Status.ARRIVED;
+                return;
+            }
+            status = Status.FAILED;
+            failReason = "no_path";
+            return;
+        }
+
+        executor = new PlayerPathExecutor(player, waypoints);
     }
 
     private void replan(String reason) {
@@ -163,20 +87,7 @@ public class PlayerNav {
         replans++;
         if (executor != null) executor.stop();
         executor = null;
-        precomputedPath = null;
-        precomputeSearch = null;
         startFreshSearch();
-    }
-
-    private void cancelSearch() {
-        if (currentSearch != null) {
-            currentSearch.cancel();
-            currentSearch = null;
-        }
-        if (precomputeSearch != null) {
-            precomputeSearch.cancel();
-            precomputeSearch = null;
-        }
     }
 
     public void start() {
@@ -188,7 +99,6 @@ public class PlayerNav {
     }
 
     public void stop() {
-        cancelSearch();
         if (executor != null) executor.stop();
         executor = null;
         status = Status.IDLE;
