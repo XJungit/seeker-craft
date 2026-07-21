@@ -305,6 +305,7 @@ implements ModInitializer {
             });
         });
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
+            FakePlayerManager.saveFakePlayerData();
             serverInstance = null;
         });
         ServerTickEvents.START_SERVER_TICK.register(this::onStartServerTick);

@@ -1,8 +1,14 @@
 package com.craftagent.bridge;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import com.mojang.authlib.GameProfile;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Set;
+import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.core.Holder;
 import net.minecraft.core.UUIDUtil;
 import net.minecraft.network.Connection;
 import net.minecraft.network.protocol.Packet;
@@ -10,6 +16,7 @@ import net.minecraft.network.protocol.PacketFlow;
 import net.minecraft.network.protocol.game.ClientboundEntityPositionSyncPacket;
 import net.minecraft.network.protocol.game.ClientboundPlayerInfoUpdatePacket;
 import net.minecraft.network.protocol.game.ClientboundRotateHeadPacket;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ClientInformation;
 import net.minecraft.server.level.ServerLevel;
@@ -18,8 +25,12 @@ import net.minecraft.server.network.CommonListenerCookie;
 import net.minecraft.server.players.NameAndId;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.ai.attributes.Attributes;
+import net.minecraft.world.entity.player.Inventory;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.level.ItemLike;
 import net.minecraft.world.level.GameType;
 import net.minecraft.world.level.Level;
+import net.minecraft.world.level.storage.LevelResource;
 
 public class FakePlayerManager {
 
@@ -57,6 +68,7 @@ public class FakePlayerManager {
             server.getPlayerList().broadcastAll(ClientboundEntityPositionSyncPacket.of(fake), level.dimension());
             server.getPlayerList().broadcastAll(new ClientboundPlayerInfoUpdatePacket(ClientboundPlayerInfoUpdatePacket.Action.ADD_PLAYER, fake));
             CraftAgentBridge.fakePlayer = fake;
+            loadFakePlayerData(fake);
             System.out.println("[craft-agent-bridge] Fake player created: " + username + " at (0.5, 64.0, 0.5)");
             return true;
         }
@@ -126,6 +138,97 @@ public class FakePlayerManager {
             }
         }
         return -1;
+    }
+
+    private static final String SAVE_FILE_NAME = "craftagent_inv.json";
+
+    public static void saveFakePlayerData() {
+        ServerPlayer p = CraftAgentBridge.fakePlayer;
+        if (p == null) return;
+        try {
+            JsonObject data = new JsonObject();
+            JsonArray invArr = new JsonArray();
+            Inventory inv = p.getInventory();
+            for (int i = 0; i < inv.getContainerSize(); i++) {
+                ItemStack stack = inv.getItem(i);
+                if (!stack.isEmpty()) {
+                    JsonObject slotObj = new JsonObject();
+                    slotObj.addProperty("slot", i);
+                    slotObj.addProperty("id", BuiltInRegistries.ITEM.getKey(stack.getItem()).toString());
+                    slotObj.addProperty("count", stack.getCount());
+                    invArr.add(slotObj);
+                }
+            }
+            data.add("inventory", invArr);
+            data.addProperty("selected_slot", inv.getSelectedSlot());
+            data.addProperty("health", p.getHealth());
+            data.addProperty("food", p.getFoodData().getFoodLevel());
+            data.addProperty("xp_level", p.experienceLevel);
+
+            Path path = getSavePath();
+            if (path != null) {
+                Files.createDirectories(path.getParent());
+                Files.writeString(path, data.toString());
+                System.out.println("[craft-agent-bridge] Saved fake player data (" + invArr.size() + " items) to " + path);
+            }
+        } catch (Exception e) {
+            System.err.println("[craft-agent-bridge] Failed to save fake player data: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    public static void loadFakePlayerData(ServerPlayer player) {
+        try {
+            Path path = getSavePath();
+            if (path == null || !Files.exists(path)) return;
+
+            String json = Files.readString(path);
+            JsonObject data = new com.google.gson.Gson().fromJson(json, JsonObject.class);
+            if (data == null) return;
+
+            if (data.has("inventory")) {
+                Inventory inv = player.getInventory();
+                inv.clearContent();
+                JsonArray invArr = data.getAsJsonArray("inventory");
+                for (int i = 0; i < invArr.size(); i++) {
+                    JsonObject slotObj = invArr.get(i).getAsJsonObject();
+                    int slot = slotObj.get("slot").getAsInt();
+                    String id = slotObj.get("id").getAsString();
+                    int count = slotObj.get("count").getAsInt();
+
+                    Identifier loc = id.contains(":") ? Identifier.tryParse(id) : Identifier.fromNamespaceAndPath("minecraft", id);
+                    if (loc == null) continue;
+
+                    var itemOpt = BuiltInRegistries.ITEM.get(loc);
+                    if (itemOpt.isPresent()) {
+                        ItemStack stack = new ItemStack((ItemLike)((Holder.Reference)itemOpt.get()).value(), count);
+                        inv.setItem(slot, stack);
+                    }
+                }
+                if (data.has("selected_slot")) {
+                    inv.setSelectedSlot(data.get("selected_slot").getAsInt());
+                }
+            }
+
+            if (data.has("health")) player.setHealth(data.get("health").getAsFloat());
+            if (data.has("food")) player.getFoodData().setFoodLevel(data.get("food").getAsInt());
+            if (data.has("xp_level")) player.experienceLevel = data.get("xp_level").getAsInt();
+
+            System.out.println("[craft-agent-bridge] Restored fake player data from " + path);
+        } catch (Exception e) {
+            System.err.println("[craft-agent-bridge] Failed to load fake player data: " + e.getMessage());
+            e.printStackTrace();
+        }
+    }
+
+    private static Path getSavePath() {
+        MinecraftServer server = CraftAgentBridge.serverInstance;
+        if (server == null) return null;
+        try {
+            return server.getWorldPath(LevelResource.ROOT).resolve(SAVE_FILE_NAME);
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     static class EntityPlayerMPFake extends ServerPlayer {
