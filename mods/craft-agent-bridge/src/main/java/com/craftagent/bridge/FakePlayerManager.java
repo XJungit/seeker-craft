@@ -46,7 +46,9 @@ public class FakePlayerManager {
             EntityPlayerMPFake fake = new EntityPlayerMPFake(server, level, profile, clientInfo);
             server.getPlayerList().placeNewPlayer(new FakeClientConnection(PacketFlow.SERVERBOUND), fake, new CommonListenerCookie(profile, 0, clientInfo, false));
             server.getPlayerList().op(new NameAndId(profile));
-            fake.teleportTo(level, 0.5, 64.0, 0.5, Set.of(), 0.0f, 0.0f, true);
+            int safeY = getSurfaceY(level, 0, 0);
+            if (safeY < 1) safeY = 64;
+            fake.teleportTo(level, 0.5, safeY, 0.5, Set.of(), 0.0f, 0.0f, true);
             fake.setHealth(20.0f);
             fake.unsetRemovedPublic();
             fake.getAttribute(Attributes.STEP_HEIGHT).setBaseValue(0.6f);
@@ -89,27 +91,41 @@ public class FakePlayerManager {
     public static ServerPlayer getFirstPlayer(MinecraftServer server) {
         if (CraftAgentBridge.fakePlayer != null && (CraftAgentBridge.fakePlayer.isDeadOrDying() || !CraftAgentBridge.fakePlayer.isAlive())) {
             System.out.println("[craft-agent-bridge] fakePlayer dead, reviving...");
-            removeFakePlayer();
-            createFakePlayer();
-            if (CraftAgentBridge.fakePlayer != null) {
-                CraftAgentBridge.fakePlayer.setHealth(20.0f);
-                ServerPlayer real = null;
-                for (ServerPlayer p : server.getPlayerList().getPlayers()) {
-                    if (p == CraftAgentBridge.fakePlayer) continue;
-                    real = p;
-                    break;
-                }
-                if (real != null) {
-                    int gy = (int)real.getY();
-                    CraftAgentBridge.fakePlayer.teleportTo(real.level(), real.getX(), gy + 1, real.getZ() + 1.0, Set.of(), 0.0f, 0.0f, true);
-                }
+            CraftAgentBridge.fakePlayer.setHealth(20.0f);
+            CraftAgentBridge.fakePlayer.unsetRemovedPublic();
+            int safeY = getSurfaceY(CraftAgentBridge.fakePlayer.level(), 0, 0);
+            if (safeY < 1) safeY = 64;
+            CraftAgentBridge.fakePlayer.teleportTo(CraftAgentBridge.fakePlayer.level(), 0.5, safeY, 0.5, Set.of(), 0.0f, 0.0f, true);
+            ServerPlayer real = null;
+            for (ServerPlayer p : server.getPlayerList().getPlayers()) {
+                if (p == CraftAgentBridge.fakePlayer) continue;
+                real = p;
+                break;
             }
+            if (real != null) {
+                int gy = getSurfaceY(real.level(), (int)real.getX(), (int)real.getZ());
+                if (gy < 1) gy = (int)real.getY();
+                CraftAgentBridge.fakePlayer.teleportTo(real.level(), real.getX(), gy + 1.5, real.getZ(), Set.of(), 0.0f, 0.0f, true);
+            }
+            System.out.println("[craft-agent-bridge] revived at (" + CraftAgentBridge.fakePlayer.getX() + "," + CraftAgentBridge.fakePlayer.getY() + "," + CraftAgentBridge.fakePlayer.getZ() + ")");
         }
         if (CraftAgentBridge.fakePlayer != null) {
             return CraftAgentBridge.fakePlayer;
         }
         List players = server.getPlayerList().getPlayers();
         return players.isEmpty() ? null : (ServerPlayer)players.get(0);
+    }
+
+    private static int getSurfaceY(Level level, int x, int z) {
+        for (int y = level.getMaxY() - 1; y > level.getMinY(); y--) {
+            var bs = level.getBlockState(new net.minecraft.core.BlockPos(x, y, z));
+            if (!bs.isAir() && !bs.canBeReplaced()
+                && level.getBlockState(new net.minecraft.core.BlockPos(x, y + 1, z)).isAir()
+                && level.getBlockState(new net.minecraft.core.BlockPos(x, y + 2, z)).isAir()) {
+                return y + 1;
+            }
+        }
+        return -1;
     }
 
     static class EntityPlayerMPFake extends ServerPlayer {

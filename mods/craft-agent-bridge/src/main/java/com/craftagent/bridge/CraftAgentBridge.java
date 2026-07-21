@@ -443,8 +443,8 @@ implements ModInitializer {
             if (horiz < 1.2) {
                 ++moveCurrentWpIndex;
             }
-            if (moveCurrentWpIndex >= moveWaypoints.size()) {
-                moveReached = moveFinalDist < 2.0;
+            if (moveWaypoints == null || moveCurrentWpIndex >= moveWaypoints.size()) {
+                moveReached = moveWaypoints != null ? moveFinalDist < 2.0 : false;
                 moveWaypoints = null;
                 moveTarget = null;
                 player.zza = 0.0f;
@@ -491,7 +491,7 @@ implements ModInitializer {
             int dx = (int)Math.round(-Math.sin(rad));
             int dz = (int)Math.round(Math.cos(rad));
             BlockPos base = player.blockPosition();
-            BlockPos[] targets = new BlockPos[]{base.offset(dx, 0, dz), base.offset(dx, 1, dz), base.offset(dx, -1, dz)};
+            BlockPos[] targets = new BlockPos[]{base.offset(dx, 0, dz), base.offset(dx, 1, dz), base.offset(dx, -1, dz), base.offset(dx, 2, dz)};
             for (BlockPos target : targets) {
                 BlockState front = level.getBlockState(target);
                 if (front.isAir() || front.canBeReplaced() || front.getBlock() == Blocks.BEDROCK) continue;
