@@ -38,6 +38,8 @@ pub mod vehicle;
 pub use vehicle::*;
 pub mod goal;
 pub use goal::*;
+pub mod plan_executor;
+pub use plan_executor::*;
 
 // ═══════════════════════════════════════════════════════════════
 // 生存层接线（批次 A）：把已写好但未接线的 survival.rs 子系统，
@@ -671,7 +673,9 @@ pub fn create_mc_mod_tools(
     tools.push(Box::new(ModNavStopTool::new(adapter.clone())));
     // 目标引擎（GoalEngine）：复合目标自动执行
     tools.push(Box::new(ModGoalExecuteTool::new(adapter.clone())));
-    tools.push(Box::new(ModGoalStatusTool::new(adapter)));
+    tools.push(Box::new(ModGoalStatusTool::new(adapter.clone())));
+    // 步骤序列引擎：执行 LLM 生成的 JSON 计划
+    tools.push(Box::new(ModExecutePlanTool::new(adapter)));
     // Agent-local tools（Numen 风格：无需 mod 通信）
     tools.push(Box::new(NumenTodoWriteTool));
     tools.push(Box::new(NumenStatusTool));
