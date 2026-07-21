@@ -352,14 +352,17 @@ pub mod real {
                     base.insert(k.clone(), v.clone());
                 }
             }
-            let resp = self
+            let resp_text = self
                 .client
                 .post(&self.endpoint)
                 .bearer_auth(&self.api_key)
+                .header("Accept", "application/json")
                 .json(&body)
                 .send()?
                 .error_for_status()?
-                .json::<Value>()?;
+                .text()?;
+            let clean = resp_text.trim_end_matches("data: [DONE]");
+            let resp: Value = serde_json::from_str(clean)?;
             parse_chat_tools_response(&resp)
         }
 
@@ -376,14 +379,17 @@ pub mod real {
                     base.insert(k.clone(), v.clone());
                 }
             }
-            let resp = self
+            let resp_text = self
                 .client
                 .post(&self.endpoint)
                 .bearer_auth(&self.api_key)
+                .header("Accept", "application/json")
                 .json(&body)
                 .send()?
                 .error_for_status()?
-                .json::<Value>()?;
+                .text()?;
+            let clean = resp_text.trim_end_matches("data: [DONE]");
+            let resp: Value = serde_json::from_str(clean)?;
             let msg = &resp["choices"][0]["message"];
             let content = msg["content"].as_str().filter(|s| !s.is_empty());
             let content = content
