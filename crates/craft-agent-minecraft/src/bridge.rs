@@ -388,6 +388,12 @@ pub enum ModCommand {
     /// 查询目标引擎状态。
     #[serde(rename = "goal_status")]
     GoalStatus,
+    /// 采集控制器：Mod 侧状态机，自动找方块→导航→挖→收集（不限 count）。
+    #[serde(rename = "collect")]
+    Collect { target: String, count: u32 },
+    /// 查询采集控制器状态。
+    #[serde(rename = "collect_status")]
+    CollectStatus,
     // ═══ 调试命令（smoke 测试造环境用，不暴露给 LLM） ═══
     /// 在玩家前方生成实体/掉落物。entity: zombie/pig/cow/creeper/chicken/item/villager。
     #[serde(rename = "debug_spawn")]

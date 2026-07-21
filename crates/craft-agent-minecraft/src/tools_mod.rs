@@ -6,9 +6,6 @@
 
 use crate::adapter_mod::MinecraftModAdapter;
 use crate::survival::{FailureTracker, FailureType, SurvivalJournal, append_survival_notes};
-use crate::survival_decisions::{
-    FoodDecision, ThreatResponse, decide_threat_response, food_priority,
-};
 use craft_agent::core::tool::{GameTool, ToolEffects, ToolResult, ToolUpdateFn};
 
 use serde_json::Value;
@@ -205,103 +202,9 @@ impl SafeLockAdapter for Arc<Mutex<MinecraftModAdapter>> {
     }
 }
 
-/// 生存前置检查（借鉴 Numen 生存链优先级，在耗时工具前检查）。
-///
-/// 返回 Some(warning) 表示有紧急生存状态，应优先处理。
-/// 返回 None 表示状态正常，可继续执行工具。
-pub(crate) fn survival_precheck(
-    health: f32,
-    hunger: f32,
-    has_food: bool,
-    has_weapon: bool,
-    threat_present: bool,
-) -> Option<String> {
-    // 威胁检查（Numen MOB_DEFENSE 优先级 5）
-    match decide_threat_response(threat_present, health, has_weapon) {
-        ThreatResponse::Flee => {
-            return Some(format!(
-                "URGENT: health={:.0} threat nearby, FLEE recommended (use move_to to retreat)",
-                health
-            ));
-        }
-        ThreatResponse::Fight => {
-            // 有威胁但能打——不阻断，但给警告
-            // 不返回 Some，让工具继续执行
-        }
-        ThreatResponse::None => {}
-    }
-
-    // 进食检查（Numen FOOD_REGEN=4 / FOOD_HUNGER=3）
-    let (food_dec, _) = food_priority(hunger as u32, health, has_food);
-    match food_dec {
-        FoodDecision::Regen => {
-            return Some(format!(
-                "URGENT: health={:.0} hunger={:.0}, eat food NOW to regenerate health",
-                health, hunger
-            ));
-        }
-        FoodDecision::Hunger => {
-            return Some(format!(
-                "WARNING: hunger={:.0} very low, eat food soon",
-                hunger
-            ));
-        }
-        FoodDecision::Dormant => {}
-    }
-
-    None
-}
-
-/// 检查背包是否有食物。
-pub(crate) fn has_food_in_inventory(inventory: &[crate::bridge::InvSlot]) -> bool {
-    inventory.iter().any(|i| {
-        let id = i.id.to_lowercase();
-        id.contains("bread")
-            || id.contains("apple")
-            || id.contains("cooked")
-            || id.contains("steak")
-            || id.contains("porkchop")
-            || id.contains("mutton")
-            || id.contains("chicken")
-            || id.contains("carrot")
-            || id.contains("potato")
-            || id.contains("beetroot")
-            || id.contains("melon")
-            || id.contains("berry")
-            || id.contains("mushroom_stew")
-            || id.contains("rabbit_stew")
-    })
-}
-
-/// 检查背包是否有武器。
-pub(crate) fn has_weapon_in_inventory(inventory: &[crate::bridge::InvSlot]) -> bool {
-    inventory.iter().any(|i| {
-        let id = i.id.to_lowercase();
-        id.contains("sword") || id.contains("axe")
-    })
-}
-
-/// 检查附近是否有敌对实体。
-pub(crate) fn has_hostile_nearby(entities: &[crate::bridge::NearbyEntity]) -> bool {
-    entities.iter().any(|e| {
-        let t = e.r#type.to_lowercase();
-        t.contains("zombie")
-            || t.contains("skeleton")
-            || t.contains("creeper")
-            || t.contains("spider")
-            || t.contains("enderman")
-            || t.contains("witch")
-            || t.contains("blaze")
-            || t.contains("ghast")
-            || t.contains("pillager")
-            || t.contains("vindicator")
-            || t.contains("ravager")
-            || t.contains("phantom")
-            || t.contains("drowned")
-            || t.contains("husk")
-            || t.contains("stray")
-    })
-}
+// ═══════════════════════════════════════════════════════════════
+// 配方表 + 工具函数（用于 crafting/plan）
+// ═══════════════════════════════════════════════════════════════
 
 // ═══════════════════════════════════════════════════════════════
 // Perceive — 游戏状态快照（<100ms，每轮自动注入）
@@ -612,47 +515,8 @@ pub(crate) fn find_nearest_skipping(
     Some((block.clone(), yaw_diff))
 }
 
-/// collect 专用：找玩家**竖直可够到**的最近目标方块。
-/// `player_y` 为玩家脚底 y；过滤掉竖直差 > max_vert 的方块（dig_at 有 5.5m 距离上限，
-/// 树顶 log 在头顶太远会 too far，必须选树干上离玩家近的一段）。
-pub(crate) fn find_nearest_reachable(
-    adapter: &MinecraftModAdapter,
-    target: &str,
-    blacklist: &std::collections::HashSet<(i32, i32, i32)>,
-    player_y: f64,
-    max_vert: f64,
-) -> Option<(crate::bridge::NearbyBlock, f64)> {
-    let st = adapter.reload().ok()?;
-    let block = st
-        .nearby_blocks
-        .iter()
-        .filter(|b| {
-            b.id.contains(target)
-                && (b.y - player_y).abs() <= max_vert
-                && !blacklist.contains(&(
-                    b.x.round() as i32,
-                    b.y.round() as i32,
-                    b.z.round() as i32,
-                ))
-        })
-        .min_by(|a, b| {
-            a.dist
-                .partial_cmp(&b.dist)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })?;
-    let dx = block.x - st.position[0];
-    let dz = block.z - st.position[2];
-    let target_yaw = (-dx).atan2(dz).to_degrees();
-    let mut yaw_diff = target_yaw - st.yaw;
-    while yaw_diff > 180.0 {
-        yaw_diff -= 360.0;
-    }
-    while yaw_diff < -180.0 {
-        yaw_diff += 360.0;
-    }
-    Some((block.clone(), yaw_diff))
-}
-
+// ═══════════════════════════════════════════════════════════════
+// 中间点重规划 + 移动工具函数
 // ═══════════════════════════════════════════════════════════════
 // rememberHere / goToRememberedPlace / savedPlaces — 位置记忆
 // ═══════════════════════════════════════════════════════════════
@@ -726,6 +590,7 @@ pub fn create_mc_mod_tools(
         tools.push(Box::new(ModVisualPerceiveTool::new(adapter.clone())));
     }
     tools.push(Box::new(ModCollectTool::new(adapter.clone())));
+    tools.push(Box::new(ModCollectStatusTool::new(adapter.clone())));
     tools.push(Box::new(ModCraftTool::new(adapter.clone())));
     tools.push(Box::new(ModPlaceTool::new(adapter.clone())));
     tools.push(Box::new(ModEquipTool::new(adapter.clone())));

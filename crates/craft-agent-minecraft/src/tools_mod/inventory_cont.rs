@@ -7,14 +7,8 @@
 use crate::tool_args::schema;
 use crate::tools_mod::MinecraftModAdapter;
 use crate::tools_mod::SafeLockAdapter;
-use crate::tools_mod::find_nearest_reachable;
-use crate::tools_mod::has_food_in_inventory;
-use crate::tools_mod::has_hostile_nearby;
-use crate::tools_mod::has_weapon_in_inventory;
-use crate::tools_mod::survival_precheck;
 use craft_agent::core::tool::{GameTool, ToolEffects, ToolResult, ToolUpdateFn};
 use serde_json::Value;
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::sync::Mutex;
 
@@ -31,7 +25,7 @@ impl GameTool for ModCollectTool {
         "collect"
     }
     fn description(&self) -> &str {
-        "AUTO find nearest target block → walk to it → dig by coordinate (no camera aiming needed). Each block 1-3s. Trees handled column-by-column (top-down). If nearest block is unreachable, skips to next. Stops when count reached or no more blocks within 30m. Usage: collect(target=\"oak_log\", count=10) or collect(target=\"coal_ore\")"
+        "AUTO collect blocks: Mod finds nearest target block → navigates → digs → collects drops. Runs in background — non-blocking. Use collect_status to check progress. Trees handled automatically. Stops when count reached or no more blocks. Usage: collect(target=\"oak_log\", count=10)"
     }
     fn parameters(&self) -> Value {
         schema::object()
@@ -51,125 +45,49 @@ impl GameTool for ModCollectTool {
         args: Value,
         _on_update: Option<ToolUpdateFn>,
     ) -> anyhow::Result<ToolResult> {
-        let target = args["target"].as_str().unwrap_or("oak_log");
+        let target = args["target"].as_str().unwrap_or("oak_log").to_string();
         let want = args["count"].as_u64().unwrap_or(1).min(64) as u32;
         let adapter = self.adapter.lock_adapter()?;
-        let st = adapter.reload()?;
-        if let Some(warning) = survival_precheck(
-            st.health,
-            st.hunger,
-            has_food_in_inventory(&st.inventory),
-            has_weapon_in_inventory(&st.inventory),
-            has_hostile_nearby(&st.entities),
-        ) {
-            return Ok(ToolResult {
-                message: format!("collect ABORTED: {warning}"),
-                is_error: true,
-                images: vec![],
-            });
-        }
-        let before: u32 = st
-            .inventory
-            .iter()
-            .filter(|i| i.id.contains(target))
-            .map(|i| i.count)
-            .sum();
-        let max_attempts = want.clamp(3, 10);
-        let mut got = before;
-        let mut blacklisted: HashSet<(i32, i32, i32)> = HashSet::new();
-        let mut consecutive_failures = 0;
-        for attempt in 1..=max_attempts {
-            if got >= before + want {
-                break;
-            }
-            let py = adapter.reload()?.position[1];
-            let Some((block, _)) = find_nearest_reachable(&adapter, target, &blacklisted, py, 4.0)
-            else {
-                let msg = if got > before {
-                    format!(
-                        "collected {target}: {before}→{got} (no more nearby, tried {attempt}, blacklisted {})",
-                        blacklisted.len()
-                    )
-                } else {
-                    format!(
-                        "collected {target}: {before}→{got} (no {target} found nearby, blacklisted {})",
-                        blacklisted.len()
-                    )
-                };
-                return Ok(ToolResult {
-                    message: msg,
-                    is_error: got == before,
-                    images: vec![],
-                });
-            };
-            if block.dist > 30.0 {
-                return Ok(ToolResult {
-                    message: format!(
-                        "collected {target}: {before}→{got} (nearest {target} too far: {:.1}m)",
-                        block.dist
-                    ),
-                    is_error: got == before,
-                    images: vec![],
-                });
-            }
-            let player_y = adapter.reload()?.position[1];
-            let ack = adapter.move_to(block.x, player_y, block.z)?;
-            let reached = ack.reached.unwrap_or(false);
-            let stuck = ack.stuck.unwrap_or(false);
-            let final_dist = ack.final_dist.unwrap_or(999.0);
-            let bx = block.x.round() as i32;
-            let by = block.y.round() as i32;
-            let bz = block.z.round() as i32;
-            if !reached && (stuck || final_dist > 5.0) {
-                blacklisted.insert((bx, by, bz));
-                consecutive_failures += 1;
-                if consecutive_failures >= 3 {
-                    break;
-                }
-                continue;
-            }
-            if !reached {
-                // 超时但在 5m 内，尝试原地挖
-            }
-            std::thread::sleep(std::time::Duration::from_millis(200));
-            let _ = adapter.dig_at(bx, by, bz)?;
-            std::thread::sleep(std::time::Duration::from_millis(600));
-            got = adapter
-                .reload()?
-                .inventory
-                .iter()
-                .filter(|i| i.id.contains(target))
-                .map(|i| i.count)
-                .sum();
-            consecutive_failures = if got > before + (attempt - 1) {
-                0
-            } else {
-                blacklisted.insert((bx, by, bz));
-                consecutive_failures + 1
-            };
-            if consecutive_failures >= 3 {
-                break;
-            }
-        }
-        let actual = got.saturating_sub(before);
-        let msg = if actual > 0 {
-            if actual >= want {
-                format!("collected {target}: {before}→{got} (+{actual}, wanted +{want})")
-            } else {
-                format!(
-                    "collected {target}: {before}→{got} (+{actual}, wanted +{want}, partial, blacklisted {})",
-                    blacklisted.len()
-                )
-            }
-        } else {
-            format!(
-                "collected {target}: {before}→{got} (failed to collect any, blacklisted {} blocks)",
-                blacklisted.len()
-            )
-        };
+        let ack = adapter.collect_start(&target, want)?;
         Ok(ToolResult {
-            message: msg,
-            is_error: actual == 0,
+            message: format!("collect {} x{} started: {}", target, want, ack.detail),
+            is_error: ack.status != "ok",
+            images: vec![],
+        })
+    }
+}
+
+pub struct ModCollectStatusTool {
+    adapter: Arc<Mutex<MinecraftModAdapter>>,
+}
+impl ModCollectStatusTool {
+    pub fn new(a: Arc<Mutex<MinecraftModAdapter>>) -> Self {
+        Self { adapter: a }
+    }
+}
+impl GameTool for ModCollectStatusTool {
+    fn name(&self) -> &str {
+        "collect_status"
+    }
+    fn description(&self) -> &str {
+        "Check the status of the active block collection. Returns current state (running/done) with count collected. Use after collect() to check progress."
+    }
+    fn parameters(&self) -> Value {
+        schema::no_args()
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::read()
+    }
+    fn execute(
+        &self,
+        _id: &str,
+        _args: Value,
+        _on_update: Option<ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let ack = self.adapter.lock_adapter()?.collect_status()?;
+        Ok(ToolResult {
+            message: ack.detail,
+            is_error: false,
             images: vec![],
         })
     }

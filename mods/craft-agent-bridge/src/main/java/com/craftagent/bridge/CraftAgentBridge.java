@@ -285,6 +285,8 @@ implements ModInitializer {
         COMMAND_HANDLERS.put("nav_stop", MetaController::actNavStop);
         COMMAND_HANDLERS.put("goal_execute", MetaController::actGoalExecute);
         COMMAND_HANDLERS.put("goal_status", MetaController::actGoalStatus);
+        COMMAND_HANDLERS.put("collect", CollectController::actCollect);
+        COMMAND_HANDLERS.put("collect_status", CollectController::actCollectStatus);
     }
 
     public void onInitialize() {
@@ -368,6 +370,7 @@ implements ModInitializer {
         }
         com.craftagent.bridge.pathing.PlayerNavManager.get().tick();
         GoalEngine.get().tick();
+        CollectController.get().tick();
         if (moveWaypoints == null) {
             return;
         }
