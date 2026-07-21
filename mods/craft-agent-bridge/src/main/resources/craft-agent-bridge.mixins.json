@@ -1,0 +1,12 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "com.craftagent.bridge.mixin",
+  "compatibilityLevel": "JAVA_25",
+  "mixins": [
+    "PathEvaluatorInvoker"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

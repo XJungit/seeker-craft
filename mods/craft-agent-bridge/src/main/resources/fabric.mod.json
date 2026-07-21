@@ -19,5 +19,7 @@
     "minecraft": "~26.2",
     "java": ">=25"
   },
-  "mixins": []
+  "mixins": [
+    "craft-agent-bridge.mixins.json"
+  ]
 }

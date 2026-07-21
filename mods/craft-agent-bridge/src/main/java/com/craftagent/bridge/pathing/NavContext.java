@@ -1,15 +1,13 @@
 package com.craftagent.bridge.pathing;
 
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.Container;
 import net.minecraft.world.item.ItemStack;
-import net.minecraft.world.item.Items;
 import net.minecraft.world.level.BlockGetter;
-import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.level.pathfinder.PathType;
+import com.craftagent.bridge.mixin.PathEvaluatorInvoker;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -22,7 +20,7 @@ public class NavContext {
     public final int maxFallHeight;
     public final int maxNodes;
     private final Container inventory;
-    private final Map<Block, Double> toolCache = new HashMap<>();
+    private final Map<net.minecraft.world.level.block.Block, Double> toolCache = new HashMap<>();
 
     private static final String[] SCAFFOLD_ITEMS = {
         "dirt", "cobblestone", "stone", "planks", "log", "sand",
@@ -47,11 +45,11 @@ public class NavContext {
             ItemStack s = inventory.getItem(i);
             if (!s.isEmpty() && isScaffold(s)) { hasScaff = true; break; }
         }
-        return new NavContext(level, level, inventory, hasScaff, 3, 30000);
+        return new NavContext(level, level, inventory, hasScaff, 10, 50000);
     }
 
     public static NavContext forExecution(ServerLevel level, Container inventory) {
-        return new NavContext(level, level, inventory, hasAnyScaffold(inventory), 3, 0);
+        return new NavContext(level, level, inventory, hasAnyScaffold(inventory), 10, 0);
     }
 
     private static boolean hasAnyScaffold(Container inv) {
@@ -62,46 +60,50 @@ public class NavContext {
     }
 
     public static boolean isScaffold(ItemStack stack) {
-        String id = BuiltInRegistries.ITEM.getKey(stack.getItem()).toString().toLowerCase();
+        String id = net.minecraft.core.registries.BuiltInRegistries.ITEM.getKey(stack.getItem()).toString().toLowerCase();
         for (String s : SCAFFOLD_ITEMS) if (id.contains(s)) return true;
         return false;
     }
 
-    public BlockClass classify(BlockPos pos) {
-        if (pos.getY() < level.getMinY() || pos.getY() > level.getMaxY()) return BlockClass.SOLID;
-        BlockState bs = view.getBlockState(pos);
-        if (bs.isAir()) return BlockClass.PASSABLE;
-        String id = BuiltInRegistries.BLOCK.getKey(bs.getBlock()).toString();
-        boolean airOrReplaceable = bs.isAir() || bs.canBeReplaced();
-        return classifyId(id, airOrReplaceable);
+    public PathType getPathType(BlockPos pos) {
+        if (pos.getY() < level.getMinY() || pos.getY() > level.getMaxY()) return PathType.BLOCKED;
+        try {
+            return PathEvaluatorInvoker.invokeGetPathTypeFromState(view, pos);
+        } catch (Exception e) {
+            return pathTypeFallback(pos);
+        }
     }
 
-    public static BlockClass classifyId(String id, boolean airOrReplaceable) {
-        if (id.contains("lava")) return BlockClass.LAVA;
-        if (id.contains("water")) return BlockClass.WATER;
-        if (airOrReplaceable) return BlockClass.PASSABLE;
-        String lowId = id.toLowerCase();
-        if (lowId.contains("_leaves") || lowId.contains("leaves")
-            || lowId.endsWith("grass") || lowId.contains("_sapling")
-            || lowId.contains("flower") || lowId.contains("mushroom")
-            || lowId.contains("carpet") || lowId.contains("glass")
-            || lowId.contains("pane") || lowId.contains("fence")
-            || lowId.contains("iron_bars") || lowId.contains("door")
-            || lowId.contains("trapdoor") || lowId.contains("vine")
-            || lowId.contains("ladder") || lowId.contains("snow")
-            || lowId.contains("seagrass") || lowId.contains("kelp")
-            || lowId.contains("lily_pad") || lowId.contains("torch")
-            || lowId.contains("lantern") || lowId.contains("cobweb")
-            || lowId.contains("bamboo") || lowId.contains("reeds")
-            || lowId.contains("coral") || lowId.contains("banner")
-            || lowId.contains("pressure_plate") || lowId.contains("button")
-            || lowId.contains("rail") || lowId.contains("_sign")
-            || lowId.contains("candle") || lowId.contains("amethyst_cluster")
-            || lowId.contains("bud") || lowId.contains("hang")
-            || lowId.contains("air") || lowId.contains("structure_void")
-            || lowId.contains("light") || lowId.contains("sculk_vein")
-        ) return BlockClass.PASSABLE;
+    public BlockClass classify(BlockPos pos) {
+        return pathTypeToBlockClass(getPathType(pos));
+    }
+
+    private BlockClass pathTypeToBlockClass(PathType pt) {
+        if (pt == null) return BlockClass.SOLID;
+        if (pt == PathType.LAVA) return BlockClass.LAVA;
+        if (pt == PathType.WATER || pt == PathType.WATER_BORDER) return BlockClass.WATER;
+        if (isBodyPassable(pt)) return BlockClass.PASSABLE;
         return BlockClass.SOLID;
+    }
+
+    private boolean isBodyPassable(PathType pt) {
+        if (pt == null) return false;
+        return pt != PathType.BLOCKED
+            && pt != PathType.FENCE
+            && pt != PathType.UNPASSABLE_RAIL
+            && pt != PathType.DOOR_WOOD_CLOSED
+            && pt != PathType.DOOR_IRON_CLOSED
+            && pt != PathType.STICKY_HONEY;
+    }
+
+    private PathType pathTypeFallback(BlockPos pos) {
+        BlockState bs = view.getBlockState(pos);
+        if (bs.isAir()) return PathType.OPEN;
+        String id = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(bs.getBlock()).toString();
+        if (id.contains("lava")) return PathType.LAVA;
+        if (id.contains("water")) return PathType.WATER;
+        if (bs.canBeReplaced()) return PathType.OPEN;
+        return PathType.BLOCKED;
     }
 
     public boolean bodyPassable(BlockPos pos) {
@@ -153,7 +155,7 @@ public class NavContext {
     public double costOfBreaking(BlockPos pos) {
         BlockState bs = view.getBlockState(pos);
         if (bs.isAir() || bs.canBeReplaced()) return 0;
-        Block b = bs.getBlock();
+        net.minecraft.world.level.block.Block b = bs.getBlock();
         Double cached = toolCache.get(b);
         if (cached != null) return cached;
         double ticks = miningTicks(pos);
@@ -193,7 +195,7 @@ public class NavContext {
     public boolean canPlaceAgainst(BlockPos pos) {
         BlockState bs = view.getBlockState(pos);
         if (bs.isAir()) return false;
-        String id = BuiltInRegistries.BLOCK.getKey(bs.getBlock()).toString().toLowerCase();
+        String id = net.minecraft.core.registries.BuiltInRegistries.BLOCK.getKey(bs.getBlock()).toString().toLowerCase();
         return !id.contains("leaves") && !id.contains("glass")
             && !id.contains("pane") && !id.contains("cobweb")
             && !id.contains("tall_grass") && !id.contains("fern");

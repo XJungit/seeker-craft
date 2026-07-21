@@ -93,6 +93,10 @@ public class PlayerPathExecutor {
             case TRAVERSE:
             case DIAGONAL:
                 driveToward(target, true);
+                if (player.isInWater() && player.horizontalCollision && player.onGround()) {
+                    player.jumpFromGround();
+                    jumpedThisTick = true;
+                }
                 break;
             case ASCEND:
                 driveToward(target, true);
@@ -251,6 +255,7 @@ public class PlayerPathExecutor {
         player.zza = 0;
         player.xxa = 0;
         player.setSprinting(false);
+        player.setSwimming(false);
         player.setDeltaMovement(0, player.getDeltaMovement().y, 0);
     }
 

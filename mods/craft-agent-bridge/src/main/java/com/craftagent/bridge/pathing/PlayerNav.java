@@ -134,7 +134,7 @@ public class PlayerNav {
             }
         }
 
-        currentSearch = new AStarSearch(searchContext, startPos, goal, 30000);
+        currentSearch = new AStarSearch(searchContext, startPos, goal, searchContext.maxNodes);
     }
 
     private BlockPos findValidStart(ServerLevel level, BlockPos pos) {
@@ -155,7 +155,7 @@ public class PlayerNav {
         if (goal.isAt(from)) return;
         ServerLevel level = (ServerLevel) player.level();
         NavContext preCtx = NavContext.forSearch(level, player.getInventory());
-        precomputeSearch = new AStarSearch(preCtx, from, goal, 30000);
+        precomputeSearch = new AStarSearch(preCtx, from, goal, preCtx.maxNodes);
     }
 
     private void replan(String reason) {
