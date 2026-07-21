@@ -10,6 +10,8 @@ config/.env
 *.tmp
 *.png
 *.pt
+_tmp_*
+smoke_*.txt
 
 # 大模型文件已移除（mod 桥接后不再需要 ONNX 检测模型）
 

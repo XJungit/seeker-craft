@@ -13,7 +13,7 @@
 - **绝不用 PowerShell `Set-Content` / `Out-File` 改 Java/Rust 源文件**（编码会破坏字符串/BOM/换行）。
   要改文件一律用 Edit 工具；要查内容用 Read/Grep；要批量字符串替换用 Edit 的 replaceAll（小范围）或先备份再 Read+Edit。
 - Java 源文件是单点故障：一旦损坏且未提交，损失巨大。养成"改一点、测一下、commit 一下"的节奏。
-- 反编译恢复命令（应急用，平时别用）：从部署 jar 用 CFR 提取 `CraftAgentBridge.class` 再 `java -jar cfr.jar ...` 反编译；
+- 反编译恢复命令（应急用，平时别用）：从部署 jar 用 CFR 提取 `CraftAgentBridge.class` 再 `java -jar tools/cfr.jar ...` 反编译；
   反编译后需手工修：① 去掉 CFR 插入的 `(Object)` 强转（约 68 处）② 去掉 BOM ③ `CompletableFuture` 补回泛型 `<T>` ④ `Registry`/`Holder`/`Stream<Holder<Enchantment>>` 补回泛型 ⑤ `switch` 里漏赋值的 `targetLevel`。
 
 ## 关键路径

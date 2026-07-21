@@ -187,6 +187,8 @@ impl BackendConfig {
 
 impl AgentConfig {
     /// 从 TOML 文件加载（OnceLock 缓存，同一路径只解析一次）。
+    ///
+    /// 如果给定路径不存在，自动向上搜索父目录（最多 5 层），方便从子目录运行。
     pub fn load(path: impl AsRef<Path>) -> Result<Self> {
         static CACHE: OnceLock<(PathBuf, AgentConfig)> = OnceLock::new();
         let path = path.as_ref();
@@ -195,12 +197,32 @@ impl AgentConfig {
         {
             return Ok(cached.1.clone());
         }
-        let text = std::fs::read_to_string(path)
+        let resolved = Self::resolve_path(path);
+        let text = std::fs::read_to_string(&resolved)
             .with_context(|| format!("读取配置文件失败: {}", path.display()))?;
         let cfg: AgentConfig =
             toml::from_str(&text).with_context(|| format!("解析 TOML 失败: {}", path.display()))?;
-        CACHE.set((path.to_path_buf(), cfg.clone())).ok();
+        CACHE.set((resolved, cfg.clone())).ok();
         Ok(cfg)
+    }
+
+    /// 尝试解析路径：若原始路径存在则直接返回，否则向上搜索父目录。
+    fn resolve_path(path: &Path) -> PathBuf {
+        if path.exists() {
+            return path.to_path_buf();
+        }
+        // 最多向上搜索 5 层父目录
+        let mut current = std::env::current_dir().unwrap_or_default();
+        for _ in 0..5 {
+            let candidate = current.join(path);
+            if candidate.exists() {
+                return candidate;
+            }
+            if !current.pop() {
+                break;
+            }
+        }
+        path.to_path_buf()
     }
 }
 
