@@ -41,6 +41,7 @@ public class GoalEngine {
             case "craft" -> { currentGoal = GoalType.CRAFT; goalParam = param; goalCount = count; }
             case "get"   -> { currentGoal = GoalType.GET;   goalParam = param; goalCount = count; }
             case "hunt"  -> { currentGoal = GoalType.HUNT_FOOD; goalParam = "food"; goalCount = 1; }
+            case "build" -> { currentGoal = GoalType.BUILD;  goalParam = param; goalCount = 1; }
             case "smelt" -> { currentGoal = GoalType.SMELT;  goalParam = param; goalCount = count; }
             case "enchant" -> { currentGoal = GoalType.ENCHANT; goalParam = param; goalCount = count; }
             default -> { status = Status.FAILED; result = "unknown goal type: " + goalType; return; }
@@ -70,6 +71,7 @@ public class GoalEngine {
             case CRAFT   -> tickCraft(player);
             case GET     -> tickGet(player);
             case HUNT_FOOD -> tickHunt(player);
+            case BUILD  -> tickBuild(player);
             case SMELT  -> tickSmelt(player);
             case ENCHANT -> tickEnchant(player);
             default -> {}
@@ -138,6 +140,10 @@ public class GoalEngine {
         }
         player.attack(target);
         System.out.println("[goal] HUNT attack " + BuiltInRegistries.ENTITY_TYPE.getKey(target.getType()).getPath());
+    }
+
+    private void tickBuild(ServerPlayer player) {
+        finish("build not yet implemented in GoalEngine, use build() tool directly");
     }
 
     private void tickSmelt(ServerPlayer player) {
@@ -220,20 +226,42 @@ public class GoalEngine {
 
     private String[] getRecipeMaterials(String item) {
         return switch (item) {
-            case "iron_pickaxe" -> new String[]{"iron_ingot:3", "stick:2"};
-            case "iron_sword" -> new String[]{"iron_ingot:2", "stick:1"};
+            case "wooden_pickaxe" -> new String[]{"planks:3", "stick:2"};
+            case "wooden_axe" -> new String[]{"planks:3", "stick:2"};
+            case "wooden_sword" -> new String[]{"planks:2", "stick:1"};
             case "stone_pickaxe" -> new String[]{"cobblestone:3", "stick:2"};
+            case "stone_axe" -> new String[]{"cobblestone:3", "stick:2"};
             case "stone_sword" -> new String[]{"cobblestone:2", "stick:1"};
-            case "furnace" -> new String[]{"cobblestone:8"};
-            case "chest" -> new String[]{"planks:8"};
+            case "iron_pickaxe" -> new String[]{"iron_ingot:3", "stick:2"};
+            case "iron_axe" -> new String[]{"iron_ingot:3", "stick:2"};
+            case "iron_sword" -> new String[]{"iron_ingot:2", "stick:1"};
+            case "iron_shovel" -> new String[]{"iron_ingot:1", "stick:2"};
+            case "diamond_pickaxe" -> new String[]{"diamond:3", "stick:2"};
+            case "diamond_sword" -> new String[]{"diamond:2", "stick:1"};
             case "oak_planks" -> new String[]{"oak_log:1"};
             case "stick" -> new String[]{"planks:2"};
             case "crafting_table" -> new String[]{"planks:4"};
+            case "furnace" -> new String[]{"cobblestone:8"};
+            case "chest" -> new String[]{"planks:8"};
             case "torch" -> new String[]{"stick:1", "coal:1"};
+            case "shield" -> new String[]{"planks:6", "iron_ingot:1"};
+            case "oak_door" -> new String[]{"planks:6"};
             case "iron_helmet" -> new String[]{"iron_ingot:5"};
             case "iron_chestplate" -> new String[]{"iron_ingot:8"};
             case "iron_leggings" -> new String[]{"iron_ingot:7"};
             case "iron_boots" -> new String[]{"iron_ingot:4"};
+            case "diamond_helmet" -> new String[]{"diamond:5"};
+            case "diamond_chestplate" -> new String[]{"diamond:8"};
+            case "diamond_leggings" -> new String[]{"diamond:7"};
+            case "diamond_boots" -> new String[]{"diamond:4"};
+            case "bow" -> new String[]{"stick:3", "string:3"};
+            case "arrow" -> new String[]{"flint:1", "stick:1", "feather:1"};
+            case "bucket" -> new String[]{"iron_ingot:3"};
+            case "shears" -> new String[]{"iron_ingot:2"};
+            case "flint_and_steel" -> new String[]{"iron_ingot:1", "flint:1"};
+            case "fishing_rod" -> new String[]{"stick:3", "string:2"};
+            case "compass" -> new String[]{"iron_ingot:4", "redstone:1"};
+            case "clock" -> new String[]{"gold_ingot:4", "redstone:1"};
             default -> null;
         };
     }
