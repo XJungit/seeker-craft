@@ -44,6 +44,8 @@ pub enum AgentEvent {
         action: String,
         detail: String,
     },
+    #[serde(rename = "compaction")]
+    Compaction { summary: String, tokens_before: u64 },
     #[serde(rename = "done")]
     Done { reason: String },
     #[serde(rename = "error")]
@@ -451,6 +453,14 @@ fn run_agent(
         let (step_log, should_continue) = step_result?;
         for line in &step_log {
             let _ = event_tx.send(AgentEvent::Log { text: line.clone() });
+        }
+
+        // 实时反馈：压缩事件
+        if let Some(comp) = agent.last_compaction.take() {
+            let _ = event_tx.send(AgentEvent::Compaction {
+                summary: comp.summary,
+                tokens_before: comp.tokens_before,
+            });
         }
 
         let _ = event_tx.send(AgentEvent::Step {

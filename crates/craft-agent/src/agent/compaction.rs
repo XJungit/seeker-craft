@@ -241,11 +241,13 @@ impl Agent {
         self.pending_checkpoint = true;
         self.usage = Usage::default();
 
-        Ok(CompactionResult {
+        let comp_result = CompactionResult {
             summary,
             first_kept_entry_id,
             tokens_before,
-        })
+        };
+        self.last_compaction = Some(comp_result.clone());
+        Ok(comp_result)
     }
 
     /// 硬截断：不调 LLM，直接丢弃最旧的消息，保留系统提示 + 最近 N 条。

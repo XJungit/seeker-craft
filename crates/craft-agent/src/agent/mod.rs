@@ -347,7 +347,7 @@ pub const MANAGE_KNOWLEDGE_TOOL: &str = r#"{
   }
 }"#;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct CompactionResult {
     pub summary: String,
     pub first_kept_entry_id: String,
@@ -380,6 +380,7 @@ pub struct Agent {
     pending_checkpoint: bool,
     session_msg_offset: usize,
     pending_compaction: Option<CompactionResult>,
+    pub last_compaction: Option<CompactionResult>,
     pub retry_abort: Arc<AtomicBool>,
     recent_calls: std::collections::VecDeque<String>,
 }
@@ -425,6 +426,7 @@ impl Agent {
             pending_checkpoint: false,
             session_msg_offset: 0,
             pending_compaction: None,
+            last_compaction: None,
             retry_abort: Arc::new(AtomicBool::new(false)),
             recent_calls: std::collections::VecDeque::with_capacity(10),
             compaction_provider,
