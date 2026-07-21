@@ -491,8 +491,8 @@ implements ModInitializer {
             int dx = (int)Math.round(-Math.sin(rad));
             int dz = (int)Math.round(Math.cos(rad));
             BlockPos base = player.blockPosition();
-            BlockPos[] targets = new BlockPos[]{base.offset(dx, 0, dz), base.offset(dx, 1, dz), base.offset(dx, -1, dz), base.offset(dx, 2, dz)};
-            for (BlockPos target : targets) {
+            for (int dy = -1; dy <= 5; dy++) {
+                BlockPos target = base.offset(dx, dy, dz);
                 BlockState front = level.getBlockState(target);
                 if (front.isAir() || front.canBeReplaced() || front.getBlock() == Blocks.BEDROCK) continue;
                 InventoryHelper.equipBestTool(player, BuiltInRegistries.BLOCK.getKey(front.getBlock()).toString());

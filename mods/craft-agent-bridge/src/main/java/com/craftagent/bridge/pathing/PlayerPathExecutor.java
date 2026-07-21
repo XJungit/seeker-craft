@@ -30,6 +30,8 @@ public class PlayerPathExecutor {
     private static final double PROGRESS_THRESHOLD_SQ = 0.5;
     private static final double ARRIVAL_HORIZ_SQ = 0.8 * 0.8;
     private static final double ARRIVAL_VERT = 1.2;
+    private static final double SWIM_UP_SPEED = 0.04;
+    private static final int FORCE_FINISH_TICKS = 40;
 
     public PlayerPathExecutor(ServerPlayer player, Path path, Supplier<NavContext> ctxSupplier) {
         this.player = player;
@@ -142,6 +144,14 @@ public class PlayerPathExecutor {
             return Status.RUNNING;
         }
 
+        // Force-finish if only 1 movement left and no progress for a while
+        if (remainingMovements() <= 1 && ticksSinceProgress > FORCE_FINISH_TICKS) {
+            System.out.println("[nav] force-finish last movement " + index + " (" + movement.kind
+                + ") hDist=" + String.format("%.2f", Math.sqrt(hDistSq)) + " vDist=" + String.format("%.2f", vDist));
+            advance();
+            return Status.RUNNING;
+        }
+
         // Stuck detection
         if (ticksSinceProgress > STUCK_REPLAN_TICKS) {
             if (!stuckWarned) {
@@ -172,16 +182,23 @@ public class PlayerPathExecutor {
         player.setYRot(yaw);
         player.yHeadRot = yaw;
 
-        // Set input values (for aiStep processing)
         player.zza = sprint ? 1.3f : 1.0f;
         player.setSprinting(sprint);
 
-        // Direct velocity for fake player (no client input)
-        double speed = sprint ? 0.35 : 0.25;
         double nx = ddx / horiz;
         double nz = ddz / horiz;
-        double vy = jumpedThisTick ? player.getDeltaMovement().y : player.getDeltaMovement().y;
-        player.setDeltaMovement(nx * speed, vy, nz * speed);
+        double vy = player.getDeltaMovement().y;
+
+        if (player.isInWater()) {
+            player.setSwimming(true);
+            double waterSpeed = sprint ? 0.25 : 0.18;
+            double swimUp = player.isUnderWater() ? SWIM_UP_SPEED : 0.0;
+            player.setDeltaMovement(nx * waterSpeed, swimUp, nz * waterSpeed);
+        } else {
+            double speed = sprint ? 0.35 : 0.25;
+            if (!jumpedThisTick) vy = player.getDeltaMovement().y;
+            player.setDeltaMovement(nx * speed, vy, nz * speed);
+        }
     }
 
     private void autoPlace(BlockPos target) {

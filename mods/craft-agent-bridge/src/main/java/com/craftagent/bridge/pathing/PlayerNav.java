@@ -195,6 +195,7 @@ public class PlayerNav {
         player.zza = 0;
         player.xxa = 0;
         player.setSprinting(false);
+        player.setSwimming(false);
         player.setDeltaMovement(0, player.getDeltaMovement().y, 0);
     }
 

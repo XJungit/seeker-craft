@@ -138,9 +138,7 @@ fn main() -> anyhow::Result<()> {
                 t.failed += 1;
                 println!(
                     "  [FAIL] player position too far: ({}, {})",
-
-                    state.position[0],
-                    state.position[2]
+                    state.position[0], state.position[2]
                 );
             }
         } else {
