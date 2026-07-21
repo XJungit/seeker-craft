@@ -39,6 +39,8 @@ pub mod player;
 pub use player::*;
 pub mod vehicle;
 pub use vehicle::*;
+pub mod goal;
+pub use goal::*;
 
 // ═══════════════════════════════════════════════════════════════
 // 生存层接线（批次 A）：把已写好但未接线的 survival.rs 子系统，
@@ -800,7 +802,10 @@ pub fn create_mc_mod_tools(
     // 新寻路系统（Numen 风格：异步 A* + 8种 movement）
     tools.push(Box::new(ModNavToTool::new(adapter.clone())));
     tools.push(Box::new(ModNavStatusTool::new(adapter.clone())));
-    tools.push(Box::new(ModNavStopTool::new(adapter)));
+    tools.push(Box::new(ModNavStopTool::new(adapter.clone())));
+    // 目标引擎（GoalEngine）：复合目标自动执行
+    tools.push(Box::new(ModGoalExecuteTool::new(adapter.clone())));
+    tools.push(Box::new(ModGoalStatusTool::new(adapter)));
     // Agent-local tools（Numen 风格：无需 mod 通信）
     tools.push(Box::new(NumenTodoWriteTool));
     tools.push(Box::new(NumenStatusTool));

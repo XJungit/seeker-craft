@@ -186,4 +186,22 @@ public class MetaController {
         o.addProperty("detail", "nav stopped");
         return o;
     }
+
+    static JsonObject actGoalExecute(ServerPlayer player, ServerLevel level, JsonObject req) {
+        JsonObject o = new JsonObject();
+        String goalType = req.get("goal_type").getAsString();
+        String param = req.has("param") ? req.get("param").getAsString() : "";
+        int count = req.has("count") ? req.get("count").getAsInt() : 1;
+        GoalEngine.get().start(goalType, param, count);
+        o.addProperty("status", "ok");
+        o.addProperty("detail", "goal started: " + goalType + " " + param + " x" + count);
+        return o;
+    }
+
+    static JsonObject actGoalStatus(ServerPlayer player, ServerLevel level, JsonObject req) {
+        JsonObject o = new JsonObject();
+        o.addProperty("status", "ok");
+        o.addProperty("detail", GoalEngine.get().statusString());
+        return o;
+    }
 }

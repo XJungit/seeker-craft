@@ -283,6 +283,8 @@ implements ModInitializer {
         COMMAND_HANDLERS.put("nav_to", MetaController::actNavTo);
         COMMAND_HANDLERS.put("nav_status", MetaController::actNavStatus);
         COMMAND_HANDLERS.put("nav_stop", MetaController::actNavStop);
+        COMMAND_HANDLERS.put("goal_execute", MetaController::actGoalExecute);
+        COMMAND_HANDLERS.put("goal_status", MetaController::actGoalStatus);
     }
 
     public void onInitialize() {
@@ -365,6 +367,7 @@ implements ModInitializer {
             CraftAgentBridge.autoSurvive(survPlayer, server);
         }
         com.craftagent.bridge.pathing.PlayerNavManager.get().tick();
+        GoalEngine.get().tick();
         if (moveWaypoints == null) {
             return;
         }

@@ -378,6 +378,16 @@ pub enum ModCommand {
     /// 查询新寻路系统状态。
     #[serde(rename = "nav_status")]
     NavStatus,
+    /// 目标引擎：执行复合目标（craft/get/hunt/smelt/enchant）。
+    #[serde(rename = "goal_execute")]
+    GoalExecute {
+        goal_type: String,
+        param: String,
+        count: u32,
+    },
+    /// 查询目标引擎状态。
+    #[serde(rename = "goal_status")]
+    GoalStatus,
     // ═══ 调试命令（smoke 测试造环境用，不暴露给 LLM） ═══
     /// 在玩家前方生成实体/掉落物。entity: zombie/pig/cow/creeper/chicken/item/villager。
     #[serde(rename = "debug_spawn")]

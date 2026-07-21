@@ -210,6 +210,20 @@ impl MinecraftModAdapter {
         self.lock_bridge()?.send(ModCommand::NavStatus)
     }
 
+    /// 目标引擎：执行复合目标。
+    pub fn goal_execute(&self, goal_type: &str, param: &str, count: u32) -> Result<ModAck> {
+        self.lock_bridge()?.send(ModCommand::GoalExecute {
+            goal_type: goal_type.into(),
+            param: param.into(),
+            count,
+        })
+    }
+
+    /// 查询目标引擎状态。
+    pub fn goal_status(&self) -> Result<ModAck> {
+        self.lock_bridge()?.send(ModCommand::GoalStatus)
+    }
+
     /// 精确放置方块到指定坐标（mod 侧 useItemOn，不依赖准星朝向）。
     pub fn place_at(&self, x: i32, y: i32, z: i32, item: &str) -> Result<ModAck> {
         self.lock_bridge()?.send(ModCommand::PlaceAt {
