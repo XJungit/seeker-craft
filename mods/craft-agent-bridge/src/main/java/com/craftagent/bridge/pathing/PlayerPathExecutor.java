@@ -4,6 +4,7 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 import com.craftagent.bridge.InventoryHelper;
@@ -19,14 +20,17 @@ public class PlayerPathExecutor {
     private Vec3 lastProgressPos;
     private boolean stuckWarned;
     private boolean jumpedThisTick;
+    private int pillarTries;
 
-    private static final int PROGRESS_TIMEOUT = 100;
+    private static final int PROGRESS_TIMEOUT = 120;
     private static final int FORCE_FINISH_TICKS = 40;
     private static final double PROGRESS_THRESHOLD_SQ = 0.5;
     private static final double ARRIVAL_HORIZ_SQ = 0.8 * 0.8;
     private static final double ARRIVAL_VERT = 1.2;
-    private static final double SWIM_UP_SPEED = 0.04;
+    private static final double SWIM_UP_SPEED = 0.12;
     private static final double AUTO_DIG_RANGE = 2.5;
+    private static final double FALL_THRESHOLD = 3.0;
+    private static final double CLIFF_SAFE_DIST = 2.0;
 
     public PlayerPathExecutor(ServerPlayer player, List<BlockPos> waypoints) {
         this.player = player;
@@ -113,24 +117,92 @@ public class PlayerPathExecutor {
 
         if (player.isInWater()) {
             player.setSwimming(true);
-            double swimUp = player.isUnderWater() ? SWIM_UP_SPEED : 0.0;
-            if (!jumpedThisTick) {
-                if (player.horizontalCollision && player.onGround()) {
+            boolean headAboveWater = !player.isUnderWater();
+            if (headAboveWater) {
+                player.setSwimming(false);
+                double vy = 0.3;
+                if (!jumpedThisTick && player.onGround()) {
+                    player.jumpFromGround();
+                    jumpedThisTick = true;
+                    vy = 0.42;
+                }
+                player.setDeltaMovement(nx * 0.3, vy, nz * 0.3);
+            } else {
+                double swimUp = SWIM_UP_SPEED;
+                if (!jumpedThisTick && player.horizontalCollision && player.onGround()) {
                     player.jumpFromGround();
                     jumpedThisTick = true;
                 }
+                double vy = jumpedThisTick ? player.getDeltaMovement().y : swimUp;
+                player.setDeltaMovement(nx * 0.3, vy, nz * 0.3);
             }
-            double vy = jumpedThisTick ? player.getDeltaMovement().y : swimUp;
-            player.setDeltaMovement(nx * 0.25, vy, nz * 0.25);
         } else {
+            ServerLevel level = (ServerLevel) player.level();
+            if (isCliffEdge(level, player.blockPosition(), yaw)) {
+                player.setSprinting(false);
+                player.zza = 0.3f;
+                player.setShiftKeyDown(true);
+            } else {
+                player.setShiftKeyDown(false);
+            }
+
+            double fallDist = checkFallDistance(level, target);
+            if (fallDist > FALL_THRESHOLD) {
+                player.setSprinting(false);
+                player.zza = 0.5f;
+                player.setShiftKeyDown(true);
+            }
+
+            if (!jumpedThisTick && player.horizontalCollision && player.onGround()) {
+                player.jumpFromGround();
+                jumpedThisTick = true;
+            }
             double vy = jumpedThisTick ? player.getDeltaMovement().y : player.getDeltaMovement().y;
-            player.setDeltaMovement(nx * 0.35, vy, nz * 0.35);
+            double speed = player.isShiftKeyDown() ? 0.15 : 0.35;
+            player.setDeltaMovement(nx * speed, vy, nz * speed);
         }
 
         if (player.isInWater() && player.horizontalCollision && player.onGround() && !jumpedThisTick) {
             player.jumpFromGround();
             jumpedThisTick = true;
         }
+    }
+
+    private boolean isCliffEdge(ServerLevel level, BlockPos pos, float yaw) {
+        BlockPos front = pos.offset(
+            (int) Math.round(-Math.sin(Math.toRadians(yaw))),
+            0,
+            (int) Math.round(Math.cos(Math.toRadians(yaw)))
+        );
+        BlockState frontBlock = level.getBlockState(front);
+        if (frontBlock.isAir() || frontBlock.canBeReplaced()) {
+            BlockState below = level.getBlockState(front.below());
+            if (below.isAir() || below.canBeReplaced()) {
+                int drop = 0;
+                for (int dy = -1; dy >= -5; dy--) {
+                    BlockState b = level.getBlockState(front.offset(0, dy, 0));
+                    if (!b.isAir() && !b.canBeReplaced()) {
+                        drop = -dy - 1;
+                        break;
+                    }
+                }
+                return drop >= 3;
+            }
+        }
+        return false;
+    }
+
+    private double checkFallDistance(ServerLevel level, Vec3 target) {
+        BlockPos targetBelow = BlockPos.containing(target.x, target.y - 1, target.z);
+        int drop = 0;
+        for (int dy = 0; dy >= -10; dy--) {
+            BlockState b = level.getBlockState(targetBelow.offset(0, dy, 0));
+            if (!b.isAir() && !b.canBeReplaced()) {
+                drop = -dy;
+                break;
+            }
+        }
+        return drop;
     }
 
     private void autoDig() {
@@ -144,7 +216,7 @@ public class PlayerPathExecutor {
             BlockPos bp = front.offset(0, dy, 0);
             if (bp.distSqr(player.blockPosition()) > AUTO_DIG_RANGE * AUTO_DIG_RANGE) break;
             BlockState bs = level.getBlockState(bp);
-            if (bs.isAir() || bs.canBeReplaced() || bs.getBlock() == net.minecraft.world.level.block.Blocks.BEDROCK)
+            if (bs.isAir() || bs.canBeReplaced() || bs.getBlock() == Blocks.BEDROCK)
                 continue;
             InventoryHelper.equipBestTool(player,
                 BuiltInRegistries.BLOCK.getKey(bs.getBlock()).toString());
@@ -159,6 +231,8 @@ public class PlayerPathExecutor {
         index++;
         ticksSinceProgress = 0;
         stuckWarned = false;
+        pillarTries = 0;
+        player.setShiftKeyDown(false);
         lastProgressPos = player.position();
     }
 
@@ -167,6 +241,7 @@ public class PlayerPathExecutor {
         player.xxa = 0;
         player.setSprinting(false);
         player.setSwimming(false);
+        player.setShiftKeyDown(false);
         player.setDeltaMovement(0, player.getDeltaMovement().y, 0);
     }
 
