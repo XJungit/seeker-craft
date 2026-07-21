@@ -6,8 +6,10 @@ import com.google.gson.JsonObject;
 import java.util.Set;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
+import net.minecraft.core.Holder;
 import net.minecraft.core.Vec3i;
 import net.minecraft.core.registries.BuiltInRegistries;
+import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.InteractionHand;
@@ -352,27 +354,7 @@ public class EntityInteractionController {
             }
             BlockPos framePos = new BlockPos(bx, by, bz);
             BlockState existing = level.getBlockState(framePos);
-            if (!existing.isAir()) continue;
-            // Direct setBlock: bypass placeAt's useItemOn distance check in MC 26.2
-            Block heldBlock = Block.byItem(player.getMainHandItem().getItem());
-            if (heldBlock == null || heldBlock == Blocks.AIR) {
-                // find obsidian in inventory
-                boolean found = false;
-                for (int si = 0; si < player.getInventory().getContainerSize(); si++) {
-                    ItemStack s = player.getInventory().getItem(si);
-                    if (s.isEmpty()) continue;
-                    Block b = Block.byItem(s.getItem());
-                    if (b == null || b == Blocks.AIR) continue;
-                    String key = BuiltInRegistries.BLOCK.getKey(b).toString().toLowerCase();
-                    if (!key.contains(search)) continue;
-                    player.getInventory().setSelectedSlot(si);
-                    found = true;
-                    break;
-                }
-                if (!found) continue;
-            }
-            level.setBlock(framePos, Blocks.OBSIDIAN.defaultBlockState(), 3);
-            player.getMainHandItem().shrink(1);
+            if (!existing.isAir() || !InventoryHelper.placeAt(player, level, bx, by, bz, search)) continue;
             ++placed;
         }
         if (placed < 10) {

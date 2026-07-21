@@ -21,6 +21,7 @@ import net.minecraft.world.entity.npc.villager.Villager;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.item.Items;
 import net.minecraft.world.item.trading.ItemCost;
+import net.minecraft.world.item.trading.Merchant;
 import net.minecraft.world.item.trading.MerchantOffer;
 import net.minecraft.world.item.trading.MerchantOffers;
 import net.minecraft.world.MenuProvider;
@@ -282,7 +283,7 @@ public class DebugController {
         player.getInventory().clearContent();
         AABB global = AABB.ofSize(new Vec3(0.0, 64.0, 0.0), 100000.0, 100000.0, 100000.0);
         for (Entity e : level.getEntities(null, global)) {
-            if (e instanceof ItemEntity || e instanceof Monster) e.discard();
+            if (e instanceof ItemEntity || e instanceof Monster || e instanceof Merchant) e.discard();
         }
         detail.append("cleared ");
 

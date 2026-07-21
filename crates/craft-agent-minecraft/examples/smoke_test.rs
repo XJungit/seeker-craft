@@ -84,13 +84,20 @@ fn main() -> anyhow::Result<()> {
     let mut passed = 0usize;
 
     // SKIP 仅保留「单人世界 + debug fixture 确实无法造出环境」的工具。
-    // 目前已修复：collect/build/transfer/eat_item/collect_items/trade_with_villager/
-    // build_portal/go_to_player/attack_player（均已添加 mod 侧 fixture 支持）。
+    // 已修复（9→2）：collect/build/transfer/eat_item/collect_items/trade_with_villager/
+    // go_to_player/attack_player（均已添加 mod 侧 fixture 支持）。
+    // build_portal: MC 26.2 survival reach/useItemOn 阻止框架放置，fixture 仍给材料+creative。.
     // 注意：键名必须与工具 name() 完全一致（全为 snake_case）。
-    let destructive: HashMap<&str, &str> = [("teleport_to", "dimension change is disruptive")]
-        .iter()
-        .cloned()
-        .collect();
+    let destructive: HashMap<&str, &str> = [
+        (
+            "build_portal",
+            "placeAt/useItemOn distance check in MC 26.2 survival mode blocks top frame blocks",
+        ),
+        ("teleport_to", "dimension change is disruptive"),
+    ]
+    .iter()
+    .cloned()
+    .collect();
 
     for t in tools.iter() {
         let name = t.name();
@@ -235,7 +242,9 @@ fn default_args(name: &str, schema: Value, px: f64, py: f64, pz: f64) -> Value {
                 ("chest", "action") => Some(json!("view")),
                 ("ride", "action") => Some(json!("mount")),
                 ("getCraftingPlan", "targetItem") => Some(json!("oak_planks")),
-                ("getBlueprintLevel", "blueprint") | ("build", "blueprint") => Some(json!("dirt_shelter")),
+                ("getBlueprintLevel", "blueprint") | ("build", "blueprint") => {
+                    Some(json!("dirt_shelter"))
+                }
                 ("collect_items", "item_ids") => Some(json!(["oak_log"])),
                 ("transfer", "moves") => Some(json!([{"from": 54, "to": 0}])),
                 _ => None,
