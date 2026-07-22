@@ -458,6 +458,8 @@ public class GoalEngine {
     }
 
     public Status status() { return status; }
+    /** #3/#5 仲裁：GoalEngine 是否正在执行 LLM 委托的复合目标（占用移动/战斗控制）。 */
+    public boolean isRunning() { return status == Status.RUNNING; }
     public String result() { return result; }
     /** #4 可观测性：返回当前目标栈（从根到栈顶），供 LLM 感知 GoalEngine 正在做什么。 */
     public java.util.List<String> progressStack() {

@@ -643,7 +643,9 @@ ServerLifecycleEvents.SERVER_STARTED.register(server -> {
         }
 
         // ── 4. Auto-flee when critical health ──
-        if (hp <= 6.0f && threat != null) {
+        // #3/#5 仲裁：若 GoalEngine 正在执行 LLM 委托的复合目标（可能正控制移动），
+        // 不强行抢占导航，避免与 GoalEngine 的移动互相打架；仅在无目标运行时自动逃跑。
+        if (hp <= 6.0f && threat != null && !GoalEngine.get().isRunning()) {
             double dx = player.getX() - threat.getX();
             double dz = player.getZ() - threat.getZ();
             double len = Math.sqrt(dx * dx + dz * dz);

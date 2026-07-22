@@ -41,6 +41,9 @@ public class CombatController {
 
     public void tick() {
         if ("idle".equals(mode)) return;
+        // #3/#5 仲裁：GoalEngine 正在执行 LLM 委托目标时，战斗交由目标内部逻辑，
+        // 避免 CombatController 自动战斗与 GoalEngine 抢夺控制权。
+        if (GoalEngine.get().isRunning()) return;
         if (ticksLeft <= 0) {
             finish("timeout");
             return;
