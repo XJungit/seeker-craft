@@ -297,9 +297,9 @@ implements ModInitializer {
         serverThread.setDaemon(true);
         serverThread.start();
         System.out.println("[craft-agent-bridge] \u670d\u52a1\u7aef TCP \u7ebf\u7a0b\u5df2\u542f\u52a8\uff0c\u76d1\u542c 127.0.0.1:25567");
-        ServerLifecycleEvents.SERVER_STARTED.register(server -> {
+ServerLifecycleEvents.SERVER_STARTED.register(server -> {
             serverInstance = server;
-            System.out.println("[craft-agent-bridge] MinecraftServer \u5df2\u7ed1\u5b9a\uff08ServerPlayer \u67b6\u6784\u5c31\u7eea\uff09");
+            CraftAgentBridge.fakePlayerSpawning = false;
             server.executeIfPossible(() -> {
                 try {
                     Thread.sleep(100L);
@@ -312,6 +312,7 @@ implements ModInitializer {
         });
         ServerLifecycleEvents.SERVER_STOPPING.register(server -> {
             FakePlayerManager.saveFakePlayerData();
+            CraftAgentBridge.fakePlayer = null;
             serverInstance = null;
         });
         ServerTickEvents.START_SERVER_TICK.register(this::onStartServerTick);
