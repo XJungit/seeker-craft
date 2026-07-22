@@ -147,9 +147,10 @@ public class GoalEngine {
             String[] parts = ing.split(":");
             String matName = parts[0];
             int need = Integer.parseInt(parts[1]) * g.count;
-            if (countInInventory(matName) < need) {
+            int haveMat = countInInventory(matName);
+            if (haveMat < need) {
                 Goal sub = obtainGoal(matName, need);
-                System.out.println("[goal] need " + matName + " x" + need + " -> push " + sub.type + " " + sub.param);
+                System.out.println("[goal] need " + matName + " x" + need + " (have=" + haveMat + ") -> push " + sub.type + " " + sub.param);
                 stack.push(sub);
                 return;
             }
@@ -382,7 +383,7 @@ public class GoalEngine {
     private Goal obtainGoal(String ingredient, int count) {
         return switch (ingredient) {
             case "planks"   -> new Goal("get", "log", count);
-            case "stick"    -> new Goal("craft", "planks", 2 * count);
+            case "stick"    -> new Goal("craft", "stick", count);
             case "cobblestone" -> new Goal("get", "stone", count);
             case "iron_ingot"  -> new Goal("smelt", "raw_iron", count);
             case "copper_ingot" -> new Goal("smelt", "raw_copper", count);
