@@ -524,12 +524,28 @@ impl Agent {
         self.events.push(AgentEvent::TurnStart { turn });
         self.drain_queues();
 
-        // Compaction if message limit exceeded
-        if self.messages.len() >= MAX_AGENT_MESSAGES {
-            log.push(format!(
-                "[t{turn}] 消息数达到上限 {}，触发压缩",
-                MAX_AGENT_MESSAGES
-            ));
+        // Compaction if message limit exceeded OR token budget exceeded.
+        // 两条触发条件合并为一次压缩（#14 修复：避免一回合压缩两次浪费 LLM 调用）。
+        let budget = self
+            .config
+            .compaction
+            .context_window
+            .saturating_sub(self.config.compaction.reserve);
+        let over_messages = self.messages.len() >= MAX_AGENT_MESSAGES;
+        let over_tokens = self.estimate_tokens() > budget;
+        if over_messages || over_tokens {
+            if over_messages {
+                log.push(format!(
+                    "[t{turn}] 消息数达到上限 {}，触发压缩",
+                    MAX_AGENT_MESSAGES
+                ));
+            } else {
+                log.push(format!(
+                    "[t{turn}] token 估算 {} 超过预算 {}，触发压缩",
+                    self.estimate_tokens(),
+                    budget
+                ));
+            }
             if self.config.enable_compaction {
                 self.events.push(AgentEvent::AutoCompactionStart);
                 match self.compact() {
@@ -540,40 +556,17 @@ impl Agent {
                     }
                     Err(e) => {
                         log.push(format!("[t{turn}] 压缩失败，改用硬截断: {e}"));
+                        // #12 修复：硬截断后注入提示，避免 LLM 对上下文丢失完全无感知
                         self.hard_truncate();
+                        self.messages.push(Message::user(
+                            "【系统提示】由于上下文压缩失败，早期对话已被截断，仅保留最近片段。请基于当前可见信息继续。".to_string(),
+                        ));
                     }
                 }
                 self.events.push(AgentEvent::AutoCompactionEnd);
             } else {
                 // 压缩关闭时：硬截断兜底（不调 LLM），避免直接卡死
                 log.push(format!("[t{turn}] compaction 已禁用，执行硬截断兜底"));
-                self.hard_truncate();
-            }
-        }
-
-        // Token budget compaction
-        let budget = self
-            .config
-            .compaction
-            .context_window
-            .saturating_sub(self.config.compaction.reserve);
-        if self.estimate_tokens() > budget {
-            if self.config.enable_compaction {
-                self.events.push(AgentEvent::AutoCompactionStart);
-                match self.compact() {
-                    Ok(result) => {
-                        if !result.summary.is_empty() {
-                            self.pending_compaction = Some(result);
-                        }
-                    }
-                    Err(e) => {
-                        log.push(format!("[t{turn}] 压缩失败，改用硬截断: {e}"));
-                        self.hard_truncate();
-                    }
-                }
-                self.events.push(AgentEvent::AutoCompactionEnd);
-            } else {
-                // 即使关闭压缩，超预算也要硬截断，否则小模型必卡死
                 self.hard_truncate();
             }
         }

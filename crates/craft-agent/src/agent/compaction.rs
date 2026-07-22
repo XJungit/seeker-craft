@@ -130,11 +130,9 @@ impl Agent {
             return Ok(CompactionResult::default());
         }
 
-        let tokens_before = self.messages[..cut]
-            .iter()
-            .map(Self::msg_tokens)
-            .sum::<u64>()
-            + self.usage.total_tokens;
+        // 用统一的 token 估算（实测优先 / 消息累加 / 启发式），避免重复计入：
+        // 之前 `msg_tokens 求和 + self.usage.total_tokens` 会把每条消息算两遍（usage 已含同等内容）。
+        let tokens_before = self.estimate_tokens_range(0, cut);
         let recent_count = self.messages.len() - cut;
         let first_kept_entry_id = self
             .session

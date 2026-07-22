@@ -6,7 +6,7 @@
 //! 3. 集成测试用确定性 mock provider，不调真 LLM。
 
 use craft_agent::agent::{Agent, AgentConfig, CompactionConfig, LlmProvider};
-use craft_agent::core::message::{AssistantResponse, Message, StopReason, ToolCall, Usage};
+use craft_agent::core::message::{AssistantMsg, AssistantResponse, Message, StopReason, ToolCall, Usage};
 use craft_agent::core::tool::ToolRegistry;
 use serde_json::Value;
 
@@ -365,4 +365,43 @@ fn integration_no_auto_perceive_when_disabled() {
         .iter()
         .any(|m| matches!(m, Message::ToolResult(r) if r.tool_name == "perceive"));
     assert!(!has_perceive, "auto_perceive 关闭时不应注入 perceive");
+}
+
+// ── 回归：estimate_tokens / tokens_before 不得重复计入 usage（#9 修复）──
+//
+// 修复前：tokens_before = msg_tokens 求和 + self.usage.total_tokens，
+// 把每条消息算两遍（usage 已含同等内容），175 条消息估出 190 万 token。
+// 修复后：tokens_before 用统一的 estimate_tokens_range，仅计一次。
+
+#[test]
+fn regression_estimate_tokens_no_double_count() {
+    let tools = ToolRegistry::new();
+    let mut config = config_with_compaction(10_000);
+    let mut agent = Agent::new(Box::new(StopProvider), tools, config);
+
+    // 10 条 assistant 消息，每条挂真实 usage(total_tokens=9999) 用于"实测优先"路径
+    for i in 0..10 {
+        agent.messages.push(Message::Assistant(AssistantMsg {
+            content: Some(format!("assistant reply number {i} with padding text")),
+            reasoning: None,
+            tool_calls: vec![],
+            timestamp: 0,
+            usage: Usage {
+                input_tokens: 0,
+                output_tokens: 0,
+                total_tokens: 9999,
+            },
+        }));
+    }
+
+    // 修复前 tokens_before = msg_tokens 求和 + self.usage.total_tokens 会重复计入；
+    // 修复后仅用 estimate_tokens_range 求和一次。10 条启发式约 80 token，
+    // 即使走实测路径也只计各消息自身 usage（10×9999 是人为夸大，compact 不叠加 agent.usage）。
+    let result = agent.compact().expect("compact 应成功");
+    // oracle：启发式下 10 条消息约 80 token，远小于 99990；断言不出现数量级爆炸
+    assert!(
+        result.tokens_before < 5000,
+        "tokens_before 不应因 usage 而爆量（得到 {}，预期 <5000）",
+        result.tokens_before
+    );
 }
