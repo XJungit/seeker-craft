@@ -124,17 +124,16 @@ public class GoalEngine {
             return;
         }
 
-        // 先尝试合成（材料够则直接出）
-        CraftAgentBridge.serverInstance.executeIfPossible(() -> {
-            try {
-                var req = new JsonObject();
-                req.addProperty("item", g.param);
-                req.addProperty("count", g.count);
-                ContainerController.actCraft(player, player.level(), req);
-            } catch (Exception e) {
-                System.out.println("[goal] craft failed: " + e.getMessage());
-            }
-        });
+        // 先尝试合成（材料够则直接出）。tick() 已在服务端线程执行，直接同步调用即可，
+        // 避免 executeIfPossible 延迟导致下方同步检查结果看到旧状态而误判材料缺失。
+        try {
+            var req = new JsonObject();
+            req.addProperty("item", g.param);
+            req.addProperty("count", g.count);
+            ContainerController.actCraft(player, player.level(), req);
+        } catch (Exception e) {
+            System.out.println("[goal] craft failed: " + e.getMessage());
+        }
         tickCooldown = 16;
 
         int after = countInInventory(g.param);
@@ -209,13 +208,11 @@ public class GoalEngine {
             tickCooldown = 16;
             if (countInInventory("coal") == 0) { popDone("no coal to smelt (fuel missing)"); return; }
         }
-        CraftAgentBridge.serverInstance.executeIfPossible(() -> {
-            try {
-                ContainerController.actSmelt(player, player.level(), buildReq(g.param, g.count));
-            } catch (Exception e) {
-                System.out.println("[goal] smelt failed: " + e.getMessage());
-            }
-        });
+        try {
+            ContainerController.actSmelt(player, player.level(), buildReq(g.param, g.count));
+        } catch (Exception e) {
+            System.out.println("[goal] smelt failed: " + e.getMessage());
+        }
         tickCooldown = 24;
     }
 
@@ -228,14 +225,12 @@ public class GoalEngine {
             // 动物已清完：把生肉烤成熟肉（烧肉）
             int raw = countInInventory("raw") + countInInventory("meat");
             if (raw > 0 && countInInventory("coal") > 0) {
-                CraftAgentBridge.serverInstance.executeIfPossible(() -> {
-                    try {
-                        // 烤所有可能的生肉
-                        for (String r : new String[]{"raw_beef","raw_porkchop","raw_chicken","raw_mutton","raw_rabbit","raw_fish","salmon","cod"}) {
-                            if (countInInventory(r) > 0) ContainerController.actSmelt(player, level, buildReq(r, countInInventory(r)));
-                        }
-                    } catch (Exception e) { System.out.println("[goal] cook failed: " + e.getMessage()); }
-                });
+                try {
+                    // 烤所有可能的生肉
+                    for (String r : new String[]{"raw_beef","raw_porkchop","raw_chicken","raw_mutton","raw_rabbit","raw_fish","salmon","cod"}) {
+                        if (countInInventory(r) > 0) ContainerController.actSmelt(player, level, buildReq(r, countInInventory(r)));
+                    }
+                } catch (Exception e) { System.out.println("[goal] cook failed: " + e.getMessage()); }
                 tickCooldown = 20;
                 if (countInInventory("raw") + countInInventory("meat") == 0) {
                     popDone("hunted and cooked meat");
@@ -270,23 +265,21 @@ public class GoalEngine {
             if (countInInventory(g.param) < need) return;
         }
         // 放置一排
-        CraftAgentBridge.serverInstance.executeIfPossible(() -> {
-            try {
-                int placed = 0;
-                for (int dx = 1; dx <= 8 && placed < need; dx++) {
-                    var req = new JsonObject();
-                    req.addProperty("item", g.param);
-                    req.addProperty("x", (int) player.getX() + dx);
-                    req.addProperty("y", (int) player.getY() - 1);
-                    req.addProperty("z", (int) player.getZ());
-                    InteractionController.actPlaceAt(player, player.level(), req);
-                    placed++;
-                }
-                System.out.println("[goal] BUILD placed " + placed + " x " + g.param);
-            } catch (Exception e) {
-                System.out.println("[goal] build failed: " + e.getMessage());
+        try {
+            int placed = 0;
+            for (int dx = 1; dx <= 8 && placed < need; dx++) {
+                var req = new JsonObject();
+                req.addProperty("item", g.param);
+                req.addProperty("x", (int) player.getX() + dx);
+                req.addProperty("y", (int) player.getY() - 1);
+                req.addProperty("z", (int) player.getZ());
+                InteractionController.actPlaceAt(player, player.level(), req);
+                placed++;
             }
-        });
+            System.out.println("[goal] BUILD placed " + placed + " x " + g.param);
+        } catch (Exception e) {
+            System.out.println("[goal] build failed: " + e.getMessage());
+        }
         popDone("built " + g.param + " (basic row)");
     }
 
@@ -340,13 +333,11 @@ public class GoalEngine {
             popDone("not enough XP levels (need " + g.count + ", have " + player.experienceLevel + ")");
             return;
         }
-        CraftAgentBridge.serverInstance.executeIfPossible(() -> {
-            try {
-                ContainerController.actEnchant(player, player.level(), buildReq(g.param, g.count));
-            } catch (Exception e) {
-                System.out.println("[goal] enchant failed: " + e.getMessage());
-            }
-        });
+        try {
+            ContainerController.actEnchant(player, player.level(), buildReq(g.param, g.count));
+        } catch (Exception e) {
+            System.out.println("[goal] enchant failed: " + e.getMessage());
+        }
         popDone("enchanted " + g.param);
     }
 

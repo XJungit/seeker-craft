@@ -43,8 +43,8 @@ fn main() -> anyhow::Result<()> {
         }
     };
 
-    // 先把 bot 传送到一个空旷已知点，避免卡墙
-    let _ = send_dbg(&adapter, ModCommand::DebugTeleportBot { x: Some(0.5), z: Some(0.5) });
+    // 先用 platform fixture 搭干净 9x9 平台 + bot 归位(0.5,65,0.5) + 清场，避免之前测试挖出的坑影响。
+    let _ = send_dbg(&adapter, ModCommand::DebugSetFixture { fixture: "platform".into() });
     std::thread::sleep(Duration::from_millis(500));
 
     // ── 1. nav_to 真实移动 ──
@@ -61,7 +61,9 @@ fn main() -> anyhow::Result<()> {
         mark("nav_to 移动", false, &format!("几乎没动 Δ={moved:.2}m ({before:?}→{after:?})"));
     }
 
-    // ── 2. collect 真实采集 ──
+    // ── 2. collect 真实采集（用 collect fixture 在平台旁立 oak_log 柱）──
+    let _ = send_dbg(&adapter, ModCommand::DebugSetFixture { fixture: "collect".into() });
+    std::thread::sleep(Duration::from_millis(400));
     let inv_before = count_item(&adapter, "log");
     let _ = adapter.lock().unwrap().collect_start("oak_log", 4);
     wait_for(&adapter, |a| collect_idle(a), 60);
