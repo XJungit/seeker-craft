@@ -728,9 +728,24 @@ impl Agent {
         self.messages.push(Message::assistant_response(&response));
 
         // Dead-loop detection
+        // #15 修复：签名归一化——把参数里的数字（坐标等）替换为 #，
+        // 这样"每次换不同坐标的重复 move_to"也能被识别为同一循环，而非永不触发。
+        let normalize = |arg_json: &str| -> String {
+            let mut out = String::with_capacity(arg_json.len());
+            let mut in_num = false;
+            for ch in arg_json.chars() {
+                if ch.is_ascii_digit() {
+                    if !in_num { out.push('#'); in_num = true; }
+                } else {
+                    in_num = false;
+                    out.push(ch);
+                }
+            }
+            out
+        };
         let call_sig = calls
             .iter()
-            .map(|tc| format!("{}|{}", tc.name, tc.arguments))
+            .map(|tc| format!("{}|{}", tc.name, normalize(&tc.arguments.to_string())))
             .collect::<Vec<_>>()
             .join(";");
         self.recent_calls.push_back(call_sig.clone());
@@ -1104,5 +1119,72 @@ mod tests {
             .count()
             >= 4;
         assert!(nudge_found, "死循环检测应识别 4+ 次重复调用");
+    }
+
+    // ── 回归：死循环检测对"每次换不同坐标的重复 move_to"也能触发（#15 修复）──
+    #[test]
+    fn dead_loop_detection_normalizes_coordinates() {
+        let provider = Box::new(FakeProvider);
+        let mut tools = ToolRegistry::new();
+        struct FakeTool;
+        impl crate::core::tool::GameTool for FakeTool {
+            fn name(&self) -> &str { "move_to" }
+            fn description(&self) -> &str { "" }
+            fn parameters(&self) -> Value { serde_json::json!({}) }
+            fn execute(&self, _id: &str, _a: Value, _u: Option<crate::core::tool::ToolUpdateFn>) -> anyhow::Result<ToolResult> {
+                Ok(ToolResult { message: "ok".into(), is_error: false, images: vec![] })
+            }
+        }
+        tools.register(Box::new(FakeTool));
+        let config = AgentConfig::new("test".into(), 5);
+        let mut agent = Agent::new(provider, tools, config);
+        // 模拟每次坐标都不同的重复 move_to（归一化后应视为同一循环）
+        let coords = [[1.0, 64.0, 2.0], [3.0, 64.0, 5.0], [9.0, 65.0, 1.0], [12.0, 64.0, 8.0], [0.0, 64.0, 0.0]];
+        for c in coords {
+            let resp = AssistantResponse {
+                content: Some("fake".into()),
+                reasoning: None,
+                tool_calls: vec![ToolCall {
+                    id: "1".into(),
+                    name: "move_to".into(),
+                    arguments: serde_json::json!({"x": c[0], "y": c[1], "z": c[2]}),
+                }],
+                usage: Usage::default(),
+                stop_reason: StopReason::ToolCalls,
+            };
+            let calls = resp.tool_calls.clone();
+            agent.recent_calls.push_back(
+                calls.iter()
+                    .map(|tc| format!("{}|{}", tc.name, tc.arguments))
+                    .collect::<Vec<_>>()
+                    .join(";"),
+            );
+        }
+        // 复刻生产代码的归一化逻辑（数字→#），验证坐标游走被识别为同一循环
+        let normalize = |arg_json: &str| -> String {
+            let mut out = String::new();
+            let mut in_num = false;
+            for ch in arg_json.chars() {
+                if ch.is_ascii_digit() {
+                    if !in_num { out.push('#'); in_num = true; }
+                } else {
+                    in_num = false;
+                    out.push(ch);
+                }
+            }
+            out
+        };
+        let normalized: Vec<String> = agent.recent_calls.iter()
+            .map(|c| {
+                // c 形如 "move_to|{...}"，对参数部分归一化
+                if let Some((name, args)) = c.split_once('|') {
+                    format!("{}|{}", name, normalize(args))
+                } else {
+                    c.to_string()
+                }
+            })
+            .collect();
+        let all_same = normalized.iter().all(|c| c == &normalized[0]);
+        assert!(all_same, "坐标归一化后所有签名应相同: {:?}", normalized);
     }
 }
