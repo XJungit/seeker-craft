@@ -97,16 +97,28 @@ public class GoalEngine {
             int need = Integer.parseInt(parts[1]);
             int haveMat = countInInventory(matName);
             if (haveMat < need) {
-                tickCooldown = 5;
-                gatherMaterial(player, matName, need - haveMat);
+                int missing = need - haveMat;
+                System.out.println("[goal] need " + matName + " x" + missing + " for " + goalParam);
+                // 递归：如果目标本身可合成，先合成
+                if (getRecipeMaterials(matName) != null) {
+                    start("craft", matName, missing);
+                } else {
+                    // 否则用 CollectController 采集
+                    CollectController.get().start(matName, missing);
+                    tickCooldown = 20;
+                }
                 return;
             }
         }
 
+        // 所有材料齐了，合成
         tickCooldown = 20;
         CraftAgentBridge.serverInstance.executeIfPossible(() -> {
             try {
-                ContainerController.actCraft(player, player.level(), buildReq(goalParam, goalCount));
+                var req = new JsonObject();
+                req.addProperty("item", goalParam);
+                req.addProperty("count", goalCount);
+                ContainerController.actCraft(player, player.level(), req);
             } catch (Exception e) {
                 System.out.println("[goal] craft failed: " + e.getMessage());
             }
@@ -120,7 +132,17 @@ public class GoalEngine {
             return;
         }
 
-        gatherMaterial(player, goalParam, goalCount - have);
+        // 检查是否有可合成的中间产物
+        String[] subRecipe = getRecipeMaterials(goalParam);
+        if (subRecipe != null) {
+            // 这个物品可以合成，用 craft 目标
+            start("craft", goalParam, goalCount - (int) have);
+            return;
+        }
+
+        // 否则用 CollectController 自动采集
+        CollectController.get().start(goalParam, goalCount - (int) have);
+        tickCooldown = 10;
     }
 
     private void tickHunt(ServerPlayer player) {
@@ -143,7 +165,7 @@ public class GoalEngine {
     }
 
     private void tickBuild(ServerPlayer player) {
-        finish("build not yet implemented in GoalEngine, use build() tool directly");
+        finish("use build() tool directly for blueprints (GoalEngine build WIP)");
     }
 
     private void tickSmelt(ServerPlayer player) {
@@ -179,37 +201,6 @@ public class GoalEngine {
             }
         });
         finish("enchanted " + goalParam);
-    }
-
-    private void gatherMaterial(ServerPlayer player, String material, int need) {
-        if (PlayerNavManager.get().isActive()) return;
-        ServerLevel level = player.level();
-        BlockPos found = findNearestBlock(level, player, material, 30);
-        if (found == null) {
-            finish("no " + material + " nearby");
-            return;
-        }
-        PlayerNavManager.get().navigateTo(found.getX() + 0.5, found.getY(), found.getZ() + 0.5);
-        System.out.println("[goal] GATHER " + material + " at " + found.toShortString());
-    }
-
-    private BlockPos findNearestBlock(ServerLevel level, ServerPlayer player, String blockType, int range) {
-        BlockPos center = player.blockPosition();
-        BlockPos best = null;
-        double bestDist = range * range;
-        for (int dx = -range; dx <= range; dx++) {
-            for (int dz = -range; dz <= range; dz++) {
-                for (int dy = -5; dy <= 5; dy++) {
-                    BlockPos bp = center.offset(dx, dy, dz);
-                    String id = BuiltInRegistries.BLOCK.getKey(level.getBlockState(bp).getBlock()).toString();
-                    if (id.contains(blockType) && bp.distSqr(center) < bestDist) {
-                        bestDist = bp.distSqr(center);
-                        best = bp;
-                    }
-                }
-            }
-        }
-        return best;
     }
 
     private int countInInventory(String item) {
