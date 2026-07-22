@@ -1,95 +1,72 @@
-# MC 桥接 mod（mod-bridge）—— MindFlayer 式直接读游戏数据
+# MC 桥接 mod（craft-agent-bridge）
 
-`craft-agent-bridge` 是一个 Fabric 客户端 mod，在 Minecraft 进程内用 Java API **直接读取结构化游戏状态**
-（物品栏精确数量、方块/实体的世界坐标与距离、玩家坐标/朝向/血量），并接受精确动作指令
-（`look`/`press`/`mine`/`move`/`look_at`）。外部 Rust Agent 通过本机 TCP（127.0.0.1:25567）的
-JSON 行协议驱动它——**不抢鼠标键盘、可后台运行**，根治之前"看而不动 / 只走不挖 / 挖空气"的感知缺陷。
+`craft-agent-bridge` 是一个 Fabric 客户端 mod，通过 TCP JSON 协议（127.0.0.1:25567）
+让外部 Rust Agent 直接读取游戏状态并精确控制玩家。
 
-这是 B 全量 mod 控制方案：感知和动作都走 mod，enigo 的 OS 级键鼠模拟被整个移除（enigo 路径仍保留作 `real` 特性，互不影响）。
+- Minecraft **26.2** + **JDK 25**
+- Fabric Loader + Fabric API
+- Gradle 构建：`cd mods/craft-agent-bridge && .\gradlew.bat build`
 
-> ⚠️ 构建环境已升级。当前使用 Minecraft **26.2** + **JDK 25**。
-> 本章节保留原始 1.21.11 + JDK 21 文档以供参考。
-> 最新版本要求见 [`mods/craft-agent-bridge/README.md`](../../mods/craft-agent-bridge/README.md)。
+## 架构
 
-## 一、前置条件（你的机器，Java 21）
-
-- Minecraft **1.21.11**（Java 版）
-- Fabric Loader ≥ 0.16.0 + Fabric API（安装到 1.21.11 客户端）
-- **JDK 21**（构建 mod 用；你跑 MC 1.21.11 本身就需要 21）
-
-## 二、构建 mod
-
-mod 是独立 Gradle 工程，不在 Rust workspace 内：
-
-```bash
-cd mods/craft-agent-bridge
-./gradlew build        # Windows: gradlew.bat build
+```
+Rust 决策层 ──TCP(25567)── Java mod
+  ┌──────────────────────┐  ┌───────────────────────────┐
+  │ 工具调用 (62 tools)   │→│ COMMAND_HANDLERS dispatch  │
+  │ perceive → StateBuilder│ │ InteractionController 等  │
+  │ collect → CollectCtl  │ │ AStar + pathing/ 子系统   │
+  │ combat  → CombatCtl   │ │ GoalEngine 自主执行       │
+  │ move_to → MovementCtl │ │ autoSurvive 守护          │
+  └──────────────────────┘  └───────────────────────────┘
 ```
 
-产物：`mods/craft-agent-bridge/build/libs/craft-agent-bridge-0.1.0.jar`
+## TCP 协议
 
-> 若 `./gradlew` 首次运行需联网下载 Gradle 分发与 Fabric 依赖（maven.fabricmc.net）。
-> 若构建报 mapping/API 名错误（如 `getYRot`/`getXRot`、`getEntities().getAll()`），
-> 多半是 1.21.x 小版本 mapping 差异——按报错改 `src/main/java/com/craftagent/bridge/CraftAgentBridge.java`
-> 里对应调用即可（文件顶部有协议与 API 说明注释）。
+请求：`{"type":"<命令>", ...参数}` JSON 一行，`\n` 结尾
+响应：`{"status":"ok"/"fail", ...} JSON 一行
 
-## 三、安装并启动
+当前支持 ~60 条命令，通过 `COMMAND_HANDLERS` 路由到各 Controller。
 
-1. 把 `craft-agent-bridge-0.1.0.jar` 放进 `.minecraft/mods/`。
-2. 启动 Minecraft 1.21.11，进入一个世界（单人/集成服务端均可）。
-3. mod 在客户端启动时自动开 TCP 服务 `127.0.0.1:25567`（控制台打印
-   `[craft-agent-bridge] TCP 服务线程已启动`）。
-4. Agent 连不上会报 "连接 MC 桥接 mod 失败" —— 确认 MC 已进世界且 mod 已加载。
+### 常用命令
 
-## 四、运行 Agent（全量 mod 控制）
-
-```bash
-cargo run -p craft-agent-minecraft --example agent_multi_step_mod --features mod-bridge \
-  -- --steps=40 --goal="收集木头做工作台" --session=sessions/mc_run_mod.jsonl
-```
-
-- 感知 `perceive` 返回的是**结构化状态文本**（精确数据），不再靠 VLM 看图猜；同时仍截一张图供 viewer 核对。
-- `mine` 回执带"原木前后数量差"，agent 能确认是否真挖到木头。
-- 可选另开 viewer：`cargo run -p craft-agent-viewer -- --session sessions/mc_run_mod.jsonl`
-
-## 五、TCP 协议（JSON 行，一行一对象，`\n` 结尾）
-
-请求 → 响应（同一连接持久复用）：
-
-| 请求 | 响应要点 |
-|---|---|
-| `{"type":"state"}` | `position/yaw/pitch/health/hunger`、 `inventory[]`(slot,id,count)、`targeted_block`(准星所指)、`nearby_blocks[]`(白名单扫描)、`entities[]`(附近生物+各自 velocity/effects)、`time/dimension/biome/gamemode`、`velocity`(玩家速度)、`effects[]`(玩家状态效果)、`experience_level`/`experience_progress`、`raining`/`thundering`、`sky_light`/`block_light`(光照 0~15) |
-
-**state 字段明细（扩展字段旧版 mod 缺失时按默认值解析，不报错）：**
-
-| 字段 | 类型 | 说明 |
+| 命令 | 参数 | 说明 |
 |---|---|---|
-| `velocity` | `[f64;3]` | 玩家运动速度 (vx,vy,vz)，米/秒。坠崖/被击退/在移动时非零 |
-| `effects[]` | `[{id,amplifier,duration}]` | 玩家状态效果；`amplifier` 0=Ⅰ级，`duration` 单位 tick(20/s) |
-| `experience_level` | `u32` | 经验等级 |
-| `experience_progress` | `f32` | 当前级经验进度 0~1 |
-| `raining` / `thundering` | `bool` | 是否下雨 / 雷暴 |
-| `sky_light` / `block_light` | `i32` (0~15) | 玩家所在处天空/方块光照等级 |
-| `entities[].velocity` | `[f64;3]` | 实体速度（生物/掉落物均有） |
-| `entities[].effects[]` | `[{id,amplifier,duration}]` | 生物身上的状态效果（掉落物为空数组） |
-| `{"type":"look","dx":300,"dy":0}` | 相对转视角（dx>0 右转, dy>0 低头；约 300≈90°） |
-| `{"type":"look_at","x":..,"y":..,"z":..}` | 绝对朝向某坐标（精确对准，供 aim_and_mine） |
-| `{"type":"press","keys":"w","ticks":40}` | 按住按键 ticks×50ms（w/a/s/d/space/shift/ctrl/e/1-9） |
-| `{"type":"mine","ticks":60}` | 按住左键挖 ticks×50ms；回执 `logs_before`/`logs_after` 用于成败判断 |
-| `{"type":"move","dir":"forward","ticks":40}` | 朝某方向移动 |
-| `{"type":"move_to","x":..,"y":..,"z":..}` | 简易寻路走到坐标（水平 <1.5m 或超时停） |
+| `state` | — | 全量状态（位置/物品/方块/实体/光照等） |
+| `look` | dx,dy | 相对转视角 |
+| `look_at` | x,y,z | 绝对朝向坐标 |
+| `place_at` | x,y,z,item | 精确放置方块 |
+| `dig_at` | x,y,z | 精确破坏方块 |
+| `move_to` | x,y,z,radius | A* 寻路导航 |
+| `collect` | target,num | 自动寻找+采集 |
+| `combat` | mode,ticks | 战斗(melee/kite/retreat) |
+| `attack` | — | 攻击最近敌对 |
+| `craft` | item,num | 自动合成 |
+| `smelt` | item,num | 自动烧炼 |
+| `enchant` | item,enchantment | 附魔 |
+| `debug_spawn` | entity,num | 刷实体（测试用） |
 
-所有动作响应含 `status`("ok"/"fail") 与 `detail`。
+详见源代码 `CraftAgentBridge.java:registerCommandHandlers()` 及各 Controller。
 
-## 六、与既有架构的关系
+## Java 侧组件
 
-- 新增 `craft-agent-minecraft` 模块：`bridge.rs`(TCP 客户端) / `adapter_mod.rs`(MinecraftModAdapter) / `tools_mod.rs`(mod 工具集)，
-  全部 `#[cfg(feature="mod-bridge")]`，实现同一 `GameAdapter` trait —— 核心/决策/记忆层零改动。
-- `Cargo.toml`：`mod-bridge = ["real", "dep:serde"]`（复用 xcap 截图供 viewer + craft-agent-model 的 LLM 客户端）。
-- enigo 路径（`real` 特性）保持不变，可随时回退对比。
+| 组件 | 行数 | 职责 |
+|---|---|---|
+| `CraftAgentBridge` | ~1004 | TCP server + dispatch + 移动 tick + autoSurvive |
+| `AStar.java` | 340 | A* 寻路（8方向+10方向变体+重力落地） |
+| `VanillaPathfinder` | 80 | MC 原生寻路包装（Zombie 代理） |
+| `PlayerPathExecutor` | 231 | 逐帧路径执行+autoDig+悬崖检测 |
+| `MovementController` | 1146 | 移动/战斗/收集/跟随/useItem/eat/pillarUp |
+| `CombatController` | 149 | 战斗 AI 状态机（melee/kite/retreat） |
+| `CollectController` | 202 | 方块自动采集（扫描→导航→破坏→验证） |
+| `GoalEngine` | 479 | 自主目标分解（craft/get/smelt/hunt/build/explore/defend） |
+| `FakePlayerManager` | 255 | FakePlayer 生命周期 + 物品栏持久化 |
+| 其余 7 Controller | ~3000 | 交互/容器/实体交互/调试/建造/合成/状态 |
 
-## 七、已知风险 / 待打磨
+## 与 Rust 的职责边界
 
-- `look_at` 的 yaw 公式按 MC 前向向量反解；若实测瞄准镜像/偏移，翻转 `CraftAgentBridge.java` 中 `Math.atan2(-ddx, ddz)` 的 `-ddx` 符号即可。
-- `move_to` 是粗粒度直线导航（遇障跳过），复杂地形仍需 LLM 用 `look`+`press w` 分步走。
-- 方块白名单在 `BLOCK_WHITELIST` 里调。
+当前状态有重叠，已知冲突点：
+
+- **GoalEngine (Java)** 自主分解目标 vs **Rust LLM** 决策循环——两个决策体可能抢控制权
+- `performCombat`(MovementController) vs `CombatController.tick()`——两套战斗系统
+- GoalEngine 的 craft/smelt 逻辑与 Rust 侧 CraftingHelper 重复
+- `autoSurvive` 守护逻辑在 Java 侧运行，不经过 LLM 决策
