@@ -576,15 +576,24 @@ implements ModInitializer {
             }
         }
 
-        // ── 3. Auto-inventory: discard worthless items ──
+        // ── 3. Auto-inventory: always discard worthless items ──
+        for (int slot = 0; slot < 36; slot++) {
+            ItemStack s = inv.getItem(slot);
+            if (s.isEmpty()) continue;
+            String id = BuiltInRegistries.ITEM.getKey(s.getItem()).toString().toLowerCase();
+            if (id.contains("rotten_flesh") || id.contains("leaf_litter")) {
+                inv.setItem(slot, ItemStack.EMPTY);
+                System.out.println("[cab-survive] AUTO DISCARD " + id + " (worthless)");
+            }
+        }
         int freeSlots = 0;
         for (int i = 0; i < 36; i++) { if (inv.getItem(i).isEmpty()) freeSlots++; }
         if (freeSlots <= 2) {
-            for (int slot = 0; slot < 36; slot++) {
+for (int slot = 0; slot < 41; slot++) {
                 ItemStack s = inv.getItem(slot);
                 if (s.isEmpty()) continue;
                 String id = BuiltInRegistries.ITEM.getKey(s.getItem()).toString().toLowerCase();
-                if (id.contains("rotten_flesh") || id.contains("leaf_litter") || id.contains("stick") && s.getCount() > 16) {
+                if (id.contains("stick") && s.getCount() > 16) {
                     inv.setItem(slot, ItemStack.EMPTY);
                     System.out.println("[cab-survive] AUTO DISCARD " + id + " (inventory full)");
                 }

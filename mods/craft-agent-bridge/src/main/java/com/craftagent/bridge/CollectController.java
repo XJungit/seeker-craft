@@ -135,7 +135,18 @@ public class CollectController {
     }
 
     public String statusString() {
-        return status + ": " + result;
+        if ("idle".equals(status)) return "idle";
+        ServerPlayer player = FakePlayerManager.getFirstPlayer(CraftAgentBridge.serverInstance);
+        int have = 0;
+        if (player != null) {
+            String clean = targetBlock.replace("minecraft:", "");
+            for (int i = 0; i < player.getInventory().getContainerSize(); i++) {
+                var s = player.getInventory().getItem(i);
+                if (!s.isEmpty() && BuiltInRegistries.ITEM.getKey(s.getItem()).toString().contains(clean))
+                    have += s.getCount();
+            }
+        }
+        return status + ": " + targetBlock + " " + have + "/" + targetCount + " (attempts=" + totalAttempts + ")";
     }
 
     public static JsonObject actCollect(ServerPlayer player, ServerLevel level, JsonObject req) {
