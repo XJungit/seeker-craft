@@ -44,7 +44,13 @@ public class GoalEngine {
 
     public void start(String goalType, String param, int count) {
         stack.clear();
-        stack.push(new Goal(goalType, param, count));
+        if ("explore".equals(goalType)) {
+            stack.push(new Goal("explore", param.isEmpty() ? "cave" : param, count));
+        } else if ("defend".equals(goalType)) {
+            stack.push(new Goal("defend", param, count));
+        } else {
+            stack.push(new Goal(goalType, param, count));
+        }
         status = Status.RUNNING;
         tickCooldown = 0;
         result = "";
@@ -97,6 +103,8 @@ public class GoalEngine {
             case "enchant" -> tickEnchant(player, g);
             case "hunt"    -> tickHunt(player, g);
             case "build"   -> tickBuild(player, g);
+            case "explore" -> tickExplore(player, g);
+            case "defend"  -> tickDefend(player, g);
             default -> { popDone("unknown goal type: " + g.type); }
         }
     }
@@ -196,7 +204,24 @@ public class GoalEngine {
         var animals = level.getEntities(player, player.getBoundingBox().inflate(20),
             e -> e instanceof net.minecraft.world.entity.animal.Animal);
         if (animals.isEmpty()) {
-            popDone("no animals nearby to hunt");
+            // 动物已清完：把生肉烤成熟肉（烧肉）
+            int raw = countInInventory("raw") + countInInventory("meat");
+            if (raw > 0 && countInInventory("coal") > 0) {
+                CraftAgentBridge.serverInstance.executeIfPossible(() -> {
+                    try {
+                        // 烤所有可能的生肉
+                        for (String r : new String[]{"raw_beef","raw_porkchop","raw_chicken","raw_mutton","raw_rabbit","raw_fish","salmon","cod"}) {
+                            if (countInInventory(r) > 0) ContainerController.actSmelt(player, level, buildReq(r, countInInventory(r)));
+                        }
+                    } catch (Exception e) { System.out.println("[goal] cook failed: " + e.getMessage()); }
+                });
+                tickCooldown = 20;
+                if (countInInventory("raw") + countInInventory("meat") == 0) {
+                    popDone("hunted and cooked meat");
+                }
+                return;
+            }
+            popDone("hunted (no meat to cook)");
             return;
         }
         var target = animals.get(0);
@@ -242,6 +267,50 @@ public class GoalEngine {
             }
         });
         popDone("built " + g.param + " (basic row)");
+    }
+
+    // ───────────────────────── explore ─────────────────────────
+    // 简化探索：朝一个方向走一段距离，沿途收集遇到的矿物/木头，直到到达或超时。
+    private int exploreTicks = 0;
+    private void tickExplore(ServerPlayer player, Goal g) {
+        exploreTicks += 8;
+        // 顺路采集附近的矿/木（非阻塞，让 CollectController 推进）
+        if (!CollectController.get().statusString().startsWith("running")) {
+            CollectController.get().start("log", 4);
+        }
+        if (!PlayerNavManager.get().isActive()) {
+            double dir = Math.toRadians(player.getYRot());
+            double tx = player.getX() + Math.sin(dir) * 24.0;
+            double tz = player.getZ() + Math.cos(dir) * 24.0;
+            PlayerNavManager.get().navigateTo(tx, player.getY(), tz);
+        }
+        if (exploreTicks > 600) { // 约 30 秒
+            exploreTicks = 0;
+            popDone("explored around (" + String.format("%.0f,%.0f", player.getX(), player.getZ()) + ")");
+        }
+    }
+
+    // ───────────────────────── defend ─────────────────────────
+    // 站桩防御：清除周围敌对生物，无威胁则结束。
+    private void tickDefend(ServerPlayer player, Goal g) {
+        ServerLevel level = player.level();
+        var hostiles = level.getEntities(player, player.getBoundingBox().inflate(16),
+            e -> e instanceof net.minecraft.world.entity.Mob
+                 && InventoryHelper.isHostile(BuiltInRegistries.ENTITY_TYPE.getKey(e.getType()).getPath()));
+        if (hostiles.isEmpty()) {
+            popDone("area secure (no hostiles)");
+            return;
+        }
+        var target = hostiles.get(0);
+        if (target.distanceTo(player) > 3.0) {
+            if (!PlayerNavManager.get().isActive()) {
+                PlayerNavManager.get().navigateTo(target.getX(), target.getY(), target.getZ());
+            }
+            return;
+        }
+        InventoryHelper.equipBestWeapon(player);
+        player.attack(target);
+        tickCooldown = 10;
     }
 
     // ───────────────────────── enchant ─────────────────────────

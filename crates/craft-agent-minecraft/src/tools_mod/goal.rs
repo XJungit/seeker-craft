@@ -22,14 +22,14 @@ impl GameTool for ModGoalExecuteTool {
         "goal_execute"
     }
     fn description(&self) -> &str {
-        "Execute a compound goal automatically. Mod handles all sub-steps: material checking, gathering, crafting, equipping. type: goal type (craft/get/hunt/smelt/enchant). param: item name (e.g. iron_pickaxe, stone, raw_iron). count: how many (default 1). Use goal_status to check progress. Usage: goal_execute(type=\"craft\", param=\"iron_pickaxe\")  goal_execute(type=\"get\", param=\"stone\", count=20)  goal_execute(type=\"hunt\")  goal_execute(type=\"smelt\", param=\"raw_iron\", count=3)"
+        "Execute a compound goal automatically. Mod handles all sub-steps: material checking, gathering, crafting, smelting, equipping. type: goal type (craft/get/hunt/smelt/enchant/build/explore/defend). param: item name for craft/get/smelt/enchant/build; ignored for hunt/explore/defend. count: how many (default 1). Use goal_status to check progress. Usage: goal_execute(type=\"craft\", param=\"iron_pickaxe\")  goal_execute(type=\"get\", param=\"stone\", count=20)  goal_execute(type=\"hunt\")  goal_execute(type=\"smelt\", param=\"raw_iron\", count=3)  goal_execute(type=\"build\", param=\"oak_planks\")  goal_execute(type=\"explore\")  goal_execute(type=\"defend\")"
     }
     fn parameters(&self) -> Value {
         schema::object()
-            .str_req("type", "Goal type: craft, get, hunt, smelt, enchant")
+            .str_req("type", "Goal type: craft, get, hunt, smelt, enchant, build, explore, defend")
             .str_opt(
                 "param",
-                "Item name (e.g. iron_pickaxe, stone, raw_iron)",
+                "Item name (e.g. iron_pickaxe, stone, raw_iron) for craft/get/smelt/enchant/build",
                 "",
             )
             .int_opt("count", "How many to craft/get/smelt", 1, 1, 64)
