@@ -209,6 +209,9 @@ implements ModInitializer {
     static volatile int noProgressTicks;
     static volatile boolean moveSprinting;
     static volatile boolean shouldStop;
+    // #6 修复：移动共享状态的统一锁。dispatch 已统一在服务端线程执行（#7），
+    // 写/读不再跨线程；此锁作为额外保障，避免 double[]/List 内部元素可见性隐患。
+    static final Object moveLock = new Object();
     static class PendingGive {
         final String playerName;
         final String item;
@@ -383,35 +386,42 @@ ServerLifecycleEvents.SERVER_STARTED.register(server -> {
         GoalEngine.get().tick();
         CollectController.get().tick();
         CombatController.get().tick();
-        if (moveWaypoints == null) {
-            return;
+        synchronized (moveLock) {
+            if (moveWaypoints == null) {
+                return;
+            }
         }
         ServerPlayer player = FakePlayerManager.getFirstPlayer(server);
         if (player == null) {
-            moveWaypoints = null;
+            synchronized (moveLock) { moveWaypoints = null; }
             return;
         }
         double pxBefore = player.getX();
         double pzBefore = player.getZ();
-        if (moveCurrentWpIndex >= moveWaypoints.size()) {
-            moveReached = true;
-            moveFinalDist = 0.0;
-            moveWaypoints = null;
-            moveTarget = null;
-            player.zza = 0.0f;
-            player.xxa = 0.0f;
-            player.setSprinting(false);
-            player.setDeltaMovement(0.0, player.getDeltaMovement().y, 0.0);
-            System.out.println("[cab-move] DONE all waypoints reached");
-            // 若有待执行的 give_player（非阻塞走近后丢物），到达即触发
-            if (pendingGive != null) {
-                PendingGive pg = pendingGive;
-                pendingGive = null;
-                executeGiveToPlayer(pg.playerName, pg.item, pg.num);
+        synchronized (moveLock) {
+            if (moveCurrentWpIndex >= moveWaypoints.size()) {
+                moveReached = true;
+                moveFinalDist = 0.0;
+                moveWaypoints = null;
+                moveTarget = null;
+                player.zza = 0.0f;
+                player.xxa = 0.0f;
+                player.setSprinting(false);
+                player.setDeltaMovement(0.0, player.getDeltaMovement().y, 0.0);
+                System.out.println("[cab-move] DONE all waypoints reached");
+                // 若有待执行的 give_player（非阻塞走近后丢物），到达即触发
+                if (pendingGive != null) {
+                    PendingGive pg = pendingGive;
+                    pendingGive = null;
+                    executeGiveToPlayer(pg.playerName, pg.item, pg.num);
+                }
+                return;
             }
-            return;
         }
-        Vec3 wp = moveWaypoints.get(moveCurrentWpIndex);
+        Vec3 wp;
+        synchronized (moveLock) {
+            wp = moveWaypoints.get(moveCurrentWpIndex);
+        }
         double tx = wp.x;
         double ty = wp.y;
         double tz = wp.z;

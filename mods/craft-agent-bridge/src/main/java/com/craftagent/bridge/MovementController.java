@@ -41,12 +41,14 @@ public class MovementController {
         double ty = req.get("y").getAsDouble();
         double tz = req.get("z").getAsDouble();
         int maxTicks = req.has("max_ticks") ? req.get("max_ticks").getAsInt() : 200;
-        CraftAgentBridge.moveReached = false;
-        CraftAgentBridge.moveFinalDist = 999.0;
-        CraftAgentBridge.moveStuck = false;
-        CraftAgentBridge.moveTicksLeft = maxTicks;
-        CraftAgentBridge.moveTarget = new double[]{tx, ty, tz};
-        CraftAgentBridge.moveStuckCounter = 0;
+        synchronized (CraftAgentBridge.moveLock) {
+            CraftAgentBridge.moveReached = false;
+            CraftAgentBridge.moveFinalDist = 999.0;
+            CraftAgentBridge.moveStuck = false;
+            CraftAgentBridge.moveTicksLeft = maxTicks;
+            CraftAgentBridge.moveTarget = new double[]{tx, ty, tz};
+            CraftAgentBridge.moveStuckCounter = 0;
+        }
         ServerLevel level = CraftAgentBridge.onServer(() -> {
             ServerPlayer p = FakePlayerManager.getFirstPlayer(CraftAgentBridge.serverInstance);
             return p != null ? p.level() : null;
@@ -61,8 +63,10 @@ public class MovementController {
             ServerPlayer p = FakePlayerManager.getFirstPlayer(CraftAgentBridge.serverInstance);
             return p != null ? p.blockPosition() : targetPos;
         });
-        CraftAgentBridge.moveWaypoints = AStar.findPath(level, Vec3.atCenterOf((Vec3i)fromPos), Vec3.atCenterOf((Vec3i)targetPos));
-        CraftAgentBridge.moveCurrentWpIndex = 0;
+        synchronized (CraftAgentBridge.moveLock) {
+            CraftAgentBridge.moveWaypoints = AStar.findPath(level, Vec3.atCenterOf((Vec3i)fromPos), Vec3.atCenterOf((Vec3i)targetPos));
+            CraftAgentBridge.moveCurrentWpIndex = 0;
+        }
         if (CraftAgentBridge.moveWaypoints == null) {
             o.addProperty("status", "ok");
             o.addProperty("reached", Boolean.valueOf(false));
