@@ -382,7 +382,7 @@ public class GoalEngine {
     /** 给定一种成品配方材料，返回如何获取它的子目标（自动处理 矿→raw→ingot 链）。 */
     private Goal obtainGoal(String ingredient, int count) {
         return switch (ingredient) {
-            case "planks"   -> new Goal("get", "log", count);
+            case "planks"   -> new Goal("craft", "planks", count);
             case "stick"    -> new Goal("craft", "stick", count);
             case "cobblestone" -> new Goal("get", "stone", count);
             case "iron_ingot"  -> new Goal("smelt", "raw_iron", count);
