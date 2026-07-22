@@ -86,7 +86,7 @@ public class CollectController {
             int after = countInInventory(player, targetBlock);
             int gained = after - have;
             collected += gained;
-            System.out.println("[collect] DUG " + found.toShortString() + " (" + blockId + ") gained=" + gained);
+            System.out.println("[collect] DUG " + found.toShortString() + " (" + blockId + ") gained=" + gained + " invLog=" + after + " botY=" + player.getY());
         }
     }
 
@@ -126,7 +126,9 @@ public class CollectController {
     private void finish(String msg) {
         status = "done";
         result = msg;
-        System.out.println("[collect] DONE: " + msg);
+        ServerPlayer p = FakePlayerManager.getFirstPlayer(CraftAgentBridge.serverInstance);
+        int invLog = p == null ? -1 : countInInventory(p, targetBlock);
+        System.out.println("[collect] DONE: " + msg + " | invLog=" + invLog + " botY=" + (p == null ? "?" : p.getY()) + " collected=" + collected);
     }
 
     public void stop() {
