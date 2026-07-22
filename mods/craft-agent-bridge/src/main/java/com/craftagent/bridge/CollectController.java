@@ -67,10 +67,12 @@ public class CollectController {
             return;
         }
 
-        // Navigate to it
+        // Navigate to an ADJACENT standoff cell (not onto the block itself,
+        //否则自动挖路会把目标方块当障碍挖掉导致丢物)
         totalAttempts++;
         if (player.blockPosition().distManhattan(found) > 2) {
-            PlayerNavManager.get().navigateTo(found.getX() + 0.5, found.getY(), found.getZ() + 0.5);
+            BlockPos stand = standoff(level, found);
+            PlayerNavManager.get().navigateTo(stand.getX() + 0.5, stand.getY(), stand.getZ() + 0.5);
             return;
         }
 
@@ -90,8 +92,27 @@ public class CollectController {
         }
     }
 
-    private BlockPos findBlock(ServerLevel level, ServerPlayer player, String target, int range) {
-        BlockPos center = player.blockPosition();
+    /** 找目标方块旁边一个可站立的格子（避免直接走到方块上触发自动挖路）。 */
+    private BlockPos standoff(ServerLevel level, BlockPos block) {
+        BlockPos[] candidates = {
+            block.offset(1, 0, 0), block.offset(-1, 0, 0),
+            block.offset(0, 0, 1), block.offset(0, 0, -1),
+            block.offset(1, 0, -1), block.offset(-1, 0, 1),
+            block.offset(0, 1, 0), block.offset(0, -1, 0),
+        };
+        for (BlockPos c : candidates) {
+            BlockState feet = level.getBlockState(c);
+            BlockState head = level.getBlockState(c.above());
+            BlockState floor = level.getBlockState(c.below());
+            if (feet.isAir() && head.isAir() && !floor.isAir() && !floor.canBeReplaced()) {
+                return c;
+            }
+        }
+        // 退路：直接在方块旁边一格（哪怕地板是目标方块也行，挖路会处理）
+        return block.offset(1, 0, 0);
+    }
+
+    private BlockPos findBlock(ServerLevel level, ServerPlayer player, String target, int range) {        BlockPos center = player.blockPosition();
         BlockPos best = null;
         double bestDist = range * range;
         String targetClean = target.replace("minecraft:", "");
