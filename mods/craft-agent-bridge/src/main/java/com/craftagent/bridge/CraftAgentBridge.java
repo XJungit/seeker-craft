@@ -558,11 +558,15 @@ ServerLifecycleEvents.SERVER_STARTED.register(server -> {
             }
         }
 
-        // ── 0b. Vacuum nearby dropped items so they get auto-discarded / collected ──
-        AABB vac = AABB.ofSize(player.position(), 2.5, 2.5, 2.5);
+        // ── 0b. Delete worthless dropped items on the ground (rotten flesh / leaf litter)
+        //        so they never get auto-picked-up and accumulate in inventory. ──
+        AABB vac = AABB.ofSize(player.position(), 12.0, 6.0, 12.0);
         for (Entity e : level.getEntities(player, vac)) {
             if (e instanceof net.minecraft.world.entity.item.ItemEntity ie) {
-                ie.setPos(player.getX(), player.getY() + 0.5, player.getZ());
+                String iid = BuiltInRegistries.ITEM.getKey(ie.getItem().getItem()).toString().toLowerCase();
+                if (iid.contains("rotten_flesh") || iid.contains("leaf_litter")) {
+                    ie.discard();
+                }
             }
         }
 
