@@ -103,69 +103,50 @@ public class PlayerPathExecutor {
     private void driveToward(Vec3 target) {
         double ddx = target.x - player.getX();
         double ddz = target.z - player.getZ();
+        double vdy = target.y - player.getY();
         double horiz = Math.sqrt(ddx * ddx + ddz * ddz);
-        if (horiz < 0.01) return;
 
         float yaw = (float) Math.toDegrees(Math.atan2(-ddx, ddz));
         player.setYRot(yaw);
         player.yHeadRot = yaw;
-        player.zza = 1.3f;
-        player.setSprinting(true);
 
-        double nx = ddx / horiz;
-        double nz = ddz / horiz;
+        if (horiz < 0.01 && Math.abs(vdy) < 0.01) return;
 
-        if (player.isInWater()) {
-            player.setSwimming(true);
-            boolean headAboveWater = !player.isUnderWater();
-            if (headAboveWater) {
-                player.setSwimming(false);
-                double vy = 0.3;
-                if (!jumpedThisTick && player.onGround()) {
-                    player.jumpFromGround();
-                    jumpedThisTick = true;
-                    vy = 0.42;
-                }
-                player.setDeltaMovement(nx * 0.3, vy, nz * 0.3);
-            } else {
-                double swimUp = SWIM_UP_SPEED;
-                if (!jumpedThisTick && player.horizontalCollision && player.onGround()) {
-                    player.jumpFromGround();
-                    jumpedThisTick = true;
-                }
-                double vy = jumpedThisTick ? player.getDeltaMovement().y : swimUp;
-                player.setDeltaMovement(nx * 0.3, vy, nz * 0.3);
-            }
+        double nx = horiz > 0.001 ? ddx / horiz : 0;
+        double nz = horiz > 0.001 ? ddz / horiz : 0;
+
+        ServerLevel level = (ServerLevel) player.level();
+        boolean cliff = isCliffEdge(level, player.blockPosition(), yaw);
+        double fallDist = checkFallDistance(level, target);
+
+        double speed = 0.32;
+        if (cliff || fallDist > FALL_THRESHOLD) speed = 0.12;
+
+        double stepX = nx * speed;
+        double stepZ = nz * speed;
+        double stepY = 0.0;
+
+        if (Math.abs(vdy) > 0.05) {
+            stepY = Math.signum(vdy) * Math.min(Math.abs(vdy), 0.3);
         } else {
-            ServerLevel level = (ServerLevel) player.level();
-            if (isCliffEdge(level, player.blockPosition(), yaw)) {
-                player.setSprinting(false);
-                player.zza = 0.3f;
-                player.setShiftKeyDown(true);
-            } else {
-                player.setShiftKeyDown(false);
+            BlockPos feet = player.blockPosition().below();
+            if (level.getBlockState(feet).isAir() || level.getBlockState(feet).canBeReplaced()) {
+                stepY = -0.25;
             }
-
-            double fallDist = checkFallDistance(level, target);
-            if (fallDist > FALL_THRESHOLD) {
-                player.setSprinting(false);
-                player.zza = 0.5f;
-                player.setShiftKeyDown(true);
-            }
-
-            if (!jumpedThisTick && player.horizontalCollision && player.onGround()) {
-                player.jumpFromGround();
-                jumpedThisTick = true;
-            }
-            double vy = jumpedThisTick ? player.getDeltaMovement().y : player.getDeltaMovement().y;
-            double speed = player.isShiftKeyDown() ? 0.15 : 0.35;
-            player.setDeltaMovement(nx * speed, vy, nz * speed);
         }
 
-        if (player.isInWater() && player.horizontalCollision && player.onGround() && !jumpedThisTick) {
-            player.jumpFromGround();
-            jumpedThisTick = true;
+        double newX = player.getX() + stepX;
+        double newZ = player.getZ() + stepZ;
+        double newY = player.getY() + stepY;
+
+        if (player.isInWater() && !player.isUnderWater()) {
+            newY += 0.2;
         }
+
+        player.setPos(newX, newY, newZ);
+        player.setYRot(yaw);
+        player.setXRot(player.getXRot());
+        player.setDeltaMovement(0.0, player.getDeltaMovement().y, 0.0);
     }
 
     private boolean isCliffEdge(ServerLevel level, BlockPos pos, float yaw) {

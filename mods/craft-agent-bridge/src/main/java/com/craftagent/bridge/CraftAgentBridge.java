@@ -558,6 +558,14 @@ ServerLifecycleEvents.SERVER_STARTED.register(server -> {
             }
         }
 
+        // ── 0b. Vacuum nearby dropped items so they get auto-discarded / collected ──
+        AABB vac = AABB.ofSize(player.position(), 2.5, 2.5, 2.5);
+        for (Entity e : level.getEntities(player, vac)) {
+            if (e instanceof net.minecraft.world.entity.item.ItemEntity ie) {
+                ie.setPos(player.getX(), player.getY() + 0.5, player.getZ());
+            }
+        }
+
         // ── 1. Auto-eat when hungry ──
         if (hunger < 12.0f) {
             for (int slot = 0; slot < inv.getContainerSize(); slot++) {

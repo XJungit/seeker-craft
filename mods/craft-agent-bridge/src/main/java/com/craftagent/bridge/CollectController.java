@@ -69,7 +69,7 @@ public class CollectController {
 
         // Navigate to it
         totalAttempts++;
-        if (player.blockPosition().distSqr(found) > 4) {
+        if (player.blockPosition().distManhattan(found) > 2) {
             PlayerNavManager.get().navigateTo(found.getX() + 0.5, found.getY(), found.getZ() + 0.5);
             return;
         }

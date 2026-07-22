@@ -122,16 +122,21 @@ fn main() -> anyhow::Result<()> {
     let mut system_prompt = String::from(
         "你是 Minecraft AI 玩家，通过服务端 mod 桥接（ServerPlayer 架构）精确控制角色。每轮会自动注入游戏状态（perceive），无需手动调用 perceive。\n\
          感知返回的是结构化状态（精确物品栏数量/方块与生物的世界坐标与距离/玩家坐标朝向/血量饥饿），直接据数据决策，不要靠看图猜。\n\
-         核心工具: collect(target,count) 自动找→走→挖; move_to(x,y,z) 精确导航; look_at(x,y,z) 瞄准坐标; craft(item,count) 合成; place(item) 放置; combat(mode,ticks) 战斗。\n\
-         禁止调用 look(dx,dy)/press(keys)/mine(ticks)/craftable() —— 这些工具未注册，会返回 Unknown tool。",
+         可用工具（均为 mod 侧自动执行，非阻塞后台运行）：\n\
+         - collect(target,count)：自动找最近目标方块→走过去→挖掘→拾取，后台运行，用 collect_status 查进度。\n\
+         - nav_to(x,y,z)：A* 寻路导航（唯一移动工具），后台运行，用 nav_status 查进度。\n\
+         - craft(item,count)：2x2 合成；3x3 配方先 collect 出 crafting_table 再 place 后 activate_nearest_block。\n\
+         - place(item) / combat(mode,ticks) / goal_execute(goal) / execute_plan(plan) / discard(item,num) 等。\n\
+         禁止调用 look(dx,dy)/press(keys)/mine(ticks)/move_to/look_at/craftable() —— 这些工具未注册，会返回 Unknown tool。\n\
+         策略：简单采集用 collect；多步任务用 goal_execute 让 mod 自动分解执行；需要精确控制序列时用 execute_plan。",
     );
     if use_vision {
         system_prompt.push_str(" visual_perceive(prompt) 工具可截屏看图，仅在需要识别 GUI 界面/合成台/背包画面时使用，平时用自动注入的 perceive 数据即可。");
     }
     system_prompt.push_str(
-        "\n采集木头标准流程: collect(\"oak_log\", 8) → craft(\"oak_planks\", 32) → craft(\"crafting_table\", 1) → look_at(脚下地面坐标) → place(\"crafting_table\")。\n\
-         collect 会自动找最近的目标方块、走过去、挖掘，回执里返回实际挖到的数量。如果数量不足，换个位置再 collect。\n\
-         除非已合成工作台（物品栏出现 crafting_table 或已放置），否则每个回合必须以 tool_call 收尾，不得只用文本结束。",
+        "\n采集木头标准流程: collect(\"oak_log\", 8) → craft(\"oak_planks\", 32) → craft(\"crafting_table\", 1) → place(\"crafting_table\")。\n\
+         collect 会自动找最近的目标方块、走过去、挖掘并拾取掉落物。用 collect_status 确认数量。\n\
+         除非任务已完成，否则每个回合必须以 tool_call 收尾，不得只用文本结束。",
     );
     let cfg = AgentConfig::new(system_prompt, max_iter)
         .with_compaction(compaction)
