@@ -533,6 +533,30 @@ implements ModInitializer {
         float hunger = player.getFoodData().getFoodLevel();
         Inventory inv = player.getInventory();
 
+        // ── 0. Auto-inventory: always discard worthless items FIRST ──
+        for (int slot = 0; slot < 41; slot++) {
+            ItemStack s = inv.getItem(slot);
+            if (s.isEmpty()) continue;
+            String id = BuiltInRegistries.ITEM.getKey(s.getItem()).toString().toLowerCase();
+            if (id.contains("rotten_flesh") || id.contains("leaf_litter")) {
+                inv.setItem(slot, ItemStack.EMPTY);
+                System.out.println("[cab-survive] AUTO DISCARD " + id + " (worthless)");
+            }
+        }
+        int freeSlots = 0;
+        for (int i = 0; i < 36; i++) { if (inv.getItem(i).isEmpty()) freeSlots++; }
+        if (freeSlots <= 2) {
+            for (int slot = 0; slot < 36; slot++) {
+                ItemStack s = inv.getItem(slot);
+                if (s.isEmpty()) continue;
+                String id = BuiltInRegistries.ITEM.getKey(s.getItem()).toString().toLowerCase();
+                if (id.contains("stick") && s.getCount() > 16) {
+                    inv.setItem(slot, ItemStack.EMPTY);
+                    System.out.println("[cab-survive] AUTO DISCARD " + id + " (inventory full)");
+                }
+            }
+        }
+
         // ── 1. Auto-eat when hungry ──
         if (hunger < 12.0f) {
             for (int slot = 0; slot < inv.getContainerSize(); slot++) {
@@ -573,30 +597,6 @@ implements ModInitializer {
             if (d < minDist) {
                 minDist = d;
                 threat = le;
-            }
-        }
-
-        // ── 3. Auto-inventory: always discard worthless items ──
-        for (int slot = 0; slot < 36; slot++) {
-            ItemStack s = inv.getItem(slot);
-            if (s.isEmpty()) continue;
-            String id = BuiltInRegistries.ITEM.getKey(s.getItem()).toString().toLowerCase();
-            if (id.contains("rotten_flesh") || id.contains("leaf_litter")) {
-                inv.setItem(slot, ItemStack.EMPTY);
-                System.out.println("[cab-survive] AUTO DISCARD " + id + " (worthless)");
-            }
-        }
-        int freeSlots = 0;
-        for (int i = 0; i < 36; i++) { if (inv.getItem(i).isEmpty()) freeSlots++; }
-        if (freeSlots <= 2) {
-for (int slot = 0; slot < 41; slot++) {
-                ItemStack s = inv.getItem(slot);
-                if (s.isEmpty()) continue;
-                String id = BuiltInRegistries.ITEM.getKey(s.getItem()).toString().toLowerCase();
-                if (id.contains("stick") && s.getCount() > 16) {
-                    inv.setItem(slot, ItemStack.EMPTY);
-                    System.out.println("[cab-survive] AUTO DISCARD " + id + " (inventory full)");
-                }
             }
         }
 
