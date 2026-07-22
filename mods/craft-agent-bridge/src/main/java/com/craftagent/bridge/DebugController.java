@@ -374,11 +374,13 @@ public class DebugController {
                 }
             }
             case "collect" -> {
+                // 采集测试夹具：故意清空基线原木，逼 bot 必须真正去挖柱子才能凑够数量
+                player.getInventory().clearContent();
                 // Build a 4-block-tall oak_log column for the collect/mining tool
                 for (int h = 0; h < 4; h++) {
                     level.setBlock(new BlockPos(3, 64 + h, 0), Blocks.OAK_LOG.defaultBlockState(), 3);
                 }
-                detail.append(" +log_column");
+                detail.append(" +log_column(no_baseline)");
             }
             case "build" -> {
                 // Give materials for common blueprints (dirt_shelter needs ~30 dirt)
