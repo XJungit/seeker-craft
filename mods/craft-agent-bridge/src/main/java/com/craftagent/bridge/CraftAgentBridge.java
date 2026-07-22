@@ -789,41 +789,43 @@ ServerLifecycleEvents.SERVER_STARTED.register(server -> {
     private JsonObject dispatch(JsonObject req) {
         String type;
         String string = type = req.has("type") ? req.get("type").getAsString() : "";
+        // 统一调度层：所有命令都在服务端线程执行（runOnServerThread），
+        // TCP 读线程只负责解析/转发，绝不阻塞（#7 修复）。命令内部不再 Thread.sleep。
         if ("state".equals(type)) {
             return CraftAgentBridge.runOnServerThread(StateBuilder::buildState);
         }
         if ("move_to".equals(type)) {
-            return MovementController.performMoveTo(req);
+            return CraftAgentBridge.runOnServerThread(() -> MovementController.performMoveTo(req));
         }
         if ("go_to_player".equals(type)) {
-            return MovementController.performGoToPlayer(req);
+            return CraftAgentBridge.runOnServerThread(() -> MovementController.performGoToPlayer(req));
         }
         if ("give_player".equals(type)) {
-            return this.performGivePlayer(req);
+            return CraftAgentBridge.runOnServerThread(() -> this.performGivePlayer(req));
         }
         if ("discard_smart".equals(type)) {
-            return MovementController.performDiscardSmart(req);
+            return CraftAgentBridge.runOnServerThread(() -> MovementController.performDiscardSmart(req));
         }
         if ("collect_items".equals(type)) {
-            return MovementController.performCollectItems(req);
+            return CraftAgentBridge.runOnServerThread(() -> MovementController.performCollectItems(req));
         }
         if ("attack_player".equals(type)) {
-            return MovementController.performAttackPlayer(req);
+            return CraftAgentBridge.runOnServerThread(() -> MovementController.performAttackPlayer(req));
         }
         if ("follow_player".equals(type)) {
-            return MovementController.performFollowPlayer(req);
+            return CraftAgentBridge.runOnServerThread(() -> MovementController.performFollowPlayer(req));
         }
         if ("use_item".equals(type)) {
-            return MovementController.performUseItem(req);
+            return CraftAgentBridge.runOnServerThread(() -> MovementController.performUseItem(req));
         }
         if ("eat_item".equals(type)) {
-            return MovementController.performEatItem(req);
+            return CraftAgentBridge.runOnServerThread(() -> MovementController.performEatItem(req));
         }
         if ("pillar_up".equals(type)) {
-            return MovementController.performPillarUp(req);
+            return CraftAgentBridge.runOnServerThread(() -> MovementController.performPillarUp(req));
         }
         if ("wait".equals(type)) {
-            return MovementController.performWait(req);
+            return CraftAgentBridge.runOnServerThread(() -> MovementController.performWait(req));
         }
         return CraftAgentBridge.runOnServerThread(() -> {
             try {
