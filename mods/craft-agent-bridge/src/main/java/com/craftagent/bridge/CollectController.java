@@ -17,6 +17,7 @@ public class CollectController {
     private String targetBlock;
     private int targetCount;
     private int collected;
+    private long navStartTick = -1;
     private int totalAttempts;
     private String status = "idle";
     private String result = "";
@@ -35,6 +36,7 @@ public class CollectController {
         this.targetCount = count;
         this.collected = 0;
         this.totalAttempts = 0;
+        this.navStartTick = -1;
         this.searchedTypes = new HashSet<>();
         this.status = "running";
         this.result = "";
@@ -49,9 +51,20 @@ public class CollectController {
 
         ServerPlayer player = FakePlayerManager.getFirstPlayer(CraftAgentBridge.serverInstance);
         if (player == null) return;
-        if (PlayerNavManager.get().isActive()) return;
+        if (PlayerNavManager.get().isActive()) {
+            // 导航超时兜底：避免永久卡在 RUNNING 导致采集死锁
+            if (navStartTick < 0) navStartTick = CraftAgentBridge.serverInstance.getTickCount();
+            else if (CraftAgentBridge.serverInstance.getTickCount() - navStartTick > 400) {
+                System.out.println("[collect] nav timeout, forcing stop. status=" + PlayerNavManager.get().statusString() + " botY=" + player.getY());
+                PlayerNavManager.get().stop();
+                navStartTick = -1;
+            }
+            return;
+        }
+        navStartTick = -1;
 
         ServerLevel level = (ServerLevel) player.level();
+        System.out.println("[collect] tick: have=" + countInInventory(player, targetBlock) + " botY=" + player.getY() + " botPos=" + player.blockPosition());
 
         // Check if we already have enough
         int have = countInInventory(player, targetBlock);
@@ -72,6 +85,8 @@ public class CollectController {
         totalAttempts++;
         if (player.blockPosition().distManhattan(found) > 2) {
             BlockPos stand = standoff(level, found);
+            System.out.println("[collect] navigate to standoff=" + stand + " (target=" + found + ")");
+            navStartTick = -1;
             PlayerNavManager.get().navigateTo(stand.getX() + 0.5, stand.getY(), stand.getZ() + 0.5);
             return;
         }
