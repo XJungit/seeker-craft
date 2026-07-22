@@ -344,7 +344,7 @@ public class GoalEngine {
             case "iron_shovel"    -> List.of(new Goal("smelt","raw_iron",1*count), new Goal("craft","stick",2*count));
             case "diamond_pickaxe","diamond_axe" -> List.of(new Goal("craft","diamond",3*count), new Goal("craft","stick",2*count));
             case "diamond_sword"  -> List.of(new Goal("craft","diamond",2*count), new Goal("craft","stick",1*count));
-            case "oak_planks","birch_planks","spruce_planks","jungle_planks","acacia_planks","dark_oak_planks" -> List.of(new Goal("get","log",1*count));
+            case "oak_planks","birch_planks","spruce_planks","jungle_planks","acacia_planks","dark_oak_planks","planks" -> List.of(new Goal("get","log",1*count));
             case "stick"          -> List.of(new Goal("craft","planks",2*count));
             case "crafting_table" -> List.of(new Goal("craft","planks",4*count));
             case "furnace"        -> List.of(new Goal("get","cobblestone",8*count));
@@ -363,6 +363,14 @@ public class GoalEngine {
             case "arrow"    -> List.of(new Goal("get","flint",1*count), new Goal("craft","stick",1*count), new Goal("get","feather",1*count));
             case "bucket","shears","flint_and_steel" -> List.of(new Goal("smelt","raw_iron", Math.max(1,(item.equals("bucket")?3:item.equals("shears")?2:1))*count));
             case "oak_door" -> List.of(new Goal("craft","planks",6*count));
+            case "cobblestone" -> List.of(new Goal("get","stone",1*count));
+            case "diamond" -> List.of(new Goal("get","diamond_ore",1*count));
+            case "coal" -> List.of(new Goal("get","coal_ore",1*count));
+            case "string" -> List.of(new Goal("get","string",1*count));
+            case "flint" -> List.of(new Goal("get","gravel",1*count));
+            case "feather" -> List.of(new Goal("get","feather",1*count));
+            case "log" -> List.of(new Goal("get","log",1*count));
+            case "raw_iron","raw_copper","raw_gold" -> List.of(new Goal("get", item, 1*count));
             default -> null;
         };
     }

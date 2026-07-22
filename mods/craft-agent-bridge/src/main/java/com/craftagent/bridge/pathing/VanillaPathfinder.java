@@ -34,7 +34,22 @@ public class VanillaPathfinder {
             nav.setCanFloat(true);
 
             Path path = nav.createPath(target, SEARCH_RANGE);
-            if (path == null || path.isDone() || path.getNodeCount() == 0) return null;
+            if (path == null || path.isDone() || path.getNodeCount() == 0) {
+                // 兜底：A* 失败（如目标在附近平坦处），直接生成直线 waypoint。
+                List<BlockPos> line = new ArrayList<>();
+                BlockPos from = player.blockPosition();
+                int steps = (int) Math.ceil(from.distSqr(target) > 0 ? Math.sqrt(from.distSqr(target)) : 1);
+                steps = Math.max(1, Math.min(steps, SEARCH_RANGE));
+                for (int i = 1; i <= steps; i++) {
+                    double t = (double) i / steps;
+                    int x = (int) Math.round(from.getX() + (target.getX() - from.getX()) * t);
+                    int y = (int) Math.round(from.getY() + (target.getY() - from.getY()) * t);
+                    int z = (int) Math.round(from.getZ() + (target.getZ() - from.getZ()) * t);
+                    line.add(new BlockPos(x, y, z));
+                }
+                System.out.println("[nav] A* failed, using straight-line fallback (" + line.size() + " wp)");
+                return line;
+            }
 
             List<BlockPos> waypoints = new ArrayList<>();
             for (int i = path.getNextNodeIndex(); i < path.getNodeCount(); i++) {

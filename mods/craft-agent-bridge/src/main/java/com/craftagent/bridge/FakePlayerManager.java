@@ -238,7 +238,6 @@ public class FakePlayerManager {
 
         public void tick() {
             if (this.level().getServer().getTickCount() % 10 == 0) {
-                this.connection.resetPosition();
                 this.level().getChunkSource().move(this);
             }
             try {
