@@ -187,18 +187,18 @@ public class PlayerPathExecutor {
     }
 
     private void autoDig() {
-        BlockPos front = player.blockPosition().offset(
-            (int) Math.round(-Math.sin(Math.toRadians(player.getYRot()))),
-            0,
-            (int) Math.round(Math.cos(Math.toRadians(player.getYRot())))
-        );
+        BlockPos feet = player.blockPosition();
         ServerLevel level = (ServerLevel) player.level();
-        for (int dy = -1; dy <= 5; dy++) {
-            BlockPos bp = front.offset(0, dy, 0);
-            if (bp.distSqr(player.blockPosition()) > AUTO_DIG_RANGE * AUTO_DIG_RANGE) break;
+        // 只挖身体/头部高度的障碍（dy>=0 相对于脚下），绝不挖脚下地板（dy<0），
+        // 否则会把自己站的地板挖穿、掉进坑里。
+        for (int dy = 0; dy <= 5; dy++) {
+            BlockPos bp = feet.offset(0, dy, 0);
+            if (bp.distSqr(feet) > AUTO_DIG_RANGE * AUTO_DIG_RANGE) break;
             BlockState bs = level.getBlockState(bp);
             if (bs.isAir() || bs.canBeReplaced() || bs.getBlock() == Blocks.BEDROCK)
                 continue;
+            // 不挖玩家自己站立/头部所在的方块（避免把自己埋了）
+            if (dy == 0 && bp.equals(feet)) continue;
             InventoryHelper.equipBestTool(player,
                 BuiltInRegistries.BLOCK.getKey(bs.getBlock()).toString());
             if (level.destroyBlock(bp, true)) {
