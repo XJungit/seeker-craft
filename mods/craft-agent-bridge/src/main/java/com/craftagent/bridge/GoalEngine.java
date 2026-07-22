@@ -130,7 +130,8 @@ public class GoalEngine {
             var req = new JsonObject();
             req.addProperty("item", g.param);
             req.addProperty("count", g.count);
-            ContainerController.actCraft(player, player.level(), req);
+            var r = ContainerController.actCraft(player, player.level(), req);
+            System.out.println("[goal] actCraft(" + g.param + ") -> " + r.get("crafted") + " | log=" + countInInventory("log") + " planks=" + countInInventory("planks"));
         } catch (Exception e) {
             System.out.println("[goal] craft failed: " + e.getMessage());
         }
