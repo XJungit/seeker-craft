@@ -29,6 +29,11 @@ pub mod tool_args;
 #[cfg(feature = "mod-bridge")]
 pub mod tools_mod;
 
+/// Azalea 客户端协议层适配器（Phase 3）：Rust 全栈 bot 连入 MC 服务器，
+/// 原生支持 26.2，替代原 Fabric mod TCP 桥。仅 `azalea-bot` 特性编译。
+#[cfg(feature = "azalea-bot")]
+pub mod azalea;
+
 #[cfg(any(feature = "mod-bridge", feature = "real"))]
 pub mod builder;
 
