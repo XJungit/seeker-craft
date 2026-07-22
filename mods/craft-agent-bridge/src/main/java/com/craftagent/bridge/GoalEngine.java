@@ -459,6 +459,15 @@ public class GoalEngine {
 
     public Status status() { return status; }
     public String result() { return result; }
+    /** #4 可观测性：返回当前目标栈（从根到栈顶），供 LLM 感知 GoalEngine 正在做什么。 */
+    public java.util.List<String> progressStack() {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        int idx = 1;
+        for (Goal g : stack) {
+            out.add((idx++) + "/" + stack.size() + " " + g.type + " " + g.param + " x" + g.count);
+        }
+        return out;
+    }
     public String statusString() {
         return switch (status) {
             case IDLE -> "idle";

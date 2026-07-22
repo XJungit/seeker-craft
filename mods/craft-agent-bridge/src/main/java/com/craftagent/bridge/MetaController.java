@@ -202,6 +202,12 @@ public class MetaController {
         JsonObject o = new JsonObject();
         o.addProperty("status", "ok");
         o.addProperty("detail", GoalEngine.get().statusString());
+        // #4 可观测性：把目标栈作为结构化 progress 返回，LLM 可感知内部进度
+        var stack = GoalEngine.get().progressStack();
+        var arr = new com.google.gson.JsonArray();
+        for (var s : stack) arr.add(s);
+        o.add("progress", arr);
+        o.addProperty("state", GoalEngine.get().status().name());
         return o;
     }
 }
