@@ -22,6 +22,11 @@ serde_json = "1"
 serde = { version = "1", features = ["derive"], optional = true }
 # 多模态直读：把截图 base64 内联为 data URI（仅 real 路径使用，故 optional）
 base64 = { version = "0.22", optional = true }
+# Azalea 客户端协议层（Phase 1 转向：替代 Fabric mod TCP 桥接）。
+# 仅 azalea feature 编译，默认不引入，保持轻量。
+azalea = { path = "D:/azalea/azalea", optional = true }
+azalea-client = { path = "D:/azalea/azalea-client", optional = true }
+tokio = { version = "1", features = ["full"], optional = true }
 
 [features]
 # 开启后接入真实 Minecraft：VLM/SoM 渲染(craft-agent-model/real) + xcap 截图 + enigo 键鼠。
@@ -30,6 +35,9 @@ real = ["craft-agent-model/real", "dep:xcap", "dep:enigo", "dep:image", "dep:bas
 # 全量 mod 控制：进程内 Fabric mod 桥接（craft-agent-bridge），结构化状态感知 + 进程内动作，
 # 彻底移除 enigo 的 OS 级键鼠模拟。基于 real（复用 xcap 截图供 viewer + craft-agent-model/real 的 LLM 客户端）。
 mod-bridge = ["real", "dep:serde"]
+# Azalea 客户端协议层路线：Rust 全栈 bot 连入普通 MC 服务器（含局域网），
+# 用 Azalea(pathfinder 移植自 Baritone) 替代自研 A*。MC 26.2 原生支持。
+azalea-bot = ["dep:azalea", "dep:azalea-client", "dep:tokio"]
 
 # 仅 Windows 编译：前台窗口接管（AttachThreadInput + SetForegroundWindow），
 # 确保 MC 在独占全屏/后台时收得到 enigo 合成输入（SendInput 只投前台窗口队列）。
