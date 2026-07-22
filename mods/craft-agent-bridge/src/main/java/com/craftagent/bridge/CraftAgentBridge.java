@@ -862,37 +862,30 @@ ServerLifecycleEvents.SERVER_STARTED.register(server -> {
         String targetName = req.has("player_name") ? req.get("player_name").getAsString() : "";
         String giveItem = req.has("item") ? req.get("item").getAsString() : "";
         int giveNum = req.has("num") ? req.get("num").getAsInt() : 1;
-        String targetId = CraftAgentBridge.onServer(() -> {
-            for (ServerPlayer p : serverInstance.getPlayerList().getPlayers()) {
-                if (!p.getName().getString().equalsIgnoreCase(targetName)) continue;
-                return p.getUUID().toString();
-            }
-            return null;
-        });
+        String targetId = null;
+        for (ServerPlayer p : serverInstance.getPlayerList().getPlayers()) {
+            if (!p.getName().getString().equalsIgnoreCase(targetName)) continue;
+            targetId = p.getUUID().toString();
+            break;
+        }
         if (targetId == null) {
             o.addProperty("status", "fail");
             o.addProperty("detail", "give_player: player '" + targetName + "' not found");
             return o;
         }
-        double[] targetPos = CraftAgentBridge.onServer(() -> {
-            for (ServerPlayer p : serverInstance.getPlayerList().getPlayers()) {
-                if (!p.getUUID().toString().equals(targetId)) continue;
-                return new double[]{p.getX(), p.getY(), p.getZ()};
-            }
-            return null;
-        });
+        double[] targetPos = null;
+        for (ServerPlayer p : serverInstance.getPlayerList().getPlayers()) {
+            if (!p.getUUID().toString().equals(targetId)) continue;
+            targetPos = new double[]{p.getX(), p.getY(), p.getZ()};
+            break;
+        }
         if (targetPos == null) {
             o.addProperty("status", "fail");
             o.addProperty("detail", "give_player: player disappeared");
             return o;
         }
-        double[] myPos = CraftAgentBridge.onServer(() -> {
-            ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
-            if (p == null) {
-                return null;
-            }
-            return new double[]{p.getX(), p.getY(), p.getZ()};
-        });
+        ServerPlayer me = FakePlayerManager.getFirstPlayer(serverInstance);
+        double[] myPos = me == null ? null : new double[]{me.getX(), me.getY(), me.getZ()};
         double dist = Double.MAX_VALUE;
         if (myPos != null) {
             double dx = myPos[0] - targetPos[0];
@@ -919,27 +912,25 @@ ServerLifecycleEvents.SERVER_STARTED.register(server -> {
     /** 实际把 bot 背包里的物品丢给玩家（在服务端线程执行）。 */
     private static int executeGiveToPlayer(String targetName, String giveItem, int giveNum) {
         String search = giveItem.replace("minecraft:", "").toLowerCase();
-        return CraftAgentBridge.onServer(() -> {
-            ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
-            if (p == null) {
-                return 0;
-            }
-            Inventory inv = p.getInventory();
-            int count = 0;
-            for (int i = 0; i < inv.getContainerSize() && count < giveNum; ++i) {
-                String key;
-                ItemStack s = inv.getItem(i);
-                if (s.isEmpty() || !(key = BuiltInRegistries.ITEM.getKey(s.getItem()).toString().toLowerCase()).contains(search)) continue;
-                int take = Math.min(s.getCount(), giveNum - count);
-                ItemStack toDrop = s.copy();
-                toDrop.setCount(take);
-                s.shrink(take);
-                p.drop(toDrop, false);
-                count += take;
-            }
-            p.containerMenu.broadcastChanges();
-            return count;
-        });
+        ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
+        if (p == null) {
+            return 0;
+        }
+        Inventory inv = p.getInventory();
+        int count = 0;
+        for (int i = 0; i < inv.getContainerSize() && count < giveNum; ++i) {
+            String key;
+            ItemStack s = inv.getItem(i);
+            if (s.isEmpty() || !(key = BuiltInRegistries.ITEM.getKey(s.getItem()).toString().toLowerCase()).contains(search)) continue;
+            int take = Math.min(s.getCount(), giveNum - count);
+            ItemStack toDrop = s.copy();
+            toDrop.setCount(take);
+            s.shrink(take);
+            p.drop(toDrop, false);
+            count += take;
+        }
+        p.containerMenu.broadcastChanges();
+        return count;
     }
 
     private JsonObject performAction(String type, JsonObject req) {
