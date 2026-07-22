@@ -117,14 +117,14 @@ public class GoalEngine {
             return;
         }
 
-        // 解析材料：返回子目标列表（craft/get/smelt/collect）
-        List<Goal> mats = resolveMaterials(g.param, g.count - have);
-        if (mats == null) {
+        // 成品配方材料（与 CraftingHelper 一致）
+        List<String> ings = requiredIngredients(g.param);
+        if (ings == null) {
             popDone("no recipe for " + g.param);
             return;
         }
 
-        // 检查是否所有材料都已齐（直接尝试合成，craftItem 内部会校验）
+        // 先尝试合成（材料够则直接出）
         CraftAgentBridge.serverInstance.executeIfPossible(() -> {
             try {
                 var req = new JsonObject();
@@ -137,20 +137,25 @@ public class GoalEngine {
         });
         tickCooldown = 16;
 
-        // 合成后再检查，若仍缺材料则展开第一个缺失子目标压栈
         int after = countInInventory(g.param);
-        if (after < g.count) {
-            for (Goal m : mats) {
-                if (countInInventory(m.param) < m.count) {
-                    System.out.println("[goal] need " + m.param + " x" + m.count + " -> push subgoal");
-                    stack.push(m);
-                    return;
-                }
-            }
-            // 材料够但合成没出（可能配方不支持），结束并提示
-            if (after >= 1) { popDone("crafted " + g.param + " x" + after); }
-            else { popDone("cannot craft " + g.param + " (missing materials or unsupported recipe)"); }
+        if (after >= g.count) {
+            popDone("crafted " + g.param + " x" + after);
+            return;
         }
+
+        // 找第一个仍缺失的材料，压入对应获取子目标
+        for (String ing : ings) {
+            String[] parts = ing.split(":");
+            String matName = parts[0];
+            int need = Integer.parseInt(parts[1]) * g.count;
+            if (countInInventory(matName) < need) {
+                Goal sub = obtainGoal(matName, need);
+                System.out.println("[goal] need " + matName + " x" + need + " -> push " + sub.type + " " + sub.param);
+                stack.push(sub);
+                return;
+            }
+        }
+        popDone("cannot craft " + g.param + " (missing materials or unsupported recipe)");
     }
 
     // ───────────────────────── get ─────────────────────────
@@ -160,8 +165,8 @@ public class GoalEngine {
             popDone("got " + g.param + " x" + g.count);
             return;
         }
-        // 若能合成则转 craft，否则采集
-        if (resolveMaterials(g.param, 1) != null) {
+        // 若能合成（有成品配方）则转 craft，否则采集
+        if (requiredIngredients(g.param) != null) {
             stack.push(new Goal("craft", g.param, g.count - have));
             return;
         }
@@ -180,7 +185,23 @@ public class GoalEngine {
         int have = countInInventory(out);
         if (have >= g.count) { popDone("smelted -> " + out + " x" + g.count); return; }
         int raw = countInInventory(g.param);
-        if (raw == 0) { popDone("no " + g.param + " to smelt"); return; }
+        if (raw == 0) {
+            // 没有原料：先采集对应矿石（iron_ore→raw_iron 等）
+            String ore = switch (g.param) {
+                case "raw_iron" -> "iron_ore";
+                case "raw_copper" -> "copper_ore";
+                case "raw_gold" -> "gold_ore";
+                default -> null;
+            };
+            if (ore != null) {
+                CollectController.get().start(ore, g.count);
+                tickCooldown = 16;
+                if (countInInventory(g.param) == 0) return;
+            } else {
+                popDone("no " + g.param + " to smelt");
+                return;
+            }
+        }
         int coal = countInInventory("coal");
         if (coal == 0) {
             // 需要燃料：先采集煤
@@ -330,48 +351,58 @@ public class GoalEngine {
     }
 
     // ───────────────────────── 材料解析 ─────────────────────────
-    /** 返回把 param 合成出来所需的子目标（已计算数量）。null = 无配方（应采集/已知基础物）。 */
-    private List<Goal> resolveMaterials(String item, int count) {
+    /** 返回把 param 合成出来所需的【成品配方材料名】（与 CraftingHelper 一致）。null = 无配方。 */
+    private List<String> requiredIngredients(String item) {
         return switch (item) {
-            case "wooden_pickaxe" -> List.of(new Goal("craft","planks",3*count), new Goal("craft","stick",2*count));
-            case "wooden_axe"     -> List.of(new Goal("craft","planks",3*count), new Goal("craft","stick",2*count));
-            case "wooden_sword"   -> List.of(new Goal("craft","planks",2*count), new Goal("craft","stick",1*count));
-            case "wooden_shovel"  -> List.of(new Goal("craft","planks",1*count), new Goal("craft","stick",2*count));
-            case "stone_pickaxe","stone_axe" -> List.of(new Goal("craft","cobblestone",3*count), new Goal("craft","stick",2*count));
-            case "stone_sword"    -> List.of(new Goal("craft","cobblestone",2*count), new Goal("craft","stick",1*count));
-            case "iron_pickaxe","iron_axe" -> List.of(new Goal("smelt","raw_iron",3*count), new Goal("craft","stick",2*count));
-            case "iron_sword"     -> List.of(new Goal("smelt","raw_iron",2*count), new Goal("craft","stick",1*count));
-            case "iron_shovel"    -> List.of(new Goal("smelt","raw_iron",1*count), new Goal("craft","stick",2*count));
-            case "diamond_pickaxe","diamond_axe" -> List.of(new Goal("craft","diamond",3*count), new Goal("craft","stick",2*count));
-            case "diamond_sword"  -> List.of(new Goal("craft","diamond",2*count), new Goal("craft","stick",1*count));
-            case "oak_planks","birch_planks","spruce_planks","jungle_planks","acacia_planks","dark_oak_planks","planks" -> List.of(new Goal("get","log",1*count));
-            case "stick"          -> List.of(new Goal("craft","planks",2*count));
-            case "crafting_table" -> List.of(new Goal("craft","planks",4*count));
-            case "furnace"        -> List.of(new Goal("get","cobblestone",8*count));
-            case "chest"          -> List.of(new Goal("craft","planks",8*count));
-            case "torch"          -> List.of(new Goal("craft","stick",1*count), new Goal("get","coal",1*count));
-            case "shield"         -> List.of(new Goal("craft","planks",6*count), new Goal("smelt","raw_iron",1*count));
-            case "iron_helmet"    -> List.of(new Goal("smelt","raw_iron",5*count));
-            case "iron_chestplate"-> List.of(new Goal("smelt","raw_iron",8*count));
-            case "iron_leggings"  -> List.of(new Goal("smelt","raw_iron",7*count));
-            case "iron_boots"     -> List.of(new Goal("smelt","raw_iron",4*count));
-            case "diamond_helmet" -> List.of(new Goal("craft","diamond",5*count));
-            case "diamond_chestplate" -> List.of(new Goal("craft","diamond",8*count));
-            case "diamond_leggings"   -> List.of(new Goal("craft","diamond",7*count));
-            case "diamond_boots"      -> List.of(new Goal("craft","diamond",4*count));
-            case "bow"      -> List.of(new Goal("craft","stick",3*count), new Goal("get","string",3*count));
-            case "arrow"    -> List.of(new Goal("get","flint",1*count), new Goal("craft","stick",1*count), new Goal("get","feather",1*count));
-            case "bucket","shears","flint_and_steel" -> List.of(new Goal("smelt","raw_iron", Math.max(1,(item.equals("bucket")?3:item.equals("shears")?2:1))*count));
-            case "oak_door" -> List.of(new Goal("craft","planks",6*count));
-            case "cobblestone" -> List.of(new Goal("get","stone",1*count));
-            case "diamond" -> List.of(new Goal("get","diamond_ore",1*count));
-            case "coal" -> List.of(new Goal("get","coal_ore",1*count));
-            case "string" -> List.of(new Goal("get","string",1*count));
-            case "flint" -> List.of(new Goal("get","gravel",1*count));
-            case "feather" -> List.of(new Goal("get","feather",1*count));
-            case "log" -> List.of(new Goal("get","log",1*count));
-            case "raw_iron","raw_copper","raw_gold" -> List.of(new Goal("get", item, 1*count));
+            case "wooden_pickaxe", "wooden_axe" -> List.of("planks:3", "stick:2");
+            case "wooden_sword"   -> List.of("planks:2", "stick:1");
+            case "wooden_shovel"  -> List.of("planks:1", "stick:2");
+            case "stone_pickaxe", "stone_axe" -> List.of("cobblestone:3", "stick:2");
+            case "stone_sword"    -> List.of("cobblestone:2", "stick:1");
+            case "iron_pickaxe", "iron_axe" -> List.of("iron_ingot:3", "stick:2");
+            case "iron_sword"     -> List.of("iron_ingot:2", "stick:1");
+            case "iron_shovel"    -> List.of("iron_ingot:1", "stick:2");
+            case "diamond_pickaxe", "diamond_axe" -> List.of("diamond:3", "stick:2");
+            case "diamond_sword"  -> List.of("diamond:2", "stick:1");
+            case "oak_planks","birch_planks","spruce_planks","jungle_planks","acacia_planks","dark_oak_planks","planks" -> List.of("log:1");
+            case "stick"          -> List.of("planks:2");
+            case "crafting_table" -> List.of("planks:4");
+            case "furnace"        -> List.of("cobblestone:8");
+            case "chest"          -> List.of("planks:8");
+            case "torch"          -> List.of("stick:1", "coal:1");
+            case "shield"         -> List.of("planks:6", "iron_ingot:1");
+            case "iron_helmet"    -> List.of("iron_ingot:5");
+            case "iron_chestplate"-> List.of("iron_ingot:8");
+            case "iron_leggings"  -> List.of("iron_ingot:7");
+            case "iron_boots"     -> List.of("iron_ingot:4");
+            case "diamond_helmet" -> List.of("diamond:5");
+            case "diamond_chestplate" -> List.of("diamond:8");
+            case "diamond_leggings"   -> List.of("diamond:7");
+            case "diamond_boots"      -> List.of("diamond:4");
+            case "oak_door" -> List.of("planks:6");
+            case "bucket" -> List.of("iron_ingot:3");
+            case "shears" -> List.of("iron_ingot:2");
+            case "flint_and_steel" -> List.of("iron_ingot:1");
             default -> null;
+        };
+    }
+
+    /** 给定一种成品配方材料，返回如何获取它的子目标（自动处理 矿→raw→ingot 链）。 */
+    private Goal obtainGoal(String ingredient, int count) {
+        return switch (ingredient) {
+            case "planks"   -> new Goal("get", "log", count);
+            case "stick"    -> new Goal("craft", "planks", 2 * count);
+            case "cobblestone" -> new Goal("get", "stone", count);
+            case "iron_ingot"  -> new Goal("smelt", "raw_iron", count);
+            case "copper_ingot" -> new Goal("smelt", "raw_copper", count);
+            case "gold_ingot"  -> new Goal("smelt", "raw_gold", count);
+            case "diamond"  -> new Goal("get", "diamond_ore", count);
+            case "coal"     -> new Goal("get", "coal_ore", count);
+            case "raw_iron" -> new Goal("get", "iron_ore", count);
+            case "raw_copper" -> new Goal("get", "copper_ore", count);
+            case "raw_gold" -> new Goal("get", "gold_ore", count);
+            case "log"      -> new Goal("get", "log", count);
+            default         -> new Goal("get", ingredient, count);
         };
     }
 

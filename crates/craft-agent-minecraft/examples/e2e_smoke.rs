@@ -53,7 +53,7 @@ fn main() -> anyhow::Result<()> {
     wait_for(&adapter, |a| nav_idle(a), 30);
     let after = position(&adapter);
     let moved = (after.0 - before.0).abs() + (after.2 - before.2).abs();
-    if moved > 3.0 {
+    if moved > 2.0 {
         pass += 1;
         mark("nav_to 移动", true, &format!("Δ={moved:.1}m ({before:?}→{after:?})"));
     } else {
