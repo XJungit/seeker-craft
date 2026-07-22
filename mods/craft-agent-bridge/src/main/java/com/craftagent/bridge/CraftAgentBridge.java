@@ -209,6 +209,14 @@ implements ModInitializer {
     static volatile int noProgressTicks;
     static volatile boolean moveSprinting;
     static volatile boolean shouldStop;
+    static class PendingGive {
+        final String playerName;
+        final String item;
+        final int num;
+        PendingGive(String playerName, String item, int num) { this.playerName = playerName; this.item = item; this.num = num; }
+    }
+    // 非阻塞 give_player：若需走近玩家，先异步行走，到达后由 tick 触发实际丢物
+    static volatile PendingGive pendingGive;
     static volatile String currentGoal;
     static volatile boolean fakePlayerSpawning;
     static final Set<String> BLOCK_WHITELIST;
@@ -395,6 +403,12 @@ ServerLifecycleEvents.SERVER_STARTED.register(server -> {
             player.setSprinting(false);
             player.setDeltaMovement(0.0, player.getDeltaMovement().y, 0.0);
             System.out.println("[cab-move] DONE all waypoints reached");
+            // 若有待执行的 give_player（非阻塞走近后丢物），到达即触发
+            if (pendingGive != null) {
+                PendingGive pg = pendingGive;
+                pendingGive = null;
+                executeGiveToPlayer(pg.playerName, pg.item, pg.num);
+            }
             return;
         }
         Vec3 wp = moveWaypoints.get(moveCurrentWpIndex);
@@ -873,25 +887,25 @@ ServerLifecycleEvents.SERVER_STARTED.register(server -> {
             dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
         }
         if (dist > 3.0) {
+            // 非阻塞：启动异步行走（服务端 tick 驱动），到达后由 onEndServerTick 触发实际丢物
             moveTarget = targetPos;
             moveTicksLeft = 200;
-            long start = System.currentTimeMillis();
-            while (moveTarget != null && System.currentTimeMillis() - start < 10000L) {
-                if (shouldStop) {
-                    shouldStop = false;
-                    break;
-                }
-                try {
-                    Thread.sleep(200L);
-                }
-                catch (InterruptedException e) {
-                    // empty catch block
-                    break;
-                }
-            }
+            pendingGive = new PendingGive(targetName, giveItem, giveNum);
+            o.addProperty("status", "ok");
+            o.addProperty("detail", "give_player: walking to " + targetName + " (async), will drop on arrival");
+            return o;
         }
+        int dropped = executeGiveToPlayer(targetName, giveItem, giveNum);
+        o.addProperty("status", "ok");
+        o.addProperty("dropped", (Number)dropped);
+        o.addProperty("detail", "give_player " + giveItem + " x" + dropped + " to " + targetName);
+        return o;
+    }
+
+    /** 实际把 bot 背包里的物品丢给玩家（在服务端线程执行）。 */
+    private static int executeGiveToPlayer(String targetName, String giveItem, int giveNum) {
         String search = giveItem.replace("minecraft:", "").toLowerCase();
-        int dropped = CraftAgentBridge.onServer(() -> {
+        return CraftAgentBridge.onServer(() -> {
             ServerPlayer p = FakePlayerManager.getFirstPlayer(serverInstance);
             if (p == null) {
                 return 0;
@@ -912,10 +926,6 @@ ServerLifecycleEvents.SERVER_STARTED.register(server -> {
             p.containerMenu.broadcastChanges();
             return count;
         });
-        o.addProperty("status", "ok");
-        o.addProperty("dropped", (Number)dropped);
-        o.addProperty("detail", "give_player " + giveItem + " x" + dropped + " to " + targetName);
-        return o;
     }
 
     private JsonObject performAction(String type, JsonObject req) {

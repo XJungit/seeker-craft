@@ -93,26 +93,14 @@ public class MovementController {
             prevY = wp.y;
         }
         String detailSuffix = (hasWater ? " [WATER]" : "") + (hasFall ? " [FALL>3]" : "");
-        int hardLimit = maxTicks * 50 + 2000;
-        for (int waitMs = 0; waitMs < hardLimit && CraftAgentBridge.moveWaypoints != null; waitMs += 50) {
-            try {
-                Thread.sleep(50L);
-            }
-            catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            }
-        }
-        if (CraftAgentBridge.moveWaypoints != null) {
-            CraftAgentBridge.moveWaypoints = null;
-            CraftAgentBridge.moveTarget = null;
-            CraftAgentBridge.moveReached = false;
-        }
+        // 非阻塞：路径已交给服务端 tick 驱动（onStartServerTick），这里立即返回 ack，
+        // 调用方通过反复调用 move_to（或 move_status）轮询 reached/final_dist/stuck。
+        // 不再在 TCP 线程上 Thread.sleep 阻塞，避免卡死后续命令（#1 修复）。
         o.addProperty("status", "ok");
-        o.addProperty("reached", Boolean.valueOf(CraftAgentBridge.moveReached));
+        o.addProperty("reached", Boolean.valueOf(false));
         o.addProperty("final_dist", (Number)CraftAgentBridge.moveFinalDist);
-        o.addProperty("stuck", Boolean.valueOf(CraftAgentBridge.moveStuck));
-        o.addProperty("detail", "move_to " + tx + "," + ty + "," + tz + " (reached=" + CraftAgentBridge.moveReached + ", dist=" + String.format("%.1f", CraftAgentBridge.moveFinalDist) + "m)" + detailSuffix);
+        o.addProperty("stuck", Boolean.valueOf(false));
+        o.addProperty("detail", "move_to started (async, poll move_to for progress) " + tx + "," + ty + "," + tz + detailSuffix);
         return o;
     }
 
