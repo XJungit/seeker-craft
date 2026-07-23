@@ -277,6 +277,8 @@ fn run_agent(
          - mine_below()：挖脚下方块（向下探矿，会持续挖直到你改指令）。\n\
          - mine(x,y,z)：挖掉指定世界坐标的方块（精确挖掘）。\n\
          - interact_block(x,y,z)：对着指定坐标方块交互（放置/右键激活）。\n\
+         - attack(target)：攻击最近的生物（自卫/狩猎），target 可填 nearest。\n\
+         - craft(item,count)：合成物品（当前版本暂不支持，调用会返回错误；请勿依赖）。\n\
          - chat(content)：发聊天消息，用于向玩家汇报进度。\n\
          行为准则：\n\
          1) 下探任务：连续调 mine_below 2~3 次后，调一次 chat 汇报当前 Y 坐标与进度，\n\

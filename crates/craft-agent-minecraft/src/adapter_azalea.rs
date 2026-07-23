@@ -212,6 +212,22 @@ impl MinecraftAzaleaAdapter {
                     detail: format!("chat: {content}"),
                 })
             }
+            MinecraftAction::Attack { target } => {
+                let detail = format!("attack 已下发（目标={target}，攻击最近非玩家实体）");
+                self.bot.attack(target);
+                Ok(ExecResult {
+                    ok: true,
+                    detail,
+                })
+            }
+            MinecraftAction::Craft { item, count } => {
+                // 当前 azalea 版本未提供高层合成 API（bot.craft / recipe_for 尚不存在），
+                // 故暂不支持程序化合成。保留动作类型供未来升级。
+                Err(anyhow!(
+                    "azalea 当前版本不支持程序化合成（craft={item}, count={count}）。\
+                     需要合成时请在游戏内手动操作，或待 azalea 升级合成 API"
+                ))
+            }
         }
     }
 }

@@ -97,6 +97,12 @@ pub enum MinecraftAction {
     InteractBlock { x: i32, y: i32, z: i32 },
     /// 发送聊天消息（也用作 LLM 指令回显）。
     Chat { content: String },
+    /// 攻击最近的生物（用于自卫/狩猎）。target 为 "nearest" 或实体种类关键词（如 "zombie"）。
+    /// 当前实现攻击最近的「非玩家」实体；无法指定具体实体 id。
+    Attack { target: String },
+    /// 合成物品。item 为配方 id（如 "minecraft:stick"），count 为数量。
+    /// 需要附近有工作台；找不到则失败并说明原因。
+    Craft { item: String, count: u32 },
 }
 
 /// 动作执行结果

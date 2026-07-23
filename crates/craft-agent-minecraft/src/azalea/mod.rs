@@ -48,6 +48,7 @@ pub enum BotCommand {
     MineBelow,
     BlockInteract { x: i32, y: i32, z: i32 },
     Chat { content: String },
+    Attack { target: String },
 }
 
 /// handler 状态：持有命令队列、事件发送端与最近坐标（跨事件持久，Arc 共享）。
@@ -194,6 +195,23 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                     BotCommand::Chat { content } => {
                         bot.chat(&content);
                     }
+                    BotCommand::Attack { target: _target } => {
+                        // 攻击最近的「非玩家」实体（自卫/狩猎）。
+                        // nearest_entities 返回按距离排序的 EntityRef；用 Without<Player>
+                        // 过滤掉玩家，再跳过本地 bot 自身。找不到则无操作。
+                        if let Ok(entities) =
+                            bot.nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>()
+                        {
+                            let self_id = bot.entity().id();
+                            for e in entities.iter() {
+                                if e.id() == self_id {
+                                    continue;
+                                }
+                                e.attack();
+                                break;
+                            }
+                        }
+                    }
                 }
             }
             // 持续下挖：只要标志为真且当前未在挖，就续挖（对齐 POC 逻辑，
@@ -242,6 +260,11 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
     }
     bot
 }
+
+    /// 攻击最近的生物（自卫/狩猎）。
+    pub fn attack(&self, target: String) {
+        self.push_cmd(BotCommand::Attack { target });
+    }
 
     /// 推送动作指令（fire-and-forget，handler tick 中执行）。
     fn push_cmd(&self, cmd: BotCommand) {

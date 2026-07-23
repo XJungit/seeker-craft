@@ -290,6 +290,114 @@ impl GameTool for InteractBlockTool {
     }
 }
 
+/// 攻击最近的生物（自卫/狩猎）。target 预留为实体种类关键词（当前实现攻击最近非玩家实体）。
+pub struct AttackTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl AttackTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for AttackTool {
+    fn name(&self) -> &str {
+        "attack"
+    }
+    fn description(&self) -> &str {
+        "攻击最近的生物（自卫/狩猎）。无参数（当前总是攻击最近的「非玩家」实体）。bot 会持续攻击直到目标消失。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "target": { "type": "string", "description": "预留：实体种类关键词（如 zombie）。当前忽略，总是攻击最近非玩家实体" }
+            }
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let target = args
+            .get("target")
+            .and_then(|v| v.as_str())
+            .unwrap_or("nearest")
+            .to_string();
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::Attack { target }))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}
+
+/// 合成物品（需要附近有工作台）。
+pub struct CraftTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl CraftTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for CraftTool {
+    fn name(&self) -> &str {
+        "craft"
+    }
+    fn description(&self) -> &str {
+        "合成物品（当前 azalea 版本暂不支持程序化合成，调用会返回错误提示）。\n\
+         item 为配方 id（如 \"minecraft:stick\"），count 为数量。\n\
+         备选：需要合成时请改用 mine + interact_block 手动搭工作台，或待 azalea 升级。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "item": { "type": "string", "description": "配方 id，如 minecraft:stick" },
+                "count": { "type": "integer", "description": "合成数量（默认 1）" }
+            },
+            "required": ["item"]
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let item = args
+            .get("item")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("缺少 item"))?
+            .to_string();
+        let count = args
+            .get("count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1) as u32;
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::Craft { item, count }))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}
+
 /// 创建 azalea 工具集并注册到 `ToolRegistry`。
 pub fn create_mc_azalea_tools(adapter: ArcAzaleaAdapter) -> Vec<Box<dyn GameTool>> {
     let ctx = Arc::new(AzaleaToolCtx::new(adapter));
@@ -299,6 +407,8 @@ pub fn create_mc_azalea_tools(adapter: ArcAzaleaAdapter) -> Vec<Box<dyn GameTool
         Box::new(MineBelowTool::new(ctx.clone())),
         Box::new(MineTool::new(ctx.clone())),
         Box::new(InteractBlockTool::new(ctx.clone())),
+        Box::new(AttackTool::new(ctx.clone())),
+        Box::new(CraftTool::new(ctx.clone())),
         Box::new(ChatTool::new(ctx.clone())),
     ]
 }
