@@ -281,6 +281,87 @@ pub mod real {
     }
 
     impl OpenAiLlmClient {
+        /// 折叠多轮 tool-calling 历史为纯文本，适配不支持多轮 tool 的上游端点。
+        /// - 删除 `role:"tool"` 消息（上游不认）
+        /// - 剥除 assistant 的 `tool_calls` 字段（仅留 content）
+        /// - 把工具结果以文本追进对应 assistant 的 content，保留语义
+        fn fold_tool_history(messages: &Value) -> Value {
+            let Some(arr) = messages.as_array() else { return messages.clone() };
+            let mut out: Vec<Value> = Vec::new();
+            // 收集 tool_call_id -> 工具结果文本，供回写 assistant content。
+            let mut tool_results: std::collections::HashMap<String, String> =
+                std::collections::HashMap::new();
+            for m in arr {
+                if m.get("role").and_then(|r| r.as_str()) == Some("tool") {
+                    let id = m
+                        .get("tool_call_id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let content = m
+                        .get("content")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    tool_results.insert(id, content);
+                    continue; // 丢弃 role:tool 消息本身
+                }
+                out.push(m.clone());
+            }
+            // 第二遍：剥 assistant 的 tool_calls，并把对应结果回写 content。
+            for m in out.iter_mut() {
+                if m.get("role").and_then(|r| r.as_str()) != Some("assistant") {
+                    continue;
+                }
+                let calls = m.get("tool_calls").and_then(|v| v.as_array()).cloned();
+                if let Some(calls) = calls {
+                    let mut summary = String::new();
+                    for c in &calls {
+                        let name = c
+                            .get("function")
+                            .and_then(|f| f.get("name"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("?");
+                        let args = c
+                            .get("function")
+                            .and_then(|f| f.get("arguments"))
+                            .map(|v| v.to_string())
+                            .unwrap_or_default();
+                        let id = c
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("");
+                        let result = tool_results
+                            .get(id)
+                            .cloned()
+                            .unwrap_or_else(|| "(无结果)".to_string());
+                        summary.push_str(&format!(
+                            "\n[工具 {name} 参数 {args} → 结果 {result}]"
+                        ));
+                    }
+                    // 剥除 tool_calls，结果并入 content。
+                    if let Value::Object(map) = m {
+                        map.remove("tool_calls");
+                        let existing = map
+                            .get("content")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        let merged = if existing.is_empty() {
+                            summary.trim_start().to_string()
+                        } else {
+                            format!("{existing}{summary}")
+                        };
+                        map.insert("content".into(), Value::String(merged));
+                        if map.get("content").and_then(|v| v.as_str()) == Some("") {
+                            map.insert("content".into(), Value::String("（已执行工具）".into()));
+                        }
+                    }
+                }
+            }
+            Value::Array(out)
+        }
+
         /// 直接用三要素构造（temperature/max_tokens 取默认，无 extra_body）。
         pub fn new(
             endpoint: impl Into<String>,
@@ -333,7 +414,15 @@ pub mod real {
         }
 
         /// 带工具的结构化 chat。保留 assistant 正文、推理、provider 原始 call id、usage 与终止原因。
+        ///
+        /// 上游适配：部分端点（如本地 OC-DSV4F 代理背后的 deepseek-v4）不支持
+        /// 多轮 tool-calling 历史——只要 messages 里出现 `tool_calls` 或 `role:"tool"`
+        /// 就返回 invalid_request_error。这里在发送前把这类历史折叠为纯文本：
+        /// 删去 `role:"tool"` 消息，剥除 assistant 的 `tool_calls` 字段（仅留 content），
+        /// 并把工具结果以文本追进对应 assistant 的 content，保留语义不丢上下文。
+        /// agent 核心的多轮协议不受影响（它读的是自身内存的 messages）。
         pub fn chat_tools(&self, messages: &Value, tools: &Value) -> Result<AssistantResponse> {
+            let messages = Self::fold_tool_history(messages);
             let mut body = json!({
                 "model": self.model,
                 "messages": messages,
@@ -352,18 +441,41 @@ pub mod real {
                     base.insert(k.clone(), v.clone());
                 }
             }
-            let resp_text = self
-                .client
-                .post(&self.endpoint)
-                .bearer_auth(&self.api_key)
-                .header("Accept", "application/json")
-                .json(&body)
-                .send()?
-                .error_for_status()?
-                .text()?;
-            let clean = resp_text.trim_end_matches("data: [DONE]");
-            let resp: Value = serde_json::from_str(clean)?;
-            parse_chat_tools_response(&resp)
+            let mut last_err = None;
+            for attempt in 0..3 {
+                let resp_text = self
+                    .client
+                    .post(&self.endpoint)
+                    .bearer_auth(&self.api_key)
+                    .header("Accept", "application/json")
+                    .json(&body)
+                    .send()?;
+                match resp_text.error_for_status_ref() {
+                    Ok(_) => {
+                        let resp_text = resp_text.text()?;
+                        let clean = resp_text.trim_end_matches("data: [DONE]");
+                        let resp: Value = serde_json::from_str(clean)?;
+                        return parse_chat_tools_response(&resp);
+                    }
+                    Err(e) => {
+                        // 上游偶发限流/过载（invalid_request_error + Upstream request
+                        // failed）对相同合法请求瞬时拒绝，退避重试可恢复。
+                        let status = resp_text.status().as_u16();
+                        if status == 400 || status == 429 {
+                            last_err = Some(e.into());
+                            if attempt < 2 {
+                                std::thread::sleep(std::time::Duration::from_millis(
+                                    500 * (attempt as u64 + 1) + 500,
+                                ));
+                                continue;
+                            }
+                        } else {
+                            return Err(e.into());
+                        }
+                    }
+                }
+            }
+            Err(last_err.unwrap_or_else(|| anyhow!("LLM 请求失败")))
         }
 
         fn chat_raw(&self, messages: &Value) -> Result<String> {
