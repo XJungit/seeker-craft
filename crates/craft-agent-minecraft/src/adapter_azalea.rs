@@ -20,6 +20,9 @@ pub struct MinecraftAzaleaAdapter {
     bot: Arc<AzaleaBot>,
     /// 缓存最近一次结构化状态（perceive 后供 execute / harness 使用）。
     last: Mutex<Option<WorldState>>,
+    /// 卡住检测：上次 Y 与连续未变化的次数（挖到基岩/空气时坐标不动）。
+    last_y: Mutex<Option<f64>>,
+    stuck_count: Mutex<u32>,
 }
 
 #[derive(Clone)]
@@ -76,6 +79,8 @@ impl MinecraftAzaleaAdapter {
         let adapter = Arc::new(Mutex::new(Self {
             bot: bot.clone(),
             last: Mutex::new(None),
+            last_y: Mutex::new(None),
+            stuck_count: Mutex::new(0),
         }));
 
         // 后台消费事件流，更新共享 Arc 内的 `last` 缓存。
@@ -98,9 +103,27 @@ impl MinecraftAzaleaAdapter {
                             player_count,
                         } = ev
                         {
+                            // 卡住检测：Y 不变则累加，变化则清零。
+                            let mut last_y = g.last_y.lock().unwrap();
+                            let mut stuck = g.stuck_count.lock().unwrap();
+                            if let Some(py) = *last_y {
+                                if (position.y - py).abs() < 0.01 {
+                                    *stuck += 1;
+                                } else {
+                                    *stuck = 0;
+                                }
+                            }
+                            *last_y = Some(position.y);
+                            let stuck_hint = if *stuck >= 2 {
+                                format!(" [卡住{}轮：Y 坐标不变，可能挖到基岩/空气或脚下方块无法破坏，建议停止下探并向玩家 chat 汇报]", *stuck)
+                            } else {
+                                String::new()
+                            };
+                            drop(stuck);
+                            drop(last_y);
                             let scene = format!(
-                                "坐标=({:.1},{:.1},{:.1}) 背包前5={:?} 附近玩家={}",
-                                position.x, position.y, position.z, inventory, player_count
+                                "坐标=({:.1},{:.1},{:.1}) 背包前5={:?} 附近玩家={}{}",
+                                position.x, position.y, position.z, inventory, player_count, stuck_hint
                             );
                             *g.last.lock().unwrap() = Some(WorldState {
                                 scene_desc: scene.clone(),
@@ -121,10 +144,17 @@ impl MinecraftAzaleaAdapter {
     }
 
     fn perceive(&self) -> Result<WorldState> {
+        // 首帧 State 可能尚未到达（connect 返回早于首次 Tick 快照）。
+        // 轮询等待最多 ~3s，避免返回占位串导致 LLM 首回合拿到无意义 context。
+        for _ in 0..30 {
+            if let Some(st) = self.last.lock().unwrap().clone() {
+                return Ok(st);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
         if let Some(st) = self.last.lock().unwrap().clone() {
             Ok(st)
         } else {
-            // 尚未收到首次 State；返回"未知"占位，harness 可重试。
             Ok(WorldState {
                 scene_desc: "等待首次状态快照...".to_string(),
                 marked_elements: vec![],

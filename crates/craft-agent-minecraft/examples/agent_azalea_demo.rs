@@ -30,12 +30,12 @@ fn main() -> anyhow::Result<()> {
         .iter()
         .find(|a| a.starts_with("--steps="))
         .and_then(|s| s.trim_start_matches("--steps=").parse().ok())
-        .unwrap_or(20);
+        .unwrap_or(10);
     let goal: String = args
         .iter()
         .find(|a| a.starts_with("--goal="))
         .map(|s| s.trim_start_matches("--goal=").to_string())
-        .unwrap_or_else(|| "挖矿下探".to_string());
+        .unwrap_or_else(|| "挖矿下探：向下挖矿探矿，挖到基岩层(Y<=1)或卡住即向玩家 chat 汇报并结束".to_string());
 
     // 同步构建 LLM 客户端（必须在任何 tokio runtime 之外，因内部用 reqwest::blocking）。
     let model_cfg = ModelConfig::load("config/agent.toml")?;
@@ -87,20 +87,27 @@ fn main() -> anyhow::Result<()> {
 
     let system_prompt = String::from(
         "你是 Minecraft AI 玩家，通过 azalea 客户端协议控制 bot（纯 vanilla 26.2）。\n\
-         每轮自动注入游戏状态（perceive），无需手动调用。\n\
          可用工具：\n\
           - perceive()：读坐标/背包/附近玩家（无参数）。\n\
           - goto(x,y,z)：A* 导航到坐标。\n\
-          - mine_below()：挖脚下方块（向下探矿）。\n\
-          - chat(content)：发聊天消息。\n\
-         策略：用 perceive 看状态，用 mine_below 下探，用 chat 回报进度。除非任务完成，否则每轮必须以工具调用收尾。",
+          - mine_below()：挖脚下方块（向下探矿，会持续挖直到你改指令）。\n\
+          - chat(content)：发聊天消息，用于向玩家汇报进度。\n\
+         行为准则：\n\
+         1) 下探任务：连续调 mine_below 2~3 次后，调一次 chat 汇报当前 Y 坐标与进度，\n\
+             再继续 mine_below。穿插 chat 汇报，不要无脑连续调同一工具超过 3 次。\n\
+         2) 若 perceive 返回含 \"[卡住N轮]\" 提示（Y 坐标不变，已挖到基岩或脚下无可破坏方块），\n\
+             必须停止下探，用 chat 向玩家说明情况后，以纯文本宣布任务完成/无法继续——\n\
+             不得继续调 mine_below，也不得假装还在挖。\n\
+         3) perceive 可随时调用确认状态，不必每轮都调。\n\
+         4) 任务确实无法推进时，允许纯文本结束（说明原因），这不算错误。",
     );
     let cfg = AgentConfig::new(system_prompt, max_iter)
         .with_compaction(compaction)
         // azalea 路线无 mod 专属知识：关闭 MC_KNOWLEDGE_BASE 与 world_info，
         // 仅用工具自描述，避免 LLM 误调 azalea 不存在的 collect/combat 等工具。
         .with_knowledge_base(None)
-        .with_world_info(None);
+        .with_world_info(None)
+        .with_knowledge_tool(false);
 
     let mut agent = Agent::new(Box::new(Lp { llm }), registry, cfg);
 

@@ -206,6 +206,10 @@ pub struct AgentConfig {
     pub enable_world_info: bool,
     pub enable_self_prompt: bool,
     pub enable_modes: bool,
+    /// 是否注册 manage_knowledge 工具（动态世界知识增删）。
+    /// mod 路线默认 true；azalea 等无世界知识库的路线设 false，
+    /// 避免向 LLM 暴露不存在/无用的工具导致上游偶发 400。
+    pub enable_knowledge_tool: bool,
     /// 静态知识库前缀（如 mod 路线的 MC 配方/生存策略）。
     /// `None` 表示不注入任何静态知识，仅用工具自描述（azalea 等无 mod 专属知识时设此）。
     pub knowledge_base: Option<String>,
@@ -227,6 +231,7 @@ impl AgentConfig {
             enable_world_info: true,
             enable_self_prompt: true,
             enable_modes: true,
+            enable_knowledge_tool: true,
             knowledge_base: Some(MC_KNOWLEDGE_BASE.to_string()),
             world_info: Some(default_mc_world_info()),
         }
@@ -239,6 +244,11 @@ impl AgentConfig {
     /// 设置世界信息库（`None` 为空库，不注入任何路线专属提示）。
     pub fn with_world_info(mut self, wi: Option<WorldInfoLib>) -> Self {
         self.world_info = wi;
+        self
+    }
+    /// 设置是否注册 manage_knowledge 工具。
+    pub fn with_knowledge_tool(mut self, v: bool) -> Self {
+        self.enable_knowledge_tool = v;
         self
     }
     pub fn with_compaction(mut self, c: CompactionConfig) -> Self {
