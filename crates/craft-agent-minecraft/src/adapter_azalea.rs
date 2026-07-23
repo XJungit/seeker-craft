@@ -243,6 +243,27 @@ impl MinecraftAzaleaAdapter {
                     detail: format!("smelt 已下发（需已打开熔炉：{output} + {fuel} x{count}）"),
                 })
             }
+            MinecraftAction::Gather { item, count } => {
+                self.bot.gather(item.clone(), count);
+                Ok(ExecResult {
+                    ok: true,
+                    detail: format!("gather 已下发（采集最近 {item} x{count}）"),
+                })
+            }
+            MinecraftAction::Place { item, x, y, z } => {
+                self.bot.place(item.clone(), x, y, z);
+                Ok(ExecResult {
+                    ok: true,
+                    detail: format!("place 已下发（{item} @ ({x},{y},{z})）"),
+                })
+            }
+            MinecraftAction::OpenContainer { x, y, z } => {
+                self.bot.open_container(x, y, z);
+                Ok(ExecResult {
+                    ok: true,
+                    detail: format!("open 已下发（容器 @ ({x},{y},{z})）"),
+                })
+            }
         }
     }
 }

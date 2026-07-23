@@ -281,6 +281,9 @@ fn run_agent(
           - craft(item,count)：2×2 背包合成（无需工作台），如 craft(\"oak_planks\",4)。\n\
           - craft_3x3(item,count)：3×3 工作台合成（需先右键打开工作台），如 craft_3x3(\"furnace\")。\n\
           - smelt(output,fuel,count)：熔炼（需先右键打开熔炉），如 smelt(\"iron_ingot\",\"coal\")。\n\
+          - gather(item,count)：走到最近方块并挖掘（早期采集），如 gather(\"oak_log\",4) / gather(\"stone\",8)。\n\
+          - place(item,x,y,z)：把手持物品放到坐标旁（如 place(\"crafting_table\",x,y,z) 造工作台）。\n\
+          - open(x,y,z)：打开坐标处容器（工作台/熔炉），随后可 craft_3x3 / smelt。\n\
           - chat(content)：发聊天消息，用于向玩家汇报进度。\n\
          行为准则：\n\
          1) 下探任务：连续调 mine_below 2~3 次后，调一次 chat 汇报当前 Y 坐标与进度，\n\

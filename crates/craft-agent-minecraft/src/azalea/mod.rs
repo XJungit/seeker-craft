@@ -14,7 +14,9 @@
 pub mod actions;
 pub mod client;
 pub mod craft;
+pub mod gather;
 pub mod perception;
+pub mod place;
 
 use azalea::prelude::*;
 use azalea::pathfinder::goals::BlockPosGoal;
@@ -57,6 +59,12 @@ pub enum BotCommand {
     /// 熔炼：要求已打开熔炉/高炉/烟熏炉（Furnace 类菜单）。
     /// output 为目标物品 id（如 "iron_ingot"），fuel 为燃料物品 id（如 "coal"），count 为期望数量。
     Smelt { output: String, fuel: String, count: u32 },
+    /// 采集：走到最近的指定方块（如 "oak_log" / "stone" / "coal_ore"）并挖掘，直到背包有 count 个。
+    Gather { item: String, count: u32 },
+    /// 放置：把手持物品 item 放到世界坐标 (x,y,z) 旁（右键放置）。
+    Place { item: String, x: i32, y: i32, z: i32 },
+    /// 打开容器：打开世界坐标 (x,y,z) 处的容器（工作台/熔炉/箱子等）。
+    OpenContainer { x: i32, y: i32, z: i32 },
 }
 
 /// handler 状态：持有命令队列、事件发送端与最近坐标（跨事件持久，Arc 共享）。
@@ -163,10 +171,43 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
             //   craft <物品> [数量]        2×2 背包合成
             //   craft3 <物品> [数量]       3×3 工作台合成（需已开工作台）
             //   smelt <产物> <燃料> [数量] 熔炼（需已开熔炉）
+            //   gather <方块> [数量]       走到最近该方块并挖掘（如 gather oak_log 4）
+            //   place <物品> <x> <y> <z>  把手持物品放到坐标旁（如 place crafting_table 10 64 10）
+            //   open <x> <y> <z>          打开该坐标的容器（工作台/熔炉）
             //   goto <x> <y> <z> / mine <x> <y> <z> / minebelow / attack
             {
                 let mut q = cmd_queue.lock().unwrap();
-                if let Some(rest) = content.strip_prefix("craft3 ") {
+                if let Some(rest) = content.strip_prefix("open ") {
+                    let c: Vec<i32> =
+                        rest.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+                    if c.len() == 3 {
+                        q.push(BotCommand::OpenContainer { x: c[0], y: c[1], z: c[2] });
+                    }
+                } else if let Some(rest) = content.strip_prefix("place ") {
+                    let mut parts = rest.split_whitespace();
+                    if let Some(item) = parts.next() {
+                        let c: Vec<i32> =
+                            parts.filter_map(|s| s.parse().ok()).collect();
+                        if c.len() == 3 {
+                            q.push(BotCommand::Place {
+                                item: item.to_string(),
+                                x: c[0],
+                                y: c[1],
+                                z: c[2],
+                            });
+                        }
+                    }
+                } else if let Some(rest) = content.strip_prefix("gather ") {
+                    let mut parts = rest.split_whitespace();
+                    if let Some(item) = parts.next() {
+                        let count =
+                            parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
+                        q.push(BotCommand::Gather {
+                            item: item.to_string(),
+                            count,
+                        });
+                    }
+                } else if let Some(rest) = content.strip_prefix("craft3 ") {
                     let mut parts = rest.split_whitespace();
                     if let Some(item) = parts.next() {
                         let count =
@@ -319,6 +360,42 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                             }
                         }
                     }
+                    BotCommand::Gather { item, count } => {
+                        match crate::azalea::gather::do_gather(&bot, &item, count).await {
+                            Ok(msg) => {
+                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[采集] {msg}") });
+                            }
+                            Err(e) => {
+                                let _ = evt_tx.send(BotEvent::Chat {
+                                    content: format!("[采集失败] {e}"),
+                                });
+                            }
+                        }
+                    }
+                    BotCommand::Place { item, x, y, z } => {
+                        match crate::azalea::place::do_place(&bot, &item, BlockPos::new(x, y, z)).await {
+                            Ok(msg) => {
+                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[放置] {msg}") });
+                            }
+                            Err(e) => {
+                                let _ = evt_tx.send(BotEvent::Chat {
+                                    content: format!("[放置失败] {e}"),
+                                });
+                            }
+                        }
+                    }
+                    BotCommand::OpenContainer { x, y, z } => {
+                        match crate::azalea::place::do_open_container(&bot, BlockPos::new(x, y, z)).await {
+                            Ok(msg) => {
+                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[开容器] {msg}") });
+                            }
+                            Err(e) => {
+                                let _ = evt_tx.send(BotEvent::Chat {
+                                    content: format!("[开容器失败] {e}"),
+                                });
+                            }
+                        }
+                    }
                 }
             }
             // 持续下挖：只要标志为真且当前未在挖，就续挖（对齐 POC 逻辑，
@@ -390,6 +467,21 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
             fuel,
             count,
         });
+    }
+
+    /// 采集最近的指定方块（如 "oak_log"）并挖掘，直到背包有 count 个。
+    pub fn gather(&self, item: String, count: u32) {
+        self.push_cmd(BotCommand::Gather { item, count });
+    }
+
+    /// 把手持物品 item 放置到世界坐标 (x,y,z) 旁。
+    pub fn place(&self, item: String, x: i32, y: i32, z: i32) {
+        self.push_cmd(BotCommand::Place { item, x, y, z });
+    }
+
+    /// 打开世界坐标 (x,y,z) 处的容器（工作台/熔炉/箱子等）。
+    pub fn open_container(&self, x: i32, y: i32, z: i32) {
+        self.push_cmd(BotCommand::OpenContainer { x, y, z });
     }
 
     /// 推送动作指令（fire-and-forget，handler tick 中执行）。

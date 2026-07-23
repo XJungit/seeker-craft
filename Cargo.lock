@@ -1248,6 +1248,7 @@ dependencies = [
  "azalea-client",
  "azalea-inventory",
  "azalea-registry",
+ "azalea-world",
  "craft-agent",
  "craft-agent-model",
  "dotenvy",

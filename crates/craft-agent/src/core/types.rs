@@ -107,6 +107,12 @@ pub enum MinecraftAction {
     /// 熔炼（需已打开熔炉/高炉/烟熏炉）。output 为产物 id（如 "iron_ingot"），
     /// fuel 为燃料 id（如 "coal"），count 为数量。
     Smelt { output: String, fuel: String, count: u32 },
+    /// 采集最近的指定方块（如 "oak_log" / "stone" / "coal_ore"）并挖掘，直到背包有 count 个。
+    Gather { item: String, count: u32 },
+    /// 放置：把手持物品 item 放到世界坐标 (x,y,z) 旁（右键放置）。
+    Place { item: String, x: i32, y: i32, z: i32 },
+    /// 打开容器：打开世界坐标 (x,y,z) 处的容器（工作台/熔炉/箱子等）。
+    OpenContainer { x: i32, y: i32, z: i32 },
 }
 
 /// 动作执行结果

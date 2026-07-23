@@ -522,6 +522,172 @@ impl GameTool for SmeltTool {
     }
 }
 
+/// 采集最近方块（砍树/挖石/挖矿）。
+pub struct GatherTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl GatherTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for GatherTool {
+    fn name(&self) -> &str {
+        "gather"
+    }
+    fn description(&self) -> &str {
+        "走到最近的指定方块并挖掘，直到背包有 count 个（早期游戏采集：砍树/挖石/挖矿）。\n\
+         item 为方块物品 id（如 \"oak_log\" / \"stone\" / \"coal_ore\"），count 为期望数量（默认 1）。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "item": { "type": "string", "description": "方块物品 id，如 oak_log / stone / coal_ore" },
+                "count": { "type": "integer", "description": "采集数量（默认 1）" }
+            },
+            "required": ["item"]
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let item = args
+            .get("item")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("缺少 item"))?
+            .to_string();
+        let count = args
+            .get("count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1) as u32;
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::Gather { item, count }))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}
+
+/// 放置方块（把手持物品放到坐标旁）。
+pub struct PlaceTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl PlaceTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for PlaceTool {
+    fn name(&self) -> &str {
+        "place"
+    }
+    fn description(&self) -> &str {
+        "把手持物品 item 放置到世界坐标 (x,y,z) 旁（右键放置）。\n\
+         需背包持有该物品；常用于放置工作台/熔炉以便后续 craft_3x3 / smelt。\n\
+         item 为目标物品 id（如 \"crafting_table\"），坐标用整数。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "item": { "type": "string", "description": "物品 id，如 crafting_table / furnace" },
+                "x": { "type": "integer" },
+                "y": { "type": "integer" },
+                "z": { "type": "integer" }
+            },
+            "required": ["item", "x", "y", "z"]
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let item = args
+            .get("item")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("缺少 item"))?
+            .to_string();
+        let x = args.get("x").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 x"))? as i32;
+        let y = args.get("y").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 y"))? as i32;
+        let z = args.get("z").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 z"))? as i32;
+        let r = self.ctx.adapter.execute_shared(Action::Minecraft(
+            MinecraftAction::Place { item, x, y, z },
+        ))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}
+
+/// 打开容器（工作台/熔炉/箱子）。
+pub struct OpenContainerTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl OpenContainerTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for OpenContainerTool {
+    fn name(&self) -> &str {
+        "open"
+    }
+    fn description(&self) -> &str {
+        "打开世界坐标 (x,y,z) 处的容器（工作台/熔炉/箱子等）。\n\
+         打开后配合 craft_3x3 / smelt 使用。坐标用整数。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "x": { "type": "integer" },
+                "y": { "type": "integer" },
+                "z": { "type": "integer" }
+            },
+            "required": ["x", "y", "z"]
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let x = args.get("x").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 x"))? as i32;
+        let y = args.get("y").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 y"))? as i32;
+        let z = args.get("z").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 z"))? as i32;
+        let r = self.ctx.adapter.execute_shared(Action::Minecraft(
+            MinecraftAction::OpenContainer { x, y, z },
+        ))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}
+
 /// 创建 azalea 工具集并注册到 `ToolRegistry`。
 pub fn create_mc_azalea_tools(adapter: ArcAzaleaAdapter) -> Vec<Box<dyn GameTool>> {
     let ctx = Arc::new(AzaleaToolCtx::new(adapter));
@@ -535,6 +701,9 @@ pub fn create_mc_azalea_tools(adapter: ArcAzaleaAdapter) -> Vec<Box<dyn GameTool
         Box::new(CraftTool::new(ctx.clone())),
         Box::new(Craft3x3Tool::new(ctx.clone())),
         Box::new(SmeltTool::new(ctx.clone())),
+        Box::new(GatherTool::new(ctx.clone())),
+        Box::new(PlaceTool::new(ctx.clone())),
+        Box::new(OpenContainerTool::new(ctx.clone())),
         Box::new(ChatTool::new(ctx.clone())),
     ]
 }
