@@ -194,6 +194,102 @@ impl GameTool for ChatTool {
     }
 }
 
+/// 挖掉世界坐标 (x, y, z) 处的方块（指定坐标挖掘）。
+pub struct MineTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl MineTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for MineTool {
+    fn name(&self) -> &str {
+        "mine"
+    }
+    fn description(&self) -> &str {
+        "挖掉指定世界坐标 (x,y,z) 的方块。bot 会对该方块发起挖掘（需在其可达范围内）。参数：x,y,z 整数。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "x": { "type": "integer", "description": "目标 X 坐标" },
+                "y": { "type": "integer", "description": "目标 Y 坐标" },
+                "z": { "type": "integer", "description": "目标 Z 坐标" }
+            },
+            "required": ["x", "y", "z"]
+        })
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let x = args.get("x").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 x"))? as i32;
+        let y = args.get("y").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 y"))? as i32;
+        let z = args.get("z").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 z"))? as i32;
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::MineBlock { x, y, z }))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}
+
+/// 对着世界坐标 (x, y, z) 的方块交互（放置/右键）。
+pub struct InteractBlockTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl InteractBlockTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for InteractBlockTool {
+    fn name(&self) -> &str {
+        "interact_block"
+    }
+    fn description(&self) -> &str {
+        "对着指定世界坐标 (x,y,z) 的方块交互（放置方块/右键激活）。参数：x,y,z 整数。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "x": { "type": "integer", "description": "目标 X 坐标" },
+                "y": { "type": "integer", "description": "目标 Y 坐标" },
+                "z": { "type": "integer", "description": "目标 Z 坐标" }
+            },
+            "required": ["x", "y", "z"]
+        })
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let x = args.get("x").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 x"))? as i32;
+        let y = args.get("y").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 y"))? as i32;
+        let z = args.get("z").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 z"))? as i32;
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::InteractBlock { x, y, z }))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}
+
 /// 创建 azalea 工具集并注册到 `ToolRegistry`。
 pub fn create_mc_azalea_tools(adapter: ArcAzaleaAdapter) -> Vec<Box<dyn GameTool>> {
     let ctx = Arc::new(AzaleaToolCtx::new(adapter));
@@ -201,6 +297,8 @@ pub fn create_mc_azalea_tools(adapter: ArcAzaleaAdapter) -> Vec<Box<dyn GameTool
         Box::new(PerceiveTool::new(ctx.clone())),
         Box::new(GotoTool::new(ctx.clone())),
         Box::new(MineBelowTool::new(ctx.clone())),
+        Box::new(MineTool::new(ctx.clone())),
+        Box::new(InteractBlockTool::new(ctx.clone())),
         Box::new(ChatTool::new(ctx.clone())),
     ]
 }

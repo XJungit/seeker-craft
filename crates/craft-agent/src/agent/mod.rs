@@ -231,9 +231,12 @@ impl AgentConfig {
             enable_world_info: true,
             enable_self_prompt: true,
             enable_modes: true,
-            enable_knowledge_tool: true,
-            knowledge_base: Some(MC_KNOWLEDGE_BASE.to_string()),
-            world_info: Some(default_mc_world_info()),
+            // 默认关闭 mod 专属知识污染：新路线（azalea 等）开箱即用、
+            // 仅见自身工具集；mod 路线在 demo 里显式 .with_knowledge_base/
+            // world_info/enable_knowledge_tool 开启。
+            enable_knowledge_tool: false,
+            knowledge_base: None,
+            world_info: None,
         }
     }
     /// 设置静态知识库（`None` 关闭，仅用工具自描述）。
@@ -267,6 +270,7 @@ impl AgentConfig {
 
 // ── MC Knowledge Base (static parts, prefixed to auto-generated tool reference) ──
 
+#[allow(dead_code)]
 const MC_KNOWLEDGE_BASE: &str = r#"
 ## Your Role
 You are a Minecraft bot. Each turn you receive game state (STATS, HOTBAR, INVENTORY, NEARBY BLOCKS, NEARBY ENTITIES) and must call exactly one tool. Never text-only.

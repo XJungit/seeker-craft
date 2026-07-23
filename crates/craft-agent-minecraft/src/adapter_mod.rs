@@ -1209,6 +1209,11 @@ impl GameAdapter for MinecraftModAdapter {
             Action::Click { element_id } => Err(anyhow!(
                 "mod 模式无 2D 点击（element_id={element_id}）；改用 look/dig_at/place_at 操作 3D 世界"
             )),
+            // azalea 路线专属动作（Action::Minecraft）；本 mod 适配器不处理，
+            // 明确拒绝并引导调用方使用 adapter_azalea。
+            Action::Minecraft(_) => Err(anyhow!(
+                "mod 适配器不支持 Action::Minecraft；azalea 路线请使用 adapter_azalea"
+            )),
         }
     }
 }

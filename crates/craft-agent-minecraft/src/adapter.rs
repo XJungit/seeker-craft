@@ -474,6 +474,11 @@ impl GameAdapter for MinecraftAdapter {
                     detail: format!("mine {}ms", (ticks as u64).saturating_mul(STEP_MS)),
                 })
             }
+            // azalea 路线专属动作（Action::Minecraft）；本 mod/VLM 适配器不处理，
+            // 明确拒绝并引导调用方使用对应的具体方法。
+            Action::Minecraft(_) => Err(anyhow!(
+                "mod/VLM 适配器不支持 Action::Minecraft；azalea 路线请使用 adapter_azalea"
+            )),
         }
     }
 }

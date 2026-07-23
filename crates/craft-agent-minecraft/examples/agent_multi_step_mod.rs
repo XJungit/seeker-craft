@@ -11,7 +11,7 @@
 
 #[cfg(feature = "mod-bridge")]
 fn main() -> anyhow::Result<()> {
-    use craft_agent::agent::{Agent, AgentConfig, CompactionConfig, LlmProvider};
+    use craft_agent::agent::{Agent, AgentConfig, CompactionConfig, LlmProvider, MC_KNOWLEDGE_BASE, default_mc_world_info};
     use craft_agent::core::message::{AssistantResponse, Message};
     use craft_agent::core::session::Session;
     use craft_agent::core::tool::ToolRegistry;
@@ -140,7 +140,11 @@ fn main() -> anyhow::Result<()> {
     );
     let cfg = AgentConfig::new(system_prompt, max_iter)
         .with_compaction(compaction)
-        .with_auto_perceive(true);
+        .with_auto_perceive(true)
+        // mod 路线显式开启 mod 专属知识（azalea 等无 mod 知识的路线保持默认关闭）。
+        .with_knowledge_base(Some(craft_agent::agent::MC_KNOWLEDGE_BASE.to_string()))
+        .with_world_info(Some(craft_agent::agent::default_mc_world_info()))
+        .with_knowledge_tool(true);
 
     let mut agent = match session_path {
         Some(p) => {

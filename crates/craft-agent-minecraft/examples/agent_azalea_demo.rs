@@ -11,6 +11,15 @@
 //! 架构对齐 mod 路线（agent_multi_step_mod.rs）：main 保持纯同步，
 //! LLM 客户端用 reqwest::blocking（from_config 不能在 tokio runtime 内构建）。
 //! 仅连接阶段用一次性局部 runtime 跑完 async connect，之后全程同步。
+//!
+//! 端点适配说明（重要）：本 demo 默认走的 [llm] 后端（如本地 OC-DSV4F 代理）
+//! 背后的上游**不支持多轮 tool-calling 历史**——只要发出的 messages 含
+//! assistant.tool_calls 或 role:"tool" 就返回 invalid_request_error / Upstream
+//! request failed。此限制在 craft-agent-model 的 OpenAiLlmClient::chat_tools
+//! 内通过 fold_tool_history() 适配：发送前把 tool 历史折叠为纯文本
+//! （删 role:tool、剥 tool_calls、结果并入 content）。agent 核心的多轮
+//! 协议不受影响（它读自身内存的 messages）。换用原生支持多轮 tool 的
+//! 端点时，可将该折叠改为可配置关闭以保留完整多轮上下文。
 
 #[cfg(feature = "azalea-bot")]
 fn main() -> anyhow::Result<()> {
@@ -35,7 +44,7 @@ fn main() -> anyhow::Result<()> {
         .iter()
         .find(|a| a.starts_with("--goal="))
         .map(|s| s.trim_start_matches("--goal=").to_string())
-        .unwrap_or_else(|| "挖矿下探：向下挖矿探矿，挖到基岩层(Y<=1)或卡住即向玩家 chat 汇报并结束".to_string());
+        .unwrap_or_else(|| "向下挖矿探矿：连续下挖若干格，每 2~3 格用 chat 向玩家汇报一次坐标与进度；挖到基岩层(Y<=1)或连续卡住即 chat 汇报并宣布任务完成。".to_string());
 
     // 同步构建 LLM 客户端（必须在任何 tokio runtime 之外，因内部用 reqwest::blocking）。
     let model_cfg = ModelConfig::load("config/agent.toml")?;
@@ -91,6 +100,8 @@ fn main() -> anyhow::Result<()> {
           - perceive()：读坐标/背包/附近玩家（无参数）。\n\
           - goto(x,y,z)：A* 导航到坐标。\n\
           - mine_below()：挖脚下方块（向下探矿，会持续挖直到你改指令）。\n\
+          - mine(x,y,z)：挖掉指定世界坐标的方块（精确挖掘）。\n\
+          - interact_block(x,y,z)：对着指定坐标方块交互（放置/右键激活）。\n\
           - chat(content)：发聊天消息，用于向玩家汇报进度。\n\
          行为准则：\n\
          1) 下探任务：连续调 mine_below 2~3 次后，调一次 chat 汇报当前 Y 坐标与进度，\n\
