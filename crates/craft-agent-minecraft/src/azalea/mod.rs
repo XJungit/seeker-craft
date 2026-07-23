@@ -56,6 +56,9 @@ pub struct BotState {
     pub cmd_queue: Arc<Mutex<Vec<BotCommand>>>,
     pub evt_tx: Arc<mpsc::UnboundedSender<BotEvent>>,
     pub last_position: Arc<Mutex<Option<azalea::Vec3>>>,
+    /// 持续下挖标志：收到 MineBelow 后置 true，Tick 内只要未在挖就重复触发，
+    /// 对齐 POC 的持续挖矿逻辑（azalea 单次 start_mining 可能因中断失效）。
+    pub mining_below: Arc<Mutex<bool>>,
 }
 
 impl Default for BotState {
@@ -67,6 +70,7 @@ impl Default for BotState {
             cmd_queue: Arc::new(Mutex::new(Vec::new())),
             evt_tx: Arc::new(mpsc::unbounded_channel::<BotEvent>().0),
             last_position: Arc::new(Mutex::new(None)),
+            mining_below: Arc::new(Mutex::new(false)),
         }
     }
 }
@@ -101,6 +105,7 @@ impl AzaleaBot {
             cmd_queue: cmd_queue.clone(),
             evt_tx: evt_tx.clone(),
             last_position: last_position.clone(),
+            mining_below: Arc::new(Mutex::new(false)),
         };
 
         let addr = address.to_string();
@@ -163,12 +168,16 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
             for cmd in cmds {
                 match cmd {
                     BotCommand::Goto { x, y, z } => {
+                        *state.mining_below.lock().unwrap() = false;
                         bot.start_goto(BlockPosGoal(BlockPos::new(x, y, z)));
                     }
                     BotCommand::Mine { x, y, z } => {
+                        *state.mining_below.lock().unwrap() = false;
                         bot.start_mining(BlockPos::new(x, y, z));
                     }
                     BotCommand::MineBelow => {
+                        // 进入持续下挖模式：置标志，Tick 内自动续挖。
+                        *state.mining_below.lock().unwrap() = true;
                         if let Ok(p) = bot.position() {
                             let foot = BlockPos::new(
                                 p.x.floor() as i32,
@@ -179,11 +188,24 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                         }
                     }
                     BotCommand::BlockInteract { x, y, z } => {
+                        *state.mining_below.lock().unwrap() = false;
                         bot.block_interact(BlockPos::new(x, y, z));
                     }
                     BotCommand::Chat { content } => {
                         bot.chat(&content);
                     }
+                }
+            }
+            // 持续下挖：只要标志为真且当前未在挖，就续挖（对齐 POC 逻辑，
+            // 避免单次 start_mining 因中断失效导致 bot 停在原地不下降）。
+            if *state.mining_below.lock().unwrap() && !bot.is_mining() {
+                if let Ok(p) = bot.position() {
+                    let foot = BlockPos::new(
+                        p.x.floor() as i32,
+                        (p.y - 1.0).floor() as i32,
+                        p.z.floor() as i32,
+                    );
+                    bot.start_mining(foot);
                 }
             }
             // 每 20 tick 推送状态快照。

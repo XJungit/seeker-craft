@@ -37,7 +37,7 @@ real = ["craft-agent-model/real", "dep:xcap", "dep:enigo", "dep:image", "dep:bas
 mod-bridge = ["real", "dep:serde"]
 # Azalea 客户端协议层路线：Rust 全栈 bot 连入普通 MC 服务器（含局域网），
 # 用 Azalea(pathfinder 移植自 Baritone) 替代自研 A*。MC 26.2 原生支持。
-azalea-bot = ["dep:azalea", "dep:azalea-client", "dep:tokio"]
+azalea-bot = ["dep:azalea", "dep:azalea-client", "dep:tokio", "craft-agent-model/real"]
 
 # 仅 Windows 编译：前台窗口接管（AttachThreadInput + SetForegroundWindow），
 # 确保 MC 在独占全屏/后台时收得到 enigo 合成输入（SendInput 只投前台窗口队列）。

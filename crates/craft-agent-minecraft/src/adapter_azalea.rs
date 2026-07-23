@@ -14,7 +14,6 @@ use anyhow::{anyhow, Context, Result};
 use craft_agent::core::adapter::GameAdapter;
 use craft_agent::core::types::{Action, ExecResult, MinecraftAction, Screenshot, WorldState};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 /// Minecraft azalea 适配器。
 pub struct MinecraftAzaleaAdapter {
@@ -55,6 +54,17 @@ impl GameAdapter for ArcAzaleaAdapter {
     }
 }
 
+impl ArcAzaleaAdapter {
+    /// `&self` 版执行（供工具上下文持有 Arc 时调用，无需 &mut）。
+    pub fn execute_shared(&self, action: Action) -> Result<ExecResult> {
+        self.0.lock().unwrap().execute(action)
+    }
+    /// `&self` 版感知。
+    pub fn perceive_shared(&self) -> Result<WorldState> {
+        self.0.lock().unwrap().perceive()
+    }
+}
+
 impl MinecraftAzaleaAdapter {
     /// 连接本机已开放的 vanilla 26.2 局域网服（如 localhost:4444）。
     /// 返回 `ArcAzaleaAdapter`（共享 Arc），后台任务消费 bot 事件流更新缓存。
@@ -69,34 +79,42 @@ impl MinecraftAzaleaAdapter {
         }));
 
         // 后台消费事件流，更新共享 Arc 内的 `last` 缓存。
+        // 用独立 OS 线程 + 独立 current_thread runtime 跑，与 demo 主
+        // runtime 完全隔离，避免主 runtime 退出时 drop 嵌套 panic。
         let adapter_weak = Arc::downgrade(&adapter);
         let bot_for_task = bot.clone();
-        tokio::spawn(async move {
-            while let Some(ev) = bot_for_task.next_event().await {
-                if let Some(a) = adapter_weak.upgrade() {
-                    let mut g = a.lock().unwrap();
-                    if let BotEvent::State {
-                        position,
-                        inventory,
-                        player_count,
-                    } = ev
-                    {
-                        let scene = format!(
-                            "坐标=({:.1},{:.1},{:.1}) 背包前5={:?} 附近玩家={}",
-                            position.x, position.y, position.z, inventory, player_count
-                        );
-                        *g.last.lock().unwrap() = Some(WorldState {
-                            scene_desc: scene.clone(),
-                            marked_elements: vec![],
-                            detected_targets: vec![],
-                            self_hint: scene,
-                            screenshot: Arc::new(Vec::new()),
-                        });
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("azalea adapter event runtime");
+            rt.block_on(async move {
+                while let Some(ev) = bot_for_task.next_event().await {
+                    if let Some(a) = adapter_weak.upgrade() {
+                        let g = a.lock().unwrap();
+                        if let BotEvent::State {
+                            position,
+                            inventory,
+                            player_count,
+                        } = ev
+                        {
+                            let scene = format!(
+                                "坐标=({:.1},{:.1},{:.1}) 背包前5={:?} 附近玩家={}",
+                                position.x, position.y, position.z, inventory, player_count
+                            );
+                            *g.last.lock().unwrap() = Some(WorldState {
+                                scene_desc: scene.clone(),
+                                marked_elements: vec![],
+                                detected_targets: vec![],
+                                self_hint: scene,
+                                screenshot: Arc::new(Vec::new()),
+                            });
+                        }
+                    } else {
+                        break;
                     }
-                } else {
-                    break;
                 }
-            }
+            });
         });
 
         Ok(ArcAzaleaAdapter(adapter))

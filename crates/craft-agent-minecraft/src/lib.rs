@@ -35,6 +35,8 @@ pub mod tools_mod;
 pub mod azalea;
 #[cfg(feature = "azalea-bot")]
 pub mod adapter_azalea;
+#[cfg(feature = "azalea-bot")]
+pub mod tools_azalea;
 
 #[cfg(any(feature = "mod-bridge", feature = "real"))]
 pub mod builder;
