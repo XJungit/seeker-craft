@@ -16,6 +16,8 @@ members = [
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+license = "MIT"
+repository = "https://github.com/anomalyco/craft-agent"
 
 # ===== 公共依赖版本单点声明（成员用 `<dep>.workspace = true` 引用）=====
 [workspace.dependencies]

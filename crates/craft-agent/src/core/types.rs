@@ -100,9 +100,13 @@ pub enum MinecraftAction {
     /// 攻击最近的生物（用于自卫/狩猎）。target 为 "nearest" 或实体种类关键词（如 "zombie"）。
     /// 当前实现攻击最近的「非玩家」实体；无法指定具体实体 id。
     Attack { target: String },
-    /// 合成物品。item 为配方 id（如 "minecraft:stick"），count 为数量。
-    /// 需要附近有工作台；找不到则失败并说明原因。
+    /// 合成物品（2×2 背包网格，无需工作台）。item 为配方 id（如 "oak_planks"），count 为数量。
     Craft { item: String, count: u32 },
+    /// 3×3 工作台合成（需已打开工作台）。item 为配方 id（如 "furnace"），count 为数量。
+    Craft3x3 { item: String, count: u32 },
+    /// 熔炼（需已打开熔炉/高炉/烟熏炉）。output 为产物 id（如 "iron_ingot"），
+    /// fuel 为燃料 id（如 "coal"），count 为数量。
+    Smelt { output: String, fuel: String, count: u32 },
 }
 
 /// 动作执行结果

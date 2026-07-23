@@ -278,8 +278,10 @@ fn run_agent(
          - mine(x,y,z)：挖掉指定世界坐标的方块（精确挖掘）。\n\
          - interact_block(x,y,z)：对着指定坐标方块交互（放置/右键激活）。\n\
          - attack(target)：攻击最近的生物（自卫/狩猎），target 可填 nearest。\n\
-         - craft(item,count)：合成物品（当前版本暂不支持，调用会返回错误；请勿依赖）。\n\
-         - chat(content)：发聊天消息，用于向玩家汇报进度。\n\
+          - craft(item,count)：2×2 背包合成（无需工作台），如 craft(\"oak_planks\",4)。\n\
+          - craft_3x3(item,count)：3×3 工作台合成（需先右键打开工作台），如 craft_3x3(\"furnace\")。\n\
+          - smelt(output,fuel,count)：熔炼（需先右键打开熔炉），如 smelt(\"iron_ingot\",\"coal\")。\n\
+          - chat(content)：发聊天消息，用于向玩家汇报进度。\n\
          行为准则：\n\
          1) 下探任务：连续调 mine_below 2~3 次后，调一次 chat 汇报当前 Y 坐标与进度，\n\
              再继续 mine_below。穿插 chat 汇报，不要无脑连续调同一工具超过 3 次。\n\

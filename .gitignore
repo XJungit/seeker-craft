@@ -22,6 +22,9 @@ __pycache__/
 # 本地 agent 记忆（机器相关，非源码）
 .workbuddy/
 
+# 本地 cargo 配置（含机器相关绝对路径，勿提交；仓库用 https git 依赖）
+.cargo/config.toml
+
 # 参考项目源码（学习用，非项目主源码）
 references/
 

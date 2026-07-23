@@ -221,12 +221,27 @@ impl MinecraftAzaleaAdapter {
                 })
             }
             MinecraftAction::Craft { item, count } => {
-                // 当前 azalea 版本未提供高层合成 API（bot.craft / recipe_for 尚不存在），
-                // 故暂不支持程序化合成。保留动作类型供未来升级。
-                Err(anyhow!(
-                    "azalea 当前版本不支持程序化合成（craft={item}, count={count}）。\
-                     需要合成时请在游戏内手动操作，或待 azalea 升级合成 API"
-                ))
+                // 走 2×2 背包合成（azalea 公开 API 实现，无需工作台）。
+                // 命令经队列异步在 handler 内执行；结果通过事件流回传（见 mod.rs）。
+                self.bot.craft_2x2(item.clone(), count);
+                Ok(ExecResult {
+                    ok: true,
+                    detail: format!("craft 已下发（2×2 背包合成：{item} x{count}）"),
+                })
+            }
+            MinecraftAction::Craft3x3 { item, count } => {
+                self.bot.craft_3x3(item.clone(), count);
+                Ok(ExecResult {
+                    ok: true,
+                    detail: format!("craft3x3 已下发（需已打开工作台：{item} x{count}）"),
+                })
+            }
+            MinecraftAction::Smelt { output, fuel, count } => {
+                self.bot.smelt(output.clone(), fuel.clone(), count);
+                Ok(ExecResult {
+                    ok: true,
+                    detail: format!("smelt 已下发（需已打开熔炉：{output} + {fuel} x{count}）"),
+                })
             }
         }
     }

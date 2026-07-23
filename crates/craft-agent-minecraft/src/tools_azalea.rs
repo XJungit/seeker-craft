@@ -354,9 +354,9 @@ impl GameTool for CraftTool {
         "craft"
     }
     fn description(&self) -> &str {
-        "合成物品（当前 azalea 版本暂不支持程序化合成，调用会返回错误提示）。\n\
-         item 为配方 id（如 \"minecraft:stick\"），count 为数量。\n\
-         备选：需要合成时请改用 mine + interact_block 手动搭工作台，或待 azalea 升级。"
+        "用玩家自带 2×2 背包网格合成物品（无需工作台）。\n\
+         item 为目标物品 id（可省略 minecraft: 前缀，如 \"oak_planks\" / \"stick\" / \"crafting_table\" / \"torch\" / \"chest\" / \"wooden_pickaxe\" / \"furnace\"，也支持任意原木如 \"spruce_log\" 合成对应木板）。\n\
+         count 为期望数量（默认 1）。合成在后台异步执行，结果通过聊天事件回传。"
     }
     fn parameters(&self) -> Value {
         serde_json::json!({
@@ -398,6 +398,130 @@ impl GameTool for CraftTool {
     }
 }
 
+/// 3×3 工作台合成（需已打开工作台）。
+pub struct Craft3x3Tool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl Craft3x3Tool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for Craft3x3Tool {
+    fn name(&self) -> &str {
+        "craft_3x3"
+    }
+    fn description(&self) -> &str {
+        "用已打开的 3×3 工作台合成物品（如 furnace / chest）。\n\
+         item 为目标物品 id（如 \"furnace\"），count 为期望数量（默认 1）。\n\
+         需先右键打开工作台，再调用本工具。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "item": { "type": "string", "description": "目标物品 id，如 furnace / chest" },
+                "count": { "type": "integer", "description": "合成数量（默认 1）" }
+            },
+            "required": ["item"]
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let item = args
+            .get("item")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("缺少 item"))?
+            .to_string();
+        let count = args
+            .get("count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1) as u32;
+        let r = self.ctx.adapter.execute_shared(Action::Minecraft(
+            MinecraftAction::Craft3x3 { item, count },
+        ))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}
+
+/// 熔炼（需已打开熔炉/高炉/烟熏炉）。
+pub struct SmeltTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl SmeltTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for SmeltTool {
+    fn name(&self) -> &str {
+        "smelt"
+    }
+    fn description(&self) -> &str {
+        "在已打开的熔炉/高炉/烟熏炉中熔炼物品（如 iron_ingot / glass / charcoal）。\n\
+         output 为产物 id（如 \"iron_ingot\"），fuel 为燃料 id（默认 \"coal\"，也可 \"charcoal\"/\"oak_log\"），\n\
+         count 为期望数量（默认 1）。需先右键打开熔炉，且背包有输入物与燃料。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "output": { "type": "string", "description": "产物 id，如 iron_ingot / glass / charcoal" },
+                "fuel": { "type": "string", "description": "燃料 id（默认 coal）" },
+                "count": { "type": "integer", "description": "熔炼数量（默认 1）" }
+            },
+            "required": ["output"]
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let output = args
+            .get("output")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("缺少 output"))?
+            .to_string();
+        let fuel = args
+            .get("fuel")
+            .and_then(|v| v.as_str())
+            .unwrap_or("coal")
+            .to_string();
+        let count = args
+            .get("count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1) as u32;
+        let r = self.ctx.adapter.execute_shared(Action::Minecraft(
+            MinecraftAction::Smelt {
+                output,
+                fuel,
+                count,
+            },
+        ))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}
+
 /// 创建 azalea 工具集并注册到 `ToolRegistry`。
 pub fn create_mc_azalea_tools(adapter: ArcAzaleaAdapter) -> Vec<Box<dyn GameTool>> {
     let ctx = Arc::new(AzaleaToolCtx::new(adapter));
@@ -409,6 +533,8 @@ pub fn create_mc_azalea_tools(adapter: ArcAzaleaAdapter) -> Vec<Box<dyn GameTool
         Box::new(InteractBlockTool::new(ctx.clone())),
         Box::new(AttackTool::new(ctx.clone())),
         Box::new(CraftTool::new(ctx.clone())),
+        Box::new(Craft3x3Tool::new(ctx.clone())),
+        Box::new(SmeltTool::new(ctx.clone())),
         Box::new(ChatTool::new(ctx.clone())),
     ]
 }

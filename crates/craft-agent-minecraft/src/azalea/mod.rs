@@ -13,6 +13,7 @@
 
 pub mod actions;
 pub mod client;
+pub mod craft;
 pub mod perception;
 
 use azalea::prelude::*;
@@ -49,6 +50,13 @@ pub enum BotCommand {
     BlockInteract { x: i32, y: i32, z: i32 },
     Chat { content: String },
     Attack { target: String },
+    /// 2×2 背包合成（无需工作台）：item 为目标物品 id（如 "oak_planks"），count 为期望数量。
+    Craft2x2 { item: String, count: u32 },
+    /// 3×3 工作台合成：要求已打开工作台（Crafting 菜单）。item 为目标物品 id，count 为期望数量。
+    Craft3x3 { item: String, count: u32 },
+    /// 熔炼：要求已打开熔炉/高炉/烟熏炉（Furnace 类菜单）。
+    /// output 为目标物品 id（如 "iron_ingot"），fuel 为燃料物品 id（如 "coal"），count 为期望数量。
+    Smelt { output: String, fuel: String, count: u32 },
 }
 
 /// handler 状态：持有命令队列、事件发送端与最近坐标（跨事件持久，Arc 共享）。
@@ -151,6 +159,63 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                 ChatPacket::System(p) => format!("{:?}", p.content),
                 _ => format!("{packet:?}"),
             };
+            // 聊天驱动的即时指令（便于实机调试 / 玩家直接指挥 bot）：
+            //   craft <物品> [数量]        2×2 背包合成
+            //   craft3 <物品> [数量]       3×3 工作台合成（需已开工作台）
+            //   smelt <产物> <燃料> [数量] 熔炼（需已开熔炉）
+            //   goto <x> <y> <z> / mine <x> <y> <z> / minebelow / attack
+            {
+                let mut q = cmd_queue.lock().unwrap();
+                if let Some(rest) = content.strip_prefix("craft3 ") {
+                    let mut parts = rest.split_whitespace();
+                    if let Some(item) = parts.next() {
+                        let count =
+                            parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
+                        q.push(BotCommand::Craft3x3 {
+                            item: item.to_string(),
+                            count,
+                        });
+                    }
+                } else if let Some(rest) = content.strip_prefix("smelt ") {
+                    let mut parts = rest.split_whitespace();
+                    if let Some(output) = parts.next() {
+                        let fuel = parts.next().unwrap_or("coal").to_string();
+                        let count =
+                            parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
+                        q.push(BotCommand::Smelt {
+                            output: output.to_string(),
+                            fuel,
+                            count,
+                        });
+                    }
+                } else if let Some(rest) = content.strip_prefix("craft ") {
+                    let mut parts = rest.split_whitespace();
+                    if let Some(item) = parts.next() {
+                        let count =
+                            parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
+                        q.push(BotCommand::Craft2x2 {
+                            item: item.to_string(),
+                            count,
+                        });
+                    }
+                } else if let Some(rest) = content.strip_prefix("goto ") {
+                    let c: Vec<i32> =
+                        rest.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+                    if c.len() == 3 {
+                        q.push(BotCommand::Goto { x: c[0], y: c[1], z: c[2] });
+                    }
+                } else if let Some(rest) = content.strip_prefix("mine ") {
+                    let c: Vec<i32> =
+                        rest.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+                    if c.len() == 3 {
+                        q.push(BotCommand::Mine { x: c[0], y: c[1], z: c[2] });
+                    }
+                } else if content == "minebelow" {
+                    q.push(BotCommand::MineBelow);
+                } else if content == "attack" {
+                    q.push(BotCommand::Attack { target: "chat".into() });
+                }
+            }
             let _ = evt_tx.send(BotEvent::Chat { content });
         }
         Event::Disconnect(reason) => {
@@ -162,10 +227,12 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
             if let Ok(p) = bot.position() {
                 *lp.lock().unwrap() = Some(p);
             }
-            // 消费命令队列（非阻塞）。
-            let mut q = cmd_queue.lock().unwrap();
-            let cmds: Vec<BotCommand> = q.drain(..).collect();
-            drop(q);
+            // 消费命令队列（非阻塞）。把 drain 包在独立作用域，确保 MutexGuard
+            // 在 await 前彻底离开作用域（否则 future 因持有 !Send 的 guard 而不满足 Send）。
+            let cmds: Vec<BotCommand> = {
+                let mut q = cmd_queue.lock().unwrap();
+                q.drain(..).collect()
+            };
             for cmd in cmds {
                 match cmd {
                     BotCommand::Goto { x, y, z } => {
@@ -209,6 +276,46 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                                 }
                                 e.attack();
                                 break;
+                            }
+                        }
+                    }
+                    BotCommand::Craft2x2 { item, count } => {
+                        // 2×2 背包合成（异步：需等服务端回填网格与结果槽）。
+                        // 在 handler 内 await 是 azalea 既有模式（其示例也在事件
+                        // handler 中 await 阻塞式 bot 操作）；current_thread runtime
+                        // 在 await 期间仍可处理容器更新包。
+                        match crate::azalea::craft::do_craft_2x2(&bot, &item, count).await {
+                            Ok(msg) => {
+                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[合成] {msg}") });
+                            }
+                            Err(e) => {
+                                let _ = evt_tx.send(BotEvent::Chat {
+                                    content: format!("[合成失败] {e}"),
+                                });
+                            }
+                        }
+                    }
+                    BotCommand::Craft3x3 { item, count } => {
+                        match crate::azalea::craft::do_craft_3x3(&bot, &item, count).await {
+                            Ok(msg) => {
+                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[合成] {msg}") });
+                            }
+                            Err(e) => {
+                                let _ = evt_tx.send(BotEvent::Chat {
+                                    content: format!("[合成失败] {e}"),
+                                });
+                            }
+                        }
+                    }
+                    BotCommand::Smelt { output, fuel, count } => {
+                        match crate::azalea::craft::do_smelt(&bot, &output, &fuel, count).await {
+                            Ok(msg) => {
+                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[熔炼] {msg}") });
+                            }
+                            Err(e) => {
+                                let _ = evt_tx.send(BotEvent::Chat {
+                                    content: format!("[熔炼失败] {e}"),
+                                });
                             }
                         }
                     }
@@ -264,6 +371,25 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
     /// 攻击最近的生物（自卫/狩猎）。
     pub fn attack(&self, target: String) {
         self.push_cmd(BotCommand::Attack { target });
+    }
+
+    /// 2×2 背包合成（无需工作台）。item 为目标物品 id（如 "oak_planks"），count 为期望数量。
+    pub fn craft_2x2(&self, item: String, count: u32) {
+        self.push_cmd(BotCommand::Craft2x2 { item, count });
+    }
+
+    /// 3×3 工作台合成（要求已打开工作台）。item 为目标物品 id，count 为期望数量。
+    pub fn craft_3x3(&self, item: String, count: u32) {
+        self.push_cmd(BotCommand::Craft3x3 { item, count });
+    }
+
+    /// 熔炼（要求已打开熔炉/高炉/烟熏炉）。output 目标物品 id，fuel 燃料 id，count 数量。
+    pub fn smelt(&self, output: String, fuel: String, count: u32) {
+        self.push_cmd(BotCommand::Smelt {
+            output,
+            fuel,
+            count,
+        });
     }
 
     /// 推送动作指令（fire-and-forget，handler tick 中执行）。

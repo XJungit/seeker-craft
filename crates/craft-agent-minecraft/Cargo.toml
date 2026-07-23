@@ -13,14 +13,20 @@ anyhow.workspace = true
 dotenvy.workspace = true
 serde_json = "1"
 # Azalea 客户端协议层（Rust 全栈 bot 连入普通 MC 服务器，MC 26.2 原生支持）。
-azalea = { path = "D:/azalea/azalea", optional = true }
-azalea-client = { path = "D:/azalea/azalea-client", optional = true }
+# azalea 锁定到 26.2 支持的 commit，以 git 源引入（独立 workspace，不与本 workspace 配置冲突）。
+# 首次构建需联网拉取（cargo 缓存）；国内协作者可加速：
+#   git config --global url."https://ghfast.top/https://github.com/".insteadOf "https://github.com/"
+# vendor/azalea 为可选本地 submodule（便于读 azalea 源码/改），不参与构建。
+azalea = { git = "https://github.com/azalea-rs/azalea", rev = "c35b57ebf82fa8b26ada77ab9eb795e3827d6c16", optional = true }
+azalea-client = { git = "https://github.com/azalea-rs/azalea", rev = "c35b57ebf82fa8b26ada77ab9eb795e3827d6c16", optional = true }
+azalea-inventory = { git = "https://github.com/azalea-rs/azalea", rev = "c35b57ebf82fa8b26ada77ab9eb795e3827d6c16", optional = true }
+azalea-registry = { git = "https://github.com/azalea-rs/azalea", rev = "c35b57ebf82fa8b26ada77ab9eb795e3827d6c16", optional = true }
 tokio = { version = "1", features = ["full"], optional = true }
 
 [features]
 # 唯一路线：Azalea 客户端协议层（Rust 全栈 bot 直连普通 MC 服务器）。
 # 旧 mod-bridge / real（Fabric mod TCP 桥接 + 真机 VLM 键鼠）路线已从源码删除。
-azalea-bot = ["dep:azalea", "dep:azalea-client", "dep:tokio", "craft-agent-model/real"]
+azalea-bot = ["dep:azalea", "dep:azalea-client", "dep:azalea-inventory", "dep:azalea-registry", "dep:tokio", "craft-agent-model/real"]
 
 # 仅 Windows 编译：前台窗口接管（AttachThreadInput + SetForegroundWindow），
 # 确保 MC 在独占全屏/后台时收得到 enigo 合成输入（SendInput 只投前台窗口队列）。

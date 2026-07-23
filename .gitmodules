@@ -1,0 +1,3 @@
+[submodule "vendor/azalea"]
+	path = vendor/azalea
+	url = https://github.com/azalea-rs/azalea.git
