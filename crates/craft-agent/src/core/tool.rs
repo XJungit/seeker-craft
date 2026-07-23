@@ -155,24 +155,21 @@ pub trait GameTool: Send + Sync {
     /// 转换为 OpenAI function calling 的完整定义
     fn to_openai_def(&self) -> Value {
         let params = self.parameters();
-        if params.as_object().is_none_or(|o| o.is_empty()) {
-            serde_json::json!({
-                "type": "function",
-                "function": {
-                    "name": self.name(),
-                    "description": self.description(),
-                }
-            })
+        let params = if params.as_object().is_some_and(|o| !o.is_empty()) {
+            params
         } else {
-            serde_json::json!({
-                "type": "function",
-                "function": {
-                    "name": self.name(),
-                    "description": self.description(),
-                    "parameters": params,
-                }
-            })
-        }
+            // OpenAI 规范要求 function 必须带 parameters 字段；
+            // 缺省时补空对象，避免严格端点（如本地 OC-DSV4F 代理）返回 400。
+            serde_json::json!({ "type": "object", "properties": {} })
+        };
+        serde_json::json!({
+            "type": "function",
+            "function": {
+                "name": self.name(),
+                "description": self.description(),
+                "parameters": params,
+            }
+        })
     }
 }
 

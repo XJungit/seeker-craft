@@ -206,6 +206,12 @@ pub struct AgentConfig {
     pub enable_world_info: bool,
     pub enable_self_prompt: bool,
     pub enable_modes: bool,
+    /// 静态知识库前缀（如 mod 路线的 MC 配方/生存策略）。
+    /// `None` 表示不注入任何静态知识，仅用工具自描述（azalea 等无 mod 专属知识时设此）。
+    pub knowledge_base: Option<String>,
+    /// 世界信息库（动态注入与感知相关的提示）。`None` 表示空库，
+    /// 用于非 mod 路线（azalea 等）避免注入 mod 专属的 collect/combat 提示。
+    pub world_info: Option<WorldInfoLib>,
 }
 impl AgentConfig {
     pub fn new(prompt: String, max_iterations: u32) -> Self {
@@ -221,7 +227,19 @@ impl AgentConfig {
             enable_world_info: true,
             enable_self_prompt: true,
             enable_modes: true,
+            knowledge_base: Some(MC_KNOWLEDGE_BASE.to_string()),
+            world_info: Some(default_mc_world_info()),
         }
+    }
+    /// 设置静态知识库（`None` 关闭，仅用工具自描述）。
+    pub fn with_knowledge_base(mut self, kb: Option<String>) -> Self {
+        self.knowledge_base = kb;
+        self
+    }
+    /// 设置世界信息库（`None` 为空库，不注入任何路线专属提示）。
+    pub fn with_world_info(mut self, wi: Option<WorldInfoLib>) -> Self {
+        self.world_info = wi;
+        self
     }
     pub fn with_compaction(mut self, c: CompactionConfig) -> Self {
         self.compaction = c;
@@ -313,14 +331,22 @@ You are a Minecraft bot. Each turn you receive game state (STATS, HOTBAR, INVENT
 
 /// Auto-generated knowledge string (base + tool reference from ToolRegistry).
 /// Generated once lazily to keep system prompt stable for prefix caching.
-pub fn build_knowledge_string(tools: &ToolRegistry) -> String {
+/// `kb` 为静态知识库前缀（如 mod 路线的 MC 配方）；`None` 时仅用工具自描述，
+/// 不注入任何路线专属知识（azalea 等路线设 None 以避免污染工具集）。
+pub fn build_knowledge_string(tools: &ToolRegistry, kb: Option<&str>) -> String {
     let tool_ref = tools.to_knowledge_string();
+    let base = kb.unwrap_or("").trim();
     if tool_ref.is_empty() {
-        MC_KNOWLEDGE_BASE.to_string()
+        base.to_string()
+    } else if base.is_empty() {
+        format!(
+            "## Available Tools\nThe following tools are the ONLY ones available:\n\n{}",
+            tool_ref
+        )
     } else {
         format!(
             "{}\n\n## Available Tools\nThe following tools are the ONLY ones available:\n\n{}",
-            MC_KNOWLEDGE_BASE.trim(),
+            base,
             tool_ref
         )
     }
@@ -400,7 +426,7 @@ impl Agent {
     /// 返回知识字符串（工具参考自动从 ToolRegistry 生成），缓存复用保 prefix-cache 稳定
     pub fn knowledge_string(&self) -> String {
         // 可通过 cache field 优化，目前每次都生成（工具集不变，结果相同）
-        build_knowledge_string(&self.tools)
+        build_knowledge_string(&self.tools, self.config.knowledge_base.as_deref())
     }
 }
 
@@ -410,7 +436,7 @@ impl Agent {
         tools: ToolRegistry,
         mut config: AgentConfig,
     ) -> Self {
-        let world_info = default_mc_world_info();
+        let world_info = config.world_info.take().unwrap_or_else(default_mc_world_info);
         let compaction_provider = config.compaction.compaction_provider.take();
         Self {
             provider,

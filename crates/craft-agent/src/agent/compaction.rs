@@ -9,7 +9,8 @@ impl Agent {
     pub const IMAGE_TOKENS: u64 = 1200;
 
     pub fn estimate_tokens(&self) -> u32 {
-        let system_chars = self.config.prompt.len() + build_knowledge_string(&self.tools).len();
+        let system_chars = self.config.prompt.len()
+            + build_knowledge_string(&self.tools, self.config.knowledge_base.as_deref()).len();
         let system_tokens = system_chars as u64 / Self::CHARS_PER_TOKEN as u64;
 
         let mut measured_total: u64 = 0;
