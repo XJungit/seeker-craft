@@ -7,6 +7,11 @@ import net.minecraft.server.level.ServerLevel;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
+import net.minecraft.world.item.ItemStack;
+import net.minecraft.world.entity.Entity;
+import net.minecraft.world.entity.item.ItemEntity;
+import net.minecraft.world.phys.AABB;
+import net.minecraft.world.phys.Vec3;
 import com.craftagent.bridge.pathing.PlayerNavManager;
 import java.util.HashSet;
 import java.util.Set;
@@ -55,9 +60,10 @@ public class CollectController {
             // 导航超时兜底：避免永久卡在 RUNNING 导致采集死锁
             if (navStartTick < 0) navStartTick = CraftAgentBridge.serverInstance.getTickCount();
             else if (CraftAgentBridge.serverInstance.getTickCount() - navStartTick > 400) {
-                System.out.println("[collect] nav timeout, forcing stop. status=" + PlayerNavManager.get().statusString() + " botY=" + player.getY());
+                System.out.println("[collect] nav timeout, giving up. status=" + PlayerNavManager.get().statusString() + " botY=" + player.getY());
                 PlayerNavManager.get().stop();
-                navStartTick = -1;
+                finish("collected " + targetBlock + ": nav timeout (target unreachable)");
+                return;
             }
             return;
         }
@@ -100,8 +106,19 @@ public class CollectController {
         String blockId = BuiltInRegistries.BLOCK.getKey(bs.getBlock()).toString();
         InventoryHelper.equipBestTool(player, blockId);
         if (level.destroyBlock(found, true)) {
+            // 掉落物不会自动进背包：把刚生成的掉落物直接吸入背包（通用，任何方块都适用）。
+            int before = countInInventory(player, targetBlock);
+            AABB box = AABB.ofSize(new Vec3(found.getX() + 0.5, found.getY() + 0.5, found.getZ() + 0.5), 1.5, 1.5, 1.5);
+            for (Entity e : level.getEntities(player, box)) {
+                if (!(e instanceof ItemEntity ie)) continue;
+                ItemStack drop = ie.getItem();
+                if (drop.isEmpty()) continue;
+                InventoryHelper.addItem(player.getInventory(),
+                    BuiltInRegistries.ITEM.getKey(drop.getItem()).toString(), drop.getCount());
+                ie.discard();
+            }
             int after = countInInventory(player, targetBlock);
-            int gained = after - have;
+            int gained = after - before;
             collected += gained;
             System.out.println("[collect] DUG " + found.toShortString() + " (" + blockId + ") gained=" + gained + " invLog=" + after + " botY=" + player.getY());
         }

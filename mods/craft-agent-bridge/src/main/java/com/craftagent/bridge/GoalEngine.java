@@ -195,7 +195,10 @@ public class GoalEngine {
                 default -> null;
             };
             if (ore != null) {
-                CollectController.get().start(ore, g.count);
+                // 只在 CollectController 空闲时才启动，避免每 tick 重置导致采矿永远推不动
+                if (!CollectController.get().statusString().startsWith("running")) {
+                    CollectController.get().start(ore, g.count);
+                }
                 tickCooldown = 16;
                 if (countInInventory(g.param) == 0) return;
             } else {
@@ -205,8 +208,10 @@ public class GoalEngine {
         }
         int coal = countInInventory("coal");
         if (coal == 0) {
-            // 需要燃料：先采集煤
-            CollectController.get().start("coal_ore", 1);
+            // 需要燃料：先采集煤（同样仅在空闲时启动）
+            if (!CollectController.get().statusString().startsWith("running")) {
+                CollectController.get().start("coal_ore", 1);
+            }
             tickCooldown = 16;
             if (countInInventory("coal") == 0) { popDone("no coal to smelt (fuel missing)"); return; }
         }
