@@ -19,8 +19,7 @@ This guide explains the main directories and crates in Craft-Agent.
 
 ## Mods
 
-- `craft-agent-bridge/` -- main Fabric mod bridge.
-- `craft-agent-bridge-1.21/` -- MC 1.21 compatibility branch.
+- `mods/` -- (removed) the old Fabric mod bridge; azalea route needs no mod.
 
 ## References
 

@@ -2,17 +2,17 @@
 
 通用游戏 Agent 框架（首个落地场景：Minecraft Java 版）。
 
-当前支持两条运行路径：
-- **mod-bridge**：通过 Fabric mod 结构化感知与执行，适合后台 / 精确控制。
-- **real**：保留截图 + VLM + 键鼠执行，适合真机可视化场景。
+当前唯一运行路径：
+- **azalea-bot（活跃）**：Rust 全栈客户端 bot，直连普通 MC 服务器（含局域网），原生支持 MC 26.2，内置 Baritone 级 pathfinder。
+> 旧 `mod-bridge`（Fabric mod TCP 桥接）与 `real`（VLM 截图 + enigo 键鼠）路线已从源码删除。
 
 ## 决策内核
 
 - **感知**：结构化游戏状态 + 可选 VLM 视觉补充。
 - **决策**：LLM 基于世界状态生成工具调用（OpenAI 兼容，多后端可配）。
-- **执行**：mod 主线程精确执行 / 或键鼠执行。
+- **执行**：azalea 客户端协议包（与真人玩家等价）/ 或旧 mod 主线程精确执行。
 
-完整设计见 [`game-agent-design.md`](./game-agent-design.md)，架构概览见 [`ARCHITECTURE.md`](./ARCHITECTURE.md)。
+完整设计见 [`docs/design/refactor-azalea-client-route.md`](./docs/design/refactor-azalea-client-route.md)，架构概览见 [`ARCHITECTURE.md`](./ARCHITECTURE.md)。
 
 ## 工程结构
 
@@ -23,11 +23,8 @@ Craft-Agent/
 ├── crates/
 │   ├── craft-agent/          # 核心：GameAdapter / Agent 主循环 / Session
 │   ├── craft-agent-model/    # VLM/LLM 客户端
-│   ├── craft-agent-minecraft/# MC 适配器与工具集
+│   ├── craft-agent-minecraft/# MC 适配器与工具集（azalea 路线）
 │   └── craft-agent-viewer/   # 运行可视化
-├── mods/
-│   ├── craft-agent-bridge/           # MC Fabric mod（Java）
-│   └── craft-agent-bridge-1.21/      # MC 1.21 兼容分支
 ├── config/
 │   └── agent.toml            # 多后端配置
 ├── references/               # 参考项目源码（不参与主工程构建）
@@ -37,16 +34,12 @@ Craft-Agent/
 ## 快速开始
 
 ```bash
-# 构建全部成员
+# 构建全部成员（azalea-bot 特性按需开启）
 cargo build --workspace
 
-# mod-bridge 示例
-cargo run -p craft-agent-minecraft --example agent_multi_step_mod --features mod-bridge \
-  -- --steps=40 --goal="收集木头做工作台" --session=sessions/mc_run_mod.jsonl
-
-# 真机路径
-cargo run -p craft-agent-minecraft --example agent_multi_step_mod --features real \
-  -- --steps=40 --goal="收集木头做工作台" --session=sessions/mc_run_real.jsonl
+# azalea bot 示例（连入本地 MC 局域网服，端口 4444）
+cargo run -p craft-agent-minecraft --example agent_azalea_demo --features azalea-bot \
+  -- --steps=40 --goal="收集木头做工作台" --session=sessions/mc_run_azalea.jsonl
 ```
 
 ### 配置后端

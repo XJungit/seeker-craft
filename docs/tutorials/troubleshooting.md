@@ -6,18 +6,16 @@ Common build, runtime, and configuration problems and fixes.
 
 | Symptom | Likely Cause | Fix |
 |---|---|---|
-| `cargo build` fails with edition 2024 error | Rust toolchain < 1.85 | `rustup update stable` |
-| `mod-bridge` feature not found | Feature flag missing | Add `--features mod-bridge` |
-| `real` feature fails on Windows | `windows-sys` crate issue | Ensure latest Rust; open issue if persists |
-| Gradle build fails with mapping errors | MC version mismatch | Check AGENTS.md for 26.2 API signatures |
-| Gradle build SSL/cert error | Network/proxy blocking Maven | See `mods/craft-agent-bridge/tools/README.md` |
+| `cargo build` fails with edition 2024 error | Rust toolchain < 1.97.1 | `rustup update` to the pinned nightly (see `rust-toolchain.toml`) |
+| `azalea-bot` feature not found | Feature flag missing | Add `--features azalea-bot` |
+| azalea connect fails | MC server not running / wrong address | Start a vanilla 26.2 server and verify `localhost:4444` reachable |
 
 ## Runtime Issues
 
 | Symptom | Likely Cause | Fix |
 |---|---|---|
 | Agent stalls (repeated tool failures) | Tool params wrong or game state unexpected | Check session logs for error details |
-| Perception stale | Mod-bridge connection lost | Verify MC running with mod loaded; check port 25567 |
+| Perception stale | azalea connection lost | Verify MC running and bot joined; check server address/port |
 | LLM timeouts | Backend unreachable or slow | Check `config/agent.toml` endpoint and timeout_secs |
 | LLM returns empty response | Finish reason caught as length | Provider handles this with retry; check `max_tokens` |
 | Agent loops same action 10+ times | Self-prompt/obs_streak not triggering | Enable `enable_self_prompt` or check modes config |
@@ -25,14 +23,12 @@ Common build, runtime, and configuration problems and fixes.
 
 ## Connection Issues
 
-- **Mod-bridge**: MC must be running *before* starting the agent. Verify `CraftAgentBridge` mod is in `mods/` folder.
-- **Mod-bridge port conflict**: Change port in mod Java source and agent `--port` arg.
-- **Real path**: Ensure no other application is capturing the mouse/keyboard.
+- **Azalea bot**: Start the MC server *before* running the agent. The bot joins as a player on `localhost:4444` (configurable in `adapter_azalea.rs`).
 
 ## Performance
 
-- **High token cost**: Enable compaction; prefer `mod-bridge` over `real`.
-- **High latency per turn**: Reduce `context_window` or switch to V4 Flash.
+- **High token cost**: Enable compaction (default on). 
+- **High latency per turn**: Reduce `context_window` or switch to a faster model.
 - **Large session files**: Reduce `keep_recent` or compact more aggressively.
 
 ## DeepSeek Cache Debugging

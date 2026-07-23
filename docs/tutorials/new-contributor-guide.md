@@ -21,7 +21,7 @@ After the tutorials, read the crate README for the crate you'll work on:
 
 ## Common Tasks
 
-- Run a mod-bridge session: see `getting-started.md`
+- Run the azalea-bot session: see `getting-started.md`
 - Add a Minecraft tool: see `adding-tools.md`
 - Inspect runtime behavior: see `troubleshooting.md`
 

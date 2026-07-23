@@ -1,37 +1,26 @@
 # craft-agent-minecraft
 
-Minecraft 游戏适配器与工具集。支持两条运行时路径：
+Minecraft 游戏适配器与工具集（Azalea 客户端路线）。
 
-| 路径 | 特性 | 感知 | 执行 |
-|---|---|---|---|
-| `mod-bridge` | Fabric mod TCP 桥接，可后台 | 结构化 JSON（精确坐标/数量） | Mod 主线程精确执行 |
-| `real` | VLM 截图 + enigo 键鼠 | 截图 + VLM 分析 | OS 级键鼠模拟 |
+唯一运行时路径：**`azalea-bot`** —— Rust 全栈客户端 bot 直连普通 MC 服务器（含局域网），
+原生支持 MC 26.2，内置 Baritone 级 pathfinder。旧 `mod-bridge`（Fabric mod TCP 桥接）与
+`real`（VLM 截图 + enigo 键鼠）路线已从源码删除。
 
 ## 选择特性
 
 ```toml
 # Cargo.toml
-craft-agent-minecraft = { features = ["real"] }       # 或
-craft-agent-minecraft = { features = ["mod-bridge"] }  # 默认
+craft-agent-minecraft = { features = ["azalea-bot"] }
 ```
 
 ## 工具集
 
-约 20 个 Minecraft 工具，覆盖：
-- **采集**：collect / mine_block
-- **合成**：craft
-- **建造**：place / move_to / look_at
-- **战斗**：combat / attack
-- **信息**：perceive / inventory / world_state
+azalea 路线工具（注册于 `create_mc_azalea_tools`）：
 
-## McAgentBuilder
-
-统一构造入口，同时支持 mod-bridge 和 real 路径：
-
-```rust
-let agent = McAgentBuilder::new(goal)
-    .with_mod_bridge("127.0.0.1", 25567)?
-    .build(provider, compaction)?;
-```
+- **感知**：perceive
+- **导航**：goto（A* pathfinder）
+- **采集**：mine_below（下挖）/ mine（精确挖掘）
+- **交互**：interact_block（放置/右键激活）
+- **通信**：chat（向玩家汇报）
 
 详见 [`docs/tutorials/adding-adapters.md`](../../docs/tutorials/adding-adapters.md)。

@@ -3,7 +3,7 @@
 Project design documentation. Updated 2026-07-22 to reflect actual codebase
 state (pathfinding/combat/GoalEngine exist on Java side; no Baritone).
 
-- [mod-bridge.md](./mod-bridge.md) — Java mod architecture, TCP protocol, component map.
+- [refactor-azalea-client-route.md](./refactor-azalea-client-route.md) — architecture shift from Fabric mod to Azalea client (implemented).
 - [mindcraft-parity-audit.md](./mindcraft-parity-audit.md) — Tool coverage vs Mindcraft (62 tools, 44 PASS).
 - [upgrade-to-mindcraft-parity-2026-07-15.md](./upgrade-to-mindcraft-parity-2026-07-15.md) — Capability comparison & remaining gaps.
 

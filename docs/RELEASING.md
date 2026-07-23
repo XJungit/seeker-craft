@@ -15,7 +15,7 @@ We use semver-like tags for milestones:
 - [ ] `cargo test --workspace` passes
 - [ ] `cargo clippy --workspace` clean (or known exceptions documented)
 - [ ] `cargo fmt --check` passes
-- [ ] Example runs: `agent_multi_step_mod` compiles and starts
+- [ ] Example runs: `agent_azalea_demo` (with `--features azalea-bot`) compiles and starts
 - [ ] All crate READMEs reflect current API
 - [ ] `docs/tutorials/` consistent with release
 

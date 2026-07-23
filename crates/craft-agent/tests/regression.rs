@@ -299,7 +299,7 @@ fn regression_estimate_tokens_heuristic_when_no_usage() {
     let agent = Agent::new(
         Box::new(StopProvider),
         tools,
-        AgentConfig::new("p".into(), 3),
+        AgentConfig::new("you are a minecraft bot".into(), 3),
     );
 
     // 空消息也应估算 > 0（system prompt 有 token）

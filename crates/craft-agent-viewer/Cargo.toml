@@ -9,7 +9,7 @@ path = "src/main.rs"
 
 [dependencies]
 craft-agent         = { workspace = true }
-craft-agent-minecraft = { workspace = true, features = ["mod-bridge"] }
+craft-agent-minecraft = { workspace = true, features = ["azalea-bot"] }
 craft-agent-model   = { workspace = true }
 tokio               = { workspace = true }
 tokio-stream         = { version = "0.1", features = ["sync"] }

@@ -25,4 +25,4 @@ Use `McAgentBuilder` as a reference for wiring:
 
 ## Example
 
-See `adapter_mod.rs` and `tools_mod.rs` for the mod-bridge reference implementation.
+See `adapter_azalea.rs` and `tools_azalea.rs` for the azalea-bot reference implementation.

@@ -2,12 +2,11 @@
 
 ## Build
 
-**Java mod:** `$env:JAVA_HOME = 'C:\Users\xj\AppData\Roaming\.minecraft\runtime\java-runtime-epsilon'; .\gradlew.bat build` in `mods/craft-agent-bridge/`
+**Rust (azalea client — 唯一路线):** `cargo build` / `cargo test --workspace` (edition 2024, nightly pinned via rust-toolchain.toml)
+- azalea bot demo: `cargo run -p craft-agent-minecraft --example agent_azalea_demo --features azalea-bot`
+- 其他 azalea 示例：agent_azalea_demo / azalea_adapter_demo / azalea_bot_demo / azalea_connect / azalea_place_demo
 
-**Rust:** `cargo build` or `cargo test --workspace` (edition 2024, MSRV 1.97.1)
-
-**Smoke test (requires MC + mod loaded):**
-`cargo run -p craft-agent-minecraft --example smoke_test --features mod-bridge`
+> 旧路线 `mod-bridge`（Fabric mod TCP 桥接）与 `real`（VLM 截图 + enigo 键鼠）已从源码删除，仅保留 azalea 客户端协议层。
 
 **Viewer dashboard:** `cargo run -p craft-agent-viewer` → http://127.0.0.1:8080
 
@@ -18,29 +17,11 @@ D:\Craft-Agent/
 ├── crates/
 │   ├── craft-agent/          — Core agent runtime (LLM loop, compaction, modes, session)
 │   ├── craft-agent-model/    — LLM/VLM client layer, multi-backend config
-│   ├── craft-agent-minecraft/— Minecraft adapter (62 tools, TCP bridge, survival)
+│   ├── craft-agent-minecraft/— Minecraft adapter (azalea bot 路线)
 │   └── craft-agent-viewer/   — Axum web dashboard, SSE events, agent control loop
-├── mods/craft-agent-bridge/  — Java Fabric mod (MC 26.2, JDK 25, Mojang mappings)
-│   └── src/main/java/com/craftagent/bridge/  — 30+ source files
 ├── config/agent.toml         — Multi-backend LLM/VLM config (deepseek/agnes/stepfun)
 └── docs/design/              — Architecture docs, parity analysis
 ```
-
-## Java mod structure
-
-**Not a thin bridge!** Java side has significant game logic:
-
-| Component | Lines | Role |
-|---|---|---|
-| `AStar.java` + 13 `pathing/` | ~800 | A* search + VanillaPathfinder + PlayerPathExecutor |
-| `MovementController` | 1146 | Pathfinding, combat, collect, follow, pillarUp |
-| `CombatController` | 149 | Combat state machine (melee/kite/retreat) |
-| `CollectController` | 202 | Block collection automaton |
-| `GoalEngine` | 479 | Autonomous goal decomposition (craft/get/smelt/hunt/build/explore/defend) |
-| `CraftAgentBridge` | 1004 | TCP server, dispatch, movement ticks, autoSurvive |
-| Other controllers | ~3000 | Interaction, container, entity, debug, state |
-
-**Architectural conflict:** GoalEngine (Java) runs independently of Rust LLM loop. Two decision bodies may fight over the player. `performCombat` (MovementController) and `CombatController.tick()` are duplicate combat systems. GoalEngine's craft/smelt logic duplicates Rust-side CraftingHelper.
 
 ## MC 26.2 API gotchas
 

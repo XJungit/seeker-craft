@@ -1,8 +1,9 @@
 # 通用游戏 Agent 框架 — 方案设计（纯视觉路线）
 
 > ⚠️ **本文档描述的是早期纯视觉路线设计（截图+VLM+键鼠）。**
-> 项目当前路线已转向 **mod-bridge 优先**（Fabric mod TCP 桥接，结构化感知+精确执行），
-> `real` 纯视觉路径保留作备用。具体实现请参考 [`ARCHITECTURE.md`](./ARCHITECTURE.md) 和 [`docs/tutorials/`](./docs/tutorials/)。
+> 项目当前唯一路线为 **Azalea 客户端协议层**（Rust 全栈 bot 直连 MC 服务器），
+> 旧 `mod-bridge`（Fabric mod TCP 桥接）与 `real`（纯视觉键鼠）路线已从源码删除。
+> 具体实现请参考 [`ARCHITECTURE.md`](./ARCHITECTURE.md) 和 [`docs/tutorials/`](./docs/tutorials/)。
 > 本文保留作为历史设计参考。
 
 > 版本：v0.4 ｜ 日期：2026-07-16 ｜ 状态：⚠️ **部分过时，保留作历史参考**

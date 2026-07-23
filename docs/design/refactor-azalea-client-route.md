@@ -1,6 +1,6 @@
 # Craft-Agent 架构转向：Fabric Mod → Azalea 客户端协议层
 
-> 状态：设计评审稿（不落地代码）
+> 状态：**已实现**（Phase 1–6 全部落地；azalea 路线已跑通 e2e。Java mod 目录已删除，Rust `mod-bridge` 特性保留为 legacy 但默认不构建）
 > 作者：opencode
 > 决策来源：用户确认"转向 Azalea 客户端协议层路线"
 > 关联：refactor-numen-philosophy-baritone-base.md（前稿，已作废结论）、24 条问题清单

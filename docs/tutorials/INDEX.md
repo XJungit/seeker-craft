@@ -6,7 +6,7 @@ Start here if you are new to the project.
 
 1. Read `getting-started.md`.
 2. Read `project-structure.md`.
-3. Run the mod-bridge example.
+3. Run the azalea-bot example (`agent_azalea_demo`).
 4. Read `agent-loop.md`.
 5. Pick a task and read the matching tutorial.
 

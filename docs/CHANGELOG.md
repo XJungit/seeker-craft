@@ -2,6 +2,13 @@
 
 This file tracks notable changes to Craft-Agent.
 
+## 2026-07-23
+
+- **Removed mod-bridge & real routes from source**: The Fabric mod TCP bridge
+  (`craft-agent-bridge` Java mod) and the `real` VLM+enigo path were deleted.
+  The only supported route is now **azalea-bot** (Rust client bot, `azalea-bot` feature).
+- Viewer (`craft-agent-viewer`) rewired to the azalea adapter; VLM screenshots removed.
+
 ## 2026-07-18
 
 - **DeepSeek cache optimization**: Moved jailbreak variables (obs_streak, bootstrap)

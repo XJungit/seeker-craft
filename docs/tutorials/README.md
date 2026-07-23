@@ -37,6 +37,6 @@ This directory contains hands-on guides for working on Craft-Agent.
 
 ```bash
 cargo build --workspace
-cargo run -p craft-agent-minecraft --example agent_multi_step_mod --features mod-bridge \
-  -- --steps=40 --goal="collect wood" --session=sessions/mc_run_mod.jsonl
+cargo run -p craft-agent-minecraft --example agent_azalea_demo --features azalea-bot \
+  -- --steps=40 --goal="collect wood" --session=sessions/mc_run_azalea.jsonl
 ```

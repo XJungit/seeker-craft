@@ -274,7 +274,7 @@ impl Default for WorldInfoLib {
 /// Minecraft 场景的默认 World Info 库
 ///
 /// {label} 会被替换为 perceive 文本中匹配关键词的那一行（含方块名、坐标、距离）。
-/// mod-bridge 路径下 offset_x/offset_y 无意义（用世界坐标 move_to），已从模板移除。
+/// azalea 路线下 offset_x/offset_y 无意义（用世界坐标 goto），已从模板移除。
 pub fn default_mc_world_info() -> WorldInfoLib {
     let mut lib = WorldInfoLib::new();
     lib.add(WorldInfo::new(
