@@ -33,6 +33,8 @@ pub mod tools_mod;
 /// 原生支持 26.2，替代原 Fabric mod TCP 桥。仅 `azalea-bot` 特性编译。
 #[cfg(feature = "azalea-bot")]
 pub mod azalea;
+#[cfg(feature = "azalea-bot")]
+pub mod adapter_azalea;
 
 #[cfg(any(feature = "mod-bridge", feature = "real"))]
 pub mod builder;

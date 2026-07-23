@@ -78,6 +78,25 @@ pub enum Action {
     Press { keys: String, ticks: u32 },
     /// 原地挖掘
     Mine { ticks: u32 },
+    /// Minecraft 专属动作（azalea 客户端协议层路线）。
+    /// 结构化精确控制，不依赖截图/VLM。
+    Minecraft(MinecraftAction),
+}
+
+/// Minecraft 专属动作（azalea 客户端协议层）。
+/// 决策层用自然语言/坐标描述意图，adapter 翻译成 bot 命令。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum MinecraftAction {
+    /// 走到世界坐标 (x, y, z)。
+    Goto { x: i32, y: i32, z: i32 },
+    /// 挖掉指定方块 (x, y, z)。
+    MineBlock { x: i32, y: i32, z: i32 },
+    /// 挖掉 bot 脚下方块（向下挖矿井）。
+    MineBelow,
+    /// 对着指定方块交互（放置/右键）。
+    InteractBlock { x: i32, y: i32, z: i32 },
+    /// 发送聊天消息（也用作 LLM 指令回显）。
+    Chat { content: String },
 }
 
 /// 动作执行结果
