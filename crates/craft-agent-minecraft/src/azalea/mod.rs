@@ -12,6 +12,7 @@
 //! - 所有动作在 26.2 上已逐一验证（见 examples/azalea_connect.rs Phase 2 POC）。
 
 pub mod actions;
+pub mod auto_craft;
 pub mod client;
 pub mod craft;
 pub mod gather;
@@ -65,6 +66,8 @@ pub enum BotCommand {
     Place { item: String, x: i32, y: i32, z: i32 },
     /// 打开容器：打开世界坐标 (x,y,z) 处的容器（工作台/熔炉/箱子等）。
     OpenContainer { x: i32, y: i32, z: i32 },
+    /// 高层自动合成（木链）：采集→2×2→放置工作台→开→3×3，一键造木制品。
+    AutoCraft { item: String, count: u32 },
 }
 
 /// handler 状态：持有命令队列、事件发送端与最近坐标（跨事件持久，Arc 共享）。
@@ -174,10 +177,21 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
             //   gather <方块> [数量]       走到最近该方块并挖掘（如 gather oak_log 4）
             //   place <物品> <x> <y> <z>  把手持物品放到坐标旁（如 place crafting_table 10 64 10）
             //   open <x> <y> <z>          打开该坐标的容器（工作台/熔炉）
+            //   autocraft <物品> [数量]   高层自动合成（木链，如 autocraft chest 1）
             //   goto <x> <y> <z> / mine <x> <y> <z> / minebelow / attack
             {
                 let mut q = cmd_queue.lock().unwrap();
-                if let Some(rest) = content.strip_prefix("open ") {
+                if let Some(rest) = content.strip_prefix("autocraft ") {
+                    let mut parts = rest.split_whitespace();
+                    if let Some(item) = parts.next() {
+                        let count =
+                            parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
+                        q.push(BotCommand::AutoCraft {
+                            item: item.to_string(),
+                            count,
+                        });
+                    }
+                } else if let Some(rest) = content.strip_prefix("open ") {
                     let c: Vec<i32> =
                         rest.split_whitespace().filter_map(|s| s.parse().ok()).collect();
                     if c.len() == 3 {
@@ -396,6 +410,18 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                             }
                         }
                     }
+                    BotCommand::AutoCraft { item, count } => {
+                        match crate::azalea::auto_craft::do_auto_craft(&bot, &item, count).await {
+                            Ok(msg) => {
+                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[自动合成] {msg}") });
+                            }
+                            Err(e) => {
+                                let _ = evt_tx.send(BotEvent::Chat {
+                                    content: format!("[自动合成失败] {e}"),
+                                });
+                            }
+                        }
+                    }
                 }
             }
             // 持续下挖：只要标志为真且当前未在挖，就续挖（对齐 POC 逻辑，
@@ -482,6 +508,11 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
     /// 打开世界坐标 (x,y,z) 处的容器（工作台/熔炉/箱子等）。
     pub fn open_container(&self, x: i32, y: i32, z: i32) {
         self.push_cmd(BotCommand::OpenContainer { x, y, z });
+    }
+
+    /// 高层自动合成（木链）：一句话造木制品（如 chest）。
+    pub fn auto_craft(&self, item: String, count: u32) {
+        self.push_cmd(BotCommand::AutoCraft { item, count });
     }
 
     /// 推送动作指令（fire-and-forget，handler tick 中执行）。

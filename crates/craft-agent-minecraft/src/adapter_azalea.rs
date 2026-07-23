@@ -264,6 +264,13 @@ impl MinecraftAzaleaAdapter {
                     detail: format!("open 已下发（容器 @ ({x},{y},{z})）"),
                 })
             }
+            MinecraftAction::AutoCraft { item, count } => {
+                self.bot.auto_craft(item.clone(), count);
+                Ok(ExecResult {
+                    ok: true,
+                    detail: format!("auto_craft 已下发（木链自动合成 {item} x{count}）"),
+                })
+            }
         }
     }
 }

@@ -113,6 +113,8 @@ pub enum MinecraftAction {
     Place { item: String, x: i32, y: i32, z: i32 },
     /// 打开容器：打开世界坐标 (x,y,z) 处的容器（工作台/熔炉/箱子等）。
     OpenContainer { x: i32, y: i32, z: i32 },
+    /// 高层自动合成（木链）：采集→2×2→放置工作台→开→3×3，一键造木制品（chest 等）。
+    AutoCraft { item: String, count: u32 },
 }
 
 /// 动作执行结果

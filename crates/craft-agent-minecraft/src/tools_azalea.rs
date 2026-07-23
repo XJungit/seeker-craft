@@ -688,6 +688,63 @@ impl GameTool for OpenContainerTool {
     }
 }
 
+/// 高层自动合成（木链一键造木制品）。
+pub struct AutoCraftTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl AutoCraftTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for AutoCraftTool {
+    fn name(&self) -> &str {
+        "auto_craft"
+    }
+    fn description(&self) -> &str {
+        "高层自动合成（木链）：一句话造木制品，bot 自主完成 采集木头→2×2合成木板→造/放工作台→3×3合成。\n\
+         支持目标：oak_planks / stick / crafting_table / chest。如 auto_craft(\"chest\",1)。\n\
+         其他物品请用分步工具 gather/craft/place/open。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "item": { "type": "string", "description": "木制品 id：oak_planks/stick/crafting_table/chest" },
+                "count": { "type": "integer", "description": "数量（默认 1）" }
+            },
+            "required": ["item"]
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let item = args
+            .get("item")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("缺少 item"))?
+            .to_string();
+        let count = args
+            .get("count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1) as u32;
+        let r = self.ctx.adapter.execute_shared(Action::Minecraft(
+            MinecraftAction::AutoCraft { item, count },
+        ))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}
+
 /// 创建 azalea 工具集并注册到 `ToolRegistry`。
 pub fn create_mc_azalea_tools(adapter: ArcAzaleaAdapter) -> Vec<Box<dyn GameTool>> {
     let ctx = Arc::new(AzaleaToolCtx::new(adapter));
@@ -704,6 +761,7 @@ pub fn create_mc_azalea_tools(adapter: ArcAzaleaAdapter) -> Vec<Box<dyn GameTool
         Box::new(GatherTool::new(ctx.clone())),
         Box::new(PlaceTool::new(ctx.clone())),
         Box::new(OpenContainerTool::new(ctx.clone())),
+        Box::new(AutoCraftTool::new(ctx.clone())),
         Box::new(ChatTool::new(ctx.clone())),
     ]
 }
