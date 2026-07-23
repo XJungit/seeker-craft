@@ -18,6 +18,7 @@ pub mod craft;
 pub mod gather;
 pub mod perception;
 pub mod place;
+pub mod recipes;
 
 use azalea::prelude::*;
 use azalea::pathfinder::goals::BlockPosGoal;

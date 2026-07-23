@@ -702,9 +702,10 @@ impl GameTool for AutoCraftTool {
         "auto_craft"
     }
     fn description(&self) -> &str {
-        "高层自动合成（木链）：一句话造木制品，bot 自主完成 采集木头→2×2合成木板→造/放工作台→3×3合成。\n\
-         支持目标：oak_planks / stick / crafting_table / chest。如 auto_craft(\"chest\",1)。\n\
-         其他物品请用分步工具 gather/craft/place/open。"
+        "高层自动合成：一句话造任意已登记物品，bot 沿配方图递归满足全部原料（采集/合成/熔炼），\n\
+         自动造并打开放置的工作台/熔炉。支持目标含 oak_planks/stick/crafting_table/chest/furnace/\n\
+         ladder/door/trapdoor/fence/iron_ingot/copper_ingot/gold_ingot/glass/stone/charcoal 等。\n\
+         如 auto_craft(\"chest\",1) / auto_craft(\"iron_ingot\",3)。其他物品请用分步工具。"
     }
     fn parameters(&self) -> Value {
         serde_json::json!({
