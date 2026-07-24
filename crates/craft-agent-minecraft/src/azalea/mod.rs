@@ -206,6 +206,13 @@ pub struct BotState {
     /// 持续下挖标志：收到 MineBelow 后置 true，Tick 内只要未在挖就重复触发，
     /// 对齐 POC 的持续挖矿逻辑（azalea 单次 start_mining 可能因中断失效）。
     pub mining_below: Arc<Mutex<bool>>,
+    /// 当前正在执行的单条命令（串行槽）。每 tick 只推进一条，完成后才取队列下一条。
+    /// 修复：原实现每 tick drain 全部命令一起执行，多个 start_mining 互相覆盖只剩
+    /// 最后一个生效——导致"一轮多动作"实际只执行了最后一个动作。
+    pub pending: Arc<Mutex<Option<BotCommand>>>,
+    /// 异步命令（Craft/Gather/Place 等）在 tick 内 await 期间的中途锁：防止下一 tick
+    /// 重复进入同一异步命令（handle 每 tick 都会触发）。非阻塞命令（Goto/Mine）不用。
+    pub busy: Arc<Mutex<bool>>,
     /// 共享世界记忆库（适配器/工具/Agent 共用；handler 内扫描回填）。
     pub memory: Option<WorldMemory>,
     /// 已扫描记录的坐标 → 上次扫描时间戳（TTL 去重 + 重验世界变化）。
@@ -222,6 +229,8 @@ impl Default for BotState {
             evt_tx: Arc::new(mpsc::unbounded_channel::<BotEvent>().0),
             last_position: Arc::new(Mutex::new(None)),
             mining_below: Arc::new(Mutex::new(false)),
+            pending: Arc::new(Mutex::new(None)),
+            busy: Arc::new(Mutex::new(false)),
             memory: None,
             scanned: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -273,6 +282,8 @@ impl AzaleaBot {
             evt_tx: evt_tx.clone(),
             last_position: last_position.clone(),
             mining_below: Arc::new(Mutex::new(false)),
+            pending: Arc::new(Mutex::new(None)),
+            busy: Arc::new(Mutex::new(false)),
             memory: memory,
             scanned: Arc::new(Mutex::new(HashMap::new())),
         };
@@ -450,17 +461,83 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
             if let Ok(p) = bot.position() {
                 *lp.lock().unwrap() = Some(p);
             }
-            // 消费命令队列（非阻塞）。把 drain 包在独立作用域，确保 MutexGuard
-            // 在 await 前彻底离开作用域（否则 future 因持有 !Send 的 guard 而不满足 Send）。
-            let cmds: Vec<BotCommand> = {
-                let mut q = cmd_queue.lock().unwrap();
-                q.drain(..).collect()
+            // 串行消费命令队列：每 tick 最多推进「一条」命令，等它完成才取下一条。
+            // 旧实现每 tick drain 全部命令一起执行，多个 start_mining 互相覆盖只剩
+            // 最后一个生效——导致"一轮多动作"实际只执行了最后一个。现改为单槽
+            // 串行：Goto/Mine/MineBelow 为非阻塞（start 后由后续 tick 轮询完成），
+            // Craft/Gather/Place 等异步命令在 tick 内 await 完成，其余 fire-and-forget
+            // 立即完成。这样模型一轮发出的 goto→gather→craft 才会真正逐个落地。
+            {
+                let mut pending = state.pending.lock().unwrap();
+                if pending.is_none() {
+                    let next = {
+                        let mut q = cmd_queue.lock().unwrap();
+                        q.pop() // FIFO：取最早入队的命令
+                    };
+                    if let Some(cmd) = next {
+                        *pending = Some(cmd);
+                    }
+                }
+                // 若已有在途命令，先判定它是否完成（非阻塞命令轮询，异步命令在
+                // 下方执行分支里 await 完即清空 pending）。
+                if let Some(cmd) = pending.as_ref() {
+                    let done = match cmd {
+                        BotCommand::Mine { x, y, z } => {
+                            if let Ok(world) = bot.world() {
+                                let s = world.read().get_block_state(BlockPos::new(*x, *y, *z));
+                                s.is_none() || s.map(|b| b.is_air()).unwrap_or(false)
+                            } else {
+                                false
+                            }
+                        }
+                        BotCommand::Goto { x, y, z } => {
+                            if let Ok(p) = bot.position() {
+                                let d = ((p.x - *x as f64).powi(2)
+                                    + (p.y - *y as f64).powi(2)
+                                    + (p.z - *z as f64).powi(2))
+                                .sqrt();
+                                d < 1.5
+                            } else {
+                                false
+                            }
+                        }
+                        BotCommand::MineBelow => false,
+                        _ => true,
+                    };
+                    if done {
+                        *pending = None;
+                    }
+                }
+            }
+            // 取当前要执行的命令：pending 里的命令每 tick 都（重）执行其 start，
+            // 非阻塞命令（Goto/Mine）重复 start 是幂等的（重设同一目标），由
+            // cmd_finished 轮询完成；MineBelow 在 arm 内清空中途槽。
+            // 异步命令（Craft/Gather 等）执行期间 busy=true，下一 tick 跳过避免重入。
+            let to_run: Option<BotCommand> = {
+                if *state.busy.lock().unwrap() {
+                    None
+                } else if let Some(c) = state.pending.lock().unwrap().as_ref() {
+                    // 仅对「非轮询」命令置 busy：这些命令在本 tick 内 await/sync 完成，
+                    // 期间不应被下一 tick 重入。Goto/Mine/MineBelow 不置（靠轮询清槽）。
+                    let is_polling = matches!(
+                        c,
+                        BotCommand::Goto { .. } | BotCommand::Mine { .. } | BotCommand::MineBelow
+                    );
+                    if !is_polling {
+                        *state.busy.lock().unwrap() = true;
+                    }
+                    Some(c.clone())
+                } else {
+                    None
+                }
             };
-            for cmd in cmds {
+            if let Some(cmd) = to_run {
+                // 标记在途（仅对需要轮询的非阻塞命令），执行后清除。
                 match cmd {
                     BotCommand::Goto { x, y, z } => {
                         *state.mining_below.lock().unwrap() = false;
                         bot.start_goto(BlockPosGoal(BlockPos::new(x, y, z)));
+                        // 非阻塞：pending 保留，由后续 tick 的 cmd_finished 轮询完成。
                     }
                     BotCommand::Mine { x, y, z } => {
                         *state.mining_below.lock().unwrap() = false;
@@ -477,6 +554,8 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                             );
                             bot.start_mining(foot);
                         }
+                        // 非阻塞：清空中途槽，让队列继续；持续下挖由下方 tick 循环续接。
+                        *state.pending.lock().unwrap() = None;
                     }
                     BotCommand::BlockInteract { x, y, z } => {
                         *state.mining_below.lock().unwrap() = false;
@@ -629,6 +708,20 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                             Err(e) => {
                                 let _ = evt_tx.send(BotEvent::Chat { content: format!("[交互失败] {e}") });
                             }
+                        }
+                    }
+                }
+                // 非轮询命令（异步/即时）执行完即清空中途槽与 busy，让队列推进下一条。
+                // 仅 Goto / Mine / MineBelow 保留在途、交由后续 tick 的 cmd_finished 轮询。
+                {
+                    let mut pending = state.pending.lock().unwrap();
+                    if let Some(c) = pending.as_ref() {
+                        if !matches!(
+                            c,
+                            BotCommand::Goto { .. } | BotCommand::Mine { .. } | BotCommand::MineBelow
+                        ) {
+                            *pending = None;
+                            *state.busy.lock().unwrap() = false;
                         }
                     }
                 }
