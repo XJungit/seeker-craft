@@ -1116,6 +1116,146 @@ impl GameTool for SetGoalTool {
     }
 }
 
+/// 执行多步计划：按顺序执行一系列工具调用（支持 goto/mine/craft/gather/place 等）。
+/// 每一步等待前一步完成再执行下一步，返回所有步骤的汇总结果。
+/// 比 Mindcraft 的代码执行更安全——只使用已注册工具，不执行任意代码。
+pub struct RunPlanTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl RunPlanTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for RunPlanTool {
+    fn name(&self) -> &str {
+        "run_plan"
+    }
+    fn description(&self) -> &str {
+        "执行多步计划：按顺序执行一系列工具调用。steps 为 JSON 数组，每步格式为 {\"action\":\"工具名\", \"参数名\":值}。\
+         支持动作: goto, mine, craft, gather, place, open, interact, attack, chat, mine_below。\
+         例: [{\"action\":\"goto\",\"x\":10,\"y\":64,\"z\":8}, {\"action\":\"mine\",\"x\":10,\"y\":63,\"z\":8}]。\
+         会等待每一步完成再执行下一步，返回所有步骤的汇总结果。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "steps": {
+                    "type": "array",
+                    "description": "动作序列，每步 {\"action\":\"工具名\", 参数...}",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "action": { "type": "string", "description": "工具名: goto/mine/craft/gather/place/open/interact/attack/chat/mine_below" }
+                        },
+                        "required": ["action"]
+                    }
+                }
+            },
+            "required": ["steps"]
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let steps = args.get("steps").and_then(|v| v.as_array()).ok_or_else(|| anyhow::anyhow!("缺少 steps 数组"))?;
+        let mut results: Vec<String> = Vec::new();
+        for (i, step) in steps.iter().enumerate() {
+            let action_name = step.get("action").and_then(|v| v.as_str()).unwrap_or("?");
+            let mc = parse_step(action_name, step)?;
+            match self.ctx.adapter.execute_shared(Action::Minecraft(mc)) {
+                Ok(r) => {
+                    results.push(format!("步骤{} ({}) 完成: {}", i + 1, action_name, r.detail));
+                }
+                Err(e) => {
+                    results.push(format!("步骤{} ({}) 失败: {}", i + 1, action_name, e));
+                    break;
+                }
+            }
+        }
+        Ok(ToolResult {
+            message: results.join("\n"),
+            is_error: false,
+            images: vec![],
+        })
+    }
+}
+
+/// 将 plan 步骤中的 action 名和参数解析为 MinecraftAction。
+fn parse_step(action: &str, step: &serde_json::Value) -> anyhow::Result<MinecraftAction> {
+    let i64 = |key: &str| step.get(key).and_then(|v| v.as_i64()).map(|v| v as i32);
+    let str = |key: &str| step.get(key).and_then(|v| v.as_str()).map(|s| s.to_string());
+    let u32 = |key: &str| step.get(key).and_then(|v| v.as_u64()).map(|v| v as u32);
+    match action {
+        "goto" => Ok(MinecraftAction::Goto {
+            x: i64("x").ok_or_else(|| anyhow::anyhow!("goto 缺少 x"))?,
+            y: i64("y").ok_or_else(|| anyhow::anyhow!("goto 缺少 y"))?,
+            z: i64("z").ok_or_else(|| anyhow::anyhow!("goto 缺少 z"))?,
+        }),
+        "mine" | "mine_block" => Ok(MinecraftAction::MineBlock {
+            x: i64("x").ok_or_else(|| anyhow::anyhow!("mine 缺少 x"))?,
+            y: i64("y").ok_or_else(|| anyhow::anyhow!("mine 缺少 y"))?,
+            z: i64("z").ok_or_else(|| anyhow::anyhow!("mine 缺少 z"))?,
+        }),
+        "mine_below" => Ok(MinecraftAction::MineBelow),
+        "interact" | "interact_block" => Ok(MinecraftAction::InteractBlock {
+            x: i64("x").ok_or_else(|| anyhow::anyhow!("interact 缺少 x"))?,
+            y: i64("y").ok_or_else(|| anyhow::anyhow!("interact 缺少 y"))?,
+            z: i64("z").ok_or_else(|| anyhow::anyhow!("interact 缺少 z"))?,
+        }),
+        "chat" => Ok(MinecraftAction::Chat {
+            content: str("content").ok_or_else(|| anyhow::anyhow!("chat 缺少 content"))?,
+        }),
+        "attack" => Ok(MinecraftAction::Attack {
+            target: str("target").unwrap_or_else(|| "nearest".to_string()),
+        }),
+        "craft" | "craft_2x2" => Ok(MinecraftAction::Craft {
+            item: str("item").ok_or_else(|| anyhow::anyhow!("craft 缺少 item"))?,
+            count: u32("count").unwrap_or(1),
+        }),
+        "craft_3x3" => Ok(MinecraftAction::Craft3x3 {
+            item: str("item").ok_or_else(|| anyhow::anyhow!("craft_3x3 缺少 item"))?,
+            count: u32("count").unwrap_or(1),
+        }),
+        "smelt" => Ok(MinecraftAction::Smelt {
+            output: str("output").ok_or_else(|| anyhow::anyhow!("smelt 缺少 output"))?,
+            fuel: str("fuel").unwrap_or_else(|| "coal".to_string()),
+            count: u32("count").unwrap_or(1),
+        }),
+        "gather" | "collect" => Ok(MinecraftAction::Gather {
+            item: str("item").ok_or_else(|| anyhow::anyhow!("gather 缺少 item"))?,
+            count: u32("count").unwrap_or(1),
+        }),
+        "place" => Ok(MinecraftAction::Place {
+            item: str("item").ok_or_else(|| anyhow::anyhow!("place 缺少 item"))?,
+            x: i64("x").ok_or_else(|| anyhow::anyhow!("place 缺少 x"))?,
+            y: i64("y").ok_or_else(|| anyhow::anyhow!("place 缺少 y"))?,
+            z: i64("z").ok_or_else(|| anyhow::anyhow!("place 缺少 z"))?,
+        }),
+        "open" | "open_container" => Ok(MinecraftAction::OpenContainer {
+            x: i64("x").ok_or_else(|| anyhow::anyhow!("open 缺少 x"))?,
+            y: i64("y").ok_or_else(|| anyhow::anyhow!("open 缺少 y"))?,
+            z: i64("z").ok_or_else(|| anyhow::anyhow!("open 缺少 z"))?,
+        }),
+        "auto_craft" => Ok(MinecraftAction::AutoCraft {
+            item: str("item").ok_or_else(|| anyhow::anyhow!("auto_craft 缺少 item"))?,
+            count: u32("count").unwrap_or(1),
+        }),
+        "enchant" => Ok(MinecraftAction::Enchant {
+            item: str("item").ok_or_else(|| anyhow::anyhow!("enchant 缺少 item"))?,
+            level: u32("level").unwrap_or(1),
+        }),
+        other => Err(anyhow::anyhow!("不支持的 action: {other}（支持: goto/mine/craft/gather/place/open/interact/attack/chat/mine_below）")),
+    }
+}
+
 /// 创建 azalea 工具集并注册到 `ToolRegistry`。
 pub fn create_mc_azalea_tools(
     adapter: ArcAzaleaAdapter,
@@ -1142,5 +1282,6 @@ pub fn create_mc_azalea_tools(
         Box::new(ChatTool::new(ctx.clone())),
         Box::new(MemoryTool::new(ctx.clone())),
         Box::new(SetGoalTool::new(ctx.clone())),
+        Box::new(RunPlanTool::new(ctx.clone())),
     ]
 }

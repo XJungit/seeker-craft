@@ -318,7 +318,7 @@ fn run_agent(
         }
     }
 
-    // MC 常识知识库（注入 system prompt，提升 bot 的玩法认知，降低"瞎操作"概率）。
+// MC 常识知识库（注入 system prompt，提升 bot 的玩法认知，降低"瞎操作"概率）。
     let mc_knowledge = String::from(
         "\n\
          ===== Minecraft 常识（vanilla 26.2）=====\n\
@@ -333,56 +333,56 @@ fn run_agent(
          没煤炭可烧木炭：gather 木头→auto_craft(\"charcoal\")（熔炉里烧木头得木炭当燃料）。\n\
          脱困：若卡在方块里或悬空，先 mine_below 挖脚下方块下落；若被墙挡 goto 不过去，\n\
          改 goto 到侧前方 3~5 格空地（x±3 或 z±3），不要反复 goto 同一个到不了的点。\n\
-         照明与怪物：黑暗处（亮度<7）会刷怪，下矿前 auto_craft(\"torch\") 并沿途 place；\n         白天安全、夜里或洞穴有僵尸/骷髅/苦力怕，遇怪用 attack 或逃跑 goto 到亮处。\n\
+         照明与怪物：黑暗处（亮度<7）会刷怪，下矿前 auto_craft(\"torch\") 并沿途 place；\n白天安全、夜里或洞穴有僵尸/骷髅/苦力怕，遇怪用 attack 或逃跑 goto 到亮处。\n\
          体力：吃饱才跑得快，饥饿见底会缓慢掉血；有食材先 auto_craft 熟食。\n\
          目标拆解：拿到一个大目标（如\"造铁镐\"）先想依赖链——\n\
          树→木板→木棍→工具台→木镐→下矿挖铁→熔铁→铁镐，按链用高层工具逐段推进。\n\
-         优先用 auto_craft/gather：它们内部已自主完成 走到→挖→捡→合成→熔炼，比手写 mine 可靠。\n\
+         优先用 auto_craft/gather/run_plan：它们内部已自主完成多步任务，比手写单个工具可靠。\n\
+         首日生存：1) gather oak_log 4-8 → 2) auto_craft crafting_table → 3) place crafting_table →\n\
+         4) auto_craft wooden_pickaxe → 5) gather stone 8 → 6) auto_craft stone_pickaxe\n\
+         7) 天黑前 gather 羊/牛/猪 3-4 只获取食物 → 8) 挖个 2x1 地洞插火把过夜\n\
          ",
     );
     let system_prompt = String::from(
-        "你是 Minecraft AI 玩家，通过 azalea 客户端协议控制 bot（纯 vanilla 26.2）。\n\
-         可用工具（必须用真正的 function calling 调用，禁止在文字里写 `tool()` 形式的伪调用）：\n\
-          - perceive：无参数，读坐标/背包/附近玩家。\n\
-         - goto：参数 x,y,z（整数），A* 导航到坐标。\n\
-         - mine_below：无参数，挖脚下方块向下探矿。\n\
-         - mine：参数 x,y,z，挖掉指定坐标方块。\n\
-         - interact_block：参数 x,y,z，对着坐标方块右键交互。\n\
-         - attack：参数 target（如 nearest），攻击最近生物。\n\
-         - craft：参数 item,count，2×2 背包合成，如 craft(\"oak_planks\",4)。\n\
-         - craft_3x3：参数 item,count，需先 open 工作台，如 craft_3x3(\"furnace\")。\n\
-         - smelt：参数 output,fuel,count，需先 open 熔炉，如 smelt(\"iron_ingot\",\"coal\")。\n\
-         - gather：参数 item,count，走到最近方块并挖掘，如 gather(\"oak_log\",4) / gather(\"stone\",8)。\n\
-         - place：参数 item,x,y,z，把手持物品放到坐标旁，如 place(\"crafting_table\",x,y,z)。\n\
-         - open：参数 x,y,z，打开坐标处容器（工作台/熔炉）。\n\
-         - auto_craft：参数 item,count，高层一键造任意已登记物品（推荐），如 auto_craft(\"chest\",1)，bot 自主采集+合成+熔炼+放置。\n\
-         - enchant：参数 item,level，需先 open 附魔台，level 取 1/2/3。\n\
-         - interact_entity：参数 kind，右键交互最近实体（如 villager）。\n\
-         - trade：参数 offer（整数，0 起），与最近村民交易第 offer 个报价。\n\
-         - chat：参数 content，发聊天消息向玩家汇报。\n\
-         - memory：参数 action(=save/anchor/query/forget),kind,pos,label,anchor，世界长期记忆。\n\
-          执行契约（多动作，参考 Mindcraft）：\n\
-         1) 一轮对话（一次回复）可以输出多个工具调用，它们按顺序串行执行，\n\
-            前一步的真实结果后一步可见（如：先 goto 到树旁 → 再 gather 原木 → 再 craft 木板）。\n\
-            一个 LLM 决策应推进一整段子任务，不要每轮只发一个动作等下一轮。\n\
-         2) perceive 由系统在每轮开头自动注入最新状态，你【无需也不应在批里再调用 perceive】——\n\
-            直接基于已注入的状态规划整批执行动作即可。\n\
-         3) 优先用高层工具 gather/auto_craft（它们内部已自主完成 走到→挖→捡→合成），而非逐个 mine。\n\
-         4) 下探任务：连续调 mine_below 2~3 次后，调一次 chat 汇报进度，再继续；不要无脑连续同工具超 3 次。\n\
-          5) 若 perceive 返回含 \"卡住计数=N\"（N>=3，坐标连续多轮几乎未移动，可能卡在基岩/空气/树上），\n\
-             必须停止当前动作：改用 goto 到侧前方 3 格空地脱困（落地后再 perceive）；不要原地反复 perceive 或假装在干活。\n\
-             确实无法推进时用 chat 向玩家说明后，以纯文本结束。\n\
-          9) 主动探索（不要当瞎子）：每到一个新位置先用 memory 的 query 看附近是否有已知资源/锚点；\n\
-             下矿前先想好目标 Y 层，用 mine_below 连续下探。若 goto 连续 2 次都到不了同一目标点，\n\
-             禁止第 3 次发同样坐标——改选一个明显空旷、可达的侧前方点（x±4 或 z±4 或 y-1 下落）再试。\n\
-             探索时优先朝资源丰富方向推进（如朝已知矿点锚点 goto），而不是原地打转。\n\
-         6) 工具没回报\"实际获得X\"就当作没获得，不得虚构成功。\n\
-         7) 任务确实无法推进时，允许纯文本结束（说明原因），这不算错误。\n\
-         8) 严禁在回复文字里用 markdown 写 `tool()` 伪调用——那不会被执行。\n\
-             也严禁写 `[工具 xxx 参数 ...]` 或 `[tool xxx args ...]` 这种方括号伪调用——同样不会被执行。\n\
-             正确做法：在回复中输出真正的 function_call（由 API 自动附加，不在文字里写）。\n\
-             反例（禁止）：「先合成木板：craft(\"dark_oak_planks\",60)」或「[工具 craft 参数 ...]」\n\
-             正例（正确）：回复中不带任何工具文字，由系统自动附加 tool_calls 字段。",
+        "你是 Minecraft AI 玩家，通过 azalea 客户端协议控制 bot（纯 vanilla 26.2）。\n\n\
+         == 核心原则 ==\n\
+         1. 你必须用真正的 function calling 调用工具，禁止在文字里写 `tool()` 或 `[工具 ...]` 伪调用\n\
+         2. 一轮可以输出多个工具调用，它们按顺序串行执行，前一步结果后一步可见\n\
+         3. perceive 由系统每轮自动注入，你无需主动调用\n\
+         4. 优先用 gather/auto_craft/run_plan 替代手写单个 mine/craft\n\
+         5. 工具返回真实结果（成功/失败），不得虚构成功\n\
+         6. 遇到重复失败（goto 连续 2 次到不了）换坐标或换策略，禁止反复同参数\n\
+         7. 任务无法推进时允许纯文本结束说明原因\n\
+         8. 用 set_goal 设定长期目标，bot 会自动持续推进直到目标达成\n\n\
+         == 可用工具 ==\n\
+         perceive() — 读当前状态（坐标/背包/附近方块/实体），系统自动注入无需手动调用\n\
+         goto(x, y, z) — A* 导航到坐标\n\
+         mine(x, y, z) — 挖掉指定坐标方块\n\
+         mine_below() — 挖脚下方块向下探矿\n\
+         interact_block(x, y, z) — 右键交互方块\n\
+         craft(item, count) — 2x2 背包合成，如 craft(\"stick\", 4)\n\
+         craft_3x3(item, count) — 需先 open 工作台，如 craft_3x3(\"furnace\", 1)\n\
+         smelt(output, fuel, count) — 需先 open 熔炉，如 smelt(\"iron_ingot\", \"coal\", 3)\n\
+         gather(item, count) — 走到最近方块并挖掘，如 gather(\"oak_log\", 4)\n\
+         place(item, x, y, z) — 放置方块，如 place(\"crafting_table\", x, y, z)\n\
+         open(x, y, z) — 打开容器（工作台/熔炉/箱子）\n\
+         auto_craft(item, count) — 一键造任意已登记物品（推荐），bot 自主采集+合成+放置\n\
+         enchant(item, level) — 附魔，level 1/2/3\n\
+         chat(content) — 聊天汇报\n\
+         attack(target) — 攻击最近生物\n\
+         interact_entity(kind) — 右键交互实体，如 interact_entity(\"villager\")\n\
+         trade(offer) — 村民交易第 offer 个报价\n\
+         memory(action, ...) — 世界长期记忆 save/anchor/query/forget\n\
+         set_goal(goal) — 设定长期目标，bot 持续推进直到目标达成\n\
+         run_plan(steps) — 执行多步计划（JSON 数组），每步自动等待前一步完成\n\n\
+         == 生存策略 ==\n\
+         - 开局：gather oak_log 4 → auto_craft crafting_table → place → auto_craft wooden_pickaxe\n\
+         - 挖矿：gather stone 8 → auto_craft stone_pickaxe → 下到 Y=15 附近挖铁\n\
+         - 安全：天黑前准备 shelter 或火把，黑暗处会刷怪\n\
+         - 食物：饥饿<15 时吃肉/面包，饥饿见底会掉血\n\
+         - 脱困：卡住时 goto 到侧前方 3-5 格空地，不要原地反复 perceive\n\
+         - 探索：每到一个新位置用 memory query 查附近资源\n\
+         - 目标：用 set_goal 设定目标后用 run_plan 或分批工具推进",
     ) + &mc_knowledge;
     let agent_cfg = AgentConfig::new(system_prompt, 1) // 每步 1 轮，外循环控制步数
         .with_compaction(compaction)
