@@ -140,6 +140,10 @@ impl GameTool for MineBelowTool {
             .ctx
             .adapter
             .execute_shared(Action::Minecraft(MinecraftAction::MineBelow))?;
+        // 行动回写：挖掉的脚下方块从世界记忆移除（用 __self__ 锚点推算脚下方块）
+        if let Some(p) = self.ctx.memory.find_anchor("__self__").and_then(|a| a.pos) {
+            self.ctx.memory.forget_pos(MemoryPos::new(p.x, p.y - 1, p.z));
+        }
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,
@@ -236,6 +240,8 @@ impl GameTool for MineTool {
             .ctx
             .adapter
             .execute_shared(Action::Minecraft(MinecraftAction::MineBlock { x, y, z }))?;
+        // 行动回写：挖掉的方块从世界记忆中移除（避免被反复推荐为资源点）
+        self.ctx.memory.forget_pos(MemoryPos::new(x, y, z));
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,
@@ -629,8 +635,17 @@ impl GameTool for PlaceTool {
         let y = args.get("y").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 y"))? as i32;
         let z = args.get("z").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 z"))? as i32;
         let r = self.ctx.adapter.execute_shared(Action::Minecraft(
-            MinecraftAction::Place { item, x, y, z },
+            MinecraftAction::Place { item: item.clone(), x, y, z },
         ))?;
+        // 行动回写：放置的方块计入世界记忆（便于后续直接 reuse，如工作台/熔炉/箱子）
+        let pos = MemoryPos::new(x, y, z);
+        let kind = match item.as_str() {
+            "chest" | "barrel" | "shulker_box" => MemoryKind::Container,
+            "lava" | "water" | "fire" => MemoryKind::Hazard,
+            "nether_portal" | "end_portal" => MemoryKind::Portal,
+            _ => MemoryKind::Structure,
+        };
+        self.ctx.memory.record(pos, kind, Some(&item), &item.clone(), None);
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,
@@ -682,6 +697,10 @@ impl GameTool for OpenContainerTool {
         let r = self.ctx.adapter.execute_shared(Action::Minecraft(
             MinecraftAction::OpenContainer { x, y, z },
         ))?;
+        // 行动回写：打开的容器计入世界记忆（箱子/熔炉/工作台等）
+        self.ctx
+            .memory
+            .record_container(MemoryPos::new(x, y, z), "已打开的容器", "");
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,

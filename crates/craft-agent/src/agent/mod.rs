@@ -1039,6 +1039,28 @@ mod tests {
         assert!(!agent.messages.is_empty());
     }
 
+    /// 验证 A：每轮 run 会把 WorldMemory 邻近记忆注入到发给 LLM 的 messages 中。
+    /// 用 FakeProvider 跑一轮，检查存在包含已知记忆标签的 user 消息。
+    #[test]
+    fn memory_injected_into_prompt_each_turn() {
+        use crate::core::memory::{MemoryKind, MemoryPos, WorldMemory};
+        let mem = WorldMemory::new();
+        mem.record_resource(MemoryPos::new(2, 64, 3), "oak_log", "测试橡树林", Some(4));
+        mem.set_anchor("__self__", Some(MemoryPos::new(0, 64, 0)), "当前位置");
+
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::new("test".into(), 1);
+        let mut agent = Agent::new(Box::new(FakeProvider), tools, config)
+            .with_world_memory(mem);
+        agent.run("去砍点木头").unwrap();
+
+        let injected = agent
+            .messages
+            .iter()
+            .any(|m| matches!(m, Message::User(u) if u.content.contains("测试橡树林")));
+        assert!(injected, "WorldMemory 邻近记忆未被注入 prompt");
+    }
+
     #[test]
     fn is_retryable_matches_errors() {
         assert!(is_retryable_error("timeout"));

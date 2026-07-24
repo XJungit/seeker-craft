@@ -410,4 +410,46 @@ mod tests {
         assert!(!m2.is_empty());
         assert!(m2.find_anchor("mine").is_some());
     }
+
+    /// 回归：扫描写入大量（175+）方块时 to_json 必须输出真实内容（曾因
+    /// HashMap<MemoryPos> 非字符串键导致 serde_json 失败返回 "{}"）。
+    #[test]
+    fn json_roundtrip_many_cells_not_empty() {
+        let m = WorldMemory::new();
+        for dx in -8..=8i32 {
+            for dy in -8..=8i32 {
+                for dz in -8..=8i32 {
+                    let p = MemoryPos::new(dx, 64 + dy, dz);
+                    m.record_resource(p, "dark_oak_log", "树木/原木", None);
+                }
+            }
+        }
+        let j = m.to_json();
+        // 必须不是 "{}" 空洞
+        assert!(j.len() > 100, "to_json 返回了过短内容: {j}");
+        assert!(!j.contains("\"cells\":[]"));
+        let m2 = WorldMemory::new();
+        m2.load_json(&j);
+        assert_eq!(m2.len(), m.len(), "回放后条目数应一致");
+    }
+
+    /// 行动回写闭环：挖掉坐标后该资源记忆被移除（与 tools_azalea 的 Mine/Place 行为一致）。
+    #[test]
+    fn mine_forgets_cell_place_records() {
+        let m = WorldMemory::new();
+        let p = MemoryPos::new(3, 65, -2);
+        m.record_resource(p, "oak_log", "橡树", None);
+        assert_eq!(m.len(), 1);
+        // 模拟 MineTool：挖掉后 forget
+        m.forget_pos(p);
+        assert_eq!(m.len(), 0);
+
+        // 模拟 PlaceTool：放置工作台后记录为结构
+        let q = MemoryPos::new(1, 64, 1);
+        m.record(q, MemoryKind::Structure, Some("crafting_table"), "crafting_table", None);
+        assert_eq!(m.len(), 1);
+        let near = m.nearby(MemoryPos::new(0, 64, 0), 16, false);
+        assert_eq!(near.len(), 1);
+        assert_eq!(near[0].item.as_deref(), Some("crafting_table"));
+    }
 }
