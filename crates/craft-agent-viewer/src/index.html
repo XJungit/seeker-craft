@@ -118,7 +118,27 @@
   .gs-slot.hotbar{border-color:var(--green)}
   .gs-slot.selected{border-color:var(--accent);background:var(--panel2);box-shadow:0 0 6px var(--accent)}
   .gs-slot.empty{opacity:.4}
-  .gs-effect{display:inline-block;padding:2px 6px;border-radius:4px;background:var(--panel2);border:1px solid var(--border);font-size:10px;color:var(--muted)}
+   .gs-effect{display:inline-block;padding:2px 6px;border-radius:4px;background:var(--panel2);border:1px solid var(--border);font-size:10px;color:var(--muted)}
+   /* 世界记忆面板 */
+   #memory{border-bottom:1px solid var(--border);background:var(--panel);padding:8px 16px;display:flex;flex-direction:column;gap:8px;font-size:12px}
+   #memory .mem-head{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+   #memory .mem-badge{font-size:11px;padding:2px 10px;border-radius:999px;background:var(--panel2);border:1px solid var(--border);color:var(--muted)}
+   #memory .mem-badge b{color:var(--text);font-weight:600}
+   #memory .mem-list{display:flex;flex-direction:column;gap:4px;max-height:200px;overflow-y:auto}
+   .mem-item{display:flex;align-items:center;gap:8px;padding:4px 8px;border-radius:6px;background:var(--panel2);border-left:3px solid var(--border);font-size:12px}
+   .mem-item .mk{font-size:10px;padding:1px 7px;border-radius:4px;color:#000;font-weight:600}
+   .mem-item .mk.Res{background:var(--green)}
+   .mem-item .mk.Str{background:var(--accent)}
+   .mem-item .mk.Cont{background:var(--orange)}
+   .mem-item .mk.Haz{background:var(--err)}
+   .mem-item .mk.Port{background:var(--purple)}
+   .mem-item .mk.Ent{background:#e87fd9}
+   .mem-item .mk.Note{background:var(--yellow)}
+   .mem-item .pos{color:var(--muted);font-family:Menlo,monospace;font-size:11px}
+   .mem-item .dep{margin-left:auto;color:var(--err);font-size:10px}
+   .mem-item .anc{margin-left:auto;color:var(--muted);font-size:11px}
+   .mem-item.anchor{border-left-color:var(--purple)}
+
 </style>
 </head>
 <body>
@@ -172,6 +192,15 @@
   </div>
 </div>
 
+<div id="memory">
+  <div class="mem-head">
+    <label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:600">世界记忆库</label>
+    <span class="mem-badge">坐标记忆 <b id="memCells">0</b></span>
+    <span class="mem-badge">锚点 <b id="memAnchors">0</b></span>
+  </div>
+  <div class="mem-list" id="memList"><div class="empty" style="color:var(--muted);text-align:center;margin-top:10px">等待扫描…</div></div>
+</div>
+
 <main>
   <section class="col"><h2>对话历史</h2><div id="chat"></div></section>
   <section class="col"><h2>工具调用与结果</h2><div id="tools"></div></section>
@@ -220,8 +249,40 @@ evtSource.onmessage=function(e){
     else if(d.kind==="step") addLog(`第${d.step}步: ${d.action}`,"step");
     else if(d.kind==="done") addLog(d.reason,"done");
     else if(d.kind==="error") addLog(d.message,"err");
+    else if(d.kind==="memory") renderMemory(d);
   }catch(_){}
 };
+
+// 世界记忆可视化
+const MEM_KIND_CLASS={Resource:"Res",Structure:"Str",Container:"Cont",Hazard:"Haz",Portal:"Port",Entity:"Ent",Note:"Note"};
+const MEM_KIND_LABEL={Resource:"资源",Structure:"结构",Container:"容器",Hazard:"危险",Portal:"传送门",Entity:"实体",Note:"标注"};
+function renderMemory(d){
+  document.getElementById("memCells").textContent=d.cells??0;
+  document.getElementById("memAnchors").textContent=d.anchors??0;
+  let snap;
+  try{snap=JSON.parse(d.json||"{}")}catch(_){snap={}}
+  const cells=snap.cells||[];
+  const anchors=snap.anchors||[];
+  const list=document.getElementById("memList");
+  if(!cells.length && !anchors.length){
+    list.innerHTML='<div class="empty" style="color:var(--muted);text-align:center;margin-top:10px">暂无记忆</div>';
+    return;
+  }
+  // 锚点置顶
+  let html="";
+  for(const a of anchors){
+    const p=a.pos?`(${a.pos.x},${a.pos.y},${a.pos.z})`:"";
+    html+=`<div class="mem-item anchor"><span class="mk Note">锚</span><span>${esc(a.name)}</span><span class="pos">${esc(a.label||"")}</span><span class="anc">${p}</span></div>`;
+  }
+  for(const c of cells){
+    const kc=MEM_KIND_CLASS[c.kind]||"Note";
+    const kl=MEM_KIND_LABEL[c.kind]||c.kind;
+    const p=`(${c.pos.x},${c.pos.y},${c.pos.z})`;
+    const dep=c.depleted?'<span class="dep">已耗尽</span>':"";
+    html+=`<div class="mem-item"><span class="mk ${kc}">${kl}</span><span>${esc(c.label||c.item||"")}</span><span class="pos">${p}</span>${dep}</div>`;
+  }
+  list.innerHTML=html;
+}
 
 let lastEventCount = 0;
 function render(data){

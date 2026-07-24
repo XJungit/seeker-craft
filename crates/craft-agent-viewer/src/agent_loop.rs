@@ -50,6 +50,16 @@ pub enum AgentEvent {
     Done { reason: String },
     #[serde(rename = "error")]
     Error { message: String },
+    /// 世界记忆库快照（资源点/结构/容器/锚点），供前端可视化。
+    #[serde(rename = "memory")]
+    Memory {
+        /// 完整 JSON（cells + anchors），前端按需渲染。
+        json: String,
+        /// 坐标记忆条数。
+        cells: usize,
+        /// 锚点数。
+        anchors: usize,
+    },
 }
 
 /// Agent 生命周期控制器。
@@ -199,6 +209,29 @@ fn run_agent(
 
     // 共享世界记忆库：适配器（自动扫描回填）+ 工具（LLM 显式记录）+ Agent（每轮注入）共用同一实例。
     let world_mem = craft_agent::core::memory::WorldMemory::new();
+
+    // 记忆可视化：后台线程每 2s 把世界记忆快照推送到前端（SSE "memory" 事件）。
+    {
+        let wm = world_mem.clone();
+        let tx = event_tx.clone();
+        let stop_flag = ctrl.stop.clone();
+        std::thread::spawn(move || {
+            loop {
+                if stop_flag.load(Ordering::Relaxed) {
+                    break;
+                }
+                let snapshot = wm.to_json();
+                let cells = wm.len();
+                let anchors = wm.anchors().len();
+                let _ = tx.send(AgentEvent::Memory {
+                    json: snapshot,
+                    cells,
+                    anchors,
+                });
+                std::thread::sleep(std::time::Duration::from_secs(2));
+            }
+        });
+    }
 
     // 连接 azalea adapter：azalea 内部用独立 OS 线程跑自己的 runtime，
     // 此处仅用一次性局部 runtime 把 async connect 跑完，拿到句柄后立即 drop。
