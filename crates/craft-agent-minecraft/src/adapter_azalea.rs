@@ -23,7 +23,7 @@ pub struct MinecraftAzaleaAdapter {
     /// 缓存最近一次结构化状态（perceive 后供 execute / harness 使用）。
     last: Mutex<Option<WorldState>>,
     /// 卡住检测：上次 Y 与连续未变化的次数（挖到基岩/空气时坐标不动）。
-    last_y: Mutex<Option<f64>>,
+    last_y: Mutex<Option<azalea::Vec3>>,
     stuck_count: Mutex<u32>,
     /// 共享世界记忆库（由 Agent 传入，perceive/action 后回填）。可为空（不记录）。
     memory: Option<WorldMemory>,
@@ -120,26 +120,33 @@ impl MinecraftAzaleaAdapter {
                             player_count,
                         } = ev
                         {
-                            // 卡住检测：Y 不变则累加，变化则清零。
-                            let mut last_y = g.last_y.lock().unwrap();
+                            // 卡住检测：仅当 X/Y/Z 三轴都几乎没动才算"卡住"。
+                            // 旧逻辑只看 Y，导致 bot 在平地行走（Y 恒定）也被误判卡住。
+                            let mut last_pos = g.last_y.lock().unwrap();
                             let mut stuck = g.stuck_count.lock().unwrap();
-                            if let Some(py) = *last_y {
-                                if (position.y - py).abs() < 0.01 {
-                                    *stuck += 1;
-                                } else {
-                                    *stuck = 0;
+                            let moved = match *last_pos {
+                                Some(p) => {
+                                    (position.x - p.x).abs() > 0.5
+                                        || (position.y - p.y).abs() > 0.5
+                                        || (position.z - p.z).abs() > 0.5
                                 }
+                                None => true,
+                            };
+                            if moved {
+                                *stuck = 0;
+                            } else {
+                                *stuck += 1;
                             }
-                            *last_y = Some(position.y);
+                            *last_pos = Some(position);
                             // 只回报客观事实（卡住计数），不给指令性结论——
                             // "卡住怎么办"由 system 行为准则统一处理，避免感知层越界决策。
                             let stuck_hint = if *stuck >= 2 {
-                                format!(" 卡住计数={}（Y 坐标连续不变）", *stuck)
+                                format!(" 卡住计数={}（坐标连续{}轮几乎未移动）", *stuck, *stuck)
                             } else {
                                 String::new()
                             };
                             drop(stuck);
-                            drop(last_y);
+                            drop(last_pos);
                             let scene = format!(
                                 "坐标=({:.1},{:.1},{:.1}) 背包前5={:?} 附近玩家={}{}",
                                 position.x, position.y, position.z, inventory, player_count, stuck_hint

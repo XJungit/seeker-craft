@@ -793,7 +793,7 @@ impl Agent {
                 calls: vec![],
             });
             self.messages.push(Message::assistant_response(&response));
-            let nudge = "【继续】你刚才只用了文字回复。必须调用一个工具。根据当前状态选一个工具立即行动，不要只用文字回复。".to_string();
+            let nudge = "【继续】你刚才只用了文字回复，没有产生真正的工具调用。请用 function calling 输出工具调用（不要用 markdown 写 `tool()` 伪调用，那不会被执行）。根据当前状态选一个工具立即行动。".to_string();
             self.messages.push(Message::user(nudge));
             log.push(format!("[t{turn}] 提醒: 纯文字回复，已注入续跑指令"));
             self.events.push(AgentEvent::TurnEnd { turn });

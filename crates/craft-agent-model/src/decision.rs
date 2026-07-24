@@ -433,26 +433,16 @@ pub mod real {
         /// agent 核心的多轮协议不受影响（它读的是自身内存的 messages）。
         pub fn chat_tools(&self, messages: &Value, tools: &Value) -> Result<AssistantResponse> {
             let messages = Self::fold_tool_history(messages);
-            // 防御：折叠后若整段历史已无 tool_calls（纯文本对话），则连 tools 字段也
-            // 不发——部分本地代理（OC-DSV4F 背后的 deepseek-v4）在 tools 存在但无
-            // 对应 tool_calls 时会返回 400 invalid_request_error。
-            let has_tool_calls = messages
-                .as_array()
-                .is_some_and(|arr| {
-                    arr.iter().any(|m| {
-                        m.get("tool_calls").is_some() || m.get("role").and_then(|r| r.as_str()) == Some("tool")
-                    })
-                });
             let mut body = json!({
                 "model": self.model,
                 "messages": messages,
                 "temperature": self.temperature,
                 "max_tokens": self.max_tokens,
             });
-            // 仅当 tools 非空才发送 tools 字段：部分兼容端（如 stepfun step-3.7-flash）
-            // 收到 "tools":[] 时会把正文塞进 reasoning_content 且 content 为空
-            // (finish_reason=length)，导致纯文本/无工具场景拿不到正文。
-            if tools.as_array().is_some_and(|arr| !arr.is_empty()) && has_tool_calls {
+            // 始终发送 tools 字段：模型每轮都需要工具 schema 才能发起 function calling。
+            // 注意：曾在折叠后"无 tool_calls 时不发 tools"导致首轮/纯文本轮模型拿不到
+            // 工具定义，退化为 markdown 伪调用（""> **gather**()"），这是致命回归，已撤销。
+            if tools.as_array().is_some_and(|arr| !arr.is_empty()) {
                 body["tools"] = tools.clone();
             }
             if let (Some(Value::Object(extra)), Value::Object(base)) = (&self.extra_body, &mut body)

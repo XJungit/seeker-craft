@@ -285,6 +285,8 @@ fn regression_estimate_tokens_measured_when_usage_present() {
             input_tokens: 0,
             output_tokens: 0,
             total_tokens: 5000,
+            cache_hit_tokens: 0,
+            cache_miss_tokens: 0,
         };
     }
     agent.messages.push(a);
@@ -390,6 +392,8 @@ fn regression_estimate_tokens_no_double_count() {
                 input_tokens: 0,
                 output_tokens: 0,
                 total_tokens: 9999,
+                cache_hit_tokens: 0,
+                cache_miss_tokens: 0,
             },
         }));
     }
