@@ -352,12 +352,19 @@ impl WorldMemory {
 
     /// 渲染邻近记忆为提示文本（注入 system/context）。
     pub fn render_nearby(&self, around: MemoryPos, radius: i32) -> String {
+        // 只渲染最近 N 条（默认 12），避免半径 64 内全量坐标灌入对话——
+        // 既撑爆 token，又因每轮坐标集合变化导致前缀缓存无法命中。
+        self.render_nearby_top(around, radius, 12)
+    }
+
+    /// 渲染邻近记忆，最多 `limit` 条（按距离升序取最近）。
+    pub fn render_nearby_top(&self, around: MemoryPos, radius: i32, limit: usize) -> String {
         let cells = self.nearby(around, radius, false);
         if cells.is_empty() {
             return String::new();
         }
         let mut s = String::from("[已知世界记忆·邻近]");
-        for c in &cells {
+        for c in cells.iter().take(limit) {
             let d = around.manhattan(&c.pos);
             let dep = if c.depleted { "（已耗尽）" } else { "" };
             let cnt = c.count.map(|n| format!(" x{n}")).unwrap_or_default();

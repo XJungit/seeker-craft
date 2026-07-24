@@ -115,7 +115,8 @@ impl Agent {
 
     pub fn build_context(&mut self) -> Context {
         use crate::core::message::Message;
-        let jailbreak = "自主行动。工具失败时调整参数重试——不准假装成功。";
+        let jailbreak = "自主行动。工具失败时调整参数重试——不准假装成功。\n\
+            行为准则：收到感知里的「卡住计数」≥3 时，说明坐标连续不变（可能下探被基岩/空气挡住或脚下方块无法破坏）——立即停止当前下探，改用 goto 侧前方 3 格空地或跳跃脱困，再重新 perceive；不要原地反复 perceive 或假装在下探。连续同工具≤3次后应向玩家 chat 汇报进度。工具没回报「实际获得X」就当作没获得，不得虚构成功。";
         let knowledge = self.knowledge_string();
 
         let builder = PromptBuilder::new()

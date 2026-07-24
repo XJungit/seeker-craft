@@ -131,8 +131,10 @@ impl MinecraftAzaleaAdapter {
                                 }
                             }
                             *last_y = Some(position.y);
+                            // 只回报客观事实（卡住计数），不给指令性结论——
+                            // "卡住怎么办"由 system 行为准则统一处理，避免感知层越界决策。
                             let stuck_hint = if *stuck >= 2 {
-                                format!(" [卡住{}轮：Y 坐标不变，可能挖到基岩/空气或脚下方块无法破坏，建议停止下探并向玩家 chat 汇报]", *stuck)
+                                format!(" 卡住计数={}（Y 坐标连续不变）", *stuck)
                             } else {
                                 String::new()
                             };
