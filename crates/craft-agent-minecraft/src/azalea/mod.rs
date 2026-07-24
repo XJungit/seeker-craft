@@ -155,18 +155,33 @@ pub enum BotEvent {
     Chat { content: String },
     /// 与服务端断开。
     Disconnect { reason: String },
-    /// 周期性状态快照（位置 + 背包概要 + 附近玩家数 + 朝向 + 脚下方块/前方方块）。
+    /// 周期性状态快照（位置 + 背包 + 生命/饱食 + 主手 + 群系 + 附近方块）。
     State {
         position: azalea::Vec3,
-        inventory: Vec<String>,
+        /// 全量非空格：格式 `oak_log:3, cobblestone:64, wooden_pickaxe:1`
+        inventory: String,
         player_count: usize,
-        /// 朝向（yaw 弧度，0=+Z 南，-PI/2=+X 东，PI/2=-X 西，±PI=-Z 北）。
+        /// 朝向（yaw 度数，0=+Z 南，-90=+X 东，90=-X 西，±180=-Z 北）。
         yaw: f64,
         pitch: f64,
-        /// 脚下方块名（站立面），如 "stone" / "grass_block" / "air"（悬空）。
+        /// 脚下方块名，如 "stone" / "grass_block" / "air"
         block_under: String,
-        /// 正前方 1 格视线方块名（用于判断面前是墙/空气/可挖物）。
+        /// 正前方 1 格视线方块名
         block_ahead: String,
+        /// 生命值 (0~20)
+        health: f32,
+        /// 饱食度 (0~20)
+        food: u32,
+        /// 饱和值 (隐藏数值，0~20)
+        saturation: f32,
+        /// 主手物品，如 "wooden_pickaxe" / "air"
+        held_item: String,
+        /// 生物群系，如 "plains" / "forest"
+        biome: String,
+        /// 附近方块概览（3x3 地面）：`grass_block:5, stone:3, air:1`
+        nearby: String,
+        /// 结构化游戏状态 JSON（前端面板可视化用），构建于 tick handler 中。
+        game_state: serde_json::Value,
     },
 }
 
@@ -766,22 +781,28 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
             let t = bot.ticks_connected();
             if t % 20 == 0 {
                 if let Ok(p) = bot.position() {
+                    // 全量背包：列出所有非空格，格式 `oak_log:3, cobblestone:64`
                     let inventory = match bot.get_inventory() {
                         Ok(inv) => match inv.slots() {
-                            Some(slots) => slots
-                                .iter()
-                                .take(5)
-                                .map(|s| {
-                                    if s.is_empty() {
-                                        "空".to_string()
-                                    } else {
-                                        format!("{s:?}")
-                                    }
-                                })
-                                .collect(),
-                            None => vec!["slots=None".to_string()],
+                            Some(slots) => {
+                                let items: Vec<String> = slots
+                                    .iter()
+                                    .filter(|s| !s.is_empty())
+                                    .map(|s| {
+                                        let kind = format!("{:?}", s.kind()).to_lowercase();
+                                        let cnt = s.count();
+                                        format!("{kind}:{cnt}")
+                                    })
+                                    .collect();
+                                if items.is_empty() {
+                                    "空背包".to_string()
+                                } else {
+                                    items.join(", ")
+                                }
+                            }
+                            None => "slots=None".to_string(),
                         },
-                        Err(_) => vec!["获取失败".to_string()],
+                        Err(_) => "获取失败".to_string(),
                     };
                     let player_count = bot.nearby_players().map(|pp| pp.len()).unwrap_or(0);
                     // 朝向（yaw/pitch，度数）：从 LookDirection 的 Debug 输出解析（azalea 字段为私有，不改动库）。
@@ -832,6 +853,96 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                     let ahead_z = (p.z + dz * horiz).floor() as i32;
                     let ahead_y = (p.y + (pitch / 90.0) * -1.0).floor() as i32;
                     let block_ahead = block_name(BlockPos::new(ahead_x, ahead_y, ahead_z));
+                    // 生命/饱食/主手/群系/附近方块
+                    let health = bot.health().unwrap_or(20.0);
+                    let hunger = bot.hunger().ok();
+                    let food = hunger.as_ref().map(|h| h.food).unwrap_or(20);
+                    let saturation = hunger.as_ref().map(|h| h.saturation).unwrap_or(5.0);
+                    let held_item = match bot.get_held_item() {
+                        Ok(item) if !item.is_empty() => {
+                            format!("{:?}", item.kind()).to_lowercase()
+                        }
+                        _ => "air".to_string(),
+                    };
+                    let biome = bot
+                        .world()
+                        .ok()
+                        .and_then(|w| {
+                            w.read()
+                                .get_biome(BlockPos::new(
+                                    p.x.floor() as i32,
+                                    p.y.floor() as i32,
+                                    p.z.floor() as i32,
+                                ))
+                        })
+                        .map(|b| format!("{b:?}").to_lowercase())
+                        .unwrap_or_else(|| "?".to_string());
+                    // 附近方块摘要：3x3 地面区域
+                    let nearby = {
+                        let foot_x = p.x.floor() as i32;
+                        let foot_z = p.z.floor() as i32;
+                        let mut counts: HashMap<String, u32> = HashMap::new();
+                        let world = bot.world().ok();
+                        for dx in -1..=1 {
+                            for dz in -1..=1 {
+                                if let Some(ref w) = world {
+                                    let bp = BlockPos::new(foot_x + dx, foot_y, foot_z + dz);
+                                    let name = match w.read().get_block_state(bp) {
+                                        Some(s) if !s.is_air() => {
+                                            format!("{s:?}")
+                                                .split('(')
+                                                .next()
+                                                .unwrap_or("?")
+                                                .to_string()
+                                        }
+                                        _ => "air".to_string(),
+                                    };
+                                    *counts.entry(name).or_insert(0) += 1;
+                                }
+                            }
+                        }
+                        let parts: Vec<String> = counts
+                            .into_iter()
+                            .filter(|(k, _)| k != "air")
+                            .map(|(k, v)| format!("{k}:{v}"))
+                            .collect();
+                        if parts.is_empty() {
+                            "air".to_string()
+                        } else {
+                            parts.join(", ")
+                        }
+                    };
+                    // 结构化游戏状态 JSON（前端面板可视化）
+                    let game_state = {
+                        let inv_slots: Vec<serde_json::Value> = match bot.get_inventory() {
+                            Ok(inv) => match inv.slots() {
+                                Some(slots) => slots
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, s)| {
+                                        let id = if s.is_empty() {
+                                            "minecraft:air".to_string()
+                                        } else {
+                                            let kind = format!("{:?}", s.kind()).to_lowercase();
+                                            format!("minecraft:{kind}")
+                                        };
+                                        let cnt = if s.is_empty() { 0 } else { s.count() };
+                                        serde_json::json!({"slot": i, "id": id, "count": cnt})
+                                    })
+                                    .collect(),
+                                None => vec![],
+                            },
+                            Err(_) => vec![],
+                        };
+                        let xp = bot.experience().ok();
+                        serde_json::json!({
+                            "inventory": inv_slots,
+                            "experience_level": xp.as_ref().map(|e| e.level).unwrap_or(0),
+                            "experience_progress": xp.as_ref().map(|e| e.progress).unwrap_or(0.0),
+                            "held_item": held_item,
+                            "selected_slot": 0,
+                        })
+                    };
                     // 回填世界记忆：更新当前位置锚点 + 扫描周边关键方块
                     if let Some(mem) = &state.memory {
                         let mp = MemoryPos::new(
@@ -850,6 +961,13 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                         pitch,
                         block_under,
                         block_ahead,
+                        health,
+                        food,
+                        saturation,
+                        held_item,
+                        biome,
+                        nearby,
+                        game_state,
                     });
                 }
             }

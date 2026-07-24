@@ -122,6 +122,13 @@ impl MinecraftAzaleaAdapter {
                             pitch,
                             block_under,
                             block_ahead,
+                            health,
+                            food,
+                            saturation: _,
+                            held_item,
+                            biome,
+                            nearby,
+                            game_state,
                         } = ev
                         {
                             // 卡住检测：仅当 X/Y/Z 三轴都几乎没动才算"卡住"。
@@ -152,8 +159,11 @@ impl MinecraftAzaleaAdapter {
                             drop(stuck);
                             drop(last_pos);
                             let scene = format!(
-                                "坐标=({:.1},{:.1},{:.1}) 朝向=(yaw={:.0}°,pitch={:.0}°) 脚下方块={} 前方方块={} 背包前5={:?} 附近玩家={}{}",
-                                position.x, position.y, position.z, yaw, pitch, block_under, block_ahead, inventory, player_count, stuck_hint
+                                "坐标=({:.1},{:.1},{:.1}) 朝向=({:.0}°,{:.0}°) 生命={:.1}/20 食物={}/20 主手={} 群系={} 脚下={} 前方={} 附近=[{}] 背包=[{}] 玩家={}{}",
+                                position.x, position.y, position.z, yaw, pitch,
+                                health, food, held_item, biome,
+                                block_under, block_ahead, nearby, inventory,
+                                player_count, stuck_hint
                             );
                             *g.last.lock().unwrap() = Some(WorldState {
                                 scene_desc: scene.clone(),
@@ -161,6 +171,18 @@ impl MinecraftAzaleaAdapter {
                                 detected_targets: vec![],
                                 self_hint: scene,
                                 screenshot: Arc::new(Vec::new()),
+                                health: Some(health),
+                                hunger: Some(food),
+                                experience_level: game_state["experience_level"].as_u64().map(|v| v as u32),
+                                experience_progress: game_state["experience_progress"].as_f64().map(|v| v as f32),
+                                position: Some(vec![position.x, position.y, position.z]),
+                                yaw: Some(yaw),
+                                pitch: Some(pitch),
+                                biome: Some(biome),
+                                gamemode: Some("survival".to_string()),
+                                inventory: game_state["inventory"].as_array().cloned(),
+                                held_item: Some(held_item),
+                                selected_slot: game_state["selected_slot"].as_u64().map(|v| v as usize),
                             });
                         }
                     } else {
@@ -191,6 +213,18 @@ impl MinecraftAzaleaAdapter {
                 detected_targets: vec![],
                 self_hint: "等待首次状态快照...".to_string(),
                 screenshot: Arc::new(Vec::new()),
+                health: None,
+                hunger: None,
+                experience_level: None,
+                experience_progress: None,
+                position: None,
+                yaw: None,
+                pitch: None,
+                biome: None,
+                gamemode: None,
+                inventory: None,
+                held_item: None,
+                selected_slot: None,
             })
         }
     }

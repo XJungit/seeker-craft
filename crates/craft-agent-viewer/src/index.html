@@ -192,6 +192,11 @@
   </div>
 </div>
 
+<div id="perceive-state" style="background:var(--panel);padding:8px 16px;font-size:12px;border-bottom:1px solid var(--border)">
+  <label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:600">LLM 感知（当前游戏状态）</label>
+  <pre id="perceiveText" style="margin:4px 0 0;white-space:pre-wrap;color:#b9c2d0;font-size:12.5px;line-height:1.5;max-height:120px;overflow-y:auto">等待首帧状态…</pre>
+</div>
+
 <div id="memory">
   <div class="mem-head">
     <label style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;font-weight:600">世界记忆库</label>
@@ -249,6 +254,7 @@ evtSource.onmessage=function(e){
     else if(d.kind==="step") addLog(`第${d.step}步: ${d.action}`,"step");
     else if(d.kind==="done") addLog(d.reason,"done");
     else if(d.kind==="error") addLog(d.message,"err");
+    else if(d.kind==="perceive") document.getElementById("perceiveText").textContent=d.state||"";
     else if(d.kind==="memory") renderMemory(d);
   }catch(_){}
 };
@@ -301,8 +307,10 @@ function render(data){
   for(let i=lastEventCount;i<events.length;i++){
     const e=events[i];
     if(e.kind==="user"){
+      const c=e.content||"";
+      const label=c.startsWith("【当前游戏状态")?"感知":c.startsWith("【邻近世界记忆")?"记忆":c.startsWith("【当前目标")?"目标":"用户";
       const d=document.createElement("div");d.className="ev user";
-      d.innerHTML=`<div class="label">目标</div><div>${esc(e.content)}</div>`;chat.appendChild(d)
+      d.innerHTML=`<div class="label">${label}</div><div>${esc(c)}</div>`;chat.appendChild(d)
     }else if(e.kind==="assistant"){
       const d=document.createElement("div");d.className="ev asst";
       let h="";

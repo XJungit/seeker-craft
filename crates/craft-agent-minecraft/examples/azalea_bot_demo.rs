@@ -40,10 +40,12 @@ async fn main() {
             BotEvent::Chat { content } => {
                 println!("[demo] 收到聊天: {content}");
             }
-            BotEvent::State { position, inventory, player_count, yaw, pitch, block_under, block_ahead } => {
+            BotEvent::State { position, inventory, player_count, yaw, pitch, block_under, block_ahead, health, food, saturation: _, held_item, biome, nearby, game_state: _ } => {
                 println!(
-                    "[demo] 状态: 坐标=({:.1},{:.1},{:.1}) 朝向=({:.0},{:.0}) 脚下={} 前方={} 背包={:?} 玩家数={}",
-                    position.x, position.y, position.z, yaw, pitch, block_under, block_ahead, inventory, player_count
+                    "[demo] 状态: pos=({:.1},{:.1},{:.1}) yaw={:.0} pitch={:.0} hp={:.1}/{} food={}/{} held={} biome={} under={} ahead={} nearby=[{}] inv=[{}] players={}",
+                    position.x, position.y, position.z, yaw, pitch,
+                    health, "20", food, "20", held_item, biome,
+                    block_under, block_ahead, nearby, inventory, player_count
                 );
             }
             BotEvent::Disconnect { reason } => {

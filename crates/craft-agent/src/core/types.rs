@@ -50,6 +50,31 @@ pub struct WorldState {
     /// 原始截图（RGBA）
     #[serde(with = "screenshot_serde")]
     pub screenshot: Screenshot,
+    /// 结构化游戏状态（前端面板可视化用，非 VLM 路线可填充）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub health: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hunger: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub experience_level: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub experience_progress: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub position: Option<Vec<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub yaw: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pitch: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub biome: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gamemode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inventory: Option<Vec<serde_json::Value>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub held_item: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub selected_slot: Option<usize>,
 }
 
 /// 移动方向（WASD 映射）

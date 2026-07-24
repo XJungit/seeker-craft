@@ -50,6 +50,12 @@ pub enum AgentEvent {
     Done { reason: String },
     #[serde(rename = "error")]
     Error { message: String },
+    /// 当前游戏状态（perceive 快照），实时推送给前端展示 LLM 视角。
+    #[serde(rename = "perceive")]
+    Perceive {
+        /// 结构化状态文本（同 LLM 收到的 perceive 注入内容）。
+        state: String,
+    },
     /// 世界记忆库快照（资源点/结构/容器/锚点），供前端可视化。
     #[serde(rename = "memory")]
     Memory {
@@ -515,6 +521,13 @@ fn run_agent(
         let (step_log, should_continue) = step_result?;
         for line in &step_log {
             let _ = event_tx.send(AgentEvent::Log { text: line.clone() });
+        }
+
+        // 实时推送 perceive 状态给前端（LLM 当前看到的游戏世界）
+        if let Ok(ws) = adapter.perceive_shared() {
+            let _ = event_tx.send(AgentEvent::Perceive {
+                state: ws.scene_desc,
+            });
         }
 
         // 实时反馈：压缩事件
