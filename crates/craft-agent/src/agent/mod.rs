@@ -619,6 +619,9 @@ impl Agent {
                         if !result.summary.is_empty() {
                             self.pending_compaction = Some(result);
                         }
+                        // 压缩后 messages 变短，session_msg_offset 必须重置，
+                        // 否则下次 save() 切片会越界 panic。
+                        self.session_msg_offset = self.messages.len();
                     }
                     Err(e) => {
                         log.push(format!("[t{turn}] 压缩失败，改用硬截断: {e}"));
@@ -627,6 +630,7 @@ impl Agent {
                         self.messages.push(Message::user(
                             "【系统提示】由于上下文压缩失败，早期对话已被截断，仅保留最近片段。请基于当前可见信息继续。".to_string(),
                         ));
+                        self.session_msg_offset = self.messages.len();
                     }
                 }
                 self.events.push(AgentEvent::AutoCompactionEnd);
