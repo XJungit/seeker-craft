@@ -1,15 +1,17 @@
 //! 配方书（recipe book）全量模型 + 通用合成执行。
 //!
-//! 服务端通过 `ClientboundRecipeBookAdd` 下发完整配方（含 shaped/shapeless/
-//! furnace/stonecutter/smithing）。我们把它们归一化成 `StoredRecipe`，供
-//! `auto_craft` 按产物 id 直接合成——不再依赖手写配方表（手写表仅作兜底）。
+//! 配方数据来自本地内置 JSON（`builtin_recipes.json`，vanilla 26.2 配方库），
+//! 与 azalea 客户端库版本完全解耦——azalea 升级不影响配方。服务端下发的
+//! `ClientboundRecipeBookAdd` 作为可选 overlay 叠加（部分版本 azalea 协议解析不全）。
 
 use std::collections::HashMap;
+use std::str::FromStr;
 
 use azalea_protocol::packets::game::c_recipe_book_add::Entry;
 use azalea_protocol::packets::game::c_update_recipes::SingleInputEntry;
 use azalea_protocol::common::recipe::{RecipeDisplayData, SlotDisplayData};
 use azalea_registry::builtin::ItemKind;
+use serde_json::Value;
 
 /// 一个原料允许的若干物品。
 #[derive(Clone, Debug, Default)]
@@ -121,6 +123,11 @@ impl RecipeBook {
     pub fn is_empty(&self) -> bool {
         self.by_result.is_empty()
     }
+
+    /// 列出所有产物 id（调试/校准用）。
+    pub fn keys(&self) -> Vec<String> {
+        self.by_result.keys().cloned().collect()
+    }
 }
 
 /// 解析 `RecipeDisplayData` 为归一化配方。
@@ -201,3 +208,119 @@ pub fn normalize_item(id: &str) -> String {
     let s = s.strip_prefix("minecraft:").unwrap_or(s);
     s.to_ascii_lowercase()
 }
+
+/// 从内置 JSON 加载完整配方库（vanilla 26.2），作为 `auto_craft` 的权威数据源。
+/// 与服务端下发的配方书解耦，azalea 升级不受影响。
+pub fn load_builtin() -> RecipeBook {
+    let raw = include_str!("builtin_recipes.json");
+    let mut book = RecipeBook::default();
+    match serde_json::from_str::<Vec<Value>>(raw) {
+        Ok(entries) => {
+            for e in &entries {
+                if let Some(r) = parse_builtin(e) {
+                    book.insert(r);
+                }
+            }
+        }
+        Err(err) => {
+            eprintln!("[recipe_book] 内置配方 JSON 解析失败: {err}");
+        }
+    }
+    book
+}
+
+/// 把一条内置 JSON 配方解析为 `StoredRecipe`。
+fn parse_builtin(e: &Value) -> Option<StoredRecipe> {
+    let result = e.get("result")?.as_str()?;
+    let result = ItemKind::from_str(&normalize_item(result)).ok()?;
+    // 同产物取第一个（JSON 中先出现的优先）
+    if let Some(existing) = e.get("count").and_then(|c| c.as_u64()) {
+        let _ = existing;
+    }
+    let count = e.get("count").and_then(|c| c.as_u64()).unwrap_or(1) as u32;
+    let kind = e.get("type")?.as_str()?;
+    match kind {
+        "shaped" => {
+            let pattern = e.get("pattern")?.as_array()?;
+            let keys = e.get("keys")?.as_object()?;
+            let height = pattern.len() as u32;
+            let mut width = 0u32;
+            let mut grid: Vec<Option<IngredientItems>> = Vec::new();
+            for row in pattern {
+                let row = row.as_str()?;
+                if width == 0 {
+                    width = row.chars().count() as u32;
+                }
+                for ch in row.chars() {
+                    if ch == ' ' {
+                        grid.push(None);
+                    } else {
+                        let item = keys.get(&ch.to_string())?.as_str()?;
+                        let k = ItemKind::from_str(&normalize_item(item)).ok()?;
+                        grid.push(Some(IngredientItems { items: vec![k] }));
+                    }
+                }
+            }
+            Some(StoredRecipe::Shaped {
+                width,
+                height,
+                grid,
+                result,
+                count,
+            })
+        }
+        "shapeless" => {
+            let ings = e.get("ingredients")?.as_array()?;
+            let ingredients = ings
+                .iter()
+                .filter_map(|v| v.as_str())
+                .filter_map(|s| ItemKind::from_str(&normalize_item(s)).ok())
+                .map(|k| IngredientItems { items: vec![k] })
+                .collect();
+            Some(StoredRecipe::Shapeless {
+                ingredients,
+                result,
+                count,
+            })
+        }
+        "furnace" => {
+            let ingredient = e.get("ingredient")?.as_str()?;
+            let fuel = e.get("fuel").and_then(|f| f.as_str()).unwrap_or("coal");
+            let ingredient = ItemKind::from_str(&normalize_item(ingredient)).ok()?;
+            let fuel = ItemKind::from_str(&normalize_item(fuel)).ok()?;
+            Some(StoredRecipe::Furnace {
+                ingredient: IngredientItems { items: vec![ingredient] },
+                fuel: IngredientItems { items: vec![fuel] },
+                result,
+                count,
+            })
+        }
+        "stonecutter" => {
+            let input = e.get("ingredient")?.as_str()?;
+            let input = ItemKind::from_str(&normalize_item(input)).ok()?;
+            Some(StoredRecipe::Stonecutter {
+                input: IngredientItems { items: vec![input] },
+                result,
+                count,
+            })
+        }
+        "smithing" => {
+            let template = e.get("template").and_then(|v| v.as_str());
+            let base = e.get("base")?.as_str()?;
+            let addition = e.get("addition")?.as_str()?;
+            let t = template
+                .and_then(|s| ItemKind::from_str(&normalize_item(s)).ok())
+                .unwrap_or(result); // 简化：netherite 升级用 netherite_ingot
+            let base = ItemKind::from_str(&normalize_item(base)).ok()?;
+            let addition = ItemKind::from_str(&normalize_item(addition)).ok()?;
+            Some(StoredRecipe::Smithing {
+                template: IngredientItems { items: vec![t] },
+                base: IngredientItems { items: vec![base] },
+                addition: IngredientItems { items: vec![addition] },
+                result,
+            })
+        }
+        _ => None,
+    }
+}
+

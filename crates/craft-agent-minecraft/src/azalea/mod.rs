@@ -136,6 +136,9 @@ impl AzaleaBot {
         let last_position: Arc<Mutex<Option<azalea::Vec3>>> = Arc::new(Mutex::new(None));
         let ext: crate::azalea::ext_state::SharedExt =
             Arc::new(Mutex::new(crate::azalea::ext_state::BotExtState::default()));
+        // 用本地内置配方库（vanilla 26.2）填充配方书，作为 auto_craft 权威数据源。
+        // 服务端下发的 RecipeBookAdd 后续会叠加/覆盖（overlay）。
+        ext.lock().unwrap().recipes = crate::azalea::recipe_book::load_builtin();
         let ext_for_bot = ext.clone();
 
         let state = BotState {
