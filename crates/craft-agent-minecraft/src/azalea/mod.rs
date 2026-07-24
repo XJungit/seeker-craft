@@ -26,7 +26,7 @@ pub mod trade;
 use azalea::prelude::*;
 use azalea::pathfinder::goals::BlockPosGoal;
 use azalea::BlockPos;
-use azalea_registry::builtin::BlockKind;
+use azalea_registry::builtin::{BlockKind, EntityKind};
 use azalea_client::client_chat::ChatPacket;
 use bevy_ecs::component::Component;
 use craft_agent::core::memory::{MemoryKind, MemoryPos, WorldMemory};
@@ -179,10 +179,14 @@ pub enum BotEvent {
         held_item: String,
         /// 生物群系，如 "plains" / "forest"
         biome: String,
-        /// 附近方块概览（3x3 地面）：`grass_block:5, stone:3, air:1`
-        nearby: String,
-        /// 结构化游戏状态 JSON（前端面板可视化用），构建于 tick handler 中。
-        game_state: serde_json::Value,
+/// 附近方块概览（3x3 地面）：`grass_block:5, stone:3, air:1`
+    nearby: String,
+    /// 10x10 范围方块扫描：所有非空气方块类型及计数
+    nearby_blocks: String,
+    /// 附近实体列表：玩家、动物、怪物等
+    nearby_entities: String,
+    /// 结构化游戏状态 JSON（前端面板可视化用），构建于 tick handler 中。
+    game_state: serde_json::Value,
     },
 }
 
@@ -964,6 +968,57 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                         mem.set_anchor("__self__", Some(mp), "当前位置");
                         record_surroundings(&bot, mem, &mp, &state.scanned);
                     }
+                    // 10x10 范围方块扫描：列出所有非空气方块类型及计数
+                    let nearby_blocks = {
+                        let mut counts: HashMap<String, u32> = HashMap::new();
+                        let world = bot.world().ok();
+                        let cx = p.x.floor() as i32;
+                        let cy = p.y.floor() as i32;
+                        let cz = p.z.floor() as i32;
+                        for dx in -5..=5 {
+                            for dy in -5..=5 {
+                                for dz in -5..=5 {
+                                    if let Some(ref w) = world {
+                                        let bp = BlockPos::new(cx + dx, cy + dy, cz + dz);
+                                        let name = match w.read().get_block_state(bp) {
+                                            Some(s) if !s.is_air() => {
+                                                format!("{s:?}").split('(').next().unwrap_or("?").to_string()
+                                            }
+                                            _ => continue,
+                                        };
+                                        *counts.entry(name).or_insert(0) += 1;
+                                    }
+                                }
+                            }
+                        }
+                        let mut items: Vec<_> = counts.into_iter().collect();
+                        items.sort_by(|a, b| b.1.cmp(&a.1));
+                        items.iter().map(|(k, v)| format!("{k}:{v}")).collect::<Vec<_>>().join(", ")
+                    };
+                    // 附近实体列表：按类型分组计数
+                    let nearby_entities = {
+                        let mut kinds: HashMap<String, u32> = HashMap::new();
+                        if let Ok(entities) = bot.nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>() {
+                            let self_id = bot.entity().id();
+                            for e in entities.iter() {
+                                if e.id() == self_id { continue; }
+                                let name = format!("{:?}", e.kind().unwrap_or(EntityKind::Pig)).to_lowercase();
+                                *kinds.entry(name).or_insert(0) += 1;
+                            }
+                        }
+                        // 玩家分开计数
+                        let player_count = bot.nearby_players().map(|pp| pp.len()).unwrap_or(0);
+                        let mut parts: Vec<String> = Vec::new();
+                        if player_count > 0 {
+                            parts.push(format!("player:{}", player_count));
+                        }
+                        let mut items: Vec<_> = kinds.into_iter().collect();
+                        items.sort_by(|a, b| b.1.cmp(&a.1));
+                        for (k, v) in items {
+                            if v > 0 { parts.push(format!("{k}:{v}")); }
+                        }
+                        if parts.is_empty() { "无".to_string() } else { parts.join(", ") }
+                    };
                     let _ = evt_tx.send(BotEvent::State {
                         position: p,
                         inventory,
@@ -978,6 +1033,8 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                         held_item,
                         biome,
                         nearby,
+                        nearby_blocks,
+                        nearby_entities,
                         game_state,
                     });
                 }

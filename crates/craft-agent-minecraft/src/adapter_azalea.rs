@@ -127,6 +127,8 @@ impl MinecraftAzaleaAdapter {
                             held_item,
                             biome,
                             nearby,
+                            nearby_blocks,
+                            nearby_entities,
                             game_state,
                         } = ev
                         {
@@ -158,10 +160,10 @@ impl MinecraftAzaleaAdapter {
                             drop(stuck);
                             drop(last_pos);
                             let scene = format!(
-                                "坐标=({:.1},{:.1},{:.1}) 朝向=({:.0}°,{:.0}°) 生命={:.1}/20 食物={}/20 主手={} 群系={} 脚下={} 前方={} 附近=[{}] 背包=[{}] 玩家={}{}",
+                                "坐标=({:.1},{:.1},{:.1}) 朝向=({:.0}°,{:.0}°) 生命={:.1}/20 食物={}/20 主手={} 群系={} 脚下={} 前方={} 附近3x3=[{}] 附近10x10=[{}] 实体=[{}] 背包=[{}] 玩家={}{}",
                                 position.x, position.y, position.z, yaw, pitch,
                                 health, food, held_item, biome,
-                                block_under, block_ahead, nearby, inventory,
+                                block_under, block_ahead, nearby, nearby_blocks, nearby_entities, inventory,
                                 player_count, stuck_hint
                             );
                             *g.last.lock().unwrap() = Some(WorldState {
