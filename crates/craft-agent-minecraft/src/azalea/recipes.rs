@@ -79,14 +79,10 @@ pub const RECIPES: &[Recipe] = &[
     Recipe { output: "stone", inputs: &[], method: Method::Gather },
 ];
 
-/// 查产物配方（取第一条匹配）。
+/// 查产物配方（取第一条匹配）。比较时忽略 `minecraft:` 前缀。
 pub fn lookup(output: &str) -> Option<&'static Recipe> {
-    let norm = if output.starts_with("minecraft:") {
-        output.to_string()
-    } else {
-        format!("minecraft:{output}")
-    };
+    let bare = output.strip_prefix("minecraft:").unwrap_or(output);
     RECIPES
         .iter()
-        .find(|r| r.output == norm || r.output == output)
+        .find(|r| r.output == bare || r.output == output)
 }

@@ -35,15 +35,21 @@ const RECIPES: &[(&'static str, &'static [(&'static str, u32)], u32)] = &[
     ("torch", &[("charcoal", 1), ("stick", 1)], 4),
 ];
 
-/// 把 `oak_log`/`spruce_log`/... 这类原木映射到对应木板（动态派生，无需逐条登记）。
-fn planks_plan_for(log_id: &str) -> Option<CraftPlan> {
-    let wood = log_id.strip_suffix("_log").or_else(|| log_id.strip_suffix("_stem"))?;
-    let planks = format!("minecraft:{wood}_planks");
-    // 校验木板 id 合法
-    if ItemKind::from_str(&planks).is_err() {
-        return None;
-    }
-    let kind = ItemKind::from_str(&normalize_item(log_id)).ok()?;
+/// 去掉 `minecraft:` 前缀，便于比较裸 id。
+fn bare(id: &str) -> &str {
+    id.strip_prefix("minecraft:").unwrap_or(id)
+}
+
+/// 把 `oak_planks`/`spruce_planks`/... 这类木板动态派生为「由对应原木合成」的配方，
+/// 免去逐条登记。若查询本身不是木板（如原木），返回 None，避免自引用死循环。
+fn planks_plan_for(planks_id: &str) -> Option<CraftPlan> {
+    let wood = bare(planks_id).strip_suffix("_planks")?;
+    let log = format!("minecraft:{wood}_log");
+    // 校验原木 id 合法（覆盖 oak/spruce/birch/...）
+    let kind = match ItemKind::from_str(&log) {
+        Ok(k) => k,
+        Err(_) => return None,
+    };
     Some(CraftPlan {
         ingredients: vec![(kind, 1)],
         output_per_craft: 4,
@@ -51,14 +57,11 @@ fn planks_plan_for(log_id: &str) -> Option<CraftPlan> {
 }
 
 fn lookup_recipe(item: &str) -> Option<CraftPlan> {
-    let norm = normalize_item(item);
-    // 木板动态派生优先（覆盖所有原木种类）
-    if let Some(p) = planks_plan_for(&norm) {
-        return Some(p);
-    }
-    RECIPES
+    let b = bare(item).to_string();
+    // 显式配方优先；否则对木板做动态派生（覆盖所有原木种类）
+    if let Some(p) = RECIPES
         .iter()
-        .find(|(id, _, _)| *id == norm)
+        .find(|(id, _, _)| *id == b)
         .map(|(_, ings, out)| CraftPlan {
             ingredients: ings
                 .iter()
@@ -66,6 +69,13 @@ fn lookup_recipe(item: &str) -> Option<CraftPlan> {
                 .collect(),
             output_per_craft: *out,
         })
+    {
+        return Some(p);
+    }
+    if let Some(p) = planks_plan_for(&b) {
+        return Some(p);
+    }
+    None
 }
 
 fn normalize_item(item: &str) -> String {
@@ -327,6 +337,57 @@ pub async fn do_craft_3x3_recipe(
     Ok(format!(
         "3×3 合成（配方书 {label}）x{count} 完成（约 {crafted} 次）"
     ))
+}
+
+/// 在已打开的锻造台菜单中，按配方书 Smithing 配方合成（template/base/addition 已就绪）。
+pub async fn do_craft_smithing(
+    bot: &Client,
+    recipe: &crate::azalea::recipe_book::StoredRecipe,
+    count: u32,
+) -> Result<String, String> {
+    use crate::azalea::recipe_book::StoredRecipe;
+    let (template, base, addition) = match recipe {
+        StoredRecipe::Smithing {
+            template,
+            base,
+            addition,
+            ..
+        } => (template.items.first().copied(), base.items.first().copied(), addition.items.first().copied()),
+        _ => return Err("do_craft_smithing 仅支持 Smithing 配方".to_string()),
+    };
+    let inv = bot
+        .get_inventory()
+        .map_err(|e| format!("获取容器失败（确认已打开锻造台）: {e:?}"))?;
+
+    let mut made = 0u32;
+    for _ in 0..count.max(1) {
+        if let Some(k) = template {
+            let src = find_source_slot(&inv, k).ok_or_else(|| format!("背包缺少模板 {}", k))?;
+            move_stack(&inv, src, 0).await; // template 槽
+        }
+        if let Some(k) = base {
+            let src = find_source_slot(&inv, k).ok_or_else(|| format!("背包缺少基础物品 {}", k))?;
+            move_stack(&inv, src, 1).await; // base 槽
+        }
+        if let Some(k) = addition {
+            let src = find_source_slot(&inv, k).ok_or_else(|| format!("背包缺少附加物品 {}", k))?;
+            move_stack(&inv, src, 2).await; // additional 槽
+        }
+        sleep(Duration::from_millis(80)).await;
+        let has_result = inv
+            .slots()
+            .as_ref()
+            .and_then(|s| s.get(3))
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
+        if !has_result {
+            return Err("锻造失败：结果槽无产物（模板/基础/附加可能不足）".to_string());
+        }
+        inv.shift_click(3usize); // 取结果
+        sleep(Duration::from_millis(40)).await;
+        made += 1;
+    }
+    Ok(format!("锻造合成 x{count} 完成（约 {made} 次）"))
 }
 
 /// 熔炼配方：产物 -> (输入物品 id, 每次产出数)。

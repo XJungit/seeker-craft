@@ -57,6 +57,10 @@ fn main() -> anyhow::Result<()> {
         bot.auto_craft("crafting_table".to_string(), 1);
         tokio::time::sleep(Duration::from_millis(3000)).await;
 
+        println!("[calibrate] 测试 auto_craft(\"smithing_table\", 1)（验证锻造路径解析）...");
+        bot.auto_craft("smithing_table".to_string(), 1);
+        tokio::time::sleep(Duration::from_millis(3000)).await;
+
         // 监听 bot 回显的事件（含 [自动合成]/[交易] 结果）
         println!("[calibrate] 监听 bot 事件 20s ...");
         let deadline = tokio::time::Instant::now() + Duration::from_secs(20);

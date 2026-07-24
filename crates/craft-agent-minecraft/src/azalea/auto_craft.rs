@@ -65,6 +65,128 @@ async fn ensure_recipe_inputs(bot: &Client, r: &StoredRecipe, amount: u32) -> Re
     Ok(())
 }
 
+/// 若 `item` 可用本地配方书合成，则合成并返回 Some(结果)；否则 None（交给手写 recipes.rs）。
+/// 判断配方是否需要放置的工作台（3×3 网格）。2×2 背包合成（木板/木棍/工作台/火把等）
+/// 直接在玩家背包的合成格里完成，无需放置工作台——否则会陷入「造木板需要工作台、
+/// 造工作台需要木板」的死循环。
+fn recipe_needs_table(r: &StoredRecipe) -> bool {
+    match r {
+        StoredRecipe::Shaped { grid, .. } => grid.iter().enumerate().any(|(i, c)| c.is_some() && i >= 4),
+        StoredRecipe::Shapeless { .. } => false,
+        _ => false,
+    }
+}
+
+async fn ensure_via_book(bot: &Client, item: &str, amount: u32) -> Option<Result<(), String>> {
+    let r = recipe_book_of(bot).get_by_result(item)?.clone();
+    match &r {
+        StoredRecipe::Shaped { .. } | StoredRecipe::Shapeless { .. } => {
+            if let Err(e) = ensure_recipe_inputs(bot, &r, amount).await {
+                return Some(Err(e));
+            }
+            if recipe_needs_table(&r) {
+                // 3×3：确保有工作台并放置/打开后合成
+                if item != "crafting_table" {
+                    if let Err(e) = Box::pin(ensure(bot, "crafting_table", 1)).await {
+                        return Some(Err(e));
+                    }
+                }
+                let at = match overhead_slot(bot) {
+                    Some(a) => a,
+                    None => return Some(Err("无法计算放置点".to_string())),
+                };
+                if let Err(e) = do_place(bot, "crafting_table", at).await {
+                    return Some(Err(e));
+                }
+                sleep(Duration::from_millis(200)).await;
+                if let Err(e) = do_open_container(bot, at).await {
+                    return Some(Err(e));
+                }
+                sleep(Duration::from_millis(200)).await;
+                Some(crate::azalea::craft::do_craft_3x3_recipe(bot, &r, amount).await.map(|_| ()))
+            } else {
+                // 2×2：直接在玩家背包合成格里完成（手写表已覆盖木板/木棍/工作台/火把）
+                Some(
+                    crate::azalea::craft::do_craft_2x2(bot, item, amount)
+                        .await
+                        .map(|_| ()),
+                )
+            }
+        }
+        StoredRecipe::Smithing { .. } => {
+            if let Err(e) = ensure_recipe_inputs(bot, &r, amount).await {
+                return Some(Err(e));
+            }
+            if item != "smithing_table" {
+                if let Err(e) = Box::pin(ensure(bot, "smithing_table", 1)).await {
+                    return Some(Err(e));
+                }
+            }
+            let at = match overhead_slot(bot) {
+                Some(a) => a,
+                None => return Some(Err("无法计算放置点".to_string())),
+            };
+            if let Err(e) = do_place(bot, "smithing_table", at).await {
+                return Some(Err(e));
+            }
+            sleep(Duration::from_millis(200)).await;
+            if let Err(e) = do_open_container(bot, at).await {
+                return Some(Err(e));
+            }
+            sleep(Duration::from_millis(200)).await;
+            Some(
+                crate::azalea::craft::do_craft_smithing(bot, &r, amount)
+                    .await
+                    .map(|_| ()),
+            )
+        }
+        StoredRecipe::Furnace { .. } => {
+            if let Err(e) = ensure_recipe_inputs(bot, &r, amount).await {
+                return Some(Err(e));
+            }
+            if item != "furnace" {
+                if let Err(e) = Box::pin(ensure(bot, "furnace", 1)).await {
+                    return Some(Err(e));
+                }
+            }
+            let at = match overhead_slot(bot) {
+                Some(a) => a,
+                None => return Some(Err("无法计算放置点".to_string())),
+            };
+            if let Err(e) = do_place(bot, "furnace", at).await {
+                return Some(Err(e));
+            }
+            sleep(Duration::from_millis(200)).await;
+            if let Err(e) = do_open_container(bot, at).await {
+                return Some(Err(e));
+            }
+            sleep(Duration::from_millis(200)).await;
+            // 取熔炼原料（配方书第一条为原料）
+            let ing = match &r {
+                StoredRecipe::Furnace { ingredient, .. } => ingredient.items.first().copied(),
+                _ => None,
+            };
+            let fuel = match &r {
+                StoredRecipe::Furnace { fuel, .. } => fuel.items.first().copied(),
+                _ => None,
+            };
+            match (ing, fuel) {
+                (Some(i), Some(f)) => {
+                    let ik = i.to_string();
+                    let fk = f.to_string();
+                    Some(
+                        crate::azalea::craft::do_smelt(bot, &ik, &fk, amount)
+                            .await
+                            .map(|_| ()),
+                    )
+                }
+                _ => Some(Err("锻造配方原料解析失败".to_string())),
+            }
+        }
+        _ => None,
+    }
+}
+
 /// 背包中 item 的数量。
 async fn has_item(bot: &Client, item: &str) -> u32 {
     let inv = match bot.get_inventory() {
@@ -108,6 +230,10 @@ async fn ensure(bot: &Client, item: &str, amount: u32) -> Result<(), String> {
     if has_item(bot, item).await >= amount {
         return Ok(());
     }
+    // 优先用本地配方书（覆盖 3×3 合成 / 锻造 / 熔炼等），免手写表。
+    if let Some(res) = ensure_via_book(bot, item, amount).await {
+        return res;
+    }
     let recipe = lookup(item)
         .ok_or_else(|| format!("auto_craft 无法制造 {item}（无配方且非可采集方块）"))?;
 
@@ -139,19 +265,36 @@ async fn ensure(bot: &Client, item: &str, amount: u32) -> Result<(), String> {
             {
                 let book = recipe_book_of(bot);
                 if let Some(r) = book.get_by_result(item) {
-                    if matches!(r, StoredRecipe::Shaped { .. } | StoredRecipe::Shapeless { .. }) {
-                        // 先满足配方书里的全部原料
-                        ensure_recipe_inputs(bot, r, amount).await?;
-                        // 确保有工作台并放置/打开
-                        Box::pin(ensure(bot, "crafting_table", 1)).await?;
-                        let at = overhead_slot(bot).ok_or("无法计算放置点")?;
-                        do_place(bot, "crafting_table", at).await?;
-                        sleep(Duration::from_millis(200)).await;
-                        do_open_container(bot, at).await?;
-                        sleep(Duration::from_millis(200)).await;
-                        return crate::azalea::craft::do_craft_3x3_recipe(bot, r, amount)
-                            .await
-                            .map(|_| ());
+                    match r {
+                        StoredRecipe::Shaped { .. } | StoredRecipe::Shapeless { .. } => {
+                            // 先满足配方书里的全部原料
+                            ensure_recipe_inputs(bot, r, amount).await?;
+                            // 确保有工作台并放置/打开
+                            Box::pin(ensure(bot, "crafting_table", 1)).await?;
+                            let at = overhead_slot(bot).ok_or("无法计算放置点")?;
+                            do_place(bot, "crafting_table", at).await?;
+                            sleep(Duration::from_millis(200)).await;
+                            do_open_container(bot, at).await?;
+                            sleep(Duration::from_millis(200)).await;
+                            return crate::azalea::craft::do_craft_3x3_recipe(bot, r, amount)
+                                .await
+                                .map(|_| ());
+                        }
+                        StoredRecipe::Smithing { .. } => {
+                            // 先满足模板/基础/附加三类原料
+                            ensure_recipe_inputs(bot, r, amount).await?;
+                            // 确保有锻造台并放置/打开
+                            Box::pin(ensure(bot, "smithing_table", 1)).await?;
+                            let at = overhead_slot(bot).ok_or("无法计算放置点")?;
+                            do_place(bot, "smithing_table", at).await?;
+                            sleep(Duration::from_millis(200)).await;
+                            do_open_container(bot, at).await?;
+                            sleep(Duration::from_millis(200)).await;
+                            return crate::azalea::craft::do_craft_smithing(bot, r, amount)
+                                .await
+                                .map(|_| ());
+                        }
+                        _ => {}
                     }
                 }
             }

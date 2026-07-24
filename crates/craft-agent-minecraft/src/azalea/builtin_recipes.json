@@ -141,5 +141,13 @@
   {"result":"nether_brick","type":"shaped","pattern":["NN","NN"],"keys":{"N":"nether_bricks"}},
   {"result":"soul_torch","count":4,"type":"shaped","pattern":["S","C"],"keys":{"S":"soul_soil","C":"coal"}},
   {"result":"lantern","type":"shaped","pattern":["T","G","T"],"keys":{"T":"torch","G":"iron_nugget"}},
-  {"result":"campfire","type":"shaped","pattern":["LS","S S","SSS"],"keys":{"L":"stick","S":"stick"}}
+  {"result":"campfire","type":"shaped","pattern":["LS","S S","SSS"],"keys":{"L":"stick","S":"stick"}},
+  {"result":"smithing_table","type":"shaped","pattern":["I I","PPP","PPP"],"keys":{"I":"iron_ingot","P":"oak_planks"}},
+  {"result":"netherite_ingot","type":"furnace","ingredient":"ancient_debris","fuel":"coal"},
+  {"result":"netherite_chestplate","type":"smithing","template":"netherite_upgrade_smithing_template","base":"diamond_chestplate","addition":"netherite_ingot"},
+  {"result":"netherite_sword","type":"smithing","template":"netherite_upgrade_smithing_template","base":"diamond_sword","addition":"netherite_ingot"},
+  {"result":"netherite_pickaxe","type":"smithing","template":"netherite_upgrade_smithing_template","base":"diamond_pickaxe","addition":"netherite_ingot"},
+  {"result":"netherite_helmet","type":"smithing","template":"netherite_upgrade_smithing_template","base":"diamond_helmet","addition":"netherite_ingot"},
+  {"result":"netherite_leggings","type":"smithing","template":"netherite_upgrade_smithing_template","base":"diamond_leggings","addition":"netherite_ingot"},
+  {"result":"netherite_boots","type":"smithing","template":"netherite_upgrade_smithing_template","base":"diamond_boots","addition":"netherite_ingot"}
 ]
