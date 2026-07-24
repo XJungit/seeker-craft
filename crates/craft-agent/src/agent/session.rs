@@ -84,7 +84,8 @@ impl Agent {
             self.pending_checkpoint = false;
             self.session_msg_offset = self.messages.len();
         } else {
-            let new_msgs: Vec<Message> = self.messages[self.session_msg_offset..].to_vec();
+            let offset = self.session_msg_offset.min(self.messages.len());
+            let new_msgs: Vec<Message> = self.messages[offset..].to_vec();
             for m in new_msgs {
                 sess.append_message(m);
             }
