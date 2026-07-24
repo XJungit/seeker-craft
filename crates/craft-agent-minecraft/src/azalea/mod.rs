@@ -514,7 +514,7 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                     let timed_out = {
                         let since = *state.pending_since.lock().unwrap();
                         match since {
-                            Some(t0) => (bot.ticks_connected() as u64).saturating_sub(t0) > 40,
+                            Some(t0) => (bot.ticks_connected() as u64).saturating_sub(t0) > 200,
                             None => false,
                         }
                     };

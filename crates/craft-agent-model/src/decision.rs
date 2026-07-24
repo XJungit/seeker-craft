@@ -346,7 +346,7 @@ pub mod real {
                             .cloned()
                             .unwrap_or_else(|| "(无结果)".to_string());
                         summary.push_str(&format!(
-                            "\n[工具 {name} 参数 {args} → 结果 {result}]"
+                            "\n【工具执行】{name}({args}) → {result}"
                         ));
                     }
                     // 剥除 tool_calls，结果并入 content。
