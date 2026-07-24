@@ -334,14 +334,17 @@ fn run_agent(
            - chat(content)：发聊天消息，用于向玩家汇报进度。\n\
            - memory(action,kind,pos,label,anchor)：世界长期记忆（空间-状态）。action=save 记录资源点/结构/容器坐标；action=query 查询附近记忆；action=anchor 设置当前位置锚点（__self__）；action=forget 删除。采集到重要坐标或建好设施后用 save 记录，决策前用 query 回忆。\n\
           行为准则：\n\
-         1) 下探任务：连续调 mine_below 2~3 次后，调一次 chat 汇报当前 Y 坐标与进度，\n\
+         1) 每轮尽量在一次回复里连续输出多个工具调用完成一个小目标（如：先 perceive 确认状态，\n\
+            再 goto 到树旁，再 gather 木头，最后 craft 木板），不要每轮只发一个动作等下一轮。\n\
+            参考 Mindcraft：一个 LLM 决策应推进一整段子任务；优先用高层工具 gather/auto_craft，而非逐个 mine。\n\
+         2) 下探任务：连续调 mine_below 2~3 次后，调一次 chat 汇报当前 Y 坐标与进度，\n\
              再继续 mine_below。穿插 chat 汇报，不要无脑连续调同一工具超过 3 次。\n\
-          2) 若 perceive 返回含 \"卡住计数=N\"（N>=3，Y 坐标连续不变，可能挖到基岩或脚下无可破坏方块），\n\
-              必须停止下探：改用 goto 侧前方 3 格空地或跳跃脱困，再重新 perceive；\n\
-              不要原地反复 perceive 或假装还在挖。确实无法推进时用 chat 向玩家说明后，以纯文本结束。\n\
-          3) perceive 可随时调用确认状态，不必每轮都调。\n\
-          4) 工具没回报\"实际获得X\"就当作没获得，不得虚构成功。\n\
-          5) 任务确实无法推进时，允许纯文本结束（说明原因），这不算错误。",
+         3) 若 perceive 返回含 \"卡住计数=N\"（N>=3，Y 坐标连续不变，可能挖到基岩或脚下无可破坏方块），\n\
+             必须停止下探：改用 goto 侧前方 3 格空地或跳跃脱困，再重新 perceive；\n\
+             不要原地反复 perceive 或假装还在挖。确实无法推进时用 chat 向玩家说明后，以纯文本结束。\n\
+         4) perceive 每轮开头调一次确认状态即可，不必每次都调。\n\
+         5) 工具没回报\"实际获得X\"就当作没获得，不得虚构成功。\n\
+         6) 任务确实无法推进时，允许纯文本结束（说明原因），这不算错误。",
     );
     let agent_cfg = AgentConfig::new(system_prompt, 1) // 每步 1 轮，外循环控制步数
         .with_compaction(compaction)
