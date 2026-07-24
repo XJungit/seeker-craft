@@ -631,6 +631,19 @@ impl Agent {
             }
         }
 
+        // 覆盖式清理：移除上一轮 run_one_turn 注入的易变瞬时消息
+        // （perceive 状态快照、邻近世界记忆）。这些每轮重生，不应在 history 中
+        // 累积成过期噪音，也不应污染上下文压缩摘要。只删带固定标记前缀的 user
+        // 消息，绝不碰 assistant/tool 真实交互历史。
+        self.messages
+            .retain(|m| match m {
+                Message::User(u) => {
+                    !(u.content.starts_with("【当前游戏状态（自动注入）】")
+                        || u.content.starts_with("【邻近世界记忆】"))
+                }
+                _ => true,
+            });
+
         // Auto-perceive
         if self.config.auto_perceive
             && let Some(tool) = self.tools.get("perceive")
@@ -673,7 +686,8 @@ impl Agent {
 
         // WorldMemory 邻近记忆注入（空间-状态长期记忆）
         if let Some(mem_msg) = self.build_memory_context_msg() {
-            self.messages.push(Message::user(mem_msg));
+            self.messages
+                .push(Message::user(format!("【邻近世界记忆】\n{mem_msg}")));
         }
 
         // Dynamic instructions
@@ -818,6 +832,10 @@ impl Agent {
             self.recent_calls.pop_front();
         }
         let repeat_count = self.recent_calls.iter().filter(|c| **c == call_sig).count();
+        // 注意：死循环 nudge 不能在 assistant(tool_calls) 与后续 tool result 之间插入
+        // user 消息（否则 DeepSeek/OpenAI 报 400：tool 消息必须紧跟其 tool_calls）。
+        // 故先暂存，待本轮 tool result 全部 push 之后再注入。
+        let mut loop_nudge: Option<String> = None;
         if repeat_count >= 4 {
             let nudge = format!(
                 "【死循环警告】你已连续 {repeat_count} 次执行相同操作 ({}). 请：\n\
@@ -832,7 +850,7 @@ impl Agent {
                     .collect::<Vec<_>>()
                     .join(",")
             );
-            self.messages.push(Message::user(nudge));
+            loop_nudge = Some(nudge);
             log.push(format!(
                 "[t{turn}] 死循环检测: 相同调用重复 {repeat_count} 次，注入打断指令"
             ));
@@ -968,6 +986,12 @@ impl Agent {
                     tool_name, tc.arguments, msg
                 ));
             }
+        }
+
+        // 死循环 nudge 在所有 tool result 之后注入，避免插在 assistant(tool_calls)
+        // 与 tool result 之间导致 DeepSeek/OpenAI 400。
+        if let Some(nudge) = loop_nudge.take() {
+            self.messages.push(Message::user(nudge));
         }
 
         // Extract skill
@@ -1277,5 +1301,169 @@ mod tests {
             .collect();
         let all_same = normalized.iter().all(|c| c == &normalized[0]);
         assert!(all_same, "坐标归一化后所有签名应相同: {:?}", normalized);
+    }
+
+    // ── 回归：易变瞬时注入（perceive 状态 / 邻近世界记忆）每轮覆盖，不累积 ──
+    #[test]
+    fn volatile_injections_are_overwritten_not_accumulated() {
+        use crate::core::message::Message;
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::new("test".into(), 1);
+        let mut agent = Agent::new(Box::new(FakeProvider), tools, config);
+
+        // 模拟历史里已有上一轮的易变注入 + 真实交互
+        agent.messages.push(Message::user(
+            "【当前游戏状态（自动注入）】\n坐标(0,64,0) 旧快照",
+        ));
+        agent
+            .messages
+            .push(Message::user("【邻近世界记忆】\n旧记忆"));
+        agent.messages.push(Message::assistant_response(
+            &AssistantResponse {
+                content: Some("ok".into()),
+                reasoning: None,
+                tool_calls: vec![],
+                usage: Usage::default(),
+                stop_reason: StopReason::Stop,
+            },
+        ));
+        agent.messages.push(Message::tool_result("c1", "perceive", "结果"));
+
+        let before: usize = agent
+            .messages
+            .iter()
+            .filter(|m| matches!(m, Message::User(u) if u.content.starts_with("【当前游戏状态（自动注入）】") || u.content.starts_with("【邻近世界记忆】")))
+            .count();
+        assert_eq!(before, 2, "前置：应有 2 条旧易变注入");
+
+        // run 一轮（FakeProvider 无 perceive 工具，auto_perceive 跳过，不新注入）
+        agent.run("start").unwrap();
+
+        let after: Vec<&Message> = agent
+            .messages
+            .iter()
+            .filter(|m| matches!(m, Message::User(u) if u.content.starts_with("【当前游戏状态（自动注入）】") || u.content.starts_with("【邻近世界记忆】")))
+            .collect();
+        assert_eq!(after.len(), 0, "覆盖清理后应移除旧的易变注入（不累积）");
+        // 真实交互历史保留
+        assert!(
+            agent.messages.iter().any(|m| matches!(m, Message::ToolResult(r) if r.tool_call_id == "c1")),
+            "真实 tool 交互历史不应被覆盖清理删除"
+        );
+    }
+
+    // ── 回归：死循环 nudge 必须在 tool result 之后，不能在 assistant(tool_calls) 与 tool 之间（否则 400）──
+    #[test]
+    fn dead_loop_nudge_not_between_assistant_and_tool() {
+        use crate::core::message::Message;
+        struct ToolCallProvider;
+        impl LlmProvider for ToolCallProvider {
+            fn complete(
+                &self,
+                _messages: &[Value],
+                _tools: &[Value],
+            ) -> Result<AssistantResponse> {
+                Ok(AssistantResponse {
+                    content: None,
+                    reasoning: None,
+                    tool_calls: vec![ToolCall {
+                        id: "tc1".into(),
+                        name: "perceive".into(),
+                        arguments: serde_json::json!({}),
+                    }],
+                    usage: Usage::default(),
+                    stop_reason: StopReason::ToolCalls,
+                })
+            }
+        }
+        struct PerceiveTool;
+        impl crate::core::tool::GameTool for PerceiveTool {
+            fn name(&self) -> &str { "perceive" }
+            fn description(&self) -> &str { "" }
+            fn parameters(&self) -> Value { serde_json::json!({}) }
+            fn execute(&self, _id: &str, _a: Value, _u: Option<crate::core::tool::ToolUpdateFn>) -> anyhow::Result<ToolResult> {
+                Ok(ToolResult { message: "ok".into(), is_error: false, images: vec![] })
+            }
+        }
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(PerceiveTool));
+        let mut config = AgentConfig::new("test".into(), 1);
+        config.auto_perceive = false; // 避免额外注入干扰断言
+        let mut agent = Agent::new(Box::new(ToolCallProvider), tools, config);
+
+        // 预填 recent_calls 触发死循环（4+ 次相同）
+        for _ in 0..5 {
+            agent.recent_calls.push_back("perceive|{}".to_string());
+        }
+        agent.run("start").unwrap();
+
+        // 找到 assistant(tool_calls) 的索引
+        let mut assistant_idx = None;
+        for (i, m) in agent.messages.iter().enumerate() {
+            if let Message::Assistant(a) = m
+                && !a.tool_calls.is_empty()
+            {
+                assistant_idx = Some(i);
+                break;
+            }
+        }
+        let ai = assistant_idx.expect("应存在带 tool_calls 的 assistant");
+        // assistant 之后紧跟的消息必须是 tool（role=tool），不能是 user（nudge）
+        match &agent.messages[ai + 1] {
+            Message::ToolResult(_) => {}
+            other => panic!("assistant(tool_calls) 之后必须紧跟 tool 消息，实际: {:?}", other),
+        }
+        // nudge（若存在）必须出现在所有 tool 之后
+        let last_tool = agent
+            .messages
+            .iter()
+            .rposition(|m| matches!(m, Message::ToolResult(_)))
+            .expect("应有 tool 结果");
+        let nudge_after = agent.messages[last_tool..]
+            .iter()
+            .any(|m| matches!(m, Message::User(u) if u.content.contains("死循环警告")));
+        assert!(
+            nudge_after,
+            "死循环 nudge 应在 tool result 之后注入"
+        );
+    }
+
+    // ── 回归：上下文压缩摘要不得包含易变 perceive 快照（避免过期坐标污染）──
+    #[test]
+    fn compaction_excludes_volatile_perceive_snapshot() {
+        use crate::core::message::Message;
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::new("test".into(), 1);
+        let mut agent = Agent::new(Box::new(FakeProvider), tools, config);
+
+        // 填充足够 token 的真实交互 + 一条易变 perceive 快照
+        for i in 0..10 {
+            agent.messages.push(Message::assistant_response(
+                &AssistantResponse {
+                    content: Some(format!("step {i} action")),
+                    reasoning: None,
+                    tool_calls: vec![],
+                    usage: Usage::default(),
+                    stop_reason: StopReason::Stop,
+                },
+            ));
+            agent.messages.push(Message::tool_result(
+                &format!("c{i}"),
+                "mine",
+                &"x".repeat(200),
+            ));
+        }
+        agent.messages.push(Message::user(
+            "【当前游戏状态（自动注入）】\n坐标(0,64,0) 过期快照",
+        ));
+
+        // 关闭压缩模型，用主模型（FakeProvider）生成摘要
+        let result = agent.compact();
+        assert!(result.is_ok(), "compact 不应失败: {:?}", result.err());
+        let summary = result.unwrap().summary;
+        assert!(
+            !summary.contains("【当前游戏状态（自动注入）】"),
+            "压缩摘要不应包含易变 perceive 快照，实际摘要: {summary}"
+        );
     }
 }

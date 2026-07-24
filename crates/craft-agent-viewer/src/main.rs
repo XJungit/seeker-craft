@@ -42,6 +42,8 @@ struct AppState {
     event_tx: broadcast::Sender<AgentEvent>,
     /// Agent 配置
     model_config_path: String,
+    /// MC 服务器地址（azalea 连接用，如 localhost:4444）
+    mc_addr: String,
     /// 最后一次成功拉取的游戏状态（离线时回退显示）
     last_state_cache: Mutex<Option<WorldState>>,
 }
@@ -56,6 +58,7 @@ async fn main() -> anyhow::Result<()> {
     let mut goal = "收集木头做工作台".to_string();
     let mut max_steps: u32 = 0; // 0 = 无限循环，仅手动停止才退出
     let mut config_path = "config/agent.toml".to_string();
+    let mut mc_addr = "localhost:4444".to_string();
 
     let mut i = 1;
     while i < args.len() {
@@ -100,6 +103,12 @@ async fn main() -> anyhow::Result<()> {
                 }
                 i += if has_inline { 1 } else { 2 };
             }
+            "--mc" => {
+                if let Some(v) = get_val() {
+                    mc_addr = v;
+                }
+                i += if has_inline { 1 } else { 2 };
+            }
             _ => i += 1,
         }
     }
@@ -116,6 +125,7 @@ async fn main() -> anyhow::Result<()> {
         controller: controller.clone(),
         event_tx: event_tx.clone(),
         model_config_path: config_path,
+        mc_addr,
         last_state_cache: Mutex::new(None),
     });
 
@@ -161,6 +171,7 @@ async fn api_start(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         state.controller.clone(),
         state.model_config_path.clone(),
         state.event_tx.clone(),
+        state.mc_addr.clone(),
     );
     match result {
         Ok(()) => axum::Json(json!({"ok": true})),

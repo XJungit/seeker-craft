@@ -151,8 +151,17 @@ impl Agent {
                 String::new()
             })
             .unwrap_or_default();
+        // 序列化旧历史时剔除"易变瞬时注入"（perceive 状态、邻近世界记忆），
+        // 它们每轮重生且易过期，进入摘要会污染压缩结果（如矛盾坐标）。
         let old: Vec<String> = self.messages[..cut]
             .iter()
+            .filter(|m| match m {
+                Message::User(u) => {
+                    !(u.content.starts_with("【当前游戏状态（自动注入）】")
+                        || u.content.starts_with("【邻近世界记忆】"))
+                }
+                _ => true,
+            })
             .map(Self::serialize_msg)
             .collect();
         let mut prompt = format!("<conversation>\n{}\n</conversation>\n\n", old.join("\n\n"));

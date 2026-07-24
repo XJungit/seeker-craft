@@ -131,6 +131,7 @@ pub fn spawn_agent_loop(
     controller: Arc<AgentController>,
     model_config_path: String,
     event_tx: broadcast::Sender<AgentEvent>,
+    mc_addr: String,
 ) -> anyhow::Result<()> {
     if controller.running.swap(true, Ordering::Relaxed) {
         let _ = event_tx.send(AgentEvent::Error {
@@ -173,6 +174,7 @@ pub fn spawn_agent_loop(
             &ctrl,
             &tx,
             &abort,
+            &mc_addr,
         ) {
             let _ = tx.send(AgentEvent::Error {
                 message: format!("{e}"),
@@ -195,6 +197,7 @@ fn run_agent(
     ctrl: &AgentController,
     event_tx: &broadcast::Sender<AgentEvent>,
     abort: &Arc<AtomicBool>,
+    mc_addr: &str,
 ) -> anyhow::Result<()> {
     let model_cfg = ModelConfig::load(cfg_path)?;
     let perceive_cfg = model_cfg.perceive.unwrap_or_default();
@@ -240,11 +243,11 @@ fn run_agent(
             .enable_all()
             .build()?;
         rt.block_on(ArcAzaleaAdapter::connect_with_memory(
-            "localhost:4444",
+            mc_addr,
             "craftbot",
             world_mem.clone(),
         ))
-        .map_err(|e| anyhow::anyhow!("azalea adapter 连接失败（确认服为纯 vanilla 26.2 且端口 4444 开放）: {e}"))?
+        .map_err(|e| anyhow::anyhow!("azalea adapter 连接失败（确认服为纯 vanilla 26.2 且地址 {mc_addr} 开放）: {e}"))?
     };
     *ctrl.game_adapter.write().unwrap() = Some(adapter.clone());
 
@@ -329,7 +332,8 @@ fn run_agent(
            - interact_entity(kind)：右键交互最近的实体（如 villager）。先走到村民附近再用。\n\
            - trade(offer)：与最近的村民交易，选第 offer 个报价（0 起）。需先靠近村民。\n\
            - chat(content)：发聊天消息，用于向玩家汇报进度。\n\
-         行为准则：\n\
+           - memory(action,kind,pos,label,anchor)：世界长期记忆（空间-状态）。action=save 记录资源点/结构/容器坐标；action=query 查询附近记忆；action=anchor 设置当前位置锚点（__self__）；action=forget 删除。采集到重要坐标或建好设施后用 save 记录，决策前用 query 回忆。\n\
+          行为准则：\n\
          1) 下探任务：连续调 mine_below 2~3 次后，调一次 chat 汇报当前 Y 坐标与进度，\n\
              再继续 mine_below。穿插 chat 汇报，不要无脑连续调同一工具超过 3 次。\n\
          2) 若 perceive 返回含 \"[卡住N轮]\" 提示（Y 坐标不变，已挖到基岩或脚下无可破坏方块），\n\

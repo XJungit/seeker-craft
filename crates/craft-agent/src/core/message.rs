@@ -129,6 +129,13 @@ pub struct Usage {
     pub output_tokens: u64,
     /// 整轮上下文总 token (pi: total_tokens, estimate_context_tokens 优先用它)
     pub total_tokens: u64,
+    /// DeepSeek 上下文缓存命中 token 数（prompt_cache_hit_tokens）。
+    /// 用于观测前缀缓存是否生效；非 DeepSeek 兼容端点无此字段时为 0。
+    #[serde(default, rename = "prompt_cache_hit_tokens")]
+    pub cache_hit_tokens: u64,
+    /// DeepSeek 上下文缓存未命中 token 数（prompt_cache_miss_tokens）。
+    #[serde(default, rename = "prompt_cache_miss_tokens")]
+    pub cache_miss_tokens: u64,
 }
 
 // ── 构造器 (pi: Message::assistant / Message::tool_result 风格) ──
@@ -441,5 +448,20 @@ mod tests {
         let chatml = msg.to_chatml();
         assert_eq!(chatml["content"], "你好");
         assert!(chatml.get("reasoning_content").is_none());
+    }
+
+    #[test]
+    fn usage_cache_fields_default_to_zero_when_absent() {
+        // 非 DeepSeek 兼容端点不返回 prompt_cache_hit_tokens 时，
+        // 反序列化应补 0 而非报错（避免破坏旧 JSONL 回放）。
+        let json = r#"{"input_tokens":10,"output_tokens":2,"total_tokens":12}"#;
+        let u: Usage = serde_json::from_str(json).unwrap();
+        assert_eq!(u.cache_hit_tokens, 0);
+        assert_eq!(u.cache_miss_tokens, 0);
+        // 带字段时正确解析
+        let json2 = r#"{"input_tokens":10,"output_tokens":2,"total_tokens":12,"prompt_cache_hit_tokens":7,"prompt_cache_miss_tokens":5}"#;
+        let u2: Usage = serde_json::from_str(json2).unwrap();
+        assert_eq!(u2.cache_hit_tokens, 7);
+        assert_eq!(u2.cache_miss_tokens, 5);
     }
 }

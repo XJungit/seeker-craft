@@ -168,11 +168,21 @@ pub fn parse_chat_tools_response(resp: &Value) -> Result<AssistantResponse> {
     }
 
     let usage_json = &resp["usage"];
+    let cache_hit = usage_json["prompt_cache_hit_tokens"].as_u64().unwrap_or(0);
+    let cache_miss = usage_json["prompt_cache_miss_tokens"].as_u64().unwrap_or(0);
     let usage = Usage {
         input_tokens: usage_json["prompt_tokens"].as_u64().unwrap_or(0),
         output_tokens: usage_json["completion_tokens"].as_u64().unwrap_or(0),
         total_tokens: usage_json["total_tokens"].as_u64().unwrap_or(0),
+        cache_hit_tokens: cache_hit,
+        cache_miss_tokens: cache_miss,
     };
+    if cache_hit > 0 {
+        eprintln!(
+            "[LLM] cache hit={cache_hit} miss={cache_miss} in={} out={}",
+            usage.input_tokens, usage.output_tokens
+        );
+    }
     let raw_reason = choice["finish_reason"].as_str().unwrap_or("stop");
     let stop_reason = match raw_reason {
         "stop" => StopReason::Stop,
