@@ -544,7 +544,13 @@ const UPDATE_SUMMARIZATION_PROMPT: &str =
 
 impl Agent {
     pub fn run(&mut self, user_message: impl Into<String>) -> Result<Vec<String>> {
-        self.messages.push(Message::user(user_message));
+        let goal = user_message.into();
+        // 初始目标同步为 self_prompt：这样每轮 run_one_turn 都会以
+        // "[当前目标]" 形式在末尾重新注入，模型不会在后续轮次丢失最高层意图
+        // （否则目标只存在于第 1 轮的普通 user 消息里，被后续 perceive/工具
+        // 噪音稀释，导致"上轮要挖木、下轮忘了要离开又想挖"的漂移）。
+        self.set_self_prompt(goal.clone());
+        self.messages.push(Message::user(goal));
         self.continue_run()
     }
 
@@ -632,14 +638,16 @@ impl Agent {
         }
 
         // 覆盖式清理：移除上一轮 run_one_turn 注入的易变瞬时消息
-        // （perceive 状态快照、邻近世界记忆）。这些每轮重生，不应在 history 中
-        // 累积成过期噪音，也不应污染上下文压缩摘要。只删带固定标记前缀的 user
-        // 消息，绝不碰 assistant/tool 真实交互历史。
+        // （perceive 状态快照、邻近世界记忆、上一轮的 [当前目标] 重注）。
+        // 这些每轮重生，不应在 history 中累积成过期噪音，也不应污染上下文
+        // 压缩摘要。只删带固定标记前缀的 user 消息，绝不碰 assistant/tool
+        // 真实交互历史。
         self.messages
             .retain(|m| match m {
                 Message::User(u) => {
                     !(u.content.starts_with("【当前游戏状态（自动注入）】")
-                        || u.content.starts_with("【邻近世界记忆】"))
+                        || u.content.starts_with("【邻近世界记忆】")
+                        || u.content.starts_with("[当前目标]"))
                 }
                 _ => true,
             });
@@ -1150,7 +1158,9 @@ mod tests {
             .iter()
             .filter(|m| matches!(m, Message::User(u) if u.content.contains("[当前目标]")))
             .collect();
-        assert_eq!(goal_msgs.len(), 3, "自提示应在每轮注入");
+        // 每轮注入但覆盖式清理：history 中只保留最近 1 份 [当前目标]，
+        // 不随轮次无限累积（避免稀释上下文与浪费 token）。
+        assert_eq!(goal_msgs.len(), 1, "自提示每轮注入但只保留最新 1 份");
     }
 
     #[test]
