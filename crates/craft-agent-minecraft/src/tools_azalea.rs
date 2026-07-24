@@ -1335,232 +1335,12 @@ fn _exec_action(adapter: &Arc<Mutex<MinecraftAzaleaAdapter>>, mc: MinecraftActio
     }
 }
 
-/// 执行 JavaScript 代码（通过 Node.js，图灵完备）。和 Mindcraft 一样 LLM 写 JS 代码。
-/// 代码内可用 `await bot.goto(x,y,z)`, `await bot.mine(x,y,z)`, `await bot.gather(item,count)`,
-/// `await bot.craft(item,count)`, `await bot.place(item,x,y,z)`, `await bot.open(x,y,z)`,
-/// `await bot.mineBelow()`, `await bot.chat(msg)`, `await bot.attack()`, `await bot.smelt(output,fuel,count)`,
-/// `await bot.interact(x,y,z)`, `await bot.sleep(ms)`, `bot.print(msg)`。
-/// 所有函数返回结果字符串。用 `let result = await ...` 获取返回值。
-/// 例: await bot.goto(10, 64, 20); await bot.mine(10, 63, 20); await bot.gather("oak_log", 4);
-pub struct RunJsTool {
-    ctx: Arc<AzaleaToolCtx>,
-}
-impl RunJsTool {
-    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
-        Self { ctx }
-    }
-}
-
-const NODE_WRAPPER: &str = r##"
-const readline = require('readline');
-const rl = readline.createInterface({input: process.stdin});
-let pending = {};
-rl.on('line', (line) => {
-    try {
-        const resp = JSON.parse(line);
-        if (resp.id && pending[resp.id]) {
-            pending[resp.id](resp.result);
-            delete pending[resp.id];
-        }
-    } catch(e) {}
-});
-async function _call(method, params) {
-    const id = Date.now() + '_' + Math.random().toString(36).slice(2);
-    process.stdout.write(JSON.stringify({id, method, params}) + '\n');
-    await new Promise(r => setTimeout(r, 5));
-    return new Promise((resolve) => { pending[id] = resolve; });
-}
-const bot = {
-    goto: (x,y,z) => _call('goto', [x,y,z]),
-    mine: (x,y,z) => _call('mine', [x,y,z]),
-    mineBelow: () => _call('mine_below', []),
-    gather: (item,count) => _call('gather', [item,count||1]),
-    craft: (item,count) => _call('craft', [item,count||1]),
-    place: (item,x,y,z) => _call('place', [item,x,y,z]),
-    open: (x,y,z) => _call('open', [x,y,z]),
-    chat: (msg) => _call('chat', [msg]),
-    attack: () => _call('attack', []),
-    smelt: (output,fuel,count) => _call('smelt', [output,fuel||'coal',count||1]),
-    interact: (x,y,z) => _call('interact', [x,y,z]),
-    sleep: (ms) => new Promise(r => setTimeout(r, ms)),
-    print: (msg) => { console.log(msg); }
-};
-async function main() {
-{{CODE}}
-}
-main().then(r => {
-    process.stdout.write(JSON.stringify({done: true, result: r !== undefined ? String(r) : 'ok'}) + '\n');
-    setTimeout(() => process.exit(0), 100);
-}).catch(e => {
-    process.stdout.write(JSON.stringify({done: true, error: e.message}) + '\n');
-    setTimeout(() => process.exit(1), 100);
-});
-"##;
-
-impl GameTool for RunJsTool {
-    fn name(&self) -> &str {
-        "run_js"
-    }
-    fn description(&self) -> &str {
-        "执行 JavaScript 代码（Node.js 引擎）。代码内可用 await bot.goto(x,y,z), await bot.mine(x,y,z), \
-         await bot.gather(item,count), await bot.craft(item,count), await bot.place(item,x,y,z) 等函数。\
-         所有函数同步等待完成。用 async/await 写顺序逻辑。\
-         例: await bot.goto(10, 64, 20); await bot.gather(\"oak_log\", 4); await bot.craft(\"oak_planks\", 4)"
-    }
-    fn parameters(&self) -> Value {
-        serde_json::json!({
-            "type": "object",
-            "properties": {
-                "code": { "type": "string", "description": "JavaScript 代码，用 async/await 写顺序逻辑" }
-            },
-            "required": ["code"]
-        })
-    }
-    fn effects(&self) -> ToolEffects {
-        ToolEffects::write()
-    }
-    fn execute(
-        &self,
-        _call_id: &str,
-        args: Value,
-        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
-    ) -> anyhow::Result<ToolResult> {
-        let code = args.get("code").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("缺少 code"))?;
-        let adapter = self.ctx.adapter.0.clone();
-        let wrapper = NODE_WRAPPER.replace("{{CODE}}", code);
-
-        let tmp_dir = std::env::temp_dir();
-        let tmp_file = tmp_dir.join(format!("craft_agent_{}.js", std::process::id()));
-        std::fs::write(&tmp_file, &wrapper)?;
-
-        let mut child = std::process::Command::new("node")
-            .arg(&tmp_file)
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| anyhow::anyhow!("无法启动 Node.js: {e} (请确认已安装 Node.js)"))?;
-
-        let mut child_stdin = child.stdin.take().unwrap();
-        let child_stdout = child.stdout.take().unwrap();
-        let reader = std::io::BufReader::new(child_stdout);
-        let mut last_error = String::new();
-
-        for line in reader.lines() {
-            let line = line.map_err(|e| anyhow::anyhow!("读取 Node.js 输出失败: {e}"))?;
-            let json: serde_json::Value = match serde_json::from_str(&line) {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-
-            // 检查是否完成
-            if json.get("done").and_then(|v| v.as_bool()).unwrap_or(false) {
-                if let Some(err) = json.get("error").and_then(|v| v.as_str()) {
-                    return Ok(ToolResult {
-                        message: format!("脚本错误: {err}"),
-                        is_error: true,
-                        images: vec![],
-                    });
-                }
-                let result = json.get("result").and_then(|v| v.as_str()).unwrap_or("ok");
-                let _ = std::fs::remove_file(&tmp_file);
-                return Ok(ToolResult {
-                    message: result.to_string(),
-                    is_error: false,
-                    images: vec![],
-                });
-            }
-
-            // 处理 RPC 请求
-            let id = json["id"].as_i64().unwrap_or(0);
-            let method = json.get("method").and_then(|v| v.as_str()).unwrap_or("");
-            let params = json.get("params").and_then(|v| v.as_array()).map(|a| a.clone()).unwrap_or_default();
-
-            let result = match method {
-                "goto" => {
-                    if params.len() >= 3 {
-                        let x = params[0].as_i64().unwrap_or(0) as i32;
-                        let y = params[1].as_i64().unwrap_or(0) as i32;
-                        let z = params[2].as_i64().unwrap_or(0) as i32;
-                        _exec_action(&adapter, MinecraftAction::Goto { x, y, z })
-                    } else { "参数不足".to_string() }
-                }
-                "mine" => {
-                    if params.len() >= 3 {
-                        let x = params[0].as_i64().unwrap_or(0) as i32;
-                        let y = params[1].as_i64().unwrap_or(0) as i32;
-                        let z = params[2].as_i64().unwrap_or(0) as i32;
-                        _exec_action(&adapter, MinecraftAction::MineBlock { x, y, z })
-                    } else { "参数不足".to_string() }
-                }
-                "mine_below" => {
-                    _exec_action(&adapter, MinecraftAction::MineBelow)
-                }
-                "gather" => {
-                    let item = params.get(0).and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let count = params.get(1).and_then(|v| v.as_u64()).unwrap_or(1) as u32;
-                    _exec_action(&adapter, MinecraftAction::Gather { item, count })
-                }
-                "craft" => {
-                    let item = params.get(0).and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let count = params.get(1).and_then(|v| v.as_u64()).unwrap_or(1) as u32;
-                    _exec_action(&adapter, MinecraftAction::Craft { item, count })
-                }
-                "place" => {
-                    let item = params.get(0).and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let x = params.get(1).and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                    let y = params.get(2).and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                    let z = params.get(3).and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                    _exec_action(&adapter, MinecraftAction::Place { item, x, y, z })
-                }
-                "open" => {
-                    let x = params.get(0).and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                    let y = params.get(1).and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                    let z = params.get(2).and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                    _exec_action(&adapter, MinecraftAction::OpenContainer { x, y, z })
-                }
-                "chat" => {
-                    let msg = params.get(0).and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    _exec_action(&adapter, MinecraftAction::Chat { content: msg })
-                }
-                "attack" => {
-                    _exec_action(&adapter, MinecraftAction::Attack { target: "nearest".to_string() })
-                }
-                "smelt" => {
-                    let output = params.get(0).and_then(|v| v.as_str()).unwrap_or("").to_string();
-                    let fuel = params.get(1).and_then(|v| v.as_str()).unwrap_or("coal").to_string();
-                    let count = params.get(2).and_then(|v| v.as_u64()).unwrap_or(1) as u32;
-                    _exec_action(&adapter, MinecraftAction::Smelt { output, fuel, count })
-                }
-                "interact" => {
-                    let x = params.get(0).and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                    let y = params.get(1).and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                    let z = params.get(2).and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-                    _exec_action(&adapter, MinecraftAction::InteractBlock { x, y, z })
-                }
-                other => format!("未知方法: {other}"),
-            };
-
-            let response = serde_json::json!({"id": id, "result": result});
-            writeln!(child_stdin, "{}", response)?;
-            child_stdin.flush()?;
-        }
-
-        let _ = std::fs::remove_file(&tmp_file);
-        Ok(ToolResult {
-            message: format!("脚本执行完成（最后输出: {last_error}）"),
-            is_error: false,
-            images: vec![],
-        })
-    }
-}
-
-/// 执行脚本（简易 DSL，无需外部依赖）。脚本每行一个函数调用，支持：
-/// goto(x,y,z), mine(x,y,z), gather(item,count), craft(item,count),
-/// place(item,x,y,z), open(x,y,z), mine_below(), chat(msg), attack(),
-/// smelt(output,fuel,count), interact(x,y,z), sleep(ms), print(msg), wait()
-/// 所有函数同步等待完成。字符串参数用双引号。
-/// 例: goto(10, 64, 20); mine(10, 63, 20); gather("oak_log", 4)
+/// 执行 rhai 脚本（嵌入式脚本引擎，直接在 Rust 进程内执行，比 Node.js 更快更轻量）。
+/// 脚本内可直接调用 goto(x,y,z), mine(x,y,z), gather(item,count), craft(item,count),
+/// place(item,x,y,z), open(x,y,z), mine_below(), chat(msg), attack(), smelt(output,fuel,count),
+/// interact(x,y,z), sleep(ms), print(msg)。
+/// 所有函数同步等待完成。支持变量、循环、条件判断等完整 rhai 语法。
+/// 例: let r = goto(10, 64, 20); print(r); gather("oak_log", 4); craft("oak_planks", 4)
 pub struct RunScriptTool {
     ctx: Arc<AzaleaToolCtx>,
 }
@@ -1574,17 +1354,16 @@ impl GameTool for RunScriptTool {
         "run_script"
     }
     fn description(&self) -> &str {
-        "执行简易脚本控制 bot。每行一个函数调用，字符串用双引号。\
-         支持: goto(x,y,z), mine(x,y,z), gather(item,count), craft(item,count), \
-         place(item,x,y,z), open(x,y,z), mine_below(), chat(msg), attack(), \
-         smelt(output,fuel,count), interact(x,y,z), sleep(ms), print(msg)。\
-         例: goto(10, 64, 20); gather(\"oak_log\", 4); craft(\"oak_planks\", 4)"
+        "执行 rhai 脚本（嵌入式引擎）。支持变量、循环、条件。函数: goto(x,y,z), mine(x,y,z), \
+         gather(item,count), craft(item,count), place(item,x,y,z), open(x,y,z), mine_below(), \
+         chat(msg), attack(), smelt(output,fuel,count), interact(x,y,z), sleep(ms), print(msg)。\
+         例: let r = goto(10, 64, 20); print(r); gather(\"oak_log\", 4)"
     }
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "script": { "type": "string", "description": "脚本代码，每行一个函数调用" }
+                "script": { "type": "string", "description": "rhai 脚本代码" }
             },
             "required": ["script"]
         })
@@ -1600,109 +1379,74 @@ impl GameTool for RunScriptTool {
     ) -> anyhow::Result<ToolResult> {
         let script = args.get("script").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("缺少 script"))?;
         let adapter = self.ctx.adapter.0.clone();
-        let mut results: Vec<String> = Vec::new();
+        let mut engine = rhai::Engine::new();
 
-        for line in script.lines() {
-            let line = line.trim();
-            if line.is_empty() || line.starts_with("//") || line.starts_with('#') { continue; }
-            // 去掉末尾分号
-            let line = line.strip_suffix(';').unwrap_or(line);
+        let a = adapter.clone();
+        engine.register_fn("goto", move |x: i64, y: i64, z: i64| -> String {
+            _exec_action(&a, MinecraftAction::Goto { x: x as i32, y: y as i32, z: z as i32 })
+        });
+        let a = adapter.clone();
+        engine.register_fn("mine", move |x: i64, y: i64, z: i64| -> String {
+            _exec_action(&a, MinecraftAction::MineBlock { x: x as i32, y: y as i32, z: z as i32 })
+        });
+        let a = adapter.clone();
+        engine.register_fn("mine_below", move || -> String {
+            _exec_action(&a, MinecraftAction::MineBelow)
+        });
+        let a = adapter.clone();
+        engine.register_fn("gather", move |item: String, count: i64| -> String {
+            _exec_action(&a, MinecraftAction::Gather { item, count: count as u32 })
+        });
+        let a = adapter.clone();
+        engine.register_fn("craft", move |item: String, count: i64| -> String {
+            _exec_action(&a, MinecraftAction::Craft { item, count: count as u32 })
+        });
+        let a = adapter.clone();
+        engine.register_fn("place", move |item: String, x: i64, y: i64, z: i64| -> String {
+            _exec_action(&a, MinecraftAction::Place { item, x: x as i32, y: y as i32, z: z as i32 })
+        });
+        let a = adapter.clone();
+        engine.register_fn("open", move |x: i64, y: i64, z: i64| -> String {
+            _exec_action(&a, MinecraftAction::OpenContainer { x: x as i32, y: y as i32, z: z as i32 })
+        });
+        let a = adapter.clone();
+        engine.register_fn("chat", move |msg: String| -> String {
+            _exec_action(&a, MinecraftAction::Chat { content: msg })
+        });
+        let a = adapter.clone();
+        engine.register_fn("attack", move || -> String {
+            _exec_action(&a, MinecraftAction::Attack { target: "nearest".to_string() })
+        });
+        let a = adapter.clone();
+        engine.register_fn("smelt", move |output: String, fuel: String, count: i64| -> String {
+            _exec_action(&a, MinecraftAction::Smelt { output, fuel, count: count as u32 })
+        });
+        let a = adapter.clone();
+        engine.register_fn("interact", move |x: i64, y: i64, z: i64| -> String {
+            _exec_action(&a, MinecraftAction::InteractBlock { x: x as i32, y: y as i32, z: z as i32 })
+        });
+        engine.register_fn("sleep", |ms: i64| {
+            std::thread::sleep(std::time::Duration::from_millis(ms as u64));
+        });
+        engine.register_fn("print", |msg: String| {
+            println!("[bot] {msg}");
+        });
 
-            // 解析函数名和参数
-            let paren_open = match line.find('(') {
-                Some(p) => p,
-                None => { results.push(format!("语法错误: {line} (缺少 '(')")); break; }
-            };
-            let func_name = line[..paren_open].trim();
-            let args_str = line[paren_open + 1..].strip_suffix(')').unwrap_or("");
-            let raw_args: Vec<&str> = args_str.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+        engine.set_max_operations(100_000);
+        engine.set_max_call_levels(20);
 
-            // 解析参数：字符串（带引号）或数字
-            let parse_str = |i: usize| -> Option<String> {
-                let s = *raw_args.get(i)?;
-                Some(s.strip_prefix('"').and_then(|s| s.strip_suffix('"')).unwrap_or(s).to_string())
-            };
-            let parse_i64 = |i: usize| -> Option<i64> {
-                raw_args.get(i).and_then(|s| s.parse::<i64>().ok())
-            };
-            let parse_u32 = |i: usize| -> Option<u32> {
-                raw_args.get(i).and_then(|s| s.parse::<u32>().ok())
-            };
-
-            let result = match func_name {
-                "goto" => {
-                    let (x, y, z) = (parse_i64(0)?, parse_i64(1)?, parse_i64(2)?);
-                    _exec_action(&adapter, MinecraftAction::Goto { x: x as i32, y: y as i32, z: z as i32 })
-                }
-                "mine" => {
-                    let (x, y, z) = (parse_i64(0)?, parse_i64(1)?, parse_i64(2)?);
-                    _exec_action(&adapter, MinecraftAction::MineBlock { x: x as i32, y: y as i32, z: z as i32 })
-                }
-                "mine_below" => {
-                    _exec_action(&adapter, MinecraftAction::MineBelow)
-                }
-                "gather" => {
-                    let item = parse_str(0)?;
-                    let count = parse_u32(1).unwrap_or(1);
-                    _exec_action(&adapter, MinecraftAction::Gather { item, count })
-                }
-                "craft" => {
-                    let item = parse_str(0)?;
-                    let count = parse_u32(1).unwrap_or(1);
-                    _exec_action(&adapter, MinecraftAction::Craft { item, count })
-                }
-                "place" => {
-                    let item = parse_str(0)?;
-                    let (x, y, z) = (parse_i64(1)?, parse_i64(2)?, parse_i64(3)?);
-                    _exec_action(&adapter, MinecraftAction::Place { item, x: x as i32, y: y as i32, z: z as i32 })
-                }
-                "open" => {
-                    let (x, y, z) = (parse_i64(0)?, parse_i64(1)?, parse_i64(2)?);
-                    _exec_action(&adapter, MinecraftAction::OpenContainer { x: x as i32, y: y as i32, z: z as i32 })
-                }
-                "chat" => {
-                    let msg = parse_str(0)?;
-                    _exec_action(&adapter, MinecraftAction::Chat { content: msg })
-                }
-                "attack" => {
-                    _exec_action(&adapter, MinecraftAction::Attack { target: "nearest".to_string() })
-                }
-                "smelt" => {
-                    let output = parse_str(0)?;
-                    let fuel = parse_str(1).unwrap_or_else(|| "coal".to_string());
-                    let count = parse_u32(2).unwrap_or(1);
-                    _exec_action(&adapter, MinecraftAction::Smelt { output, fuel, count })
-                }
-                "interact" => {
-                    let (x, y, z) = (parse_i64(0)?, parse_i64(1)?, parse_i64(2)?);
-                    _exec_action(&adapter, MinecraftAction::InteractBlock { x: x as i32, y: y as i32, z: z as i32 })
-                }
-                "sleep" => {
-                    let ms = parse_u32(0).unwrap_or(1000);
-                    std::thread::sleep(std::time::Duration::from_millis(ms as u64));
-                    format!("sleep {ms}ms")
-                }
-                "print" => {
-                    let msg = parse_str(0).unwrap_or_else(|| "".to_string());
-                    println!("[bot] {msg}");
-                    format!("print: {msg}")
-                }
-                "wait" => {
-                    "ok".to_string()
-                }
-                other => {
-                    results.push(format!("未知函数: {other}"));
-                    break;
-                }
-            };
-            results.push(format!("{func_name}({args_str}) → {result}"));
+        match engine.eval::<String>(script) {
+            Ok(output) => Ok(ToolResult {
+                message: if output.is_empty() { "脚本执行完成".to_string() } else { output },
+                is_error: false,
+                images: vec![],
+            }),
+            Err(e) => Ok(ToolResult {
+                message: format!("脚本错误: {e}"),
+                is_error: true,
+                images: vec![],
+            }),
         }
-
-        Ok(ToolResult {
-            message: results.join("\n"),
-            is_error: false,
-            images: vec![],
-        })
     }
 }
 /// 执行蓝图建造：按 JSON 描述的方块列表依次放置。
@@ -1808,6 +1552,5 @@ pub fn create_mc_azalea_tools(
         Box::new(SearchWikiTool::new(ctx.clone())),
         Box::new(RunScriptTool::new(ctx.clone())),
         Box::new(BuildTool::new(ctx.clone())),
-        Box::new(RunJsTool::new(ctx.clone())),
     ]
 }

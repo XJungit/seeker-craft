@@ -27,6 +27,7 @@ azalea-protocol = { git = "https://github.com/azalea-rs/azalea", rev = "c35b57eb
 bevy_app = { version = "0.19.0", optional = true }
 bevy_ecs = { version = "0.19.0", default-features = false, optional = true }
 tokio = { version = "1", features = ["full"], optional = true }
+rhai = { version = "1.25.1", features = ["sync", "serde"] }
 
 [features]
 # 唯一路线：Azalea 客户端协议层（Rust 全栈 bot 直连普通 MC 服务器）。
