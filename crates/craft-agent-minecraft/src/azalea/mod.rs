@@ -32,6 +32,7 @@ use bevy_ecs::component::Component;
 use craft_agent::core::memory::{MemoryKind, MemoryPos, WorldMemory};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 /// 当前毫秒时间戳（扫描 TTL 用）。
@@ -219,10 +220,17 @@ pub enum BotCommand {
     InteractEntity { kind: String },
 }
 
+/// 队列中的命令包装：携带结果回传通道（None 表示 fire-and-forget，如聊天指令）。
+#[derive(Clone)]
+pub struct QueuedCommand {
+    pub cmd: BotCommand,
+    pub result_tx: Option<std::sync::mpsc::Sender<String>>,
+}
+
 /// handler 状态：持有命令队列、事件发送端与最近坐标（跨事件持久，Arc 共享）。
 #[derive(Component, Clone)]
 pub struct BotState {
-    pub cmd_queue: Arc<Mutex<Vec<BotCommand>>>,
+    pub cmd_queue: Arc<Mutex<Vec<QueuedCommand>>>,
     pub evt_tx: Arc<mpsc::UnboundedSender<BotEvent>>,
     pub last_position: Arc<Mutex<Option<azalea::Vec3>>>,
     /// 持续下挖标志：收到 MineBelow 后置 true，Tick 内只要未在挖就重复触发，
@@ -231,7 +239,7 @@ pub struct BotState {
     /// 当前正在执行的单条命令（串行槽）。每 tick 只推进一条，完成后才取队列下一条。
     /// 修复：原实现每 tick drain 全部命令一起执行，多个 start_mining 互相覆盖只剩
     /// 最后一个生效——导致"一轮多动作"实际只执行了最后一个动作。
-    pub pending: Arc<Mutex<Option<BotCommand>>>,
+    pub pending: Arc<Mutex<Option<QueuedCommand>>>,
     /// pending 命令开始的 tick（ticks_connected），用于超时释放：若命令长时间
     /// 未完成（如 goto 被卡住到不了），强制清空 pending 放行队列下一条，避免死锁。
     pub pending_since: Arc<Mutex<Option<u64>>>,
@@ -265,7 +273,7 @@ impl Default for BotState {
 
 /// Azalea bot 句柄：连入后持有命令队列与事件通道，提供动作与感知 API。
 pub struct AzaleaBot {
-    cmd_queue: Arc<Mutex<Vec<BotCommand>>>,
+    cmd_queue: Arc<Mutex<Vec<QueuedCommand>>>,
     events: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<BotEvent>>>,
     /// 最近一次已知坐标（由 handler Tick 更新，供同步读取）。
     pub last_position: Arc<Mutex<Option<azalea::Vec3>>>,
@@ -294,7 +302,7 @@ impl AzaleaBot {
         let account = Account::offline(username);
         let (evt_tx, evt_rx) = mpsc::unbounded_channel::<BotEvent>();
         let evt_tx = Arc::new(evt_tx);
-        let cmd_queue: Arc<Mutex<Vec<BotCommand>>> = Arc::new(Mutex::new(Vec::new()));
+        let cmd_queue: Arc<Mutex<Vec<QueuedCommand>>> = Arc::new(Mutex::new(Vec::new()));
         let last_position: Arc<Mutex<Option<azalea::Vec3>>> = Arc::new(Mutex::new(None));
         let ext: crate::azalea::ext_state::SharedExt =
             Arc::new(Mutex::new(crate::azalea::ext_state::BotExtState::default()));
@@ -372,108 +380,81 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
             //   goto <x> <y> <z> / mine <x> <y> <z> / minebelow / attack
             {
                 let mut q = cmd_queue.lock().unwrap();
+                let mut push = |cmd: BotCommand| {
+                    q.push(QueuedCommand { cmd, result_tx: None });
+                };
                 if let Some(rest) = content.strip_prefix("autocraft ") {
                     let mut parts = rest.split_whitespace();
                     if let Some(item) = parts.next() {
-                        let count =
-                            parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
-                        q.push(BotCommand::AutoCraft {
-                            item: item.to_string(),
-                            count,
-                        });
+                        let count = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
+                        push(BotCommand::AutoCraft { item: item.to_string(), count });
                     }
                 } else if let Some(rest) = content.strip_prefix("open ") {
-                    let c: Vec<i32> =
-                        rest.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+                    let c: Vec<i32> = rest.split_whitespace().filter_map(|s| s.parse().ok()).collect();
                     if c.len() == 3 {
-                        q.push(BotCommand::OpenContainer { x: c[0], y: c[1], z: c[2] });
+                        push(BotCommand::OpenContainer { x: c[0], y: c[1], z: c[2] });
                     }
                 } else if let Some(rest) = content.strip_prefix("place ") {
                     let mut parts = rest.split_whitespace();
                     if let Some(item) = parts.next() {
-                        let c: Vec<i32> =
-                            parts.filter_map(|s| s.parse().ok()).collect();
+                        let c: Vec<i32> = parts.filter_map(|s| s.parse().ok()).collect();
                         if c.len() == 3 {
-                            q.push(BotCommand::Place {
-                                item: item.to_string(),
-                                x: c[0],
-                                y: c[1],
-                                z: c[2],
-                            });
+                            push(BotCommand::Place { item: item.to_string(), x: c[0], y: c[1], z: c[2] });
                         }
                     }
                 } else if let Some(rest) = content.strip_prefix("gather ") {
                     let mut parts = rest.split_whitespace();
                     if let Some(item) = parts.next() {
-                        let count =
-                            parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
-                        q.push(BotCommand::Gather {
-                            item: item.to_string(),
-                            count,
-                        });
+                        let count = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
+                        push(BotCommand::Gather { item: item.to_string(), count });
                     }
                 } else if let Some(rest) = content.strip_prefix("craft3 ") {
                     let mut parts = rest.split_whitespace();
                     if let Some(item) = parts.next() {
-                        let count =
-                            parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
-                        q.push(BotCommand::Craft3x3 {
-                            item: item.to_string(),
-                            count,
-                        });
+                        let count = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
+                        push(BotCommand::Craft3x3 { item: item.to_string(), count });
                     }
                 } else if let Some(rest) = content.strip_prefix("smelt ") {
                     let mut parts = rest.split_whitespace();
                     if let Some(output) = parts.next() {
                         let fuel = parts.next().unwrap_or("coal").to_string();
-                        let count =
-                            parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
-                        q.push(BotCommand::Smelt {
-                            output: output.to_string(),
-                            fuel,
-                            count,
-                        });
+                        let count = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
+                        push(BotCommand::Smelt { output: output.to_string(), fuel, count });
                     }
                 } else if let Some(rest) = content.strip_prefix("craft ") {
                     let mut parts = rest.split_whitespace();
                     if let Some(item) = parts.next() {
-                        let count =
-                            parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
-                        q.push(BotCommand::Craft2x2 {
-                            item: item.to_string(),
-                            count,
-                        });
+                        let count = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
+                        push(BotCommand::Craft2x2 { item: item.to_string(), count });
                     }
                 } else if let Some(rest) = content.strip_prefix("goto ") {
-                    let c: Vec<i32> =
-                        rest.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+                    let c: Vec<i32> = rest.split_whitespace().filter_map(|s| s.parse().ok()).collect();
                     if c.len() == 3 {
-                        q.push(BotCommand::Goto { x: c[0], y: c[1], z: c[2] });
+                        push(BotCommand::Goto { x: c[0], y: c[1], z: c[2] });
                     }
                 } else if let Some(rest) = content.strip_prefix("mine ") {
-                    let c: Vec<i32> =
-                        rest.split_whitespace().filter_map(|s| s.parse().ok()).collect();
+                    let c: Vec<i32> = rest.split_whitespace().filter_map(|s| s.parse().ok()).collect();
                     if c.len() == 3 {
-                        q.push(BotCommand::Mine { x: c[0], y: c[1], z: c[2] });
+                        push(BotCommand::Mine { x: c[0], y: c[1], z: c[2] });
                     }
                 } else if content == "minebelow" {
-                    q.push(BotCommand::MineBelow);
+                    push(BotCommand::MineBelow);
                 } else if content == "attack" {
-                    q.push(BotCommand::Attack { target: "chat".into() });
+                    push(BotCommand::Attack { target: "chat".into() });
                 } else if let Some(rest) = content.strip_prefix("enchant ") {
                     let mut parts = rest.split_whitespace();
                     if let Some(item) = parts.next() {
                         let level = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
-                        q.push(BotCommand::Enchant { item: item.to_string(), level });
+                        push(BotCommand::Enchant { item: item.to_string(), level });
                     }
                 } else if let Some(rest) = content.strip_prefix("trade ") {
                     if let Ok(offer) = rest.trim().parse::<u32>() {
-                        q.push(BotCommand::Trade { offer });
+                        push(BotCommand::Trade { offer });
                     }
                 } else if let Some(rest) = content.strip_prefix("interact ") {
                     let kind = rest.trim().to_string();
                     if !kind.is_empty() {
-                        q.push(BotCommand::InteractEntity { kind });
+                        push(BotCommand::InteractEntity { kind });
                     }
                 }
             }
@@ -489,11 +470,6 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                 *lp.lock().unwrap() = Some(p);
             }
             // 串行消费命令队列：每 tick 最多推进「一条」命令，等它完成才取下一条。
-            // 旧实现每 tick drain 全部命令一起执行，多个 start_mining 互相覆盖只剩
-            // 最后一个生效——导致"一轮多动作"实际只执行了最后一个。现改为单槽
-            // 串行：Goto/Mine/MineBelow 为非阻塞（start 后由后续 tick 轮询完成），
-            // Craft/Gather/Place 等异步命令在 tick 内 await 完成，其余 fire-and-forget
-            // 立即完成。这样模型一轮发出的 goto→gather→craft 才会真正逐个落地。
             {
                 let mut pending = state.pending.lock().unwrap();
                 if pending.is_none() {
@@ -501,17 +477,14 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                         let mut q = cmd_queue.lock().unwrap();
                         q.pop() // FIFO：取最早入队的命令
                     };
-                    if let Some(cmd) = next {
-                        *pending = Some(cmd);
-                        // 记录开始 tick，用于超时释放（卡住时避免整队死锁）。
+                    if let Some(qc) = next {
+                        *pending = Some(qc);
                         *state.pending_since.lock().unwrap() = Some(bot.ticks_connected() as u64);
                     }
                 }
-                // 若已有在途命令，先判定它是否完成（非阻塞命令轮询，异步命令在
-                // 下方执行分支里 await 完即清空 pending）。超时（默认 40 tick≈2s）
-                // 未完成则强制释放，放行队列下一条。
-                if let Some(cmd) = pending.as_ref() {
-                    let done = match cmd {
+                // 轮询非阻塞命令（Goto/Mine）完成状态，超时（40 tick≈2s）强制释放。
+                if let Some(qc) = pending.as_ref() {
+                    let done = match &qc.cmd {
                         BotCommand::Mine { x, y, z } => {
                             if let Ok(world) = bot.world() {
                                 let s = world.read().get_block_state(BlockPos::new(*x, *y, *z));
@@ -542,6 +515,25 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                         }
                     };
                     if done || timed_out {
+                        let result_msg = match &qc.cmd {
+                            BotCommand::Goto { x, y, z } if done => {
+                                format!("已到达目标 ({},{},{})", x, y, z)
+                            }
+                            BotCommand::Goto { x, y, z } => {
+                                format!("goto ({},{},{}) 超时", x, y, z)
+                            }
+                            BotCommand::Mine { x, y, z } if done => {
+                                format!("已挖掉方块 ({},{},{})", x, y, z)
+                            }
+                            BotCommand::Mine { x, y, z } => {
+                                format!("mine ({},{},{}) 超时", x, y, z)
+                            }
+                            _ if done => "命令完成".to_string(),
+                            _ => "命令超时".to_string(),
+                        };
+                        if let Some(tx) = &qc.result_tx {
+                            let _ = tx.send(result_msg);
+                        }
                         *pending = None;
                         *state.pending_since.lock().unwrap() = None;
                     }
@@ -551,38 +543,33 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
             // 非阻塞命令（Goto/Mine）重复 start 是幂等的（重设同一目标），由
             // cmd_finished 轮询完成；MineBelow 在 arm 内清空中途槽。
             // 异步命令（Craft/Gather 等）执行期间 busy=true，下一 tick 跳过避免重入。
-            let to_run: Option<BotCommand> = {
+            let to_run: Option<(BotCommand, Option<std::sync::mpsc::Sender<String>>)> = {
                 if *state.busy.lock().unwrap() {
                     None
-                } else if let Some(c) = state.pending.lock().unwrap().as_ref() {
-                    // 仅对「非轮询」命令置 busy：这些命令在本 tick 内 await/sync 完成，
-                    // 期间不应被下一 tick 重入。Goto/Mine/MineBelow 不置（靠轮询清槽）。
+                } else if let Some(qc) = state.pending.lock().unwrap().as_ref() {
                     let is_polling = matches!(
-                        c,
+                        &qc.cmd,
                         BotCommand::Goto { .. } | BotCommand::Mine { .. } | BotCommand::MineBelow
                     );
                     if !is_polling {
                         *state.busy.lock().unwrap() = true;
                     }
-                    Some(c.clone())
+                    Some((qc.cmd.clone(), qc.result_tx.clone()))
                 } else {
                     None
                 }
             };
-            if let Some(cmd) = to_run {
-                // 标记在途（仅对需要轮询的非阻塞命令），执行后清除。
+            if let Some((cmd, result_tx)) = to_run {
                 match cmd {
                     BotCommand::Goto { x, y, z } => {
                         *state.mining_below.lock().unwrap() = false;
                         bot.start_goto(BlockPosGoal(BlockPos::new(x, y, z)));
-                        // 非阻塞：pending 保留，由后续 tick 的 cmd_finished 轮询完成。
                     }
                     BotCommand::Mine { x, y, z } => {
                         *state.mining_below.lock().unwrap() = false;
                         bot.start_mining(BlockPos::new(x, y, z));
                     }
                     BotCommand::MineBelow => {
-                        // 进入持续下挖模式：置标志，Tick 内自动续挖。
                         *state.mining_below.lock().unwrap() = true;
                         if let Ok(p) = bot.position() {
                             let foot = BlockPos::new(
@@ -592,128 +579,147 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                             );
                             bot.start_mining(foot);
                         }
-                        // 非阻塞：清空中途槽，让队列继续；持续下挖由下方 tick 循环续接。
                         *state.pending.lock().unwrap() = None;
                     }
                     BotCommand::BlockInteract { x, y, z } => {
                         *state.mining_below.lock().unwrap() = false;
                         bot.block_interact(BlockPos::new(x, y, z));
+                        if let Some(tx) = &result_tx {
+                            let _ = tx.send(format!("已交互 ({},{},{})", x, y, z));
+                        }
                     }
                     BotCommand::Chat { content } => {
                         bot.chat(&content);
+                        if let Some(tx) = &result_tx {
+                            let _ = tx.send(format!("chat: {content}"));
+                        }
                     }
                     BotCommand::Attack { target: _target } => {
-                        // 攻击最近的「非玩家」实体（自卫/狩猎）。
-                        // nearest_entities 返回按距离排序的 EntityRef；用 Without<Player>
-                        // 过滤掉玩家，再跳过本地 bot 自身。找不到则无操作。
                         if let Ok(entities) =
                             bot.nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>()
                         {
                             let self_id = bot.entity().id();
+                            let mut hit = false;
                             for e in entities.iter() {
-                                if e.id() == self_id {
-                                    continue;
-                                }
+                                if e.id() == self_id { continue; }
                                 e.attack();
+                                hit = true;
                                 break;
+                            }
+                            if let Some(tx) = &result_tx {
+                                let _ = tx.send(if hit { "攻击完成".to_string() } else { "附近无可攻击实体".to_string() });
                             }
                         }
                     }
                     BotCommand::Craft2x2 { item, count } => {
-                        // 2×2 背包合成（异步：需等服务端回填网格与结果槽）。
-                        // 在 handler 内 await 是 azalea 既有模式（其示例也在事件
-                        // handler 中 await 阻塞式 bot 操作）；current_thread runtime
-                        // 在 await 期间仍可处理容器更新包。
                         match crate::azalea::craft::do_craft_2x2(&bot, &item, count).await {
                             Ok(msg) => {
-                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[合成] {msg}") });
+                                let chat = format!("[合成] {msg}");
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
+                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
                             }
                             Err(e) => {
-                                let _ = evt_tx.send(BotEvent::Chat {
-                                    content: format!("[合成失败] {e}"),
-                                });
+                                let chat = format!("[合成失败] {e}");
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
+                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
                             }
                         }
                     }
                     BotCommand::Craft3x3 { item, count } => {
                         match crate::azalea::craft::do_craft_3x3(&bot, &item, count).await {
                             Ok(msg) => {
-                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[合成] {msg}") });
+                                let chat = format!("[合成] {msg}");
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
+                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
                             }
                             Err(e) => {
-                                let _ = evt_tx.send(BotEvent::Chat {
-                                    content: format!("[合成失败] {e}"),
-                                });
+                                let chat = format!("[合成失败] {e}");
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
+                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
                             }
                         }
                     }
                     BotCommand::Smelt { output, fuel, count } => {
                         match crate::azalea::craft::do_smelt(&bot, &output, &fuel, count).await {
                             Ok(msg) => {
-                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[熔炼] {msg}") });
+                                let chat = format!("[熔炼] {msg}");
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
+                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
                             }
                             Err(e) => {
-                                let _ = evt_tx.send(BotEvent::Chat {
-                                    content: format!("[熔炼失败] {e}"),
-                                });
+                                let chat = format!("[熔炼失败] {e}");
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
+                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
                             }
                         }
                     }
                     BotCommand::Gather { item, count } => {
                         match crate::azalea::gather::do_gather(&bot, &item, count).await {
                             Ok(msg) => {
-                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[采集] {msg}") });
+                                let chat = format!("[采集] {msg}");
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
+                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
                             }
                             Err(e) => {
-                                let _ = evt_tx.send(BotEvent::Chat {
-                                    content: format!("[采集失败] {e}"),
-                                });
+                                let chat = format!("[采集失败] {e}");
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
+                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
                             }
                         }
                     }
                     BotCommand::Place { item, x, y, z } => {
                         match crate::azalea::place::do_place(&bot, &item, BlockPos::new(x, y, z)).await {
                             Ok(msg) => {
-                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[放置] {msg}") });
+                                let chat = format!("[放置] {msg}");
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
+                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
                             }
                             Err(e) => {
-                                let _ = evt_tx.send(BotEvent::Chat {
-                                    content: format!("[放置失败] {e}"),
-                                });
+                                let chat = format!("[放置失败] {e}");
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
+                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
                             }
                         }
                     }
                     BotCommand::OpenContainer { x, y, z } => {
                         match crate::azalea::place::do_open_container(&bot, BlockPos::new(x, y, z)).await {
                             Ok(msg) => {
-                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[开容器] {msg}") });
+                                let chat = format!("[开容器] {msg}");
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
+                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
                             }
                             Err(e) => {
-                                let _ = evt_tx.send(BotEvent::Chat {
-                                    content: format!("[开容器失败] {e}"),
-                                });
+                                let chat = format!("[开容器失败] {e}");
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
+                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
                             }
                         }
                     }
                     BotCommand::AutoCraft { item, count } => {
                         match crate::azalea::auto_craft::do_auto_craft(&bot, &item, count).await {
                             Ok(msg) => {
-                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[自动合成] {msg}") });
+                                let chat = format!("[自动合成] {msg}");
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
+                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
                             }
                             Err(e) => {
-                                let _ = evt_tx.send(BotEvent::Chat {
-                                    content: format!("[自动合成失败] {e}"),
-                                });
+                                let chat = format!("[自动合成失败] {e}");
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
+                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
                             }
                         }
                     }
                     BotCommand::Enchant { item, level } => {
                         match crate::azalea::craft::do_enchant(&bot, &item, level).await {
                             Ok(msg) => {
-                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[附魔] {msg}") });
+                                let chat = format!("[附魔] {msg}");
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
+                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
                             }
                             Err(e) => {
-                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[附魔失败] {e}") });
+                                let chat = format!("[附魔失败] {e}");
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
+                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
                             }
                         }
                     }
@@ -721,10 +727,14 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                         let ext = bot.ecs.read().resource::<crate::azalea::ext_state::BotExtResource>().0.clone();
                         match crate::azalea::trade::do_trade(&bot, &ext, offer).await {
                             Ok(msg) => {
-                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[交易] {msg}") });
+                                let chat = format!("[交易] {msg}");
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
+                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
                             }
                             Err(e) => {
-                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[交易失败] {e}") });
+                                let chat = format!("[交易失败] {e}");
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
+                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
                             }
                         }
                     }
@@ -739,23 +749,24 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                         match target {
                             Ok(e) => {
                                 bot.entity_interact(e);
-                                let _ = evt_tx.send(BotEvent::Chat {
-                                    content: format!("[交互] 已右键 {kind}"),
-                                });
+                                let chat = format!("[交互] 已右键 {kind}");
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
+                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
                             }
                             Err(e) => {
-                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[交互失败] {e}") });
+                                let chat = format!("[交互失败] {e}");
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
+                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
                             }
                         }
                     }
                 }
                 // 非轮询命令（异步/即时）执行完即清空中途槽与 busy，让队列推进下一条。
-                // 仅 Goto / Mine / MineBelow 保留在途、交由后续 tick 的 cmd_finished 轮询。
                 {
                     let mut pending = state.pending.lock().unwrap();
-                    if let Some(c) = pending.as_ref() {
+                    if let Some(qc) = pending.as_ref() {
                         if !matches!(
-                            c,
+                            &qc.cmd,
                             BotCommand::Goto { .. } | BotCommand::Mine { .. } | BotCommand::MineBelow
                         ) {
                             *pending = None;
@@ -1039,7 +1050,24 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
 
     /// 推送动作指令（fire-and-forget，handler tick 中执行）。
     fn push_cmd(&self, cmd: BotCommand) {
-        self.cmd_queue.lock().unwrap().push(cmd);
+        self.cmd_queue.lock().unwrap().push(QueuedCommand { cmd, result_tx: None });
+    }
+
+    /// 推送动作指令并等待执行结果（同步阻塞，超时默认 120s）。
+    /// 返回命令执行后的结果描述字符串。
+    pub fn push_cmd_and_wait(&self, cmd: BotCommand, timeout_ms: u64) -> anyhow::Result<String> {
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        self.cmd_queue.lock().unwrap().push(QueuedCommand {
+            cmd,
+            result_tx: Some(tx),
+        });
+        match rx.recv_timeout(Duration::from_millis(timeout_ms)) {
+            Ok(msg) => Ok(msg),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                Err(anyhow::anyhow!("命令执行超时 ({}ms)", timeout_ms))
+            }
+            Err(e) => Err(anyhow::anyhow!("命令结果通道错误: {}", e)),
+        }
     }
 }
 

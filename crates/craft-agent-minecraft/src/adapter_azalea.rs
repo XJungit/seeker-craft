@@ -9,9 +9,8 @@
 //! 这补齐了 Fabric mod 路线的"治本缺口"：原生结构化感知 + 原生动作执行，
 //! 无需维护 Java 补丁或 OS 级键鼠模拟。
 
-use crate::azalea::{AzaleaBot, BotEvent};
+use crate::azalea::{AzaleaBot, BotCommand, BotEvent};
 use anyhow::{anyhow, Context, Result};
-use azalea::prelude::*;
 use craft_agent::core::adapter::GameAdapter;
 use craft_agent::core::memory::WorldMemory;
 use craft_agent::core::types::{Action, ExecResult, MinecraftAction, Screenshot, WorldState};
@@ -239,124 +238,40 @@ impl MinecraftAzaleaAdapter {
         }
     }
 
-    fn execute_mc(&mut self, mc: MinecraftAction) -> Result<ExecResult> {
-        match mc {
-            MinecraftAction::Goto { x, y, z } => {
-                self.bot.goto(x, y, z);
-                Ok(ExecResult {
-                    ok: true,
-                    detail: format!("goto ({x},{y},{z}) 已下发"),
-                })
-            }
-            MinecraftAction::MineBlock { x, y, z } => {
-                self.bot.mine(x, y, z);
-                Ok(ExecResult {
-                    ok: true,
-                    detail: format!("mine ({x},{y},{z}) 已下发"),
-                })
-            }
-            MinecraftAction::MineBelow => {
-                self.bot.mine_below();
-                Ok(ExecResult {
-                    ok: true,
-                    detail: "mine_below 已下发".to_string(),
-                })
-            }
-            MinecraftAction::InteractBlock { x, y, z } => {
-                self.bot.block_interact(x, y, z);
-                Ok(ExecResult {
-                    ok: true,
-                    detail: format!("interact ({x},{y},{z}) 已下发"),
-                })
-            }
-            MinecraftAction::Chat { content } => {
-                self.bot.chat(&content);
-                Ok(ExecResult {
-                    ok: true,
-                    detail: format!("chat: {content}"),
-                })
-            }
-            MinecraftAction::Attack { target } => {
-                let detail = format!("attack 已下发（目标={target}，攻击最近非玩家实体）");
-                self.bot.attack(target);
-                Ok(ExecResult {
-                    ok: true,
-                    detail,
-                })
-            }
-            MinecraftAction::Craft { item, count } => {
-                // 走 2×2 背包合成（azalea 公开 API 实现，无需工作台）。
-                // 命令经队列异步在 handler 内执行；结果通过事件流回传（见 mod.rs）。
-                self.bot.craft_2x2(item.clone(), count);
-                Ok(ExecResult {
-                    ok: true,
-                    detail: format!("craft 已下发（2×2 背包合成：{item} x{count}）"),
-                })
-            }
-            MinecraftAction::Craft3x3 { item, count } => {
-                self.bot.craft_3x3(item.clone(), count);
-                Ok(ExecResult {
-                    ok: true,
-                    detail: format!("craft3x3 已下发（需已打开工作台：{item} x{count}）"),
-                })
-            }
-            MinecraftAction::Smelt { output, fuel, count } => {
-                self.bot.smelt(output.clone(), fuel.clone(), count);
-                Ok(ExecResult {
-                    ok: true,
-                    detail: format!("smelt 已下发（需已打开熔炉：{output} + {fuel} x{count}）"),
-                })
-            }
-            MinecraftAction::Gather { item, count } => {
-                self.bot.gather(item.clone(), count);
-                Ok(ExecResult {
-                    ok: true,
-                    detail: format!("gather 已下发（采集最近 {item} x{count}）"),
-                })
-            }
-            MinecraftAction::Place { item, x, y, z } => {
-                self.bot.place(item.clone(), x, y, z);
-                Ok(ExecResult {
-                    ok: true,
-                    detail: format!("place 已下发（{item} @ ({x},{y},{z})）"),
-                })
-            }
-            MinecraftAction::OpenContainer { x, y, z } => {
-                self.bot.open_container(x, y, z);
-                Ok(ExecResult {
-                    ok: true,
-                    detail: format!("open 已下发（容器 @ ({x},{y},{z})）"),
-                })
-            }
-            MinecraftAction::AutoCraft { item, count } => {
-                self.bot.auto_craft(item.clone(), count);
-                Ok(ExecResult {
-                    ok: true,
-                    detail: format!("auto_craft 已下发（木链自动合成 {item} x{count}）"),
-                })
-            }
-            MinecraftAction::Enchant { item, level } => {
-                self.bot.enchant(item.clone(), level);
-                Ok(ExecResult {
-                    ok: true,
-                    detail: format!("enchant 已下发（需已打开附魔台且背包有 {item} 与青金石，等级 {level}）"),
-                })
-            }
-            MinecraftAction::Trade { offer } => {
-                self.bot.trade(offer);
-                Ok(ExecResult {
-                    ok: true,
-                    detail: format!("trade 已下发（与最近村民交易，报价 #{offer}）"),
-                })
-            }
-            MinecraftAction::InteractEntity { kind } => {
-                self.bot.interact_entity(kind.clone());
-                Ok(ExecResult {
-                    ok: true,
-                    detail: format!("interact_entity 已下发（与最近 {kind} 交互）"),
-                })
-            }
+    /// 将 MinecraftAction 转换为 BotCommand（同步等待结果）。
+    fn exec_mc_sync(&self, mc: MinecraftAction, timeout_ms: u64) -> Result<ExecResult> {
+        let cmd = mc_to_cmd(mc);
+        match self.bot.push_cmd_and_wait(cmd, timeout_ms) {
+            Ok(msg) => Ok(ExecResult { ok: true, detail: msg }),
+            Err(e) => Ok(ExecResult { ok: false, detail: format!("{e}") }),
         }
+    }
+
+    fn execute_mc(&mut self, mc: MinecraftAction) -> Result<ExecResult> {
+        // 所有动作同步等待结果，让工具返回真实反馈而非"已下发"
+        self.exec_mc_sync(mc, 120_000)
+    }
+}
+
+/// 将 MinecraftAction 转换为 BotCommand（供 push_cmd_and_wait 使用）。
+fn mc_to_cmd(mc: MinecraftAction) -> BotCommand {
+    match mc {
+        MinecraftAction::Goto { x, y, z } => BotCommand::Goto { x, y, z },
+        MinecraftAction::MineBlock { x, y, z } => BotCommand::Mine { x, y, z },
+        MinecraftAction::MineBelow => BotCommand::MineBelow,
+        MinecraftAction::InteractBlock { x, y, z } => BotCommand::BlockInteract { x, y, z },
+        MinecraftAction::Chat { content } => BotCommand::Chat { content },
+        MinecraftAction::Attack { target } => BotCommand::Attack { target },
+        MinecraftAction::Craft { item, count } => BotCommand::Craft2x2 { item, count },
+        MinecraftAction::Craft3x3 { item, count } => BotCommand::Craft3x3 { item, count },
+        MinecraftAction::Smelt { output, fuel, count } => BotCommand::Smelt { output, fuel, count },
+        MinecraftAction::Gather { item, count } => BotCommand::Gather { item, count },
+        MinecraftAction::Place { item, x, y, z } => BotCommand::Place { item, x, y, z },
+        MinecraftAction::OpenContainer { x, y, z } => BotCommand::OpenContainer { x, y, z },
+        MinecraftAction::AutoCraft { item, count } => BotCommand::AutoCraft { item, count },
+        MinecraftAction::Enchant { item, level } => BotCommand::Enchant { item, level },
+        MinecraftAction::Trade { offer } => BotCommand::Trade { offer },
+        MinecraftAction::InteractEntity { kind } => BotCommand::InteractEntity { kind },
     }
 }
 
