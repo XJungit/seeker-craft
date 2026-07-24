@@ -15,10 +15,13 @@ pub mod actions;
 pub mod auto_craft;
 pub mod client;
 pub mod craft;
+pub mod ext_state;
 pub mod gather;
 pub mod perception;
 pub mod place;
+pub mod recipe_book;
 pub mod recipes;
+pub mod trade;
 
 use azalea::prelude::*;
 use azalea::pathfinder::goals::BlockPosGoal;
@@ -72,6 +75,11 @@ pub enum BotCommand {
     /// 附魔：在已打开的附魔台中，给 item 附魔（需背包有 item 与青金石 lapis_lazuli）。
     /// level 为 1/2/3，对应附魔台三个选项槽。
     Enchant { item: String, level: u32 },
+    /// 村民交易：与最近的村民交易，选第 offer 个报价（0 起）。bot 自动打开村民。
+    Trade { offer: u32 },
+    /// 实体右键交互（打开村民/动物/展示框等）：与最近的指定种类实体交互。
+    /// kind 为实体种类关键词，如 "villager"。
+    InteractEntity { kind: String },
 }
 
 /// handler 状态：持有命令队列、事件发送端与最近坐标（跨事件持久，Arc 共享）。
@@ -105,6 +113,8 @@ pub struct AzaleaBot {
     events: Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<BotEvent>>>,
     /// 最近一次已知坐标（由 handler Tick 更新，供同步读取）。
     pub last_position: Arc<Mutex<Option<azalea::Vec3>>>,
+    /// 跨系统/跨 handler 共享的扩展状态（村民报价、配方书等）。
+    pub ext: crate::azalea::ext_state::SharedExt,
 }
 
 impl AzaleaBot {
@@ -124,6 +134,9 @@ impl AzaleaBot {
         let evt_tx = Arc::new(evt_tx);
         let cmd_queue: Arc<Mutex<Vec<BotCommand>>> = Arc::new(Mutex::new(Vec::new()));
         let last_position: Arc<Mutex<Option<azalea::Vec3>>> = Arc::new(Mutex::new(None));
+        let ext: crate::azalea::ext_state::SharedExt =
+            Arc::new(Mutex::new(crate::azalea::ext_state::BotExtState::default()));
+        let ext_for_bot = ext.clone();
 
         let state = BotState {
             cmd_queue: cmd_queue.clone(),
@@ -142,6 +155,7 @@ impl AzaleaBot {
                 .expect("azalea runtime");
             rt.block_on(async move {
                 let _ = ClientBuilder::new()
+                    .add_plugins(crate::azalea::ext_state::CraftAgentPlugin { ext: ext.clone() })
                     .set_handler(AzaleaBot::handle)
                     .set_state(state)
                     .start(account, addr.as_str())
@@ -153,6 +167,7 @@ impl AzaleaBot {
             cmd_queue,
             events: Arc::new(tokio::sync::Mutex::new(evt_rx)),
             last_position,
+            ext: ext_for_bot,
         })
     }
 
@@ -279,6 +294,15 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                     if let Some(item) = parts.next() {
                         let level = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
                         q.push(BotCommand::Enchant { item: item.to_string(), level });
+                    }
+                } else if let Some(rest) = content.strip_prefix("trade ") {
+                    if let Ok(offer) = rest.trim().parse::<u32>() {
+                        q.push(BotCommand::Trade { offer });
+                    }
+                } else if let Some(rest) = content.strip_prefix("interact ") {
+                    let kind = rest.trim().to_string();
+                    if !kind.is_empty() {
+                        q.push(BotCommand::InteractEntity { kind });
                     }
                 }
             }
@@ -443,6 +467,37 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                             }
                         }
                     }
+                    BotCommand::Trade { offer } => {
+                        let ext = bot.ecs.read().resource::<crate::azalea::ext_state::BotExtResource>().0.clone();
+                        match crate::azalea::trade::do_trade(&bot, &ext, offer).await {
+                            Ok(msg) => {
+                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[交易] {msg}") });
+                            }
+                            Err(e) => {
+                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[交易失败] {e}") });
+                            }
+                        }
+                    }
+                    BotCommand::InteractEntity { kind } => {
+                        let target = match kind.to_ascii_lowercase().as_str() {
+                            "villager" => {
+                                crate::azalea::trade::find_nearest_villager(&bot)
+                                    .ok_or_else(|| "附近没有村民".to_string())
+                            }
+                            other => Err(format!("暂不支持的实体种类 {other}（目前仅 villager）")),
+                        };
+                        match target {
+                            Ok(e) => {
+                                bot.entity_interact(e);
+                                let _ = evt_tx.send(BotEvent::Chat {
+                                    content: format!("[交互] 已右键 {kind}"),
+                                });
+                            }
+                            Err(e) => {
+                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[交互失败] {e}") });
+                            }
+                        }
+                    }
                 }
             }
             // 持续下挖：只要标志为真且当前未在挖，就续挖（对齐 POC 逻辑，
@@ -540,6 +595,16 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
     /// level 1/2/3 对应附魔台三个选项。
     pub fn enchant(&self, item: String, level: u32) {
         self.push_cmd(BotCommand::Enchant { item, level });
+    }
+
+    /// 村民交易：与最近的村民交易，选第 offer 个报价（0 起）。bot 自动打开村民。
+    pub fn trade(&self, offer: u32) {
+        self.push_cmd(BotCommand::Trade { offer });
+    }
+
+    /// 实体右键交互（打开村民/动物/展示框等）。kind 如 "villager"。
+    pub fn interact_entity(&self, kind: String) {
+        self.push_cmd(BotCommand::InteractEntity { kind });
     }
 
     /// 推送动作指令（fire-and-forget，handler tick 中执行）。

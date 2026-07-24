@@ -802,6 +802,107 @@ impl GameTool for EnchantTool {
     }
 }
 
+/// 村民交易（与最近的村民交易）。
+pub struct TradeTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl TradeTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for TradeTool {
+    fn name(&self) -> &str {
+        "trade"
+    }
+    fn description(&self) -> &str {
+        "村民交易：与最近的村民交易，选第 offer 个报价（0 起，需用 perceive/interact 先靠近村民）。\n\
+         如 trade(0) 买第 1 个报价，trade(1) 买第 2 个。bot 自动打开村民并执行交易。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "offer": { "type": "integer", "description": "报价索引（从 0 开始）" }
+            },
+            "required": ["offer"]
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let offer = args
+            .get("offer")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 offer"))? as u32;
+        let r = self.ctx.adapter.execute_shared(Action::Minecraft(
+            MinecraftAction::Trade { offer },
+        ))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}
+
+/// 实体右键交互（打开村民/动物/展示框等）。
+pub struct InteractEntityTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl InteractEntityTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for InteractEntityTool {
+    fn name(&self) -> &str {
+        "interact_entity"
+    }
+    fn description(&self) -> &str {
+        "实体右键交互：与最近的指定种类实体交互（打开村民界面/动物/物品展示框等）。\n\
+         kind 为实体种类关键词，如 villager。需先走到该实体附近。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "kind": { "type": "string", "description": "实体种类，如 villager" }
+            },
+            "required": ["kind"]
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let kind = args
+            .get("kind")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("缺少 kind"))?
+            .to_string();
+        let r = self.ctx.adapter.execute_shared(Action::Minecraft(
+            MinecraftAction::InteractEntity { kind },
+        ))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}
+
 /// 创建 azalea 工具集并注册到 `ToolRegistry`。
 pub fn create_mc_azalea_tools(adapter: ArcAzaleaAdapter) -> Vec<Box<dyn GameTool>> {
     let ctx = Arc::new(AzaleaToolCtx::new(adapter));
@@ -820,6 +921,8 @@ pub fn create_mc_azalea_tools(adapter: ArcAzaleaAdapter) -> Vec<Box<dyn GameTool
         Box::new(OpenContainerTool::new(ctx.clone())),
         Box::new(AutoCraftTool::new(ctx.clone())),
         Box::new(EnchantTool::new(ctx.clone())),
+        Box::new(TradeTool::new(ctx.clone())),
+        Box::new(InteractEntityTool::new(ctx.clone())),
         Box::new(ChatTool::new(ctx.clone())),
     ]
 }

@@ -278,6 +278,20 @@ impl MinecraftAzaleaAdapter {
                     detail: format!("enchant 已下发（需已打开附魔台且背包有 {item} 与青金石，等级 {level}）"),
                 })
             }
+            MinecraftAction::Trade { offer } => {
+                self.bot.trade(offer);
+                Ok(ExecResult {
+                    ok: true,
+                    detail: format!("trade 已下发（与最近村民交易，报价 #{offer}）"),
+                })
+            }
+            MinecraftAction::InteractEntity { kind } => {
+                self.bot.interact_entity(kind.clone());
+                Ok(ExecResult {
+                    ok: true,
+                    detail: format!("interact_entity 已下发（与最近 {kind} 交互）"),
+                })
+            }
         }
     }
 }

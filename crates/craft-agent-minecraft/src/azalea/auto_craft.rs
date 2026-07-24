@@ -9,7 +9,9 @@ use std::str::FromStr;
 use std::time::Duration;
 use tokio::time::sleep;
 
+use crate::azalea::ext_state::BotExtResource;
 use crate::azalea::place::{do_open_container, do_place};
+use crate::azalea::recipe_book::{RecipeBook, StoredRecipe};
 use crate::azalea::recipes::{lookup, Method};
 
 fn kind(id: &str) -> ItemKind {
@@ -22,6 +24,45 @@ fn normalize(item: &str) -> String {
     } else {
         format!("minecraft:{item}")
     }
+}
+
+/// 从 ecs 资源读取服务端下发的配方书（若有）。
+fn recipe_book_of(bot: &Client) -> RecipeBook {
+    bot.ecs.read().resource::<BotExtResource>().0.lock().unwrap().recipes.clone()
+}
+
+/// 统计某配方书配方所需的各原料物品数量（按网格出现次数计）。
+fn recipe_input_counts(r: &StoredRecipe) -> Vec<(String, u32)> {
+    use std::collections::HashMap;
+    let mut map: HashMap<String, u32> = HashMap::new();
+    match r {
+        StoredRecipe::Shaped { grid, .. } => {
+            for cell in grid {
+                if let Some(ing) = cell {
+                    if let Some(k) = ing.items.first() {
+                        *map.entry(k.to_string()).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+        StoredRecipe::Shapeless { ingredients, .. } => {
+            for ing in ingredients {
+                if let Some(k) = ing.items.first() {
+                    *map.entry(k.to_string()).or_insert(0) += 1;
+                }
+            }
+        }
+        _ => {}
+    }
+    map.into_iter().collect()
+}
+
+/// 递归满足配方书配方的全部原料。
+async fn ensure_recipe_inputs(bot: &Client, r: &StoredRecipe, amount: u32) -> Result<(), String> {
+    for (item, per) in recipe_input_counts(r) {
+        Box::pin(ensure(bot, &item, per * amount)).await?;
+    }
+    Ok(())
 }
 
 /// 背包中 item 的数量。
@@ -94,6 +135,26 @@ async fn ensure(bot: &Client, item: &str, amount: u32) -> Result<(), String> {
             crate::azalea::craft::do_smelt(bot, item, fuel, amount).await?;
         }
         Method::Craft3x3 => {
+            // 优先用服务端配方书（精确原料，免手写表）；否则走手写 SHAPED_RECIPES
+            {
+                let book = recipe_book_of(bot);
+                if let Some(r) = book.get_by_result(item) {
+                    if matches!(r, StoredRecipe::Shaped { .. } | StoredRecipe::Shapeless { .. }) {
+                        // 先满足配方书里的全部原料
+                        ensure_recipe_inputs(bot, r, amount).await?;
+                        // 确保有工作台并放置/打开
+                        Box::pin(ensure(bot, "crafting_table", 1)).await?;
+                        let at = overhead_slot(bot).ok_or("无法计算放置点")?;
+                        do_place(bot, "crafting_table", at).await?;
+                        sleep(Duration::from_millis(200)).await;
+                        do_open_container(bot, at).await?;
+                        sleep(Duration::from_millis(200)).await;
+                        return crate::azalea::craft::do_craft_3x3_recipe(bot, r, amount)
+                            .await
+                            .map(|_| ());
+                    }
+                }
+            }
             for (inp, amt) in recipe.inputs {
                 Box::pin(ensure(bot, inp, amt * amount)).await?;
             }

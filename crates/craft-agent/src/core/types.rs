@@ -118,6 +118,10 @@ pub enum MinecraftAction {
     /// 附魔：在已打开的附魔台中给背包物品 item 附魔（需背包有 item 与青金石 lapis_lazuli）。
     /// level 为 1/2/3，对应附魔台三个选项槽。
     Enchant { item: String, level: u32 },
+    /// 村民交易：与最近的村民交易，选第 offer 个报价（0 起）。bot 自动打开村民。
+    Trade { offer: u32 },
+    /// 实体右键交互（打开村民/动物/展示框等）。kind 为实体种类关键词（如 "villager"）。
+    InteractEntity { kind: String },
 }
 
 /// 动作执行结果

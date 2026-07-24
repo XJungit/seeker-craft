@@ -253,6 +253,82 @@ pub async fn do_craft_3x3(bot: &Client, item: &str, count: u32) -> Result<String
     ))
 }
 
+/// 按配方书（服务端下发）做 3×3 合成：shaped 按网格摆放，shapeless 顺序摆放。
+/// 需已打开工作台（Crafting 菜单）。返回完成信息。
+pub async fn do_craft_3x3_recipe(
+    bot: &Client,
+    recipe: &crate::azalea::recipe_book::StoredRecipe,
+    count: u32,
+) -> Result<String, String> {
+    use crate::azalea::recipe_book::StoredRecipe;
+    let (grid_items, label) = match recipe {
+        StoredRecipe::Shaped { width, height, grid, .. } => {
+            // 把 width*height 的网格映射到 3×3 工作台槽位（1..=9，行优先）
+            let mut placed: Vec<(usize, ItemKind)> = Vec::new();
+            let w = *width as usize;
+            let h = *height as usize;
+            for r in 0..h {
+                for c in 0..w {
+                    let idx = r * w + c;
+                    if let Some(Some(ing)) = grid.get(idx) {
+                        if let Some(k) = ing.items.first() {
+                            // 工作台槽位：row*3+col+1
+                            placed.push((r * 3 + c + 1, *k));
+                        }
+                    }
+                }
+            }
+            (placed, "shaped")
+        }
+        StoredRecipe::Shapeless { ingredients, .. } => {
+            let mut placed: Vec<(usize, ItemKind)> = Vec::new();
+            for (i, ing) in ingredients.iter().enumerate() {
+                if let Some(k) = ing.items.first() {
+                    placed.push((i + 1, *k));
+                }
+            }
+            (placed, "shapeless")
+        }
+        _ => return Err("该配方不是 3×3 合成（请用 smelt/smithing 路径）".to_string()),
+    };
+
+    if grid_items.is_empty() {
+        return Err("配方书无可用原料（可能是 tag 原料未解析）".to_string());
+    }
+
+    let inv = bot
+        .get_inventory()
+        .map_err(|e| format!("获取容器失败（确认已打开工作台）: {e:?}"))?;
+
+    let crafts_needed = count.max(1);
+    let mut crafted = 0u32;
+
+    for _ in 0..crafts_needed {
+        for &(g, k) in &grid_items {
+            let src = find_source_slot(&inv, k)
+                .ok_or_else(|| format!("背包缺少原料 {:?}", k))?;
+            move_stack(&inv, src, g).await;
+        }
+        sleep(Duration::from_millis(80)).await;
+        let has_result = inv
+            .slots()
+            .as_ref()
+            .and_then(|s| s.get(0))
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
+        if !has_result {
+            return Err("配方书合成失败：网格未产生结果（原料可能不足）".to_string());
+        }
+        inv.shift_click(0usize);
+        sleep(Duration::from_millis(40)).await;
+        crafted += 1;
+    }
+
+    Ok(format!(
+        "3×3 合成（配方书 {label}）x{count} 完成（约 {crafted} 次）"
+    ))
+}
+
 /// 熔炼配方：产物 -> (输入物品 id, 每次产出数)。
 struct SmeltRecipe {
     input: &'static str,

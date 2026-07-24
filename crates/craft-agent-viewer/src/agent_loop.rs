@@ -286,6 +286,8 @@ fn run_agent(
           - open(x,y,z)：打开坐标处容器（工作台/熔炉），随后可 craft_3x3 / smelt。\n\
            - auto_craft(item,count)：高层一键造任意已登记物品（推荐），如 auto_craft(\"chest\",1) / auto_craft(\"iron_ingot\",3)，bot 自主采集+合成+熔炼+放置容器。\n\
            - enchant(item,level)：附魔（需先 open 打开附魔台，且背包有 item 与青金石 lapis_lazuli），level 取 1/2/3，如 enchant(\"iron_sword\",2)。\n\
+           - interact_entity(kind)：右键交互最近的实体（如 villager）。先走到村民附近再用。\n\
+           - trade(offer)：与最近的村民交易，选第 offer 个报价（0 起）。需先靠近村民。\n\
            - chat(content)：发聊天消息，用于向玩家汇报进度。\n\
          行为准则：\n\
          1) 下探任务：连续调 mine_below 2~3 次后，调一次 chat 汇报当前 Y 坐标与进度，\n\
