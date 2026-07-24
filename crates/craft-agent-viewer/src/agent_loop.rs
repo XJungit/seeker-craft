@@ -378,7 +378,11 @@ fn run_agent(
              探索时优先朝资源丰富方向推进（如朝已知矿点锚点 goto），而不是原地打转。\n\
          6) 工具没回报\"实际获得X\"就当作没获得，不得虚构成功。\n\
          7) 任务确实无法推进时，允许纯文本结束（说明原因），这不算错误。\n\
-         8) 严禁在回复文字里用 markdown 写 `tool()` 伪调用——那不会被执行。要执行动作必须用 function calling 输出真正的工具调用。",
+         8) 严禁在回复文字里用 markdown 写 `tool()` 伪调用——那不会被执行。\n\
+             也严禁写 `[工具 xxx 参数 ...]` 或 `[tool xxx args ...]` 这种方括号伪调用——同样不会被执行。\n\
+             正确做法：在回复中输出真正的 function_call（由 API 自动附加，不在文字里写）。\n\
+             反例（禁止）：「先合成木板：craft(\"dark_oak_planks\",60)」或「[工具 craft 参数 ...]」\n\
+             正例（正确）：回复中不带任何工具文字，由系统自动附加 tool_calls 字段。",
     ) + &mc_knowledge;
     let agent_cfg = AgentConfig::new(system_prompt, 1) // 每步 1 轮，外循环控制步数
         .with_compaction(compaction)
