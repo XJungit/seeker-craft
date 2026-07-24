@@ -4,6 +4,173 @@ use serde_json::Value;
 
 use super::{Agent, Context, MANAGE_KNOWLEDGE_TOOL};
 
+/// Few-shot 示例：场景关键词 + 成功工具调用模式
+struct Example {
+    keywords: &'static [&'static str],
+    /// (role, content) 对，role 为 "user"/"system"/"assistant"
+    turns: &'static [(&'static str, &'static str)],
+}
+
+const FEW_SHOT_EXAMPLES: &[Example] = &[
+    Example {
+        keywords: &["oak_log", "wood", "tree", "砍树", "木头", "原木"],
+        turns: &[
+            ("assistant", "gather(\"oak_log\", 4)"),
+            ("system", "成功采集 4 个 oak_log"),
+            ("assistant", "craft(\"oak_planks\", 4)"),
+            ("system", "成功合成 16 个 oak_planks"),
+        ],
+    },
+    Example {
+        keywords: &["crafting_table", "工作台", "craft"],
+        turns: &[
+            ("assistant", "craft(\"crafting_table\", 1)"),
+            ("system", "成功合成 crafting_table"),
+            ("assistant", "place(\"crafting_table\", 10, 64, 20)"),
+            ("system", "已放置 crafting_table"),
+        ],
+    },
+    Example {
+        keywords: &["stone_pickaxe", "石镐", "pickaxe", "镐"],
+        turns: &[
+            ("assistant", "gather(\"oak_log\", 4)"),
+            ("system", "成功采集 4 个 oak_log"),
+            ("assistant", "craft(\"crafting_table\", 1); place(\"crafting_table\", 10, 64, 20)"),
+            ("system", "已放置 crafting_table"),
+            ("assistant", "open(10, 64, 20); craft(\"stick\", 2)"),
+            ("system", "成功合成 stick"),
+            ("assistant", "gather(\"cobblestone\", 3)"),
+            ("system", "成功采集 3 个 cobblestone"),
+            ("assistant", "craft(\"stone_pickaxe\", 1)"),
+            ("system", "成功合成 stone_pickaxe"),
+        ],
+    },
+    Example {
+        keywords: &["iron_ore", "铁矿", "iron", "铁", "smelt", "熔炼"],
+        turns: &[
+            ("assistant", "goto(15, 30, -10); mine(15, 30, -10)"),
+            ("system", "已挖掉 iron_ore"),
+            ("assistant", "gather(\"coal\", 4); craft(\"furnace\", 1); place(\"furnace\", 10, 64, 20)"),
+            ("system", "已放置 furnace"),
+            ("assistant", "open(10, 64, 20); smelt(\"iron_ingot\", \"coal\", 3)"),
+            ("system", "成功熔炼 3 个 iron_ingot"),
+        ],
+    },
+    Example {
+        keywords: &["torch", "火把", "light", "照明", "暗"],
+        turns: &[
+            ("assistant", "craft(\"stick\", 2); craft(\"torch\", 4)"),
+            ("system", "成功合成 4 个 torch"),
+            ("assistant", "place(\"torch\", 10, 64, 20)"),
+            ("system", "已放置 torch"),
+        ],
+    },
+    Example {
+        keywords: &["chest", "箱子", "存储", "store"],
+        turns: &[
+            ("assistant", "gather(\"oak_log\", 8); craft(\"oak_planks\", 8)"),
+            ("system", "成功合成 32 个 oak_planks"),
+            ("assistant", "craft(\"chest\", 1); place(\"chest\", 10, 64, 20)"),
+            ("system", "已放置 chest"),
+        ],
+    },
+    Example {
+        keywords: &["bed", "床", "sleep", "睡觉", "夜晚", "night"],
+        turns: &[
+            ("assistant", "gather(\"white_wool\", 3); gather(\"oak_log\", 4)"),
+            ("system", "成功采集材料"),
+            ("assistant", "craft(\"oak_planks\", 4); craft(\"bed\", 1)"),
+            ("system", "成功合成 bed"),
+            ("assistant", "place(\"bed\", 10, 64, 20)"),
+            ("system", "已放置 bed"),
+        ],
+    },
+    Example {
+        keywords: &["furnace", "熔炉", "smelt", "熔炼", "cook", "烧"],
+        turns: &[
+            ("assistant", "gather(\"cobblestone\", 8); craft(\"furnace\", 1); place(\"furnace\", 10, 64, 20)"),
+            ("system", "已放置 furnace"),
+            ("assistant", "open(10, 64, 20); smelt(\"iron_ingot\", \"coal\", 3)"),
+            ("system", "成功熔炼 3 个 iron_ingot"),
+        ],
+    },
+    Example {
+        keywords: &["enchant", "附魔", "enchanting", "附魔台"],
+        turns: &[
+            ("assistant", "gather(\"diamond\", 2); craft(\"enchanting_table\", 1); place(\"enchanting_table\", 10, 64, 20)"),
+            ("system", "已放置 enchanting_table"),
+            ("assistant", "open(10, 64, 20); enchant(\"iron_sword\", 2)"),
+            ("system", "附魔完成"),
+        ],
+    },
+    Example {
+        keywords: &["villager", "村民", "trade", "交易"],
+        turns: &[
+            ("assistant", "interact_entity(\"villager\")"),
+            ("system", "已打开村民交易界面"),
+            ("assistant", "trade(0)"),
+            ("system", "交易完成"),
+        ],
+    },
+    Example {
+        keywords: &["zombie", "僵尸", "creeper", "苦力怕", "skeleton", "骷髅", "spider", "蜘蛛", "attack", "攻击", "fight", "打"],
+        turns: &[
+            ("assistant", "attack(\"nearest\")"),
+            ("system", "攻击完成"),
+        ],
+    },
+    Example {
+        keywords: &["explore", "探索", "find", "找", "look", "看看", "附近", "周围"],
+        turns: &[
+            ("assistant", "goto(0, 64, 0)"),
+            ("system", "已到达 (0, 64, 0)"),
+            ("assistant", "memory(\"query\", 32)"),
+            ("system", "附近记忆查询结果"),
+        ],
+    },
+    Example {
+        keywords: &["build", "建造", "house", "房子", "shelter", "庇护所"],
+        turns: &[
+            ("assistant", "gather(\"oak_log\", 16); craft(\"oak_planks\", 16); gather(\"cobblestone\", 32)"),
+            ("system", "材料已备齐"),
+            ("assistant", "craft(\"crafting_table\", 1); place(\"crafting_table\", 10, 64, 20)"),
+            ("system", "已放置 crafting_table"),
+            ("assistant", "open(10, 64, 20); craft(\"oak_planks\", 8)"),
+            ("system", "合成完成"),
+        ],
+    },
+    Example {
+        keywords: &["mine_below", "下矿", "dig", "挖矿", "mine", "mine"],
+        turns: &[
+            ("assistant", "mine_below()"),
+            ("system", "已挖掉脚下方块"),
+            ("assistant", "mine_below()"),
+            ("system", "已挖掉脚下方块"),
+        ],
+    },
+    Example {
+        keywords: &["coal", "煤", "charcoal", "木炭", "fuel", "燃料"],
+        turns: &[
+            ("assistant", "gather(\"coal_ore\", 4)"),
+            ("system", "成功采集 4 个 coal"),
+            ("assistant", "craft(\"torch\", 4)"),
+            ("system", "成功合成 4 个 torch"),
+        ],
+    },
+];
+
+/// 词重叠评分：两个文本共享的单词数 / 总单词数
+fn word_overlap_score(text: &str, keywords: &[&str]) -> f64 {
+    let text_lower = text.to_lowercase();
+    let mut matched = 0;
+    for kw in keywords {
+        if text_lower.contains(kw) {
+            matched += 1;
+        }
+    }
+    if keywords.is_empty() { 0.0 } else { matched as f64 / keywords.len() as f64 }
+}
+
 impl Agent {
     pub fn recent_perception_text(&self) -> &str {
         use crate::core::message::Message;
@@ -50,6 +217,29 @@ impl Agent {
                     .join("\n");
                 parts.push(format!("【经验参考】\n{}", examples));
             }
+        }
+
+        // Few-shot 示例注入：词重叠检索最相关场景（离线可用，无需 embedding）
+        let mut scored: Vec<(f64, &Example)> = FEW_SHOT_EXAMPLES
+            .iter()
+            .map(|ex| (word_overlap_score(&recent_perception, ex.keywords), ex))
+            .filter(|(score, _)| *score > 0.0)
+            .collect();
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        if !scored.is_empty() {
+            let mut example_text = String::from("【参考示例】\n");
+            for (i, (_, ex)) in scored.iter().take(2).enumerate() {
+                example_text.push_str(&format!("场景 {}:\n", i + 1));
+                for (role, content) in ex.turns {
+                    let label = match *role {
+                        "assistant" => "行动",
+                        "system" => "结果",
+                        _ => "输入",
+                    };
+                    example_text.push_str(&format!("  {label}: {content}\n"));
+                }
+            }
+            parts.push(example_text);
         }
 
         if self.obs_streak >= 5 {

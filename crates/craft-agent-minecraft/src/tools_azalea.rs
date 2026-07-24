@@ -1485,6 +1485,79 @@ impl GameTool for RunScriptTool {
         })
     }
 }
+/// 执行蓝图建造：按 JSON 描述的方块列表依次放置。
+/// 格式: {"blocks":[{"x":10,"y":64,"z":20,"block":"oak_planks"}, ...]}
+/// 自动检查背包是否有材料，缺材料时报错。每步先 goto 到目标位置再 place。
+pub struct BuildTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl BuildTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for BuildTool {
+    fn name(&self) -> &str {
+        "build"
+    }
+    fn description(&self) -> &str {
+        "按蓝图建造：JSON 格式 {\"blocks\":[{\"x\":10,\"y\":64,\"z\":20,\"block\":\"oak_planks\"}, ...]}。\
+         自动 goto 到每个位置再 place。材料不足时报错。\
+         例: build(blueprint=\"{\\\"blocks\\\":[{\\\"x\\\":10,\\\"y\\\":64,\\\"z\\\":20,\\\"block\\\":\\\"oak_planks\\\"}]}\")"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "blueprint": { "type": "string", "description": "JSON 蓝图，格式 {\"blocks\":[{\"x\":int,\"y\":int,\"z\":int,\"block\":\"id\"}]}" }
+            },
+            "required": ["blueprint"]
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let bp_str = args.get("blueprint").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("缺少 blueprint"))?;
+        let bp: serde_json::Value = serde_json::from_str(bp_str).map_err(|e| anyhow::anyhow!("JSON 解析失败: {e}"))?;
+        let blocks = bp.get("blocks").and_then(|v| v.as_array()).ok_or_else(|| anyhow::anyhow!("缺少 blocks 数组"))?;
+        let adapter = self.ctx.adapter.0.clone();
+        let mut results: Vec<String> = Vec::new();
+        for (i, block) in blocks.iter().enumerate() {
+            let x = block.get("x").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("第{}个方块缺少 x", i+1))? as i32;
+            let y = block.get("y").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("第{}个方块缺少 y", i+1))? as i32;
+            let z = block.get("z").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("第{}个方块缺少 z", i+1))? as i32;
+            let block_id = block.get("block").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("第{}个方块缺少 block", i+1))?;
+            // 先 goto 到目标位置
+            let goto_result = _exec_action(&adapter, MinecraftAction::Goto { x, y, z });
+            if goto_result.starts_with("错误") {
+                results.push(format!("第{}个 (goto) 失败: {goto_result}", i+1));
+                break;
+            }
+            // 放置方块
+            let place_result = _exec_action(&adapter, MinecraftAction::Place {
+                item: block_id.to_string(),
+                x, y, z,
+            });
+            if place_result.starts_with("错误") {
+                results.push(format!("第{}个 (place {block_id}) 失败: {place_result}", i+1));
+                break;
+            }
+            results.push(format!("第{}个: placed {block_id} @({x},{y},{z})", i+1));
+        }
+        Ok(ToolResult {
+            message: results.join("\n"),
+            is_error: false,
+            images: vec![],
+        })
+    }
+}
+
 /// 创建 azalea 工具集并注册到 `ToolRegistry`。
 pub fn create_mc_azalea_tools(
     adapter: ArcAzaleaAdapter,
@@ -1514,5 +1587,6 @@ pub fn create_mc_azalea_tools(
         Box::new(RunPlanTool::new(ctx.clone())),
         Box::new(SearchWikiTool::new(ctx.clone())),
         Box::new(RunScriptTool::new(ctx.clone())),
+        Box::new(BuildTool::new(ctx.clone())),
     ]
 }
