@@ -237,6 +237,52 @@ impl WorldMemory {
         }
     }
 
+    /// 取单条坐标记忆（供扫描重验时判断是否需要刷新）。
+    pub fn get(&self, pos: MemoryPos) -> Option<MemoryCell> {
+        self.inner.lock().unwrap().cells.get(&pos).cloned()
+    }
+
+    /// 时间衰减：删除 `updated_at` 早于 `now - ttl_ms` 的坐标记忆（不含锚点）。
+    /// 用于让长期未刷新的扫描记忆可被世界变化覆盖；锚点不受影响。
+    pub fn prune_stale(&self, ttl_ms: u64) {
+        let now = now_ms();
+        let cutoff = now.saturating_sub(ttl_ms);
+        let mut g = self.inner.lock().unwrap();
+        let stale: Vec<MemoryPos> = g
+            .cells
+            .iter()
+            .filter(|(_, c)| c.updated_at < cutoff)
+            .map(|(p, _)| *p)
+            .collect();
+        for p in stale {
+            if let Some(c) = g.cells.remove(&p) {
+                let ck = c.pos.chunk_key();
+                if let Some(v) = g.by_chunk.get_mut(&ck) {
+                    v.retain(|q| *q != p);
+                }
+            }
+        }
+    }
+
+    /// 清理所有已耗尽（depleted）的资源点记忆。被砍光的树/挖完的矿不再占位。
+    pub fn forget_depleted(&self) {
+        let mut g = self.inner.lock().unwrap();
+        let gone: Vec<MemoryPos> = g
+            .cells
+            .iter()
+            .filter(|(_, c)| c.depleted)
+            .map(|(p, _)| *p)
+            .collect();
+        for p in gone {
+            if let Some(c) = g.cells.remove(&p) {
+                let ck = c.pos.chunk_key();
+                if let Some(v) = g.by_chunk.get_mut(&ck) {
+                    v.retain(|q| *q != p);
+                }
+            }
+        }
+    }
+
     /// 删除某坐标记忆。
     pub fn forget_pos(&self, pos: MemoryPos) {
         let mut g = self.inner.lock().unwrap();
@@ -451,5 +497,33 @@ mod tests {
         let near = m.nearby(MemoryPos::new(0, 64, 0), 16, false);
         assert_eq!(near.len(), 1);
         assert_eq!(near[0].item.as_deref(), Some("crafting_table"));
+    }
+
+    /// C：时间衰减。超过 TTL 的陈旧扫描记忆被 prune_stale 清除（锚点保留）。
+    #[test]
+    fn prune_stale_drops_old_cells_keeps_anchor() {
+        // 直接构造一个明确陈旧的库（updated_at=1，远早于 now-TTL）
+        let old = r#"{"cells":[{"pos":{"x":1,"y":64,"z":1},"kind":"Resource","label":"老树","item":"oak_log","count":null,"depleted":false,"note":null,"updated_at":1}],"anchors":[{"name":"home","pos":{"x":0,"y":64,"z":0},"label":"出生点","updated_at":1}]}"#;
+        let m = WorldMemory::new();
+        m.load_json(old);
+        // TTL=1000ms，updated_at=1 远早于 now-1000 → 被清
+        m.prune_stale(1000);
+        assert_eq!(m.len(), 0, "陈旧 cell 应被 prune");
+        assert!(m.find_anchor("home").is_some(), "锚点不受 prune 影响");
+    }
+
+    /// C：已耗尽资源点清理。forget_depleted 清掉 depleted 的 cell，保留未耗尽的。
+    #[test]
+    fn forget_depleted_clears_depleted_only() {
+        let m = WorldMemory::new();
+        let p = MemoryPos::new(2, 64, 2);
+        m.record_resource(p, "oak_log", "砍光的树", None);
+        m.mark_depleted(p, true);
+        m.record_resource(MemoryPos::new(5, 64, 5), "coal_ore", "煤矿", None);
+        assert_eq!(m.len(), 2);
+        m.forget_depleted();
+        assert_eq!(m.len(), 1, "depleted 应被清，未耗尽保留");
+        let remain = m.nearby(MemoryPos::new(0, 64, 0), 64, true);
+        assert_eq!(remain[0].item.as_deref(), Some("coal_ore"));
     }
 }

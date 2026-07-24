@@ -30,9 +30,18 @@ use azalea_registry::builtin::BlockKind;
 use azalea_client::client_chat::ChatPacket;
 use bevy_ecs::component::Component;
 use craft_agent::core::memory::{MemoryKind, MemoryPos, WorldMemory};
-use std::collections::HashSet;
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
+
+/// 当前毫秒时间戳（扫描 TTL 用）。
+fn now_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
 
 /// 把感兴趣的 BlockKind 映射为记忆元数据（item, 标签, 类别）。
 /// 返回 None 表示该方块不值得记忆。
@@ -59,44 +68,66 @@ fn block_memory_meta(bk: BlockKind) -> Option<(String, &'static str, MemoryKind)
     }
 }
 
+/// 扫描去重 TTL：同一坐标在此时间内不再重新向服务端查询（省开销）。
+/// 超过 TTL 后重新 `get_block_state` 校验，让"树被砍/方块被破坏"等世界变化
+/// 能反映到记忆（消失的资源点标记 depleted，消失的结构/容器直接遗忘）。
+const SCAN_TTL_MS: u64 = 30_000;
+
 /// 扫描 bot 周围半径内的关键方块，回填到 WorldMemory。
-/// 用 `scanned` 集合去重：同一坐标只写一次（世界变化由 action 路径另处理）。
+/// 用 `scanned`（pos → 上次扫描时间戳）去重 + TTL 重验。
 fn record_surroundings(
     bot: &Client,
     mem: &WorldMemory,
     center: &MemoryPos,
-    scanned: &Arc<Mutex<HashSet<MemoryPos>>>,
+    scanned: &Arc<Mutex<HashMap<MemoryPos, u64>>>,
 ) {
     let world = match bot.world() {
         Ok(w) => w,
         Err(_) => return,
     };
     let radius = 8i32;
+    let now = now_ms();
     let mut to_write: Vec<(MemoryPos, String, &'static str, MemoryKind)> = Vec::new();
+    let mut to_deplete: Vec<MemoryPos> = Vec::new();
+    let mut to_forget: Vec<MemoryPos> = Vec::new();
     {
-        let scanned_g = scanned.lock().unwrap();
+        let mut scanned_g = scanned.lock().unwrap();
         for dx in -radius..=radius {
             for dy in -radius..=radius {
                 for dz in -radius..=radius {
                     let pos = BlockPos::new(center.x + dx, center.y + dy, center.z + dz);
                     let mp = MemoryPos::new(pos.x, pos.y, pos.z);
-                    if scanned_g.contains(&mp) {
-                        continue;
+                    // TTL 内已扫过：跳过（世界变化由 action 路径/B 的 forget 即时处理）
+                    if let Some(&last) = scanned_g.get(&mp) {
+                        if now.saturating_sub(last) < SCAN_TTL_MS {
+                            continue;
+                        }
                     }
-                    if let Some(state) = world.read().get_block_state(pos) {
-                        let bk: BlockKind = state.into();
-                        if let Some((item, label, kind)) = block_memory_meta(bk) {
+                    scanned_g.insert(mp, now);
+                    let still_memory = world
+                        .read()
+                        .get_block_state(pos)
+                        .map(|s| block_memory_meta(s.into()));
+                    match still_memory {
+                        Some(Some((item, label, kind))) => {
                             to_write.push((mp, item, label, kind));
+                        }
+                        // 方块不再是记忆类（被挖/被破坏/变空气）：
+                        // 若原记忆是资源点 → 标记 depleted（保留但不再推荐）；否则遗忘。
+                        Some(None) | None => {
+                            if let Some(c) = mem.get(mp) {
+                                if c.kind == MemoryKind::Resource {
+                                    to_deplete.push(mp);
+                                } else {
+                                    to_forget.push(mp);
+                                }
+                            }
                         }
                     }
                 }
             }
         }
     }
-    if to_write.is_empty() {
-        return;
-    }
-    let mut scanned_g = scanned.lock().unwrap();
     for (mp, item, label, kind) in to_write {
         match kind {
             MemoryKind::Resource => mem.record_resource(mp, &item, label, None),
@@ -106,7 +137,12 @@ fn record_surroundings(
             MemoryKind::Hazard => mem.record(mp, MemoryKind::Hazard, Some(&item), label, None),
             _ => mem.record(mp, kind, Some(&item), label, None),
         }
-        scanned_g.insert(mp);
+    }
+    for p in to_deplete {
+        mem.mark_depleted(p, true);
+    }
+    for p in to_forget {
+        mem.forget_pos(p);
     }
 }
 
@@ -172,8 +208,8 @@ pub struct BotState {
     pub mining_below: Arc<Mutex<bool>>,
     /// 共享世界记忆库（适配器/工具/Agent 共用；handler 内扫描回填）。
     pub memory: Option<WorldMemory>,
-    /// 已扫描记录的坐标集合（去重：同一坐标只写一次）。
-    pub scanned: Arc<Mutex<HashSet<MemoryPos>>>,
+    /// 已扫描记录的坐标 → 上次扫描时间戳（TTL 去重 + 重验世界变化）。
+    pub scanned: Arc<Mutex<HashMap<MemoryPos, u64>>>,
 }
 
 impl Default for BotState {
@@ -187,7 +223,7 @@ impl Default for BotState {
             last_position: Arc::new(Mutex::new(None)),
             mining_below: Arc::new(Mutex::new(false)),
             memory: None,
-            scanned: Arc::new(Mutex::new(HashSet::new())),
+            scanned: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 }
@@ -238,7 +274,7 @@ impl AzaleaBot {
             last_position: last_position.clone(),
             mining_below: Arc::new(Mutex::new(false)),
             memory: memory,
-            scanned: Arc::new(Mutex::new(HashSet::new())),
+            scanned: Arc::new(Mutex::new(HashMap::new())),
         };
 
         let addr = address.to_string();
