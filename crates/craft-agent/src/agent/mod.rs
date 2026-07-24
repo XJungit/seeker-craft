@@ -798,12 +798,13 @@ impl Agent {
             });
             self.messages.push(Message::assistant_response(&response));
             let content = response.content.as_deref().unwrap_or("");
+            let goal_hint = self.self_prompt.as_ref().map(|g| format!("你的目标是: {g}。")).unwrap_or_default();
             let nudge = if content.contains("[工具") || content.contains("[tool ") {
-                "【纠正】你的回复里写了 `[工具 xxx 参数...]` 或 `[tool xxx ...]` 方括号伪调用，\
+                format!("{goal_hint}【纠正】你的回复里写了 `[工具 xxx 参数...]` 或 `[tool xxx ...]` 方括号伪调用，\
                  这不会被执行。必须用真正的 function calling 输出工具调用（系统自动附加 tool_calls \
-                 字段，不要在文字里写）。请重新回复，只输出你真正要执行的工具调用（不写任何工具文字）。".to_string()
+                 字段，不要在文字里写）。请重新回复，只输出你真正要执行的工具调用（不写任何工具文字）。")
             } else {
-                "【继续】你刚才只用了文字回复，没有产生真正的工具调用。请用 function calling 输出工具调用（不要用 markdown 写 `tool()` 伪调用，那不会被执行）。根据当前状态选一个工具立即行动。".to_string()
+                format!("{goal_hint}【继续】你刚才只用了文字回复，没有产生真正的工具调用。请用 function calling 输出工具调用（不要用 markdown 写 `tool()` 伪调用，那不会被执行）。根据当前状态选一个工具立即行动。")
             };
             self.messages.push(Message::user(nudge));
             log.push(format!("[t{turn}] 提醒: 纯文字回复，已注入续跑指令"));

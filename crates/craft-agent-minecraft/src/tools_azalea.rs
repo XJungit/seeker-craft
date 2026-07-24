@@ -1063,6 +1063,59 @@ impl GameTool for MemoryTool {
     }
 }
 
+/// 设置/更新当前目标（self-prompt）。bot 会持续朝此目标行动直到调用 set_goal("") 清空。
+pub struct SetGoalTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl SetGoalTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for SetGoalTool {
+    fn name(&self) -> &str {
+        "set_goal"
+    }
+    fn description(&self) -> &str {
+        "设置或更新当前目标。bot 会持续朝此目标行动直到调用 set_goal(goal=\"\") 清空。\
+         goal 为英文目标描述，如 \"Get 3 iron ingots\" / \"Build a house\"。\
+         调用后系统每轮自动注入此目标，bot 持续行动直到目标达成。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "goal": { "type": "string", "description": "目标描述（英文）。传空字符串清空目标。" }
+            },
+            "required": ["goal"]
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let goal = args.get("goal").and_then(|v| v.as_str()).unwrap_or("");
+        if goal.is_empty() {
+            Ok(ToolResult {
+                message: "目标已清空".to_string(),
+                is_error: false,
+                images: vec![],
+            })
+        } else {
+            Ok(ToolResult {
+                message: format!("目标已设置: {goal}"),
+                is_error: false,
+                images: vec![],
+            })
+        }
+    }
+}
+
 /// 创建 azalea 工具集并注册到 `ToolRegistry`。
 pub fn create_mc_azalea_tools(
     adapter: ArcAzaleaAdapter,
@@ -1088,5 +1141,6 @@ pub fn create_mc_azalea_tools(
         Box::new(InteractEntityTool::new(ctx.clone())),
         Box::new(ChatTool::new(ctx.clone())),
         Box::new(MemoryTool::new(ctx.clone())),
+        Box::new(SetGoalTool::new(ctx.clone())),
     ]
 }
