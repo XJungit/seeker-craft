@@ -11,7 +11,9 @@
 
 use crate::azalea::{AzaleaBot, BotEvent};
 use anyhow::{anyhow, Context, Result};
+use azalea::prelude::*;
 use craft_agent::core::adapter::GameAdapter;
+use craft_agent::core::memory::WorldMemory;
 use craft_agent::core::types::{Action, ExecResult, MinecraftAction, Screenshot, WorldState};
 use std::sync::{Arc, Mutex};
 
@@ -23,6 +25,8 @@ pub struct MinecraftAzaleaAdapter {
     /// 卡住检测：上次 Y 与连续未变化的次数（挖到基岩/空气时坐标不动）。
     last_y: Mutex<Option<f64>>,
     stuck_count: Mutex<u32>,
+    /// 共享世界记忆库（由 Agent 传入，perceive/action 后回填）。可为空（不记录）。
+    memory: Option<WorldMemory>,
 }
 
 #[derive(Clone)]
@@ -31,7 +35,15 @@ pub struct ArcAzaleaAdapter(pub Arc<Mutex<MinecraftAzaleaAdapter>>);
 impl ArcAzaleaAdapter {
     /// 连接并构造共享 Arc 适配器（转发至 `MinecraftAzaleaAdapter::connect`）。
     pub async fn connect(address: &str, username: &str) -> Result<ArcAzaleaAdapter> {
-        MinecraftAzaleaAdapter::connect(address, username).await
+        MinecraftAzaleaAdapter::connect(address, username, None).await
+    }
+    /// 带世界记忆库的连接（记忆由 Agent 共享，适配器回填）。
+    pub async fn connect_with_memory(
+        address: &str,
+        username: &str,
+        memory: WorldMemory,
+    ) -> Result<ArcAzaleaAdapter> {
+        MinecraftAzaleaAdapter::connect(address, username, Some(memory)).await
     }
 }
 
@@ -71,8 +83,12 @@ impl ArcAzaleaAdapter {
 impl MinecraftAzaleaAdapter {
     /// 连接本机已开放的 vanilla 26.2 局域网服（如 localhost:4444）。
     /// 返回 `ArcAzaleaAdapter`（共享 Arc），后台任务消费 bot 事件流更新缓存。
-    pub async fn connect(address: &str, username: &str) -> Result<ArcAzaleaAdapter> {
-        let bot = AzaleaBot::connect(address, username).await
+    pub async fn connect(
+        address: &str,
+        username: &str,
+        memory: Option<WorldMemory>,
+    ) -> Result<ArcAzaleaAdapter> {
+        let bot = AzaleaBot::connect(address, username, memory.clone()).await
             .context("azalea bot 连接失败（确认服为纯 vanilla 26.2 且未开客户端 mod 校验）")?;
         let bot = Arc::new(bot);
 
@@ -81,6 +97,7 @@ impl MinecraftAzaleaAdapter {
             last: Mutex::new(None),
             last_y: Mutex::new(None),
             stuck_count: Mutex::new(0),
+            memory,
         }));
 
         // 后台消费事件流，更新共享 Arc 内的 `last` 缓存。
@@ -295,3 +312,4 @@ impl MinecraftAzaleaAdapter {
         }
     }
 }
+

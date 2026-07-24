@@ -66,19 +66,26 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
+    // 共享世界记忆库（适配器自动扫描回填 + 工具显式记录 + Agent 每轮注入）。
+    let world_mem = craft_agent::core::memory::WorldMemory::new();
+
     // 连接 azalea adapter：azalea 内部用独立 OS 线程跑自己的 runtime，
     // 此处仅用一次性局部 runtime 把 async connect 跑完，拿到句柄后立即 drop。
     let adapter = {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        rt.block_on(ArcAzaleaAdapter::connect("localhost:4444", "craftbot"))
-            .expect("azalea adapter 连接失败（确认服为纯 vanilla 26.2）")
+        rt.block_on(ArcAzaleaAdapter::connect_with_memory(
+            "localhost:4444",
+            "craftbot",
+            world_mem.clone(),
+        ))
+        .expect("azalea adapter 连接失败（确认服为纯 vanilla 26.2）")
     };
 
     // 注册 azalea 工具集（持有 adapter 引用）。
     let mut registry = ToolRegistry::new();
-    for tool in create_mc_azalea_tools(adapter) {
+    for tool in create_mc_azalea_tools(adapter, world_mem.clone()) {
         registry.register(tool);
     }
 
@@ -131,7 +138,7 @@ fn main() -> anyhow::Result<()> {
         .with_world_info(None)
         .with_knowledge_tool(false);
 
-    let mut agent = Agent::new(Box::new(Lp { llm }), registry, cfg);
+    let mut agent = Agent::new(Box::new(Lp { llm }), registry, cfg).with_world_memory(world_mem);
 
     println!(
         "\n=== AZALEA localhost:4444 | LLM={} ctx={} iter={} goal={} ===",

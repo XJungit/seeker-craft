@@ -47,9 +47,13 @@ impl Agent {
                     }
                     _ => {}
                 }
+            } else if let SessionFileEntry::Memory(m) = e {
+                // 回放记忆快照（合并式载入，后到的覆盖先到的）
+                self.world_memory.load_json(&m.snapshot);
             }
         }
 
+        self.persisted_memory_len = self.world_memory.len();
         self.knowledge_bootstrapped = sess.header.knowledge_bootstrapped;
         self.session = Some(sess);
         self
@@ -85,6 +89,12 @@ impl Agent {
                 sess.append_message(m);
             }
             self.session_msg_offset = self.messages.len();
+        }
+        // 记忆库变更时追加快照（合并式回放，仅记录差异体积由 len 判定）
+        let mem_len = self.world_memory.len();
+        if mem_len != self.persisted_memory_len {
+            sess.append_memory(&self.world_memory.to_json());
+            self.persisted_memory_len = mem_len;
         }
         sess.save()?;
         Ok(())

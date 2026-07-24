@@ -16,7 +16,8 @@ fn main() -> anyhow::Result<()> {
         .build()?;
 
     rt.block_on(async {
-        let bot = Arc::new(AzaleaBot::connect("localhost:4444", "CraftBot").await?);
+        let world_mem = craft_agent::core::memory::WorldMemory::new();
+        let bot = Arc::new(AzaleaBot::connect("localhost:4444", "CraftBot", Some(world_mem.clone())).await?);
         println!("[calibrate] 已连接，等待配方书下发...");
 
         // 等待配方书填充（服务端登录后不久下发）
@@ -80,6 +81,11 @@ fn main() -> anyhow::Result<()> {
             }
         }
         println!("[calibrate] 校准完成");
+
+        // 临时：dump 世界记忆，肉眼确认扫描写入了内容（含 __self__ 锚点 + 周边关键方块）
+        let dump = world_mem.to_json();
+        println!("[memory-dump] 条目数={} 字节={}", world_mem.len(), dump.len());
+        println!("[memory-dump] {dump}");
         Ok(())
     })
 }

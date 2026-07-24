@@ -13,6 +13,7 @@ mod session;
 
 use crate::core::message::{Message, Usage, now_ms};
 use crate::core::prompt::{WorldInfoLib, default_mc_world_info};
+use crate::core::memory::WorldMemory;
 use crate::core::session::Session;
 use crate::core::skill::SkillLibrary;
 use crate::core::tool::{ToolEffects, ToolRegistry, ToolResult, plan_tool_effect_batches};
@@ -216,6 +217,8 @@ pub struct AgentConfig {
     /// 世界信息库（动态注入与感知相关的提示）。`None` 表示空库，
     /// 用于非 mod 路线（azalea 等）避免注入 mod 专属的 collect/combat 提示。
     pub world_info: Option<WorldInfoLib>,
+    /// 世界记忆库（空间-状态长期记忆）。可外部注入共享实例（适配器/工具共用）。
+    pub world_memory: WorldMemory,
 }
 impl AgentConfig {
     pub fn new(prompt: String, max_iterations: u32) -> Self {
@@ -237,6 +240,7 @@ impl AgentConfig {
             enable_knowledge_tool: false,
             knowledge_base: None,
             world_info: None,
+            world_memory: WorldMemory::new(),
         }
     }
     /// 设置静态知识库（`None` 关闭，仅用工具自描述）。
@@ -264,6 +268,11 @@ impl AgentConfig {
     }
     pub fn with_auto_perceive(mut self, v: bool) -> Self {
         self.auto_perceive = v;
+        self
+    }
+    /// 注入外部共享的世界记忆库（与适配器/工具共用同一实例，保证写入即见）。
+    pub fn with_world_memory(mut self, mem: WorldMemory) -> Self {
+        self.world_memory = mem;
         self
     }
 }
@@ -419,6 +428,7 @@ pub struct Agent {
     follow_up: VecDeque<String>,
     turn: u32,
     world_info: WorldInfoLib,
+    world_memory: WorldMemory,
     skill_lib: SkillLibrary,
     knowledge_bootstrapped: bool,
     obs_streak: u32,
@@ -427,6 +437,7 @@ pub struct Agent {
     pub session: Option<Session>,
     pending_checkpoint: bool,
     session_msg_offset: usize,
+    persisted_memory_len: usize,
     pending_compaction: Option<CompactionResult>,
     pub last_compaction: Option<CompactionResult>,
     pub retry_abort: Arc<AtomicBool>,
@@ -452,6 +463,7 @@ impl Agent {
     ) -> Self {
         let world_info = config.world_info.take().unwrap_or_else(default_mc_world_info);
         let compaction_provider = config.compaction.compaction_provider.take();
+        let world_memory = config.world_memory.clone();
         Self {
             provider,
             tools,
@@ -465,6 +477,7 @@ impl Agent {
             follow_up: VecDeque::new(),
             turn: 0,
             world_info,
+            world_memory,
             skill_lib: SkillLibrary::new(20),
             knowledge_bootstrapped: false,
             obs_streak: 0,
@@ -473,12 +486,19 @@ impl Agent {
             session: None,
             pending_checkpoint: false,
             session_msg_offset: 0,
+            persisted_memory_len: 0,
             pending_compaction: None,
             last_compaction: None,
             retry_abort: Arc::new(AtomicBool::new(false)),
             recent_calls: std::collections::VecDeque::with_capacity(10),
             compaction_provider,
         }
+    }
+
+    /// 注入外部共享的世界记忆库（与适配器/工具共用同一实例，保证写入即见）。
+    pub fn with_world_memory(mut self, mem: WorldMemory) -> Self {
+        self.world_memory = mem;
+        self
     }
 
     // ── Queues ──
@@ -649,6 +669,11 @@ impl Agent {
             && let Some(dynamic_msg) = self.build_dynamic_context_msg()
         {
             self.messages.push(Message::user(dynamic_msg));
+        }
+
+        // WorldMemory 邻近记忆注入（空间-状态长期记忆）
+        if let Some(mem_msg) = self.build_memory_context_msg() {
+            self.messages.push(Message::user(mem_msg));
         }
 
         // Dynamic instructions
@@ -973,6 +998,10 @@ impl Agent {
     }
     pub fn usage(&self) -> Usage {
         self.usage.clone()
+    }
+    /// 暴露共享记忆库（供适配器在 perceive/action 后回填世界记忆）。
+    pub fn world_memory(&self) -> WorldMemory {
+        self.world_memory.clone()
     }
 }
 

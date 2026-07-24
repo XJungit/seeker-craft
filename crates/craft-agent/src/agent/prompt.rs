@@ -94,6 +94,25 @@ impl Agent {
         }
     }
 
+    /// 渲染 WorldMemory 邻近记忆（以 `__self__` 锚点为中心，半径 64 格）。
+    /// 无记忆或可定位锚点时返回 None（不污染上下文）。
+    pub fn build_memory_context_msg(&self) -> Option<String> {
+        if self.world_memory.is_empty() {
+            return None;
+        }
+        let around = self
+            .world_memory
+            .find_anchor("__self__")
+            .and_then(|a| a.pos)
+            .unwrap_or(crate::core::memory::MemoryPos::new(0, 64, 0));
+        let rendered = self.world_memory.render_nearby(around, 64);
+        if rendered.is_empty() {
+            None
+        } else {
+            Some(rendered)
+        }
+    }
+
     pub fn build_context(&mut self) -> Context {
         use crate::core::message::Message;
         let jailbreak = "自主行动。工具失败时调整参数重试——不准假装成功。";

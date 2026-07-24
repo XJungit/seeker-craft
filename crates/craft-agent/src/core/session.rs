@@ -73,6 +73,7 @@ pub enum SessionEntry {
     Compaction(CompactionEntry),
     BranchSummary(BranchSummaryEntry),
     WorldInfo(WorldInfoEntry),
+    Memory(MemoryEntry),
     Custom(CustomEntry),
 }
 
@@ -84,6 +85,7 @@ impl SessionEntry {
             Self::Compaction(e) => &e.id,
             Self::BranchSummary(e) => &e.id,
             Self::WorldInfo(e) => &e.id,
+            Self::Memory(e) => &e.id,
             Self::Custom(e) => &e.id,
         }
     }
@@ -94,6 +96,7 @@ impl SessionEntry {
             Self::Compaction(e) => e.parent_id.as_deref(),
             Self::BranchSummary(e) => e.parent_id.as_deref(),
             Self::WorldInfo(e) => e.parent_id.as_deref(),
+            Self::Memory(e) => e.parent_id.as_deref(),
             Self::Custom(e) => e.parent_id.as_deref(),
         }
     }
@@ -203,6 +206,22 @@ pub struct WorldInfoEntry {
     /// remove 时按关键词删除
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remove_keys: Option<Vec<String>>,
+}
+
+/// WorldMemory 持久化 entry（空间-状态长期记忆跨重启保留）。
+///
+/// 与 `WorldInfoEntry` 类似，是 `WorldMemory` 变更的一等公民：
+/// `Agent` 每轮把当前 `WorldMemory` 快照作为 `Memory` entry append，
+/// 重新打开 session 时回放所有 `Memory` entry 重建记忆库。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub struct MemoryEntry {
+    pub id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
+    pub timestamp: String,
+    /// WorldMemory 的完整 JSON 快照（cells + anchors）。
+    pub snapshot: String,
 }
 
 /// 一个可持久化的 session（与 pi `Session` 同构，去掉 TUI/extensions/autosave 线程）
@@ -484,6 +503,19 @@ impl Session {
             info,
             remove_id,
             remove_keys,
+        });
+        self.push_entry(entry, false);
+        id
+    }
+
+    /// 追加一条 WorldMemory 快照 entry（每轮记忆变更后调用）。
+    pub fn append_memory(&mut self, snapshot: &str) -> String {
+        let id = gen_id();
+        let entry = SessionEntry::Memory(MemoryEntry {
+            id: id.clone(),
+            parent_id: self.leaf_id.clone(),
+            timestamp: now_ms(),
+            snapshot: snapshot.to_string(),
         });
         self.push_entry(entry, false);
         id

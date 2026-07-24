@@ -197,19 +197,26 @@ fn run_agent(
     let llm_backend = llm_group.active_backend()?;
     let llm = Arc::new(OpenAiLlmClient::from_config(llm_backend)?);
 
+    // 共享世界记忆库：适配器（自动扫描回填）+ 工具（LLM 显式记录）+ Agent（每轮注入）共用同一实例。
+    let world_mem = craft_agent::core::memory::WorldMemory::new();
+
     // 连接 azalea adapter：azalea 内部用独立 OS 线程跑自己的 runtime，
     // 此处仅用一次性局部 runtime 把 async connect 跑完，拿到句柄后立即 drop。
     let adapter = {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()?;
-        rt.block_on(ArcAzaleaAdapter::connect("localhost:4444", "craftbot"))
-            .map_err(|e| anyhow::anyhow!("azalea adapter 连接失败（确认服为纯 vanilla 26.2 且端口 4444 开放）: {e}"))?
+        rt.block_on(ArcAzaleaAdapter::connect_with_memory(
+            "localhost:4444",
+            "craftbot",
+            world_mem.clone(),
+        ))
+        .map_err(|e| anyhow::anyhow!("azalea adapter 连接失败（确认服为纯 vanilla 26.2 且端口 4444 开放）: {e}"))?
     };
     *ctrl.game_adapter.write().unwrap() = Some(adapter.clone());
 
     let mut registry = ToolRegistry::new();
-    for tool in create_mc_azalea_tools(adapter.clone()) {
+    for tool in create_mc_azalea_tools(adapter.clone(), world_mem.clone()) {
         registry.register(tool);
     }
 
@@ -323,7 +330,9 @@ fn run_agent(
             s.save_to(path)?;
             s
         };
-        let mut agent = Agent::new(Box::new(Lp { llm }), registry, agent_cfg).with_session(sess);
+        let mut agent = Agent::new(Box::new(Lp { llm }), registry, agent_cfg)
+            .with_world_memory(world_mem)
+            .with_session(sess);
         agent.retry_abort = abort.clone();
         agent
     };

@@ -1,4 +1,5 @@
 pub mod adapter;
+pub mod memory;
 pub mod message;
 pub mod prompt;
 pub mod session;

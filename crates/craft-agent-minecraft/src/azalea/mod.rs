@@ -26,10 +26,89 @@ pub mod trade;
 use azalea::prelude::*;
 use azalea::pathfinder::goals::BlockPosGoal;
 use azalea::BlockPos;
+use azalea_registry::builtin::BlockKind;
 use azalea_client::client_chat::ChatPacket;
 use bevy_ecs::component::Component;
+use craft_agent::core::memory::{MemoryKind, MemoryPos, WorldMemory};
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
+
+/// 把感兴趣的 BlockKind 映射为记忆元数据（item, 标签, 类别）。
+/// 返回 None 表示该方块不值得记忆。
+fn block_memory_meta(bk: BlockKind) -> Option<(String, &'static str, MemoryKind)> {
+    let name = format!("{bk:?}");
+    // 原木类
+    if name.ends_with("Log") || name.ends_with("Stem") {
+        return Some((name.to_lowercase(), "树木/原木", MemoryKind::Resource));
+    }
+    // 矿石类
+    if name.ends_with("Ore") || name == "AncientDebris" {
+        return Some((name.to_lowercase(), "矿石", MemoryKind::Resource));
+    }
+    match bk {
+        BlockKind::CraftingTable => Some(("crafting_table".into(), "工作台", MemoryKind::Structure)),
+        BlockKind::Furnace => Some(("furnace".into(), "熔炉", MemoryKind::Structure)),
+        BlockKind::Chest => Some(("chest".into(), "箱子", MemoryKind::Container)),
+        BlockKind::SmithingTable => Some(("smithing_table".into(), "锻造台", MemoryKind::Structure)),
+        BlockKind::EnchantingTable => Some(("enchanting_table".into(), "附魔台", MemoryKind::Structure)),
+        BlockKind::NetherPortal => Some(("nether_portal".into(), "下界传送门", MemoryKind::Portal)),
+        BlockKind::Lava => Some(("lava".into(), "岩浆", MemoryKind::Hazard)),
+        BlockKind::Water => Some(("water".into(), "水", MemoryKind::Hazard)),
+        _ => None,
+    }
+}
+
+/// 扫描 bot 周围半径内的关键方块，回填到 WorldMemory。
+/// 用 `scanned` 集合去重：同一坐标只写一次（世界变化由 action 路径另处理）。
+fn record_surroundings(
+    bot: &Client,
+    mem: &WorldMemory,
+    center: &MemoryPos,
+    scanned: &Arc<Mutex<HashSet<MemoryPos>>>,
+) {
+    let world = match bot.world() {
+        Ok(w) => w,
+        Err(_) => return,
+    };
+    let radius = 8i32;
+    let mut to_write: Vec<(MemoryPos, String, &'static str, MemoryKind)> = Vec::new();
+    {
+        let scanned_g = scanned.lock().unwrap();
+        for dx in -radius..=radius {
+            for dy in -radius..=radius {
+                for dz in -radius..=radius {
+                    let pos = BlockPos::new(center.x + dx, center.y + dy, center.z + dz);
+                    let mp = MemoryPos::new(pos.x, pos.y, pos.z);
+                    if scanned_g.contains(&mp) {
+                        continue;
+                    }
+                    if let Some(state) = world.read().get_block_state(pos) {
+                        let bk: BlockKind = state.into();
+                        if let Some((item, label, kind)) = block_memory_meta(bk) {
+                            to_write.push((mp, item, label, kind));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    if to_write.is_empty() {
+        return;
+    }
+    let mut scanned_g = scanned.lock().unwrap();
+    for (mp, item, label, kind) in to_write {
+        match kind {
+            MemoryKind::Resource => mem.record_resource(mp, &item, label, None),
+            MemoryKind::Structure => mem.record_structure(mp, &item, label),
+            MemoryKind::Container => mem.record_container(mp, label, ""),
+            MemoryKind::Portal => mem.record(mp, MemoryKind::Portal, Some(&item), label, None),
+            MemoryKind::Hazard => mem.record(mp, MemoryKind::Hazard, Some(&item), label, None),
+            _ => mem.record(mp, kind, Some(&item), label, None),
+        }
+        scanned_g.insert(mp);
+    }
+}
 
 /// 转发给外部的 bot 事件（供 harness / LLM 消费）。
 #[derive(Debug, Clone)]
@@ -91,6 +170,10 @@ pub struct BotState {
     /// 持续下挖标志：收到 MineBelow 后置 true，Tick 内只要未在挖就重复触发，
     /// 对齐 POC 的持续挖矿逻辑（azalea 单次 start_mining 可能因中断失效）。
     pub mining_below: Arc<Mutex<bool>>,
+    /// 共享世界记忆库（适配器/工具/Agent 共用；handler 内扫描回填）。
+    pub memory: Option<WorldMemory>,
+    /// 已扫描记录的坐标集合（去重：同一坐标只写一次）。
+    pub scanned: Arc<Mutex<HashSet<MemoryPos>>>,
 }
 
 impl Default for BotState {
@@ -103,6 +186,8 @@ impl Default for BotState {
             evt_tx: Arc::new(mpsc::unbounded_channel::<BotEvent>().0),
             last_position: Arc::new(Mutex::new(None)),
             mining_below: Arc::new(Mutex::new(false)),
+            memory: None,
+            scanned: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 }
@@ -115,6 +200,8 @@ pub struct AzaleaBot {
     pub last_position: Arc<Mutex<Option<azalea::Vec3>>>,
     /// 跨系统/跨 handler 共享的扩展状态（村民报价、配方书等）。
     pub ext: crate::azalea::ext_state::SharedExt,
+    /// 共享世界记忆库（与适配器/工具/Agent 共用同一实例）。
+    pub memory: Option<craft_agent::core::memory::WorldMemory>,
 }
 
 impl AzaleaBot {
@@ -128,7 +215,11 @@ impl AzaleaBot {
 impl AzaleaBot {
     /// 离线账号连入指定地址（如 "localhost:4444"），返回就绪的 bot 句柄。
     /// 本方法 spawn 后台 task 运行 azalea 客户端循环，立即返回句柄。
-    pub async fn connect(address: &str, username: &str) -> anyhow::Result<AzaleaBot> {
+    pub async fn connect(
+        address: &str,
+        username: &str,
+        memory: Option<WorldMemory>,
+    ) -> anyhow::Result<AzaleaBot> {
         let account = Account::offline(username);
         let (evt_tx, evt_rx) = mpsc::unbounded_channel::<BotEvent>();
         let evt_tx = Arc::new(evt_tx);
@@ -146,6 +237,8 @@ impl AzaleaBot {
             evt_tx: evt_tx.clone(),
             last_position: last_position.clone(),
             mining_below: Arc::new(Mutex::new(false)),
+            memory: memory,
+            scanned: Arc::new(Mutex::new(HashSet::new())),
         };
 
         let addr = address.to_string();
@@ -171,6 +264,7 @@ impl AzaleaBot {
             events: Arc::new(tokio::sync::Mutex::new(evt_rx)),
             last_position,
             ext: ext_for_bot,
+            memory: None,
         })
     }
 
@@ -537,6 +631,16 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                         Err(_) => vec!["获取失败".to_string()],
                     };
                     let player_count = bot.nearby_players().map(|p| p.len()).unwrap_or(0);
+                    // 回填世界记忆：更新当前位置锚点 + 扫描周边关键方块
+                    if let Some(mem) = &state.memory {
+                        let mp = MemoryPos::new(
+                            p.x.floor() as i32,
+                            p.y.floor() as i32,
+                            p.z.floor() as i32,
+                        );
+                        mem.set_anchor("__self__", Some(mp), "当前位置");
+                        record_surroundings(&bot, mem, &mp, &state.scanned);
+                    }
                     let _ = evt_tx.send(BotEvent::State {
                         position: p,
                         inventory,

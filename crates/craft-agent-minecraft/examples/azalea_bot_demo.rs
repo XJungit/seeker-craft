@@ -12,7 +12,7 @@ async fn main() {
     let addr = format!("localhost:{port}");
     println!("[demo] 连接 {addr}");
 
-    let bot = AzaleaBot::connect(&addr, "craftbot").await.expect("连接失败");
+    let bot = AzaleaBot::connect(&addr, "craftbot", None).await.expect("连接失败");
     println!("[demo] 句柄就绪，等待事件...");
 
     // 驱动：从事件流消费，连入后发指令。
