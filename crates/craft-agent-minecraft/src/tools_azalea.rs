@@ -1256,6 +1256,78 @@ fn parse_step(action: &str, step: &serde_json::Value) -> anyhow::Result<Minecraf
     }
 }
 
+/// 搜索 Minecraft Wiki（中文源，国内可访问）。
+/// 使用 Bilibili 游戏 Wiki（wiki.biligame.com/mc）的 MediaWiki 搜索 API。
+pub struct SearchWikiTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl SearchWikiTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for SearchWikiTool {
+    fn name(&self) -> &str {
+        "search_wiki"
+    }
+    fn description(&self) -> &str {
+        "搜索 Minecraft Wiki（中文），查询方块/物品/生物/机制等游戏知识。\
+         参数 query 为搜索关键词（中文）。返回最多 3 条结果，含标题和摘要。\
+         例: search_wiki(query=\"铁砧\") / search_wiki(query=\"how to make a pickaxe\")"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": { "type": "string", "description": "搜索关键词" }
+            },
+            "required": ["query"]
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::read()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let query = args.get("query").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("缺少 query"))?;
+        let params = [
+            ("action", "opensearch"),
+            ("search", query),
+            ("limit", "3"),
+            ("format", "json"),
+        ];
+        let url = reqwest::Url::parse_with_params("https://wiki.biligame.com/mc/api.php", &params)?;
+        let resp = reqwest::blocking::get(&url)?.text()?;
+        let json: serde_json::Value = serde_json::from_str(&resp)?;
+        let results = json.as_array().and_then(|arr| arr.get(1)).and_then(|v| v.as_array());
+        let urls = json.as_array().and_then(|arr| arr.get(3)).and_then(|v| v.as_array());
+        match results {
+            Some(items) if !items.is_empty() => {
+                let mut lines: Vec<String> = Vec::new();
+                for (i, item) in items.iter().enumerate() {
+                    let title = item.as_str().unwrap_or("?");
+                    let link = urls.and_then(|u| u.get(i)).and_then(|v| v.as_str()).unwrap_or("");
+                    lines.push(format!("{}. {} ({})", i + 1, title, link));
+                }
+                Ok(ToolResult {
+                    message: format!("Wiki 搜索结果 ({}):\n{}", query, lines.join("\n")),
+                    is_error: false,
+                    images: vec![],
+                })
+            }
+            _ => Ok(ToolResult {
+                message: format!("Wiki 搜索无结果: {query}"),
+                is_error: false,
+                images: vec![],
+            }),
+        }
+    }
+}
+
 /// 创建 azalea 工具集并注册到 `ToolRegistry`。
 pub fn create_mc_azalea_tools(
     adapter: ArcAzaleaAdapter,
@@ -1283,5 +1355,6 @@ pub fn create_mc_azalea_tools(
         Box::new(MemoryTool::new(ctx.clone())),
         Box::new(SetGoalTool::new(ctx.clone())),
         Box::new(RunPlanTool::new(ctx.clone())),
+        Box::new(SearchWikiTool::new(ctx.clone())),
     ]
 }

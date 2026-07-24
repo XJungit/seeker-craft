@@ -1039,6 +1039,31 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                     });
                 }
             }
+            // ===== 反应式 modes（每 tick 检查，直接执行动作，不依赖 LLM）=====
+            // self_preservation：检测火/岩浆，自动脱困
+            if let Ok(p) = bot.position() {
+                let foot = BlockPos::new(p.x.floor() as i32, (p.y - 1.0).floor() as i32, p.z.floor() as i32);
+                let head = BlockPos::new(p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
+                if let Ok(world) = bot.world() {
+                    let under = world.read().get_block_state(foot);
+                    let at = world.read().get_block_state(head);
+                    let danger = |s: &str| s.contains("lava") || s.contains("fire") || s.contains("magma");
+                    let under_str = format!("{under:?}").to_lowercase();
+                    let at_str = format!("{at:?}").to_lowercase();
+                    if danger(&under_str) || danger(&at_str) {
+                        // 在火/岩浆上 → 自动走开
+                        let mut q = cmd_queue.lock().unwrap();
+                        q.push(QueuedCommand {
+                            cmd: BotCommand::Goto {
+                                x: p.x.floor() as i32 + 5,
+                                y: p.y.floor() as i32,
+                                z: p.z.floor() as i32 + 5,
+                            },
+                            result_tx: None,
+                        });
+                    }
+                }
+            }
         }
         _ => {}
     }

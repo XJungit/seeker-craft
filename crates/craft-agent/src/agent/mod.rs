@@ -525,6 +525,9 @@ impl Agent {
     pub fn clear_self_prompt(&mut self) {
         self.self_prompt = None;
     }
+    pub fn has_goal(&self) -> bool {
+        self.self_prompt.is_some()
+    }
 }
 
 // ── Compaction prompts ──

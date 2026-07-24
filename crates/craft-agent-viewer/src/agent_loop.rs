@@ -566,6 +566,12 @@ fn run_agent(
             });
             break;
         }
+
+        // 空闲自提示循环：有目标时自动持续推进，无需用户输入
+        if agent.has_goal() {
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            agent.queue_steering("继续推进当前目标，用工具采取下一步行动".to_string());
+        }
     }
     Ok(())
 }

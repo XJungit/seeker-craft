@@ -12,6 +12,7 @@ anyhow.workspace = true
 # 项目根 .env 自动加载（示例里用它把 API_KEY 等注入环境，与 setx 持久化互补）
 dotenvy.workspace = true
 serde_json = "1"
+reqwest.workspace = true
 # Azalea 客户端协议层（Rust 全栈 bot 连入普通 MC 服务器，MC 26.2 原生支持）。
 # azalea 锁定到 26.2 支持的 commit，以 git 源引入（独立 workspace，不与本 workspace 配置冲突）。
 # 永久写 https 源（可移植，别人 clone 能直接编）；本地离线开发由 .cargo/config.toml 的
