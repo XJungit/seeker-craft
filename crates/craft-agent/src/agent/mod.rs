@@ -766,6 +766,14 @@ impl Agent {
         };
 
         self.usage = response.usage.clone();
+        log.push(format!(
+            "[t{turn}] tokens: input={} out={} total={} cache_hit={} cache_miss={}",
+            response.usage.input_tokens,
+            response.usage.output_tokens,
+            response.usage.total_tokens,
+            response.usage.cache_hit_tokens,
+            response.usage.cache_miss_tokens,
+        ));
 
         // Track obs streak — text only
         let calls = response.tool_calls.clone();
