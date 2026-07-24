@@ -118,6 +118,10 @@ impl MinecraftAzaleaAdapter {
                             position,
                             inventory,
                             player_count,
+                            yaw,
+                            pitch,
+                            block_under,
+                            block_ahead,
                         } = ev
                         {
                             // 卡住检测：仅当 X/Y/Z 三轴都几乎没动才算"卡住"。
@@ -148,8 +152,8 @@ impl MinecraftAzaleaAdapter {
                             drop(stuck);
                             drop(last_pos);
                             let scene = format!(
-                                "坐标=({:.1},{:.1},{:.1}) 背包前5={:?} 附近玩家={}{}",
-                                position.x, position.y, position.z, inventory, player_count, stuck_hint
+                                "坐标=({:.1},{:.1},{:.1}) 朝向=(yaw={:.0}°,pitch={:.0}°) 脚下方块={} 前方方块={} 背包前5={:?} 附近玩家={}{}",
+                                position.x, position.y, position.z, yaw, pitch, block_under, block_ahead, inventory, player_count, stuck_hint
                             );
                             *g.last.lock().unwrap() = Some(WorldState {
                                 scene_desc: scene.clone(),

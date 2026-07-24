@@ -312,10 +312,32 @@ fn run_agent(
         }
     }
 
+    // MC 常识知识库（注入 system prompt，提升 bot 的玩法认知，降低"瞎操作"概率）。
+    let mc_knowledge = String::from(
+        "\n\
+         ===== Minecraft 常识（vanilla 26.2）=====\n\
+         矿物分布（Y 层，越深越多）：煤 coal 在 Y=0~136 随处可见，Y=90 附近多；\n\
+         铁 iron 在 Y=-24~80，Y=15 附近最富；铜 copper 同 iron；金 gold 在 Y=-64~32；\n\
+         红石 redstone 在 Y=-59~-32；青金石 lapis 在 Y=-64~-32；钻石 diamond 在 Y=-58~-51 最富；\n\
+         绿宝石 emerald 只在山地 biome。深层（Y<0）矿物密度远高于地表，\n\
+         想挖矿就 mine_below 一路下到 Y≈-20~-50。\n\
+         工具规则：徒手挖木头/沙子/泥土/砾石；挖石头/矿石必须先用 wooden_pickaxe 以上镐，\n\
+         否则不掉掉落物。先用 gather(\"oak_log\") 砍树→auto_craft(\"crafting_table\")→auto_craft(\"wooden_pickaxe\")→下矿。\n\
+         合成链路：要铁锭先挖 iron_ore→开熔炉 smelt(\"iron_ingot\",\"coal\")； coal 既是燃料也是熔炼燃料。\n\
+         没煤炭可烧木炭：gather 木头→auto_craft(\"charcoal\")（熔炉里烧木头得木炭当燃料）。\n\
+         脱困：若卡在方块里或悬空，先 mine_below 挖脚下方块下落；若被墙挡 goto 不过去，\n\
+         改 goto 到侧前方 3~5 格空地（x±3 或 z±3），不要反复 goto 同一个到不了的点。\n\
+         照明与怪物：黑暗处（亮度<7）会刷怪，下矿前 auto_craft(\"torch\") 并沿途 place；\n         白天安全、夜里或洞穴有僵尸/骷髅/苦力怕，遇怪用 attack 或逃跑 goto 到亮处。\n\
+         体力：吃饱才跑得快，饥饿见底会缓慢掉血；有食材先 auto_craft 熟食。\n\
+         目标拆解：拿到一个大目标（如\"造铁镐\"）先想依赖链——\n\
+         树→木板→木棍→工具台→木镐→下矿挖铁→熔铁→铁镐，按链用高层工具逐段推进。\n\
+         优先用 auto_craft/gather：它们内部已自主完成 走到→挖→捡→合成→熔炼，比手写 mine 可靠。\n\
+         ",
+    );
     let system_prompt = String::from(
         "你是 Minecraft AI 玩家，通过 azalea 客户端协议控制 bot（纯 vanilla 26.2）。\n\
          可用工具（必须用真正的 function calling 调用，禁止在文字里写 `tool()` 形式的伪调用）：\n\
-         - perceive：无参数，读坐标/背包/附近玩家。\n\
+          - perceive：无参数，读坐标/背包/附近玩家。\n\
          - goto：参数 x,y,z（整数），A* 导航到坐标。\n\
          - mine_below：无参数，挖脚下方块向下探矿。\n\
          - mine：参数 x,y,z，挖掉指定坐标方块。\n\
@@ -341,13 +363,17 @@ fn run_agent(
             直接基于已注入的状态规划整批执行动作即可。\n\
          3) 优先用高层工具 gather/auto_craft（它们内部已自主完成 走到→挖→捡→合成），而非逐个 mine。\n\
          4) 下探任务：连续调 mine_below 2~3 次后，调一次 chat 汇报进度，再继续；不要无脑连续同工具超 3 次。\n\
-         5) 若 perceive 返回含 \"卡住计数=N\"（N>=3，坐标连续多轮几乎未移动，可能卡在基岩/空气/树上），\n\
-            必须停止当前动作：改用 goto 到侧前方 3 格空地脱困（落地后再 perceive）；不要原地反复 perceive 或假装在干活。\n\
-            确实无法推进时用 chat 向玩家说明后，以纯文本结束。\n\
+          5) 若 perceive 返回含 \"卡住计数=N\"（N>=3，坐标连续多轮几乎未移动，可能卡在基岩/空气/树上），\n\
+             必须停止当前动作：改用 goto 到侧前方 3 格空地脱困（落地后再 perceive）；不要原地反复 perceive 或假装在干活。\n\
+             确实无法推进时用 chat 向玩家说明后，以纯文本结束。\n\
+          9) 主动探索（不要当瞎子）：每到一个新位置先用 memory 的 query 看附近是否有已知资源/锚点；\n\
+             下矿前先想好目标 Y 层，用 mine_below 连续下探。若 goto 连续 2 次都到不了同一目标点，\n\
+             禁止第 3 次发同样坐标——改选一个明显空旷、可达的侧前方点（x±4 或 z±4 或 y-1 下落）再试。\n\
+             探索时优先朝资源丰富方向推进（如朝已知矿点锚点 goto），而不是原地打转。\n\
          6) 工具没回报\"实际获得X\"就当作没获得，不得虚构成功。\n\
          7) 任务确实无法推进时，允许纯文本结束（说明原因），这不算错误。\n\
          8) 严禁在回复文字里用 markdown 写 `tool()` 伪调用——那不会被执行。要执行动作必须用 function calling 输出真正的工具调用。",
-    );
+    ) + &mc_knowledge;
     let agent_cfg = AgentConfig::new(system_prompt, 1) // 每步 1 轮，外循环控制步数
         .with_compaction(compaction)
         .with_retry(RetryConfig {

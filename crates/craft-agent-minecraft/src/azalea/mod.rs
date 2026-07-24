@@ -155,11 +155,18 @@ pub enum BotEvent {
     Chat { content: String },
     /// 与服务端断开。
     Disconnect { reason: String },
-    /// 周期性状态快照（位置 + 背包概要 + 附近玩家数）。
+    /// 周期性状态快照（位置 + 背包概要 + 附近玩家数 + 朝向 + 脚下方块/前方方块）。
     State {
         position: azalea::Vec3,
         inventory: Vec<String>,
         player_count: usize,
+        /// 朝向（yaw 弧度，0=+Z 南，-PI/2=+X 东，PI/2=-X 西，±PI=-Z 北）。
+        yaw: f64,
+        pitch: f64,
+        /// 脚下方块名（站立面），如 "stone" / "grass_block" / "air"（悬空）。
+        block_under: String,
+        /// 正前方 1 格视线方块名（用于判断面前是墙/空气/可挖物）。
+        block_ahead: String,
     },
 }
 
@@ -776,7 +783,55 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                         },
                         Err(_) => vec!["获取失败".to_string()],
                     };
-                    let player_count = bot.nearby_players().map(|p| p.len()).unwrap_or(0);
+                    let player_count = bot.nearby_players().map(|pp| pp.len()).unwrap_or(0);
+                    // 朝向（yaw/pitch，度数）：从 LookDirection 的 Debug 输出解析（azalea 字段为私有，不改动库）。
+                    let (yaw, pitch) = bot
+                        .direction()
+                        .map(|d| {
+                            let s = format!("{d:?}");
+                            let y = s
+                                .split("y_rot: ")
+                                .nth(1)
+                                .and_then(|x| x.split(',').next())
+                                .and_then(|x| x.trim().parse::<f64>().ok())
+                                .unwrap_or(0.0);
+                            let pi = s
+                                .split("x_rot: ")
+                                .nth(1)
+                                .and_then(|x| x.split('}').next())
+                                .and_then(|x| x.trim().parse::<f64>().ok())
+                                .unwrap_or(0.0);
+                            (y, pi)
+                        })
+                        .unwrap_or((0.0, 0.0));
+                    // 脚下方块 + 前方 1 格方块（用于 bot 判断脚下是否悬空/面前是否墙）。
+                    let block_name = |bp: BlockPos| -> String {
+                        if let Ok(world) = bot.world() {
+                            match world.read().get_block_state(bp) {
+                                Some(s) if !s.is_air() => {
+                                    format!("{s:?}").split('(').next().unwrap_or("?").to_string()
+                                }
+                                _ => "air".to_string(),
+                            }
+                        } else {
+                            "?".to_string()
+                        }
+                    };
+                    let foot_y = (p.y - 1.0).floor() as i32;
+                    let block_under = block_name(BlockPos::new(
+                        p.x.floor() as i32,
+                        foot_y,
+                        p.z.floor() as i32,
+                    ));
+                    // 前方方块：由 yaw/pitch 推算视线落点（水平 1 格 + 俯仰修正）。
+                    let rad = yaw.to_radians();
+                    let dx = (-rad.sin()) as f64; // 与 azalea 约定一致：yaw 0 朝 +Z
+                    let dz = (rad.cos()) as f64;
+                    let horiz = 1.0_f64.max((pitch.abs() / 90.0) * 2.0);
+                    let ahead_x = (p.x + dx * horiz).floor() as i32;
+                    let ahead_z = (p.z + dz * horiz).floor() as i32;
+                    let ahead_y = (p.y + (pitch / 90.0) * -1.0).floor() as i32;
+                    let block_ahead = block_name(BlockPos::new(ahead_x, ahead_y, ahead_z));
                     // 回填世界记忆：更新当前位置锚点 + 扫描周边关键方块
                     if let Some(mem) = &state.memory {
                         let mp = MemoryPos::new(
@@ -791,6 +846,10 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                         position: p,
                         inventory,
                         player_count,
+                        yaw,
+                        pitch,
+                        block_under,
+                        block_ahead,
                     });
                 }
             }
