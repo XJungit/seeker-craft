@@ -152,20 +152,33 @@ impl MinecraftAzaleaAdapter {
                             *last_pos = Some(position);
                             // 只回报客观事实（卡住计数），不给指令性结论——
                             // "卡住怎么办"由 system 行为准则统一处理，避免感知层越界决策。
-                            let stuck_hint = if *stuck >= 2 {
-                                format!(" 卡住计数={}（坐标连续{}轮几乎未移动）", *stuck, *stuck)
+                            let stuck_hint = if *stuck >= 15 {
+                                format!(" ⚠ 卡住! 坐标{}轮未移动", *stuck)
                             } else {
                                 String::new()
                             };
                             drop(stuck);
                             drop(last_pos);
                             let scene = format!(
-                                "坐标=({:.1},{:.1},{:.1}) 朝向=({:.0}°,{:.0}°) 生命={:.1}/20 食物={}/20 主手={} 群系={} 脚下={} 前方={} 附近3x3=[{}] 附近10x10=[{}] 实体=[{}] 背包=[{}] 玩家={}{}",
-                                position.x, position.y, position.z, yaw, pitch,
-                                health, food, held_item, biome,
-                                block_under, block_ahead, nearby, nearby_blocks, nearby_entities, inventory,
+                                "位置: ({:.0}, {:.0}, {:.0})\n\
+                                 生命: {:.0}/20  饱食: {}/20  主手: {}\n\
+                                 群系: {}  脚下: {}  前方: {}\n\
+                                 附近: [{}]\n\
+                                 10x10: [{}]\n\
+                                 实体: [{}]\n\
+                                 背包: [{}]\n\
+                                 玩家: {}{}",
+                                position.x, position.y, position.z,
+                                health, food, held_item,
+                                biome, block_under, block_ahead,
+                                nearby, nearby_blocks, nearby_entities, inventory,
                                 player_count, stuck_hint
                             );
+                            *g.last.lock().unwrap() = Some(WorldState {
+                                scene_desc: scene.clone(),
+                                marked_elements: vec![],
+                                detected_targets: vec![],
+                                self_hint: scene,
                             *g.last.lock().unwrap() = Some(WorldState {
                                 scene_desc: scene.clone(),
                                 marked_elements: vec![],

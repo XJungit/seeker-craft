@@ -1335,6 +1335,226 @@ fn _exec_action(adapter: &Arc<Mutex<MinecraftAzaleaAdapter>>, mc: MinecraftActio
     }
 }
 
+/// 执行 JavaScript 代码（通过 Node.js，图灵完备）。和 Mindcraft 一样 LLM 写 JS 代码。
+/// 代码内可用 `await bot.goto(x,y,z)`, `await bot.mine(x,y,z)`, `await bot.gather(item,count)`,
+/// `await bot.craft(item,count)`, `await bot.place(item,x,y,z)`, `await bot.open(x,y,z)`,
+/// `await bot.mineBelow()`, `await bot.chat(msg)`, `await bot.attack()`, `await bot.smelt(output,fuel,count)`,
+/// `await bot.interact(x,y,z)`, `await bot.sleep(ms)`, `bot.print(msg)`。
+/// 所有函数返回结果字符串。用 `let result = await ...` 获取返回值。
+/// 例: await bot.goto(10, 64, 20); await bot.mine(10, 63, 20); await bot.gather("oak_log", 4);
+pub struct RunJsTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl RunJsTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+
+const NODE_WRAPPER: &str = r##"
+const readline = require('readline');
+const rl = readline.createInterface({input: process.stdin});
+let pending = {};
+rl.on('line', (line) => {
+    try {
+        const resp = JSON.parse(line);
+        if (resp.id && pending[resp.id]) {
+            pending[resp.id](resp.result);
+            delete pending[resp.id];
+        }
+    } catch(e) {}
+});
+async function _call(method, params) {
+    const id = Date.now() + '_' + Math.random().toString(36).slice(2);
+    process.stdout.write(JSON.stringify({id, method, params}) + '\n');
+    await new Promise(r => setTimeout(r, 5));
+    return new Promise((resolve) => { pending[id] = resolve; });
+}
+const bot = {
+    goto: (x,y,z) => _call('goto', [x,y,z]),
+    mine: (x,y,z) => _call('mine', [x,y,z]),
+    mineBelow: () => _call('mine_below', []),
+    gather: (item,count) => _call('gather', [item,count||1]),
+    craft: (item,count) => _call('craft', [item,count||1]),
+    place: (item,x,y,z) => _call('place', [item,x,y,z]),
+    open: (x,y,z) => _call('open', [x,y,z]),
+    chat: (msg) => _call('chat', [msg]),
+    attack: () => _call('attack', []),
+    smelt: (output,fuel,count) => _call('smelt', [output,fuel||'coal',count||1]),
+    interact: (x,y,z) => _call('interact', [x,y,z]),
+    sleep: (ms) => new Promise(r => setTimeout(r, ms)),
+    print: (msg) => { console.log(msg); }
+};
+async function main() {
+{{CODE}}
+}
+main().then(r => {
+    process.stdout.write(JSON.stringify({done: true, result: r !== undefined ? String(r) : 'ok'}) + '\n');
+    setTimeout(() => process.exit(0), 100);
+}).catch(e => {
+    process.stdout.write(JSON.stringify({done: true, error: e.message}) + '\n');
+    setTimeout(() => process.exit(1), 100);
+});
+"##;
+
+impl GameTool for RunJsTool {
+    fn name(&self) -> &str {
+        "run_js"
+    }
+    fn description(&self) -> &str {
+        "执行 JavaScript 代码（Node.js 引擎）。代码内可用 await bot.goto(x,y,z), await bot.mine(x,y,z), \
+         await bot.gather(item,count), await bot.craft(item,count), await bot.place(item,x,y,z) 等函数。\
+         所有函数同步等待完成。用 async/await 写顺序逻辑。\
+         例: await bot.goto(10, 64, 20); await bot.gather(\"oak_log\", 4); await bot.craft(\"oak_planks\", 4)"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "code": { "type": "string", "description": "JavaScript 代码，用 async/await 写顺序逻辑" }
+            },
+            "required": ["code"]
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let code = args.get("code").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("缺少 code"))?;
+        let adapter = self.ctx.adapter.0.clone();
+        let wrapper = NODE_WRAPPER.replace("{{CODE}}", code);
+
+        let tmp_dir = std::env::temp_dir();
+        let tmp_file = tmp_dir.join(format!("craft_agent_{}.js", std::process::id()));
+        std::fs::write(&tmp_file, &wrapper)?;
+
+        let mut child = std::process::Command::new("node")
+            .arg(&tmp_file)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| anyhow::anyhow!("无法启动 Node.js: {e} (请确认已安装 Node.js)"))?;
+
+        let mut child_stdin = child.stdin.take().unwrap();
+        let child_stdout = child.stdout.take().unwrap();
+        let reader = std::io::BufReader::new(child_stdout);
+        let mut last_error = String::new();
+
+        for line in reader.lines() {
+            let line = line.map_err(|e| anyhow::anyhow!("读取 Node.js 输出失败: {e}"))?;
+            let json: serde_json::Value = match serde_json::from_str(&line) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+
+            // 检查是否完成
+            if json.get("done").and_then(|v| v.as_bool()).unwrap_or(false) {
+                if let Some(err) = json.get("error").and_then(|v| v.as_str()) {
+                    return Ok(ToolResult {
+                        message: format!("脚本错误: {err}"),
+                        is_error: true,
+                        images: vec![],
+                    });
+                }
+                let result = json.get("result").and_then(|v| v.as_str()).unwrap_or("ok");
+                let _ = std::fs::remove_file(&tmp_file);
+                return Ok(ToolResult {
+                    message: result.to_string(),
+                    is_error: false,
+                    images: vec![],
+                });
+            }
+
+            // 处理 RPC 请求
+            let id = json["id"].as_i64().unwrap_or(0);
+            let method = json.get("method").and_then(|v| v.as_str()).unwrap_or("");
+            let params = json.get("params").and_then(|v| v.as_array()).map(|a| a.clone()).unwrap_or_default();
+
+            let result = match method {
+                "goto" => {
+                    if params.len() >= 3 {
+                        let x = params[0].as_i64().unwrap_or(0) as i32;
+                        let y = params[1].as_i64().unwrap_or(0) as i32;
+                        let z = params[2].as_i64().unwrap_or(0) as i32;
+                        _exec_action(&adapter, MinecraftAction::Goto { x, y, z })
+                    } else { "参数不足".to_string() }
+                }
+                "mine" => {
+                    if params.len() >= 3 {
+                        let x = params[0].as_i64().unwrap_or(0) as i32;
+                        let y = params[1].as_i64().unwrap_or(0) as i32;
+                        let z = params[2].as_i64().unwrap_or(0) as i32;
+                        _exec_action(&adapter, MinecraftAction::MineBlock { x, y, z })
+                    } else { "参数不足".to_string() }
+                }
+                "mine_below" => {
+                    _exec_action(&adapter, MinecraftAction::MineBelow)
+                }
+                "gather" => {
+                    let item = params.get(0).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let count = params.get(1).and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+                    _exec_action(&adapter, MinecraftAction::Gather { item, count })
+                }
+                "craft" => {
+                    let item = params.get(0).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let count = params.get(1).and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+                    _exec_action(&adapter, MinecraftAction::Craft { item, count })
+                }
+                "place" => {
+                    let item = params.get(0).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let x = params.get(1).and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                    let y = params.get(2).and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                    let z = params.get(3).and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                    _exec_action(&adapter, MinecraftAction::Place { item, x, y, z })
+                }
+                "open" => {
+                    let x = params.get(0).and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                    let y = params.get(1).and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                    let z = params.get(2).and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                    _exec_action(&adapter, MinecraftAction::OpenContainer { x, y, z })
+                }
+                "chat" => {
+                    let msg = params.get(0).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    _exec_action(&adapter, MinecraftAction::Chat { content: msg })
+                }
+                "attack" => {
+                    _exec_action(&adapter, MinecraftAction::Attack { target: "nearest".to_string() })
+                }
+                "smelt" => {
+                    let output = params.get(0).and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let fuel = params.get(1).and_then(|v| v.as_str()).unwrap_or("coal").to_string();
+                    let count = params.get(2).and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+                    _exec_action(&adapter, MinecraftAction::Smelt { output, fuel, count })
+                }
+                "interact" => {
+                    let x = params.get(0).and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                    let y = params.get(1).and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                    let z = params.get(2).and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                    _exec_action(&adapter, MinecraftAction::InteractBlock { x, y, z })
+                }
+                other => format!("未知方法: {other}"),
+            };
+
+            let response = serde_json::json!({"id": id, "result": result});
+            writeln!(child_stdin, "{}", response)?;
+            child_stdin.flush()?;
+        }
+
+        let _ = std::fs::remove_file(&tmp_file);
+        Ok(ToolResult {
+            message: format!("脚本执行完成（最后输出: {last_error}）"),
+            is_error: false,
+            images: vec![],
+        })
+    }
+}
+
 /// 执行脚本（简易 DSL，无需外部依赖）。脚本每行一个函数调用，支持：
 /// goto(x,y,z), mine(x,y,z), gather(item,count), craft(item,count),
 /// place(item,x,y,z), open(x,y,z), mine_below(), chat(msg), attack(),
@@ -1588,5 +1808,6 @@ pub fn create_mc_azalea_tools(
         Box::new(SearchWikiTool::new(ctx.clone())),
         Box::new(RunScriptTool::new(ctx.clone())),
         Box::new(BuildTool::new(ctx.clone())),
+        Box::new(RunJsTool::new(ctx.clone())),
     ]
 }

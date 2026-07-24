@@ -583,6 +583,9 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                             );
                             bot.start_mining(foot);
                         }
+                        if let Some(tx) = &result_tx {
+                            let _ = tx.send("已开始向下挖掘".to_string());
+                        }
                         *state.pending.lock().unwrap() = None;
                     }
                     BotCommand::BlockInteract { x, y, z } => {
@@ -845,7 +848,8 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                         if let Ok(world) = bot.world() {
                             match world.read().get_block_state(bp) {
                                 Some(s) if !s.is_air() => {
-                                    format!("{s:?}").split('(').next().unwrap_or("?").to_string()
+                                    let bk: BlockKind = s.into();
+                                    format!("{bk:?}").to_lowercase()
                                 }
                                 _ => "air".to_string(),
                             }
@@ -904,11 +908,8 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                                     let bp = BlockPos::new(foot_x + dx, foot_y, foot_z + dz);
                                     let name = match w.read().get_block_state(bp) {
                                         Some(s) if !s.is_air() => {
-                                            format!("{s:?}")
-                                                .split('(')
-                                                .next()
-                                                .unwrap_or("?")
-                                                .to_string()
+                                            let bk: BlockKind = s.into();
+                                            format!("{bk:?}").to_lowercase()
                                         }
                                         _ => "air".to_string(),
                                     };
@@ -982,7 +983,8 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                                         let bp = BlockPos::new(cx + dx, cy + dy, cz + dz);
                                         let name = match w.read().get_block_state(bp) {
                                             Some(s) if !s.is_air() => {
-                                                format!("{s:?}").split('(').next().unwrap_or("?").to_string()
+                                                let bk: BlockKind = s.into();
+                                                format!("{bk:?}").to_lowercase()
                                             }
                                             _ => continue,
                                         };
@@ -1047,20 +1049,49 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                 if let Ok(world) = bot.world() {
                     let under = world.read().get_block_state(foot);
                     let at = world.read().get_block_state(head);
-                    let danger = |s: &str| s.contains("lava") || s.contains("fire") || s.contains("magma");
-                    let under_str = format!("{under:?}").to_lowercase();
-                    let at_str = format!("{at:?}").to_lowercase();
-                    if danger(&under_str) || danger(&at_str) {
-                        // 在火/岩浆上 → 自动走开
+                    let block_is_danger = |s: Option<BlockState>| -> bool {
+                        s.map(|s| {
+                            let bk: BlockKind = s.into();
+                            matches!(bk, BlockKind::Lava | BlockKind::Fire | BlockKind::MagmaBlock)
+                        }).unwrap_or(false)
+                    };
+                    if block_is_danger(under) || block_is_danger(at) {
                         let mut q = cmd_queue.lock().unwrap();
                         q.push(QueuedCommand {
                             cmd: BotCommand::Goto {
                                 x: p.x.floor() as i32 + 5,
-                                y: p.y.floor() as i32,
+                                y: p.y.floor() as i32 + 1,
                                 z: p.z.floor() as i32 + 5,
                             },
                             result_tx: None,
                         });
+                        let _ = evt_tx.send(BotEvent::Chat {
+                            content: "[MODE] 检测到火/岩浆，自动脱困".to_string(),
+                        });
+                    }
+                }
+            }
+            // self_defense：空闲时自动攻击附近敌对生物
+            if state.pending.lock().unwrap().is_none() && !*state.mining_below.lock().unwrap() {
+                if let Ok(entities) = bot.nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>() {
+                    let self_id = bot.entity().id();
+                    for e in entities.iter() {
+                        if e.id() == self_id { continue; }
+                        if let Ok(kind) = e.kind() {
+                            let hostile = matches!(kind,
+                                EntityKind::Zombie | EntityKind::Skeleton | EntityKind::Creeper
+                                | EntityKind::Spider | EntityKind::CaveSpider | EntityKind::Enderman
+                                | EntityKind::Pillager | EntityKind::Phantom | EntityKind::Witch
+                                | EntityKind::Drowned | EntityKind::Husk | EntityKind::Stray
+                            );
+                            if hostile {
+                                e.attack();
+                                let _ = evt_tx.send(BotEvent::Chat {
+                                    content: format!("[MODE] 自动攻击附近敌对生物: {kind:?}"),
+                                });
+                                break;
+                            }
+                        }
                     }
                 }
             }
