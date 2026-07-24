@@ -61,6 +61,14 @@ fn main() -> anyhow::Result<()> {
         bot.auto_craft("smithing_table".to_string(), 1);
         tokio::time::sleep(Duration::from_millis(3000)).await;
 
+        println!("[calibrate] 测试 auto_craft(\"stone_bricks\", 1)（验证切石机路径解析）...");
+        bot.auto_craft("stone_bricks".to_string(), 1);
+        tokio::time::sleep(Duration::from_millis(3000)).await;
+
+        println!("[calibrate] 测试 auto_craft(\"brewing_stand\", 1)（验证酿造台路径解析）...");
+        bot.auto_craft("brewing_stand".to_string(), 1);
+        tokio::time::sleep(Duration::from_millis(3000)).await;
+
         // 监听 bot 回显的事件（含 [自动合成]/[交易] 结果）
         println!("[calibrate] 监听 bot 事件 20s ...");
         let deadline = tokio::time::Instant::now() + Duration::from_secs(20);

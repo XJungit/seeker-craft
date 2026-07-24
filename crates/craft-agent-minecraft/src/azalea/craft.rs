@@ -390,6 +390,45 @@ pub async fn do_craft_smithing(
     Ok(format!("锻造合成 x{count} 完成（约 {made} 次）"))
 }
 
+/// 切石机合成：把 input 放入槽 1，结果出现在槽 1（与 input 同号，先放后取），
+/// 重复 count 次。切石机只有一个输出选项，故直接取结果槽。
+pub async fn do_craft_stonecutter(
+    bot: &Client,
+    recipe: &crate::azalea::recipe_book::StoredRecipe,
+    count: u32,
+) -> Result<String, String> {
+    use crate::azalea::recipe_book::StoredRecipe;
+    let input = match recipe {
+        StoredRecipe::Stonecutter { input, .. } => input.items.first().copied(),
+        _ => return Err("do_craft_stonecutter 仅支持 Stonecutter 配方".to_string()),
+    };
+    let inv = bot
+        .get_inventory()
+        .map_err(|e| format!("获取容器失败（确认已打开切石机）: {e:?}"))?;
+    let mut made = 0u32;
+    for _ in 0..count.max(1) {
+        if let Some(k) = input {
+            let src = find_source_slot(&inv, k)
+                .ok_or_else(|| format!("背包缺少切石机原料 {}", k))?;
+            move_stack(&inv, src, 1).await; // input 槽
+        }
+        sleep(Duration::from_millis(80)).await;
+        let has_result = inv
+            .slots()
+            .as_ref()
+            .and_then(|s| s.get(1))
+            .map(|s| !s.is_empty())
+            .unwrap_or(false);
+        if !has_result {
+            return Err("切石失败：结果槽无产物（原料可能不足）".to_string());
+        }
+        inv.shift_click(1usize); // 取结果
+        sleep(Duration::from_millis(40)).await;
+        made += 1;
+    }
+    Ok(format!("切石合成 x{count} 完成（约 {made} 次）"))
+}
+
 /// 熔炼配方：产物 -> (输入物品 id, 每次产出数)。
 struct SmeltRecipe {
     input: &'static str,
@@ -472,6 +511,59 @@ pub async fn do_smelt(
     Ok(format!(
         "熔炼 {output} x{count} 完成（约 {smelted}，共 {crafts_needed} 次）"
     ))
+}
+
+/// 酿造：在已打开的酿造台菜单中，把 `base`（默认 water_bottle）用 `ingredient` 酿成结果。
+/// 酿造台槽位：ingredient=0, fuel=1, bottles=3/4/5（产物回到瓶槽）。
+/// 一次最多 3 瓶；每瓶耗 1 份 ingredient，每轮约 20s（400 ticks）。
+pub async fn do_brew(
+    bot: &Client,
+    recipe: &crate::azalea::recipe_book::StoredRecipe,
+    count: u32,
+) -> Result<String, String> {
+    use crate::azalea::recipe_book::StoredRecipe;
+    let (ingredient, base) = match recipe {
+        StoredRecipe::Brewing {
+            ingredient, base, ..
+        } => (ingredient.items.first().copied(), base.items.first().copied()),
+        _ => return Err("do_brew 仅支持 Brewing 配方".to_string()),
+    };
+    let ing_kind = ingredient.ok_or("酿造配方缺少原料".to_string())?;
+    let base_kind = base.ok_or("酿造配方缺少基底（如 water_bottle）".to_string())?;
+    let fuel_kind = ItemKind::from_str("blaze_powder").map_err(|_| "blaze_powder 解析失败".to_string())?;
+
+    let inv = bot
+        .get_inventory()
+        .map_err(|e| format!("获取容器失败（确认已打开酿造台）: {e:?}"))?;
+
+    let mut made = 0u32;
+    let total = count.max(1);
+    while made < total {
+        let batch = (total - made).min(3);
+        // 燃料（blaze_powder）放槽 1
+        if let Some(src) = find_source_slot(&inv, fuel_kind) {
+            move_stack(&inv, src, 1).await;
+        }
+        // 原料放槽 0
+        let src_ing = find_source_slot(&inv, ing_kind)
+            .ok_or_else(|| format!("背包缺少酿造原料 {}", ing_kind))?;
+        move_stack(&inv, src_ing, 0).await;
+        // 基底瓶放槽 3/4/5
+        for slot in 3..3 + batch {
+            let src = find_source_slot(&inv, base_kind)
+                .ok_or_else(|| format!("背包缺少基底 {}", base_kind))?;
+            move_stack(&inv, src, slot as usize).await;
+        }
+        // 等待酿造完成（一轮 400 ticks ≈ 20s）
+        sleep(Duration::from_millis(21000)).await;
+        // 收回瓶槽产物
+        for slot in 3..3 + batch {
+            inv.shift_click(slot as usize);
+            sleep(Duration::from_millis(40)).await;
+        }
+        made += batch;
+    }
+    Ok(format!("酿造 x{total} 完成（约 {made} 瓶）"))
 }
 
 /// 附魔：在已打开的附魔台菜单中，给背包中的 `item` 附魔。

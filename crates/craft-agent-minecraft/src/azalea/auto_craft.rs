@@ -140,6 +140,56 @@ async fn ensure_via_book(bot: &Client, item: &str, amount: u32) -> Option<Result
                     .map(|_| ()),
             )
         }
+        StoredRecipe::Stonecutter { .. } => {
+            if let Err(e) = ensure_recipe_inputs(bot, &r, amount).await {
+                return Some(Err(e));
+            }
+            if item != "stonecutter" {
+                if let Err(e) = Box::pin(ensure(bot, "stonecutter", 1)).await {
+                    return Some(Err(e));
+                }
+            }
+            let at = match overhead_slot(bot) {
+                Some(a) => a,
+                None => return Some(Err("无法计算放置点".to_string())),
+            };
+            if let Err(e) = do_place(bot, "stonecutter", at).await {
+                return Some(Err(e));
+            }
+            sleep(Duration::from_millis(200)).await;
+            if let Err(e) = do_open_container(bot, at).await {
+                return Some(Err(e));
+            }
+            sleep(Duration::from_millis(200)).await;
+            Some(
+                crate::azalea::craft::do_craft_stonecutter(bot, &r, amount)
+                    .await
+                    .map(|_| ()),
+            )
+        }
+        StoredRecipe::Brewing { .. } => {
+            if let Err(e) = ensure_recipe_inputs(bot, &r, amount).await {
+                return Some(Err(e));
+            }
+            if item != "brewing_stand" {
+                if let Err(e) = Box::pin(ensure(bot, "brewing_stand", 1)).await {
+                    return Some(Err(e));
+                }
+            }
+            let at = match overhead_slot(bot) {
+                Some(a) => a,
+                None => return Some(Err("无法计算放置点".to_string())),
+            };
+            if let Err(e) = do_place(bot, "brewing_stand", at).await {
+                return Some(Err(e));
+            }
+            sleep(Duration::from_millis(200)).await;
+            if let Err(e) = do_open_container(bot, at).await {
+                return Some(Err(e));
+            }
+            sleep(Duration::from_millis(200)).await;
+            Some(crate::azalea::craft::do_brew(bot, &r, amount).await.map(|_| ()))
+        }
         StoredRecipe::Furnace { .. } => {
             if let Err(e) = ensure_recipe_inputs(bot, &r, amount).await {
                 return Some(Err(e));
@@ -183,7 +233,6 @@ async fn ensure_via_book(bot: &Client, item: &str, amount: u32) -> Option<Result
                 _ => Some(Err("锻造配方原料解析失败".to_string())),
             }
         }
-        _ => None,
     }
 }
 

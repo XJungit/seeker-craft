@@ -74,6 +74,11 @@ pub enum StoredRecipe {
         addition: IngredientItems,
         result: ItemKind,
     },
+    Brewing {
+        ingredient: IngredientItems,
+        base: IngredientItems,
+        result: ItemKind,
+    },
 }
 
 impl StoredRecipe {
@@ -84,7 +89,8 @@ impl StoredRecipe {
             | StoredRecipe::Shaped { result, .. }
             | StoredRecipe::Furnace { result, .. }
             | StoredRecipe::Stonecutter { result, .. }
-            | StoredRecipe::Smithing { result, .. } => *result,
+            | StoredRecipe::Smithing { result, .. }
+            | StoredRecipe::Brewing { result, .. } => *result,
         };
         normalize_item(&k.to_string())
     }
@@ -97,6 +103,7 @@ impl StoredRecipe {
             StoredRecipe::Furnace { .. } => "furnace",
             StoredRecipe::Stonecutter { .. } => "stonecutter",
             StoredRecipe::Smithing { .. } => "smithing",
+            StoredRecipe::Brewing { .. } => "brewing",
         }
     }
 }
@@ -317,6 +324,17 @@ fn parse_builtin(e: &Value) -> Option<StoredRecipe> {
                 template: IngredientItems { items: vec![t] },
                 base: IngredientItems { items: vec![base] },
                 addition: IngredientItems { items: vec![addition] },
+                result,
+            })
+        }
+        "brewing" => {
+            let ingredient = e.get("ingredient")?.as_str()?;
+            let base = e.get("base").and_then(|v| v.as_str()).unwrap_or("water_bottle");
+            let ing = ItemKind::from_str(&normalize_item(ingredient)).ok()?;
+            let base = ItemKind::from_str(&normalize_item(base)).ok()?;
+            Some(StoredRecipe::Brewing {
+                ingredient: IngredientItems { items: vec![ing] },
+                base: IngredientItems { items: vec![base] },
                 result,
             })
         }
