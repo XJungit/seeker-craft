@@ -14,9 +14,7 @@ dotenvy.workspace = true
 serde_json = "1"
 # Azalea 客户端协议层（Rust 全栈 bot 连入普通 MC 服务器，MC 26.2 原生支持）。
 # azalea 锁定到 26.2 支持的 commit，以 git 源引入（独立 workspace，不与本 workspace 配置冲突）。
-# 首次构建需联网拉取（cargo 缓存）；国内协作者可加速：
-#   git config --global url."https://ghfast.top/https://github.com/".insteadOf "https://github.com/"
-# vendor/azalea 为可选本地 submodule（便于读 azalea 源码/改），不参与构建。
+# 提交版本用 https（可移植）；本地离线用 file:///D:/Craft-Agent/vendor/azalea（见 .cargo/config.toml）。
 azalea = { git = "https://github.com/azalea-rs/azalea", rev = "c35b57ebf82fa8b26ada77ab9eb795e3827d6c16", optional = true }
 azalea-client = { git = "https://github.com/azalea-rs/azalea", rev = "c35b57ebf82fa8b26ada77ab9eb795e3827d6c16", optional = true }
 azalea-inventory = { git = "https://github.com/azalea-rs/azalea", rev = "c35b57ebf82fa8b26ada77ab9eb795e3827d6c16", optional = true }

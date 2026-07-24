@@ -271,6 +271,13 @@ impl MinecraftAzaleaAdapter {
                     detail: format!("auto_craft 已下发（木链自动合成 {item} x{count}）"),
                 })
             }
+            MinecraftAction::Enchant { item, level } => {
+                self.bot.enchant(item.clone(), level);
+                Ok(ExecResult {
+                    ok: true,
+                    detail: format!("enchant 已下发（需已打开附魔台且背包有 {item} 与青金石，等级 {level}）"),
+                })
+            }
         }
     }
 }

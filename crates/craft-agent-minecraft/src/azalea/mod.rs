@@ -69,6 +69,9 @@ pub enum BotCommand {
     OpenContainer { x: i32, y: i32, z: i32 },
     /// 高层自动合成（木链）：采集→2×2→放置工作台→开→3×3，一键造木制品。
     AutoCraft { item: String, count: u32 },
+    /// 附魔：在已打开的附魔台中，给 item 附魔（需背包有 item 与青金石 lapis_lazuli）。
+    /// level 为 1/2/3，对应附魔台三个选项槽。
+    Enchant { item: String, level: u32 },
 }
 
 /// handler 状态：持有命令队列、事件发送端与最近坐标（跨事件持久，Arc 共享）。
@@ -179,6 +182,7 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
             //   place <物品> <x> <y> <z>  把手持物品放到坐标旁（如 place crafting_table 10 64 10）
             //   open <x> <y> <z>          打开该坐标的容器（工作台/熔炉）
             //   autocraft <物品> [数量]   高层自动合成（木链，如 autocraft chest 1）
+            //   enchant <物品> [等级]     附魔（需已开附魔台且背包有 item 与青金石，如 enchant iron_sword 2）
             //   goto <x> <y> <z> / mine <x> <y> <z> / minebelow / attack
             {
                 let mut q = cmd_queue.lock().unwrap();
@@ -270,6 +274,12 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                     q.push(BotCommand::MineBelow);
                 } else if content == "attack" {
                     q.push(BotCommand::Attack { target: "chat".into() });
+                } else if let Some(rest) = content.strip_prefix("enchant ") {
+                    let mut parts = rest.split_whitespace();
+                    if let Some(item) = parts.next() {
+                        let level = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
+                        q.push(BotCommand::Enchant { item: item.to_string(), level });
+                    }
                 }
             }
             let _ = evt_tx.send(BotEvent::Chat { content });
@@ -423,6 +433,16 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                             }
                         }
                     }
+                    BotCommand::Enchant { item, level } => {
+                        match crate::azalea::craft::do_enchant(&bot, &item, level).await {
+                            Ok(msg) => {
+                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[附魔] {msg}") });
+                            }
+                            Err(e) => {
+                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[附魔失败] {e}") });
+                            }
+                        }
+                    }
                 }
             }
             // 持续下挖：只要标志为真且当前未在挖，就续挖（对齐 POC 逻辑，
@@ -514,6 +534,12 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
     /// 高层自动合成（木链）：一句话造木制品（如 chest）。
     pub fn auto_craft(&self, item: String, count: u32) {
         self.push_cmd(BotCommand::AutoCraft { item, count });
+    }
+
+    /// 附魔：给背包中 item 附魔（需已打开附魔台且背包有 item 与青金石）。
+    /// level 1/2/3 对应附魔台三个选项。
+    pub fn enchant(&self, item: String, level: u32) {
+        self.push_cmd(BotCommand::Enchant { item, level });
     }
 
     /// 推送动作指令（fire-and-forget，handler tick 中执行）。

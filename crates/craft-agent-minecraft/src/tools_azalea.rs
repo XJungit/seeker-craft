@@ -746,6 +746,62 @@ impl GameTool for AutoCraftTool {
     }
 }
 
+/// 附魔（需先打开附魔台）。
+pub struct EnchantTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl EnchantTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for EnchantTool {
+    fn name(&self) -> &str {
+        "enchant"
+    }
+    fn description(&self) -> &str {
+        "附魔：在已打开的附魔台中，给背包内的物品 item 附魔（需背包有 item 与青金石 lapis_lazuli）。\n\
+         level 取 1/2/3，对应附魔台三个选项槽。使用前请先用 open 打开附魔台坐标，并确认背包有 item 与青金石。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "item": { "type": "string", "description": "待附魔物品 id，如 iron_sword" },
+                "level": { "type": "integer", "description": "附魔等级 1/2/3（默认 1）" }
+            },
+            "required": ["item"]
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let item = args
+            .get("item")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("缺少 item"))?
+            .to_string();
+        let level = args
+            .get("level")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(1) as u32;
+        let r = self.ctx.adapter.execute_shared(Action::Minecraft(
+            MinecraftAction::Enchant { item, level },
+        ))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}
+
 /// 创建 azalea 工具集并注册到 `ToolRegistry`。
 pub fn create_mc_azalea_tools(adapter: ArcAzaleaAdapter) -> Vec<Box<dyn GameTool>> {
     let ctx = Arc::new(AzaleaToolCtx::new(adapter));
@@ -763,6 +819,7 @@ pub fn create_mc_azalea_tools(adapter: ArcAzaleaAdapter) -> Vec<Box<dyn GameTool
         Box::new(PlaceTool::new(ctx.clone())),
         Box::new(OpenContainerTool::new(ctx.clone())),
         Box::new(AutoCraftTool::new(ctx.clone())),
+        Box::new(EnchantTool::new(ctx.clone())),
         Box::new(ChatTool::new(ctx.clone())),
     ]
 }

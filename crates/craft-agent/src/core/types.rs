@@ -115,6 +115,9 @@ pub enum MinecraftAction {
     OpenContainer { x: i32, y: i32, z: i32 },
     /// 高层自动合成（木链）：采集→2×2→放置工作台→开→3×3，一键造木制品（chest 等）。
     AutoCraft { item: String, count: u32 },
+    /// 附魔：在已打开的附魔台中给背包物品 item 附魔（需背包有 item 与青金石 lapis_lazuli）。
+    /// level 为 1/2/3，对应附魔台三个选项槽。
+    Enchant { item: String, level: u32 },
 }
 
 /// 动作执行结果

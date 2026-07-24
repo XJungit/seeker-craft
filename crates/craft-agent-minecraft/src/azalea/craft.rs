@@ -12,6 +12,7 @@
 //! 结果后 shift_click(slot 0) 把产物收进背包。循环至满足数量。
 
 use azalea::container::ContainerHandleRef;
+use azalea::inventory::operations::PickupClick;
 use azalea::prelude::*;
 use azalea_registry::builtin::ItemKind;
 use std::str::FromStr;
@@ -32,9 +33,6 @@ const RECIPES: &[(&'static str, &'static [(&'static str, u32)], u32)] = &[
     ("crafting_table", &[("oak_planks", 4)], 1),
     ("torch", &[("coal", 1), ("stick", 1)], 4),
     ("torch", &[("charcoal", 1), ("stick", 1)], 4),
-    ("chest", &[("oak_planks", 8)], 1),
-    ("wooden_pickaxe", &[("oak_planks", 3), ("stick", 2)], 1),
-    ("furnace", &[("cobblestone", 8)], 1),
 ];
 
 /// 把 `oak_log`/`spruce_log`/... 这类原木映射到对应木板（动态派生，无需逐条登记）。
@@ -157,33 +155,47 @@ async fn move_stack(inv: &ContainerHandleRef, src: usize, dst: usize) {
 }
 
 /// 3×3 工作台合成（要求已打开工作台，即 Crafting 菜单）。
-/// 网格槽位：result=0，grid=1..=9。配方为"环形摆放"（除中心外的 8 格放同种原料），
-/// 覆盖 furnace / chest 等。vanilla 仅校验形状，多余数量无影响。
+/// 网格槽位：result=0，grid=1..=9（1=左上,2=中上,3=右上,4=左中,5=中,6=右中,7=左下,8=中下,9=右下）。
+/// 每个配方按 vanilla 形状给定「每格放什么原料」。
 struct ShapedRecipe {
-    /// 参与摆放的网格槽（1..=9）。
-    slots: &'static [usize],
-    /// 原料物品 id（所有格子用同一种）。
-    ingredient: &'static str,
+    /// (网格槽 1..=9, 原料物品 id) 列表，按 vanilla 合成形状摆放。
+    cells: &'static [(usize, &'static str)],
     output_per_craft: u32,
 }
 
 const SHAPED_RECIPES: &[(&'static str, ShapedRecipe)] = &[
-    (
-        "furnace",
-        ShapedRecipe {
-            slots: &[1, 2, 3, 4, 6, 7, 8, 9],
-            ingredient: "cobblestone",
-            output_per_craft: 1,
-        },
-    ),
-    (
-        "chest",
-        ShapedRecipe {
-            slots: &[1, 2, 3, 4, 6, 7, 8, 9],
-            ingredient: "oak_planks",
-            output_per_craft: 1,
-        },
-    ),
+    // 环形：8 格同种原料
+    ("furnace", ShapedRecipe { cells: &[(1,"cobblestone"),(2,"cobblestone"),(3,"cobblestone"),(4,"cobblestone"),(6,"cobblestone"),(7,"cobblestone"),(8,"cobblestone"),(9,"cobblestone")], output_per_craft: 1 }),
+    ("chest", ShapedRecipe { cells: &[(1,"oak_planks"),(2,"oak_planks"),(3,"oak_planks"),(4,"oak_planks"),(6,"oak_planks"),(7,"oak_planks"),(8,"oak_planks"),(9,"oak_planks")], output_per_craft: 1 }),
+    ("ladder", ShapedRecipe { cells: &[(1,"stick"),(2,"stick"),(3,"stick"),(4,"stick"),(5,"stick"),(6,"stick"),(7,"stick"),(8,"stick"),(9,"stick")], output_per_craft: 3 }),
+    ("oak_trapdoor", ShapedRecipe { cells: &[(1,"oak_planks"),(2,"oak_planks"),(3,"oak_planks"),(4,"oak_planks"),(5,"oak_planks"),(6,"oak_planks")], output_per_craft: 2 }),
+    // 门：两列木板
+    ("oak_door", ShapedRecipe { cells: &[(1,"oak_planks"),(2,"oak_planks"),(4,"oak_planks"),(5,"oak_planks"),(7,"oak_planks"),(8,"oak_planks")], output_per_craft: 3 }),
+    // 栅栏：上下木板 + 中间棍
+    ("oak_fence", ShapedRecipe { cells: &[(1,"oak_planks"),(2,"oak_planks"),(4,"stick"),(5,"stick"),(7,"oak_planks"),(8,"oak_planks")], output_per_craft: 3 }),
+    // 工具：木镐
+    ("wooden_pickaxe", ShapedRecipe { cells: &[(1,"oak_planks"),(3,"oak_planks"),(4,"oak_planks"),(5,"stick"),(7,"stick")], output_per_craft: 1 }),
+    ("wooden_axe", ShapedRecipe { cells: &[(1,"oak_planks"),(2,"oak_planks"),(4,"oak_planks"),(5,"stick"),(7,"stick")], output_per_craft: 1 }),
+    ("wooden_sword", ShapedRecipe { cells: &[(2,"oak_planks"),(5,"oak_planks"),(8,"stick")], output_per_craft: 1 }),
+    ("wooden_shovel", ShapedRecipe { cells: &[(2,"oak_planks"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
+    ("wooden_hoe", ShapedRecipe { cells: &[(1,"oak_planks"),(2,"oak_planks"),(4,"stick"),(7,"stick")], output_per_craft: 1 }),
+    // 石制工具（用 cobblestone 代替木板）
+    ("stone_pickaxe", ShapedRecipe { cells: &[(1,"cobblestone"),(3,"cobblestone"),(4,"cobblestone"),(5,"stick"),(7,"stick")], output_per_craft: 1 }),
+    ("stone_axe", ShapedRecipe { cells: &[(1,"cobblestone"),(2,"cobblestone"),(4,"cobblestone"),(5,"stick"),(7,"stick")], output_per_craft: 1 }),
+    ("stone_sword", ShapedRecipe { cells: &[(2,"cobblestone"),(5,"cobblestone"),(8,"stick")], output_per_craft: 1 }),
+    ("stone_shovel", ShapedRecipe { cells: &[(2,"cobblestone"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
+    ("stone_hoe", ShapedRecipe { cells: &[(1,"cobblestone"),(2,"cobblestone"),(4,"stick"),(7,"stick")], output_per_craft: 1 }),
+    // 铁制工具（需先熔炼 iron_ingot）
+    ("iron_pickaxe", ShapedRecipe { cells: &[(1,"iron_ingot"),(3,"iron_ingot"),(4,"iron_ingot"),(5,"stick"),(7,"stick")], output_per_craft: 1 }),
+    ("iron_axe", ShapedRecipe { cells: &[(1,"iron_ingot"),(2,"iron_ingot"),(4,"iron_ingot"),(5,"stick"),(7,"stick")], output_per_craft: 1 }),
+    ("iron_sword", ShapedRecipe { cells: &[(2,"iron_ingot"),(5,"iron_ingot"),(8,"stick")], output_per_craft: 1 }),
+    ("iron_shovel", ShapedRecipe { cells: &[(2,"iron_ingot"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
+    ("iron_hoe", ShapedRecipe { cells: &[(1,"iron_ingot"),(2,"iron_ingot"),(4,"stick"),(7,"stick")], output_per_craft: 1 }),
+    // 铁盔甲
+    ("iron_helmet", ShapedRecipe { cells: &[(1,"iron_ingot"),(2,"iron_ingot"),(3,"iron_ingot"),(4,"iron_ingot"),(6,"iron_ingot")], output_per_craft: 1 }),
+    ("iron_chestplate", ShapedRecipe { cells: &[(1,"iron_ingot"),(3,"iron_ingot"),(4,"iron_ingot"),(5,"iron_ingot"),(6,"iron_ingot"),(7,"iron_ingot"),(8,"iron_ingot"),(9,"iron_ingot")], output_per_craft: 1 }),
+    ("iron_leggings", ShapedRecipe { cells: &[(1,"iron_ingot"),(2,"iron_ingot"),(3,"iron_ingot"),(4,"iron_ingot"),(6,"iron_ingot"),(7,"iron_ingot"),(8,"iron_ingot"),(9,"iron_ingot")], output_per_craft: 1 }),
+    ("iron_boots", ShapedRecipe { cells: &[(1,"iron_ingot"),(3,"iron_ingot"),(7,"iron_ingot"),(9,"iron_ingot")], output_per_craft: 1 }),
 ];
 
 fn lookup_shaped(item: &str) -> Option<ShapedRecipe> {
@@ -192,18 +204,15 @@ fn lookup_shaped(item: &str) -> Option<ShapedRecipe> {
         .iter()
         .find(|(id, _)| *id == norm)
         .map(|(_, r)| ShapedRecipe {
-            slots: r.slots,
-            ingredient: r.ingredient,
+            cells: r.cells,
             output_per_craft: r.output_per_craft,
         })
 }
 
 pub async fn do_craft_3x3(bot: &Client, item: &str, count: u32) -> Result<String, String> {
     let recipe = lookup_shaped(item).ok_or_else(|| {
-        format!("不支持的 3×3 合成目标 {item}（当前仅 furnace / chest，且需先打开工作台）")
+        format!("不支持的 3×3 合成目标 {item}（需先打开工作台）")
     })?;
-    let ing = ItemKind::from_str(&normalize_item(recipe.ingredient))
-        .map_err(|_| format!("未知原料 {}", recipe.ingredient))?;
 
     let inv = bot
         .get_inventory()
@@ -214,9 +223,12 @@ pub async fn do_craft_3x3(bot: &Client, item: &str, count: u32) -> Result<String
     let mut crafted = 0u32;
 
     for _ in 0..crafts_needed {
-        let src = find_source_slot(&inv, ing)
-            .ok_or_else(|| format!("背包缺少原料 {}", recipe.ingredient))?;
-        for &g in recipe.slots {
+        // 按形状把每种原料摆进对应网格槽
+        for &(g, ing_id) in recipe.cells {
+            let ing_kind = ItemKind::from_str(&normalize_item(ing_id))
+                .map_err(|_| format!("未知原料 {ing_id}"))?;
+            let src = find_source_slot(&inv, ing_kind)
+                .ok_or_else(|| format!("背包缺少原料 {}", ing_id))?;
             move_stack(&inv, src, g).await;
         }
         sleep(Duration::from_millis(80)).await;
@@ -323,4 +335,60 @@ pub async fn do_smelt(
     Ok(format!(
         "熔炼 {output} x{count} 完成（约 {smelted}，共 {crafts_needed} 次）"
     ))
+}
+
+/// 附魔：在已打开的附魔台菜单中，给背包中的 `item` 附魔。
+/// 需要背包内已有待附魔物品与青金石（lapis_lazuli）。
+/// `level` 取 1/2/3，对应附魔台三个选项槽（slot 2/3/4）。
+pub async fn do_enchant(
+    bot: &Client,
+    item: &str,
+    level: u32,
+) -> Result<String, String> {
+    let opt_slot = match level.clamp(1, 3) {
+        1 => 2usize,
+        2 => 3usize,
+        _ => 4usize,
+    };
+    let item_kind = ItemKind::from_str(&normalize_item(item))
+        .map_err(|_| format!("未知物品 {item}"))?;
+    let lapis_kind = ItemKind::from_str("lapis_lazuli")
+        .map_err(|_| "青金石 id 解析失败".to_string())?;
+
+    let inv = bot
+        .get_inventory()
+        .map_err(|e| format!("获取容器失败（确认已打开附魔台）: {e:?}"))?;
+
+    // 把待附魔物品放进 item 槽(0)
+    let src_item = find_source_slot(&inv, item_kind)
+        .ok_or_else(|| format!("背包缺少待附魔物品 {item}"))?;
+    move_stack(&inv, src_item, 0).await;
+    // 把青金石放进 lapis 槽(1)
+    let src_lapis = find_source_slot(&inv, lapis_kind)
+        .ok_or_else(|| "背包缺少青金石 lapis_lazuli".to_string())?;
+    move_stack(&inv, src_lapis, 1).await;
+
+    // 等待服务端下发可用附魔选项
+    sleep(Duration::from_millis(300)).await;
+
+    // 点击所选附魔选项槽（普通左键），触发附魔（物品仍在 item 槽并带附魔）
+    inv.click(PickupClick::Left { slot: Some(opt_slot as u16) });
+    sleep(Duration::from_millis(200)).await;
+
+    let enchanted = {
+        let slots = inv.slots();
+        slots
+            .as_ref()
+            .and_then(|s| s.get(0))
+            .map(|s| !s.is_empty())
+            .unwrap_or(false)
+    };
+    if !enchanted {
+        return Err(format!("附魔 {item} 失败：物品槽为空（可能等级不足或青金不够）"));
+    }
+    // 收回到背包
+    inv.shift_click(0usize);
+    sleep(Duration::from_millis(40)).await;
+
+    Ok(format!("附魔 {item}（等级 {level}）完成"))
 }
