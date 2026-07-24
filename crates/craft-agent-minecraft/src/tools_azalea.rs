@@ -1300,8 +1300,9 @@ impl GameTool for SearchWikiTool {
             ("limit", "3"),
             ("format", "json"),
         ];
-        let url = reqwest::Url::parse_with_params("https://wiki.biligame.com/mc/api.php", &params)?;
-        let resp = reqwest::blocking::get(&url)?.text()?;
+        let url = reqwest::Url::parse_with_params("https://wiki.biligame.com/mc/api.php", &params)
+            .map_err(|e| anyhow::anyhow!("URL error: {e}"))?;
+        let resp = reqwest::blocking::get(url)?.text()?;
         let json: serde_json::Value = serde_json::from_str(&resp)?;
         let results = json.as_array().and_then(|arr| arr.get(1)).and_then(|v| v.as_array());
         let urls = json.as_array().and_then(|arr| arr.get(3)).and_then(|v| v.as_array());

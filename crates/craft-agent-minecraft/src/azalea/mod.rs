@@ -1049,13 +1049,13 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                 if let Ok(world) = bot.world() {
                     let under = world.read().get_block_state(foot);
                     let at = world.read().get_block_state(head);
-                    let block_is_danger = |s: Option<BlockState>| -> bool {
+                    let is_danger = |s: Option<azalea::block::BlockState>| -> bool {
                         s.map(|s| {
                             let bk: BlockKind = s.into();
                             matches!(bk, BlockKind::Lava | BlockKind::Fire | BlockKind::MagmaBlock)
                         }).unwrap_or(false)
                     };
-                    if block_is_danger(under) || block_is_danger(at) {
+                    if is_danger(under) || is_danger(at) {
                         let mut q = cmd_queue.lock().unwrap();
                         q.push(QueuedCommand {
                             cmd: BotCommand::Goto {

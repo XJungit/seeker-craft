@@ -179,11 +179,6 @@ impl MinecraftAzaleaAdapter {
                                 marked_elements: vec![],
                                 detected_targets: vec![],
                                 self_hint: scene,
-                            *g.last.lock().unwrap() = Some(WorldState {
-                                scene_desc: scene.clone(),
-                                marked_elements: vec![],
-                                detected_targets: vec![],
-                                self_hint: scene,
                                 screenshot: Arc::new(Vec::new()),
                                 health: Some(health),
                                 hunger: Some(food),

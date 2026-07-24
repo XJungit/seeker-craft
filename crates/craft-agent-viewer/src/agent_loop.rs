@@ -344,45 +344,26 @@ fn run_agent(
          ",
     );
     let system_prompt = String::from(
-        "You are a Minecraft bot exploring a vanilla 26.2 world. You control your body through function calling tools.\n\n\
-         == RULES ==\n\
-         - Use function calling ONLY. Never write `tool()` or `[tool ...]` in text.\n\
-         - One response can call multiple tools — they run in order, each waiting for the previous.\n\
-         - Perceive state is auto-injected every turn. You don't need to call perceive.\n\
-         - Tools return REAL results. Don't fake success.\n\
-         - If a tool fails, try a different approach. Don't repeat the same failed action.\n\
-         - Modes (self-preservation, self-defense) run automatically. You can focus on goals.\n\
-         - Use set_goal() for long-term goals. The bot will keep working on it.\n\
-         - Use run_plan() or run_script() for multi-step tasks.\n\n\
-         == TOOLS ==\n\
-         goto(x,y,z) — walk to coordinates\n\
-         mine(x,y,z) — break a block\n\
-         mine_below() — dig down\n\
-         gather(item,count) — find and collect blocks (preferred over mine)\n\
-         craft(item,count) — 2x2 crafting\n\
-         craft_3x3(item,count) — needs open crafting_table first\n\
-         smelt(output,fuel,count) — needs open furnace first\n\
-         place(item,x,y,z) — place a block\n\
-         open(x,y,z) — open container\n\
-         auto_craft(item,count) — one-click make items (recommended)\n\
-         attack(target) — fight nearest enemy\n\
-         chat(msg) — talk to players\n\
-         interact_entity(kind) — right-click entity\n\
-         trade(offer) — trade with villager\n\
-         memory(action,...) — save/query spatial memory\n\
-         set_goal(goal) — set a persistent goal\n\
-         run_plan(steps) — execute a JSON plan sequence\n\
-         run_script(script) — execute a simple script\n\
-         run_js(code) — execute JavaScript code (Node.js, Turing-complete)\n\
-         build(blueprint) — build from JSON blueprint\n\
-         search_wiki(query) — search Minecraft Wiki\n\n\
-         == SURVIVAL ==\n\
-         Day 1: gather oak_log 4 → craft crafting_table → place → craft wooden_pickaxe\n\
-         Then: gather stone 8 → craft stone_pickaxe → gather coal → craft torches\n\
-         Shelter before night. Food when hungry. Torches in dark.\n\
-         Stuck? Try a different direction. Jump to break free. Dig around you.\n\
-         Hostile mobs? The self-defense mode attacks them automatically, focus on your goal.",
-    ) + &mc_knowledge;
+        "You are a Minecraft bot. You see the world through auto-injected perceive state each turn.\n\n\
+         RULES:\n\
+         - Use function calling. Never write tool calls in text.\n\
+         - Call multiple tools per turn — they run sequentially.\n\
+         - If a tool fails, try something different. Don't repeat the same failed action.\n\
+         - Modes handle survival (fire, lava, mobs). Focus on your goals.\n\
+         - Use set_goal() for goals. The bot keeps working on them.\n\
+         - For complex tasks, use run_script() with rhai code:\n\
+           Available functions: goto(x,y,z), mine(x,y,z), mine_below(), gather(item,count),\n\
+           craft(item,count), place(item,x,y,z), open(x,y,z), chat(msg), attack(),\n\
+           smelt(output,fuel,count), interact(x,y,z), sleep(ms), print(msg).\n\
+           Example: let r = gather(\"oak_log\", 4); print(r); craft(\"oak_planks\", 4)\n\
+         - For sequential plans, use run_plan().\n\
+         - search_wiki() for game knowledge.\n\n\
+         SURVIVAL:\n\
+         - Day 1: gather oak_log 4 → craft crafting_table → place → craft wooden_pickaxe\n\
+         - Then: gather stone 8 → craft stone_pickaxe → gather coal → craft torches\n\
+         - Shelter before night. Food when hungry. Torches in dark areas.\n\
+         - Stuck? Try different direction. Jump. Dig around you.",
+    ) + mc_knowledge.as_str();
     let agent_cfg = AgentConfig::new(system_prompt, 1) // 每步 1 轮，外循环控制步数
         .with_compaction(compaction)
         .with_retry(RetryConfig {
