@@ -1,4 +1,4 @@
-# Rust 构建产物
+﻿# Rust 构建产物
 /target
 
 # 密钥 / 本地配置（切勿提交）
@@ -13,7 +13,7 @@ config/.env
 _tmp_*
 smoke_*.txt
 
-# 大模型文件已移除（mod 桥接后不再需要 ONNX 检测模型）
+# 大模型文件已移除（mod 桥接后不再需 ONNX 检测模型）
 
 # Python 缓存
 __pycache__/
@@ -33,7 +33,7 @@ references/
 .numen-clone/
 .touhou-clone/
 
-# ===== Fabric mod 构建产物（craft-agent-bridge）=====
+# ===== Fabric mod 构建产物（craft-agent-bridge）====
 /mods/craft-agent-bridge/build/
 /mods/craft-agent-bridge/.gradle/
 /mods/craft-agent-bridge/tools/proxy_cache/
@@ -43,3 +43,9 @@ references/
 /mods/craft-agent-bridge/javatest*
 
 compile-log.txt
+
+# 运行产物（viewer session JSONL）
+/tools/sessions/
+
+# 快捷方式（机器相关，非源码）
+*.lnk
