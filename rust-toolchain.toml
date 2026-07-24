@@ -1,4 +1,7 @@
+# 注意：azalea（vendor，git rev c35b57eb）依赖 nightly-only 特性
+# （generic_const_exprs / min_specialization / type_changing_struct_update 等），
+# 故整个 workspace 必须用 nightly 才能编译，不能用 stable 1.97.1。
 [toolchain]
-channel = "1.97.1"
+channel = "nightly-2026-07-21"
 components = ["rustfmt", "clippy"]
 profile = "default"

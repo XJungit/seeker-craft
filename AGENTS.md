@@ -3,6 +3,8 @@
 ## Build
 
 **Rust (azalea client — 唯一路线):** `cargo build` / `cargo test --workspace` (edition 2024, nightly pinned via rust-toolchain.toml)
+- `rust-toolchain.toml` 锁 `nightly-2026-07-21`。**必须用 nightly**：azalea (vendor, rev c35b57eb) 依赖 nightly-only 特性（`generic_const_exprs` / `min_specialization` / `type_changing_struct_update`），stable 1.97.1 编不过。cargo 自动读该文件选工具链，**不要手动改 channel 为 stable**。
+- azalea 依赖在 `Cargo.toml` 里**永久写 https 源**（可移植）。本地离线开发靠 `.cargo/config.toml` 的 `[patch."https://github.com/azalea-rs/azalea"]` 重定向到 `vendor/azalea`（file git 源）。**不要再手动把 Cargo.toml 改 file:// 来回切换**（旧工作流已废弃）。
 - azalea bot demo: `cargo run -p craft-agent-minecraft --example agent_azalea_demo --features azalea-bot`
 - 其他 azalea 示例：agent_azalea_demo / azalea_adapter_demo / azalea_bot_demo / azalea_connect / azalea_place_demo
 
