@@ -44,7 +44,7 @@ fn main() -> anyhow::Result<()> {
         .iter()
         .find(|a| a.starts_with("--goal="))
         .map(|s| s.trim_start_matches("--goal=").to_string())
-        .unwrap_or_else(|| "向下挖矿探矿：连续下挖若干格，每 2~3 格用 chat 向玩家汇报一次坐标与进度；挖到基岩层(Y<=1)或连续卡住即 chat 汇报并宣布任务完成。".to_string());
+        .unwrap_or_else(|| "你每轮都会收到[已知世界记忆·邻近]（bot 自动扫描到的资源点/结构/容器坐标）。请优先利用这些已知坐标：先 perceive 确认状态，然后去最近的 dark_oak_log 砍 8 个原木；砍完后若记得附近有合适位置，用 place 放一个 crafting_table 并记住它的坐标（用 memory 工具 anchor 命名）。完成后 chat 汇报你用了哪些记忆坐标。".to_string());
 
     // 同步构建 LLM 客户端（必须在任何 tokio runtime 之外，因内部用 reqwest::blocking）。
     let model_cfg = ModelConfig::load("config/agent.toml")?;
@@ -82,6 +82,21 @@ fn main() -> anyhow::Result<()> {
         ))
         .expect("azalea adapter 连接失败（确认服为纯 vanilla 26.2）")
     };
+
+    // 临时验证桩：等 bot 扫描回填世界记忆，打印采样（确认 A 的扫描来源有数据）
+    std::thread::sleep(std::time::Duration::from_secs(6));
+    println!(
+        "[verify] 扫描到 {} 条世界记忆；采样: {}",
+        world_mem.len(),
+        world_mem
+            .to_json()
+            .chars()
+            .take(300)
+            .collect::<String>()
+    );
+    if let Some(a) = world_mem.find_anchor("__self__") {
+        println!("[verify] __self__ 锚点: {:?}", a.pos);
+    }
 
     // 注册 azalea 工具集（持有 adapter 引用）。
     let mut registry = ToolRegistry::new();
@@ -128,7 +143,11 @@ fn main() -> anyhow::Result<()> {
               必须停止下探，用 chat 向玩家说明情况后，以纯文本宣布任务完成/无法继续——\n\
               不得继续调 mine_below，也不得假装还在挖。\n\
          3) perceive 可随时调用确认状态，不必每轮都调。\n\
-         4) 任务确实无法推进时，允许纯文本结束（说明原因），这不算错误。",
+          4) 任务确实无法推进时，允许纯文本结束（说明原因），这不算错误。\n\
+          5) 你每轮会收到 [已知世界记忆·邻近] 段落，列出自动扫描到的资源点/结构/容器坐标。\n\
+             做空间决策时优先直接复用这些已知坐标（如 goto 到记忆里的 dark_oak_log），\n\
+             不要盲目乱走。也可用 memory 工具显式记录/查询锚点。\n\
+             注意：被砍光/挖完的资源点会被标记为「已耗尽」，不要再回头去采。",
     );
     let cfg = AgentConfig::new(system_prompt, max_iter)
         .with_compaction(compaction)
@@ -148,6 +167,16 @@ fn main() -> anyhow::Result<()> {
     for line in &log {
         println!("{line}");
     }
+    // 临时验证桩：run 后再次 dump，观察 B（砍树→资源记忆变化）/C（depleted 标记）是否生效
+    let wm = agent.world_memory();
+    println!(
+        "[verify] run 后世界记忆 {} 条；含 depleted 的资源点: {}",
+        wm.len(),
+        wm.query(Some(craft_agent::core::memory::MemoryKind::Resource), None)
+            .into_iter()
+            .filter(|c| c.depleted)
+            .count()
+    );
     Ok(())
 }
 
