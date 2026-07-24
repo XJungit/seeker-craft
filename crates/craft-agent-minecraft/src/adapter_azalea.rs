@@ -14,6 +14,7 @@ use anyhow::{anyhow, Context, Result};
 use craft_agent::core::adapter::GameAdapter;
 use craft_agent::core::memory::WorldMemory;
 use craft_agent::core::types::{Action, ExecResult, MinecraftAction, Screenshot, WorldState};
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 /// Minecraft azalea 适配器。
@@ -26,6 +27,8 @@ pub struct MinecraftAzaleaAdapter {
     stuck_count: Mutex<u32>,
     /// 共享世界记忆库（由 Agent 传入，perceive/action 后回填）。可为空（不记录）。
     memory: Option<WorldMemory>,
+    /// 玩家聊天消息队列（agent loop 每步前消费）
+    pub chat_queue: Arc<Mutex<VecDeque<String>>>,
 }
 
 #[derive(Clone)]
@@ -77,6 +80,12 @@ impl ArcAzaleaAdapter {
     pub fn perceive_shared(&self) -> Result<WorldState> {
         self.0.lock().unwrap().perceive()
     }
+    /// 消费玩家聊天消息队列
+    pub fn drain_chat(&self) -> Vec<String> {
+        let guard = self.0.lock().unwrap();
+        let mut q = guard.chat_queue.lock().unwrap();
+        q.drain(..).collect()
+    }
 }
 
 impl MinecraftAzaleaAdapter {
@@ -91,12 +100,14 @@ impl MinecraftAzaleaAdapter {
             .context("azalea bot 连接失败（确认服为纯 vanilla 26.2 且未开客户端 mod 校验）")?;
         let bot = Arc::new(bot);
 
+        let chat_queue: Arc<Mutex<VecDeque<String>>> = Arc::new(Mutex::new(VecDeque::new()));
         let adapter = Arc::new(Mutex::new(Self {
             bot: bot.clone(),
             last: Mutex::new(None),
             last_y: Mutex::new(None),
             stuck_count: Mutex::new(0),
             memory,
+            chat_queue: chat_queue.clone(),
         }));
 
         // 后台消费事件流，更新共享 Arc 内的 `last` 缓存。
@@ -112,6 +123,15 @@ impl MinecraftAzaleaAdapter {
             rt.block_on(async move {
                 while let Some(ev) = bot_for_task.next_event().await {
                     if let Some(a) = adapter_weak.upgrade() {
+                        // 处理聊天消息：转发到 chat_queue
+                        if let BotEvent::Chat { content } = ev {
+                            let chat_queue = {
+                                let g = a.lock().unwrap();
+                                g.chat_queue.clone()
+                            };
+                            chat_queue.lock().unwrap().push_back(content);
+                            continue;
+                        }
                         let g = a.lock().unwrap();
                         if let BotEvent::State {
                             position,

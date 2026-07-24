@@ -499,6 +499,15 @@ fn run_agent(
                 }
             })
         };
+        // 消费聊天消息（玩家在 MC 里发的消息注入到 agent）
+        let chat_msgs = adapter.drain_chat();
+        for msg in &chat_msgs {
+            agent.queue_steering(format!("玩家说: {msg}"));
+            let _ = event_tx.send(AgentEvent::Log {
+                text: format!("💬 收到聊天: {msg}"),
+            });
+        }
+
         let step_result = agent.step();
         step_stop.store(true, Ordering::Relaxed);
         let _ = progress_handle.join();
