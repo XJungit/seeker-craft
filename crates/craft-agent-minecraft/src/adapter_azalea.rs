@@ -241,7 +241,7 @@ impl MinecraftAzaleaAdapter {
     }
 
     /// 将 MinecraftAction 转换为 BotCommand（同步等待结果）。
-    fn exec_mc_sync(&self, mc: MinecraftAction, timeout_ms: u64) -> Result<ExecResult> {
+    pub fn exec_mc_sync(&self, mc: MinecraftAction, timeout_ms: u64) -> Result<ExecResult> {
         let cmd = mc_to_cmd(mc);
         match self.bot.push_cmd_and_wait(cmd, timeout_ms) {
             Ok(msg) => Ok(ExecResult { ok: true, detail: msg }),

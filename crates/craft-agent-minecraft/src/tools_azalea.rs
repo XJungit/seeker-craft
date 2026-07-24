@@ -7,12 +7,12 @@
 //! `GameAdapter` 抽象，持有 `ArcAzaleaAdapter`，调用 `execute(Action::Minecraft)`。
 //! 最少必要工具验证 LLM 驱动闭环：perceive / goto / mine_below / chat。
 
-use crate::adapter_azalea::ArcAzaleaAdapter;
+use crate::adapter_azalea::{ArcAzaleaAdapter, MinecraftAzaleaAdapter};
 use craft_agent::core::memory::{MemoryKind, MemoryPos, WorldMemory};
 use craft_agent::core::tool::{GameTool, ToolEffects, ToolResult};
 use craft_agent::core::types::{Action, MinecraftAction};
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// 工具上下文：持有共享的 azalea adapter 与世界记忆库。
 pub struct AzaleaToolCtx {
@@ -1328,6 +1328,163 @@ impl GameTool for SearchWikiTool {
     }
 }
 
+fn _exec_action(adapter: &Arc<Mutex<MinecraftAzaleaAdapter>>, mc: MinecraftAction) -> String {
+    match adapter.lock().unwrap().exec_mc_sync(mc, 120_000) {
+        Ok(r) => r.detail,
+        Err(e) => format!("错误: {e}"),
+    }
+}
+
+/// 执行脚本（简易 DSL，无需外部依赖）。脚本每行一个函数调用，支持：
+/// goto(x,y,z), mine(x,y,z), gather(item,count), craft(item,count),
+/// place(item,x,y,z), open(x,y,z), mine_below(), chat(msg), attack(),
+/// smelt(output,fuel,count), interact(x,y,z), sleep(ms), print(msg), wait()
+/// 所有函数同步等待完成。字符串参数用双引号。
+/// 例: goto(10, 64, 20); mine(10, 63, 20); gather("oak_log", 4)
+pub struct RunScriptTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl RunScriptTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for RunScriptTool {
+    fn name(&self) -> &str {
+        "run_script"
+    }
+    fn description(&self) -> &str {
+        "执行简易脚本控制 bot。每行一个函数调用，字符串用双引号。\
+         支持: goto(x,y,z), mine(x,y,z), gather(item,count), craft(item,count), \
+         place(item,x,y,z), open(x,y,z), mine_below(), chat(msg), attack(), \
+         smelt(output,fuel,count), interact(x,y,z), sleep(ms), print(msg)。\
+         例: goto(10, 64, 20); gather(\"oak_log\", 4); craft(\"oak_planks\", 4)"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "script": { "type": "string", "description": "脚本代码，每行一个函数调用" }
+            },
+            "required": ["script"]
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let script = args.get("script").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("缺少 script"))?;
+        let adapter = self.ctx.adapter.0.clone();
+        let mut results: Vec<String> = Vec::new();
+
+        for line in script.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with("//") || line.starts_with('#') { continue; }
+            // 去掉末尾分号
+            let line = line.strip_suffix(';').unwrap_or(line);
+
+            // 解析函数名和参数
+            let paren_open = match line.find('(') {
+                Some(p) => p,
+                None => { results.push(format!("语法错误: {line} (缺少 '(')")); break; }
+            };
+            let func_name = line[..paren_open].trim();
+            let args_str = line[paren_open + 1..].strip_suffix(')').unwrap_or("");
+            let raw_args: Vec<&str> = args_str.split(',').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+
+            // 解析参数：字符串（带引号）或数字
+            let parse_str = |i: usize| -> Option<String> {
+                let s = *raw_args.get(i)?;
+                Some(s.strip_prefix('"').and_then(|s| s.strip_suffix('"')).unwrap_or(s).to_string())
+            };
+            let parse_i64 = |i: usize| -> Option<i64> {
+                raw_args.get(i).and_then(|s| s.parse::<i64>().ok())
+            };
+            let parse_u32 = |i: usize| -> Option<u32> {
+                raw_args.get(i).and_then(|s| s.parse::<u32>().ok())
+            };
+
+            let result = match func_name {
+                "goto" => {
+                    let (x, y, z) = (parse_i64(0)?, parse_i64(1)?, parse_i64(2)?);
+                    _exec_action(&adapter, MinecraftAction::Goto { x: x as i32, y: y as i32, z: z as i32 })
+                }
+                "mine" => {
+                    let (x, y, z) = (parse_i64(0)?, parse_i64(1)?, parse_i64(2)?);
+                    _exec_action(&adapter, MinecraftAction::MineBlock { x: x as i32, y: y as i32, z: z as i32 })
+                }
+                "mine_below" => {
+                    _exec_action(&adapter, MinecraftAction::MineBelow)
+                }
+                "gather" => {
+                    let item = parse_str(0)?;
+                    let count = parse_u32(1).unwrap_or(1);
+                    _exec_action(&adapter, MinecraftAction::Gather { item, count })
+                }
+                "craft" => {
+                    let item = parse_str(0)?;
+                    let count = parse_u32(1).unwrap_or(1);
+                    _exec_action(&adapter, MinecraftAction::Craft { item, count })
+                }
+                "place" => {
+                    let item = parse_str(0)?;
+                    let (x, y, z) = (parse_i64(1)?, parse_i64(2)?, parse_i64(3)?);
+                    _exec_action(&adapter, MinecraftAction::Place { item, x: x as i32, y: y as i32, z: z as i32 })
+                }
+                "open" => {
+                    let (x, y, z) = (parse_i64(0)?, parse_i64(1)?, parse_i64(2)?);
+                    _exec_action(&adapter, MinecraftAction::OpenContainer { x: x as i32, y: y as i32, z: z as i32 })
+                }
+                "chat" => {
+                    let msg = parse_str(0)?;
+                    _exec_action(&adapter, MinecraftAction::Chat { content: msg })
+                }
+                "attack" => {
+                    _exec_action(&adapter, MinecraftAction::Attack { target: "nearest".to_string() })
+                }
+                "smelt" => {
+                    let output = parse_str(0)?;
+                    let fuel = parse_str(1).unwrap_or_else(|| "coal".to_string());
+                    let count = parse_u32(2).unwrap_or(1);
+                    _exec_action(&adapter, MinecraftAction::Smelt { output, fuel, count })
+                }
+                "interact" => {
+                    let (x, y, z) = (parse_i64(0)?, parse_i64(1)?, parse_i64(2)?);
+                    _exec_action(&adapter, MinecraftAction::InteractBlock { x: x as i32, y: y as i32, z: z as i32 })
+                }
+                "sleep" => {
+                    let ms = parse_u32(0).unwrap_or(1000);
+                    std::thread::sleep(std::time::Duration::from_millis(ms as u64));
+                    format!("sleep {ms}ms")
+                }
+                "print" => {
+                    let msg = parse_str(0).unwrap_or_else(|| "".to_string());
+                    println!("[bot] {msg}");
+                    format!("print: {msg}")
+                }
+                "wait" => {
+                    "ok".to_string()
+                }
+                other => {
+                    results.push(format!("未知函数: {other}"));
+                    break;
+                }
+            };
+            results.push(format!("{func_name}({args_str}) → {result}"));
+        }
+
+        Ok(ToolResult {
+            message: results.join("\n"),
+            is_error: false,
+            images: vec![],
+        })
+    }
+}
 /// 创建 azalea 工具集并注册到 `ToolRegistry`。
 pub fn create_mc_azalea_tools(
     adapter: ArcAzaleaAdapter,
@@ -1356,5 +1513,6 @@ pub fn create_mc_azalea_tools(
         Box::new(SetGoalTool::new(ctx.clone())),
         Box::new(RunPlanTool::new(ctx.clone())),
         Box::new(SearchWikiTool::new(ctx.clone())),
+        Box::new(RunScriptTool::new(ctx.clone())),
     ]
 }
