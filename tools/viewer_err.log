@@ -1,0 +1,77 @@
+warning: field `memory` is never read
+  --> crates\craft-agent-minecraft\src\adapter_azalea.rs:28:5
+   |
+20 | pub struct MinecraftAzaleaAdapter {
+   |            ---------------------- field in this struct
+...
+28 |     memory: Option<WorldMemory>,
+   |     ^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: field `ctx` is never read
+    --> crates\craft-agent-minecraft\src\tools_azalea.rs:1068:5
+     |
+1067 | pub struct SetGoalTool {
+     |            ----------- field in this struct
+1068 |     ctx: Arc<AzaleaToolCtx>,
+     |     ^^^
+
+warning: field `ctx` is never read
+    --> crates\craft-agent-minecraft\src\tools_azalea.rs:1262:5
+     |
+1261 | pub struct SearchWikiTool {
+     |            -------------- field in this struct
+1262 |     ctx: Arc<AzaleaToolCtx>,
+     |     ^^^
+
+warning: `craft-agent-minecraft` (lib) generated 3 warnings
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.21s
+     Running `target\debug\craft-agent-viewer.exe`
+[2m2026-07-24T16:42:03.605086Z[0m [33m WARN[0m [2mazalea_client::client[0m[2m:[0m GameTick is more than 10 ticks behind, skipping ticks so we don't have to burst too much
+[2m2026-07-24T16:42:08.719627Z[0m [33m WARN[0m [2mazalea_client::plugins::attack[0m[2m:[0m tried to attack entity 126v0 which isn't in our EntityIdIndex
+[2m2026-07-24T16:42:08.779730Z[0m [33m WARN[0m [2mazalea_client::plugins::attack[0m[2m:[0m tried to attack entity 126v0 which isn't in our EntityIdIndex
+[2m2026-07-24T16:42:08.806867Z[0m [32m INFO[0m [2mazalea_client::plugins::connection[0m[2m:[0m Server closed connection
+[2m2026-07-24T16:42:08.811790Z[0m [33m WARN[0m [2mazalea_client::plugins::attack[0m[2m:[0m tried to attack entity 126v0 which isn't in our EntityIdIndex
+[2m2026-07-24T16:42:08.817467Z[0m [32m INFO[0m [2mazalea_client::plugins::disconnect[0m[2m:[0m A client 77v0 was disconnected
+[2m2026-07-24T16:42:15.871880Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:42:22.941945Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:42:29.971608Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:42:37.055757Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:42:44.132982Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:42:51.194544Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:42:58.249564Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:43:05.385222Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:43:12.455410Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:43:19.485968Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:43:26.546656Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:43:33.618844Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:43:40.686647Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:43:47.751189Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:43:54.811666Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:44:01.886218Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:44:08.940710Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:44:16.022121Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:44:23.068200Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:44:30.135220Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:44:37.203964Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:44:44.261974Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:44:51.327030Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:44:58.411567Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:45:05.488667Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:45:12.576978Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:45:19.652834Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:45:26.717206Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:45:33.758363Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:45:40.813164Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:45:47.845300Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:45:54.931046Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:46:01.996310Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:46:09.135843Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:46:16.179302Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:46:23.252955Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:46:30.372043Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:46:37.444609Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:46:44.515176Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+[2m2026-07-24T16:46:51.598040Z[0m [33m WARN[0m [2mazalea_client::plugins::join[0m[2m:[0m failed to create connection: 由于目标计算机积极拒绝，无法连接。 (os error 10061)
+error: process didn't exit successfully: `target\debug\craft-agent-viewer.exe` (exit code: 0xffffffff)

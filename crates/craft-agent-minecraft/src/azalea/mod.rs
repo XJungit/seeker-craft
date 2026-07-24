@@ -1071,12 +1071,17 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                     }
                 }
             }
-            // self_defense：空闲时自动攻击附近敌对生物
-            if state.pending.lock().unwrap().is_none() && !*state.mining_below.lock().unwrap() {
+            // self_defense：空闲时自动攻击附近敌对生物（每 100 tick ≈5s 检查一次）
+            if state.pending.lock().unwrap().is_none()
+                && !*state.mining_below.lock().unwrap()
+                && bot.ticks_connected() % 100 == 0
+            {
                 if let Ok(entities) = bot.nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>() {
                     let self_id = bot.entity().id();
+                    let mut attacked = false;
                     for e in entities.iter() {
                         if e.id() == self_id { continue; }
+                        if attacked { break; }
                         if let Ok(kind) = e.kind() {
                             let hostile = matches!(kind,
                                 EntityKind::Zombie | EntityKind::Skeleton | EntityKind::Creeper
@@ -1085,11 +1090,14 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                                 | EntityKind::Drowned | EntityKind::Husk | EntityKind::Stray
                             );
                             if hostile {
-                                e.attack();
-                                let _ = evt_tx.send(BotEvent::Chat {
-                                    content: format!("[MODE] 自动攻击附近敌对生物: {kind:?}"),
-                                });
-                                break;
+                                // 攻击前检查实体是否存活（get_component 失败说明已消失）
+                                if e.get_component::<azalea::entity::EntityKindComponent>().is_some() {
+                                    e.attack();
+                                    attacked = true;
+                                    let _ = evt_tx.send(BotEvent::Chat {
+                                        content: format!("[MODE] 攻击 {kind:?}"),
+                                    });
+                                }
                             }
                         }
                     }
