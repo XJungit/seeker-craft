@@ -210,6 +210,9 @@ pub struct BotState {
     /// 修复：原实现每 tick drain 全部命令一起执行，多个 start_mining 互相覆盖只剩
     /// 最后一个生效——导致"一轮多动作"实际只执行了最后一个动作。
     pub pending: Arc<Mutex<Option<BotCommand>>>,
+    /// pending 命令开始的 tick（ticks_connected），用于超时释放：若命令长时间
+    /// 未完成（如 goto 被卡住到不了），强制清空 pending 放行队列下一条，避免死锁。
+    pub pending_since: Arc<Mutex<Option<u64>>>,
     /// 异步命令（Craft/Gather/Place 等）在 tick 内 await 期间的中途锁：防止下一 tick
     /// 重复进入同一异步命令（handle 每 tick 都会触发）。非阻塞命令（Goto/Mine）不用。
     pub busy: Arc<Mutex<bool>>,
@@ -230,6 +233,7 @@ impl Default for BotState {
             last_position: Arc::new(Mutex::new(None)),
             mining_below: Arc::new(Mutex::new(false)),
             pending: Arc::new(Mutex::new(None)),
+            pending_since: Arc::new(Mutex::new(None)),
             busy: Arc::new(Mutex::new(false)),
             memory: None,
             scanned: Arc::new(Mutex::new(HashMap::new())),
@@ -283,6 +287,7 @@ impl AzaleaBot {
             last_position: last_position.clone(),
             mining_below: Arc::new(Mutex::new(false)),
             pending: Arc::new(Mutex::new(None)),
+            pending_since: Arc::new(Mutex::new(None)),
             busy: Arc::new(Mutex::new(false)),
             memory: memory,
             scanned: Arc::new(Mutex::new(HashMap::new())),
@@ -476,10 +481,13 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                     };
                     if let Some(cmd) = next {
                         *pending = Some(cmd);
+                        // 记录开始 tick，用于超时释放（卡住时避免整队死锁）。
+                        *state.pending_since.lock().unwrap() = Some(bot.ticks_connected() as u64);
                     }
                 }
                 // 若已有在途命令，先判定它是否完成（非阻塞命令轮询，异步命令在
-                // 下方执行分支里 await 完即清空 pending）。
+                // 下方执行分支里 await 完即清空 pending）。超时（默认 40 tick≈2s）
+                // 未完成则强制释放，放行队列下一条。
                 if let Some(cmd) = pending.as_ref() {
                     let done = match cmd {
                         BotCommand::Mine { x, y, z } => {
@@ -504,8 +512,16 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                         BotCommand::MineBelow => false,
                         _ => true,
                     };
-                    if done {
+                    let timed_out = {
+                        let since = *state.pending_since.lock().unwrap();
+                        match since {
+                            Some(t0) => (bot.ticks_connected() as u64).saturating_sub(t0) > 40,
+                            None => false,
+                        }
+                    };
+                    if done || timed_out {
                         *pending = None;
+                        *state.pending_since.lock().unwrap() = None;
                     }
                 }
             }
@@ -721,6 +737,7 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                             BotCommand::Goto { .. } | BotCommand::Mine { .. } | BotCommand::MineBelow
                         ) {
                             *pending = None;
+                            *state.pending_since.lock().unwrap() = None;
                             *state.busy.lock().unwrap() = false;
                         }
                     }
