@@ -278,79 +278,17 @@ impl AgentConfig {
 }
 
 // ── MC Knowledge Base (static parts, prefixed to auto-generated tool reference) ──
+//
+// **历史教训**：旧版这里塞了一份从其他项目（Mindcraft）复制来的英文 prompt，
+// 里面全是虚构工具名（goal_execute/collect/combat/nav_to/consume/digDown/moveAway/
+// execute_plan/look_at/discard）。虽然标了 #[allow(dead_code)] 没被直接使用，
+// 但留在源码里是定时炸弹——日后有人引用就会污染 LLM。已彻底清空。
+//
+// 真实 system prompt 在 viewer/agent_loop.rs 里注入（中文版，列了真实 23 个工具）。
+// modes.rs 的 [MODE: ...] 提示也只引用真实工具名（attack/goto/gather/craft）。
 
 #[allow(dead_code)]
-const MC_KNOWLEDGE_BASE: &str = r#"
-## Your Role
-You are a Minecraft bot. Each turn you receive game state (STATS, HOTBAR, INVENTORY, NEARBY BLOCKS, NEARBY ENTITIES) and must call exactly one tool. Never text-only.
-
-## Crafting Recipes (craft handles automatically)
-1 log→4 planks | 2 planks→4 sticks | 4 planks→1 crafting_table
-3 planks+2 sticks→wooden_pickaxe/axe/hoe | 2 planks+1 stick→wooden_sword
-1 planks+2 sticks→wooden_shovel | 1 stick+1 coal→4 torches
-8 cobblestone→1 furnace | 3 cobblestone+2 sticks→stone_pickaxe/axe
-8 planks→1 chest | 6 planks→3 door
-
-## Survival Strategy
-
-### Daytime: gather wood, craft tools, find food
-1. goal_execute(type="get", param="oak_log", count=8) → goal_execute(type="craft", param="crafting_table") → place("crafting_table", x, y, z)
-2. goal_execute(type="craft", param="stone_pickaxe") → goal_execute(type="get", param="stone", count=20)
-3. goal_execute(type="craft", param="stone_sword")
-4. Hunt animals: goal_execute(type="hunt") — auto finds, kills, collects meat
-5. Eat when hungry: consume("beef", 32) or consume("porkchop", 32)
-
-### Evening: build shelter before night
-1. PREFER build("dirt_shelter", x, y, z, 0) — auto-builds 3x3 shelter at your position.
-2. Or: digDown(3) → look_at(above) → place("dirt") — hide underground
-3. If you have wood, craft("torch", 16) → look_at(ground) → place("torch")
-
-### Night: stay safe or fight
-1. If shelter built: stay inside, craft items (tools, torches, furnace, chest) using goal_execute(type="craft")
-2. Zombies drop only rotten_flesh (worthless + poisonous). Prefer to avoid/flee zombies — not worth fighting.
-3. Only fight if cornered/no escape: combat("melee", 200) for zombies/spiders, combat("kite", 200) for skeletons/creeper
-4. If health < 8: combat("retreat", 100) to flee, then consume food
-5. Light prevents spawns: place torches every 5 blocks in dark areas
-
-### Mining cave exploration
-1. Find a cave entrance or digDown(5) to create shaft
-2. Place torches as you go down
-3. goal_execute(type="get", param="coal", count=10) for fuel → goal_execute(type="get", param="iron_ore", count=20) for iron
-4. goal_execute(type="smelt", param="raw_iron", count=20) → goal_execute(type="craft", param="iron_pickaxe")
-5. goal_execute(type="craft", param="iron_sword")
-6. craft armor: goal_execute(type="craft", param="iron_helmet"), etc.
-
-### Food & health management
-1. Hungry (hunger<15): check inventory for edible food → consume("food_name", 32)
-2. NEVER eat rotten_flesh: it causes hunger effect (food poisoning) for 30s, making things worse
-3. Good food: cooked_beef, cooked_porkchop, cooked_mutton, cooked_chicken, bread, apple, baked_potato, carrot
-4. Rotten flesh: WORTHLESS garbage. Discard immediately (do NOT save it). If inventory has rotten_flesh, discard("rotten_flesh", all) right away.
-5. No food: goal_execute(type="hunt") — auto hunts and collects meat
-6. cook raw meat: goal_execute(type="smelt", param="beef", count=N) → cooked_beef
-7. Low health: run away with moveAway(10), eat to regen
-
-## Decision Rules
-1. Read auto-injected STATS+HOTBAR: know position, health, hunger, what's in quick-access slots, nearby blocks
-2. PREFER goal_execute() for compound tasks (crafting, gathering, smelting) — it handles all sub-steps automatically
-3. For complex multi-step tasks, use execute_plan() with a JSON plan array — supports tool calls, if-then-else conditions, loops, and wait. Example: execute_plan(plan='[{"tool":"nav_to","args":{"x":12,"y":64,"z":8}},{"if":{"state":"has_item","args":{"item":"iron_ore","count":3}},"then":[{"tool":"goal_execute","args":{"type":"smelt","param":"raw_iron","count":3}}],"else":[{"tool":"goal_execute","args":{"type":"get","param":"iron_ore","count":3}}]}]')
-4. Use collect() for simple single-block gathering
-5. Use craft() for simple single-item crafting (goal_execute for complex chains)
-6. Place with place() — call look_at(x,y,z) first to aim at surface
-7. Navigate with nav_to(x,y,z) — use NEARBY BLOCKS coords
-8. Fight with combat(mode, ticks) or attack(ticks); flee with moveAway() if health<8
-9. Eat with consume() when hunger<15 — but NEVER eat rotten_flesh (causes hunger effect)
-10. Every response MUST end with a tool call. Tool error→retry with adjusted params. No faking success.
-11. If a tool returns "Unknown tool", STOP using that tool name — switch to one listed.
-
-## Response Format
-  execute_plan(plan='[{"tool":"nav_to","args":{"x":12,"y":64,"z":8}}]') — GOOD (complex plan)
-  goal_execute(type="craft", param="iron_pickaxe") — GOOD (compound)
-  collect("oak_log", 4) — GOOD
-  craft("oak_planks", 8) — GOOD
-  nav_to(120, 64, -45) — GOOD
-  "I should collect wood" — BAD (text-only)
-  "Need to look around first" — BAD (text-only)
-"#;
+const MC_KNOWLEDGE_BASE: &str = "";
 
 /// Auto-generated knowledge string (base + tool reference from ToolRegistry).
 /// Generated once lazily to keep system prompt stable for prefix caching.
@@ -802,12 +740,40 @@ impl Agent {
             self.messages.push(Message::assistant_response(&response));
             let content = response.content.as_deref().unwrap_or("");
             let goal_hint = self.self_prompt.as_ref().map(|g| format!("你的目标是: {g}。")).unwrap_or_default();
-            let nudge = if content.contains("[工具") || content.contains("[tool ") {
-                format!("{goal_hint}【纠正】你的回复里写了 `[工具 xxx 参数...]` 或 `[tool xxx ...]` 方括号伪调用，\
-                 这不会被执行。必须用真正的 function calling 输出工具调用（系统自动附加 tool_calls \
-                 字段，不要在文字里写）。请重新回复，只输出你真正要执行的工具调用（不写任何工具文字）。")
+            // 文字伪调用检测：LLM 在 assistant 文字里写 `tool(...)` 伪调用而不产生真实 tool_calls。
+            // 扩展检测模式（旧版只检测 `[工具` / `[tool `，遗漏了 `【工具执行】` / `【工具调用】` /
+            // `→ 命令完成` / `→ OK` / `gather(...)` 等常见反模式）。
+            let _lower = content.to_lowercase();
+            let is_pseudo_call = content.contains("【工具")
+                || content.contains("【tool")
+                || content.contains("[工具")
+                || content.contains("[tool ")
+                || content.contains("→ 命令完成")
+                || content.contains("→ ok")
+                || content.contains("→ OK")
+                || content.contains("→ 已到达")
+                || content.contains("→ 已完成")
+                || content.contains("工具执行】")
+                || content.contains("工具调用】")
+                // 纯文字里出现 `toolname(...)` 且没有 tool_calls（常见：goto(...) / mine(...) / gather(...)）
+                || (content.contains("goto(")
+                    || content.contains("mine(")
+                    || content.contains("gather(")
+                    || content.contains("craft(")
+                    || content.contains("attack(")
+                    || content.contains("place("))
+                    && response.tool_calls.is_empty();
+            let nudge = if is_pseudo_call {
+                format!("{goal_hint}【纠正】你的回复里写了文字伪调用（如 `【工具执行】xxx(...)` 或 `xxx(...) → 命令完成`），\
+                 这**不会被执行**——只有 function calling 输出的 tool_calls 才会被真正执行。\
+                 你刚才的所有「工具执行」都是幻觉，bot 实际上没做任何动作！\n\
+                 必须用 function calling 输出工具调用（系统自动附加 tool_calls 字段，\
+                 不要在文字里写任何 tool() 调用）。请重新回复：文字只说 1 句意图，\
+                 然后通过 function calling 输出真实 tool_calls。")
             } else {
-                format!("{goal_hint}【继续】你刚才只用了文字回复，没有产生真正的工具调用。请用 function calling 输出工具调用（不要用 markdown 写 `tool()` 伪调用，那不会被执行）。根据当前状态选一个工具立即行动。")
+                format!("{goal_hint}【继续】你刚才只用了文字回复，没有产生真正的工具调用。\
+                 请用 function calling 输出工具调用（不要用 markdown 写 `tool()` 伪调用，那不会被执行）。\
+                 根据当前状态选一个工具立即行动。")
             };
             self.messages.push(Message::user(nudge));
             log.push(format!("[t{turn}] 提醒: 纯文字回复，已注入续跑指令"));
@@ -873,7 +839,7 @@ impl Agent {
                  1. 检查 perceive 返回的状态，确认当前实际情况\n\
                  2. 换一种完全不同的方法\n\
                  3. 如果在建造，改用 build 蓝图工具而不是手动 place\n\
-                 4. 如果在采集，先 nav_to 到新位置再 collect\n\
+                 4. 如果在采集，先 goto 到新位置再 gather\n\
                  5. 如果目标已达成，停止调用工具",
                 calls
                     .iter()

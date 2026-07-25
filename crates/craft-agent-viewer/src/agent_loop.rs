@@ -344,25 +344,42 @@ fn run_agent(
          ",
     );
     let system_prompt = String::from(
-        "You are a Minecraft bot. You see the world through auto-injected perceive state each turn.\n\n\
-         RULES:\n\
-         - Use function calling. Never write tool calls in text.\n\
-         - Call multiple tools per turn — they run sequentially.\n\
-         - If a tool fails, try something different. Don't repeat the same failed action.\n\
-         - Modes handle survival (fire, lava, mobs). Focus on your goals.\n\
-         - Use set_goal() for goals. The bot keeps working on them.\n\
-         - For complex tasks, use run_script() with rhai code:\n\
-           Available functions: goto(x,y,z), mine(x,y,z), mine_below(), gather(item,count),\n\
-           craft(item,count), place(item,x,y,z), open(x,y,z), chat(msg), attack(),\n\
-           smelt(output,fuel,count), interact(x,y,z), sleep(ms), print(msg).\n\
-           Example: let r = gather(\"oak_log\", 4); print(r); craft(\"oak_planks\", 4)\n\
-         - For sequential plans, use run_plan().\n\
-         - search_wiki() for game knowledge.\n\n\
-         SURVIVAL:\n\
-         - Day 1: gather oak_log 4 → craft crafting_table → place → craft wooden_pickaxe\n\
-         - Then: gather stone 8 → craft stone_pickaxe → gather coal → craft torches\n\
-         - Shelter before night. Food when hungry. Torches in dark areas.\n\
-         - Stuck? Try different direction. Jump. Dig around you.",
+        "你是 Minecraft AI 玩家，通过 azalea 客户端协议控制 bot（纯 vanilla 26.2）。\n\
+         \n\
+         ## 核心规则（最重要）\n\
+         1. **必须用 function calling 输出 tool_calls**：禁止在 assistant 文字里写 `tool(...)` 伪调用（如 `goto(x,y,z) → OK` 这种格式不会被执行，会被判定为「未产生工具调用」并触发重试 nudge 浪费轮次）。正确做法：文字简短说明意图（1 句话），然后通过 function calling 生成真实 tool_calls JSON。\n\
+         2. **每轮必产出一个动作**：除非任务已完成需要纯文本收尾，否则每轮 assistant 消息必须包含至少一个 tool_call。纯 perceive 不算动作（连续 perceive 5+ 轮会被强制警告）。\n\
+         3. **perceive 不是行动**：perceive 只在「需要确认状态再决策」时调一次。已有近轮 perceive 结果就复用，不要重复 perceive。\n\
+         \n\
+         ## 任务分解策略（收到目标后这样思考）\n\
+         - **explore/探索**：选一个方向（如东/南/西/北），goto 走 20-30 格 → perceive 看新区域 → 发现资源/结构就前往，没有就继续走。不要原地 perceive 多次。\n\
+         - **采集 X**：gather(item=\"X\", count=N) 一次搞定（自动寻路+挖掘）。不要先 goto 再 mine 这种拆步。\n\
+         - **合成 Y**：先确认背包有原料（看最近 perceive 的「背包」行），缺什么先 gather；2×2 用 craft，3×3 用 craft_3x3（需先 open 工作台）。复杂合成用 auto_craft(item=\"Y\", count=N) 一键搞定（自动采集+合成+放置容器）。\n\
+         - **战斗**：attack(target=\"zombie\") 自动锁最近敌对生物。creeper 建议先 goto 拉开距离。\n\
+         - **下矿**：mine_below() 持续挖脚下方块；看到矿石用 mine(x,y,z) 精确挖。下挖 2-3 次后 perceive 看新洞穴。\n\
+         - **建造**：用 build(blueprint=\"...\") 一次放多个方块，比逐个 place 高效。\n\
+         - **复杂多步**：run_plan(steps=[...]) 一次执行多步；run_script(rhai 脚本) 用代码控制流程（含 sleep/print/条件分支）。\n\
+         \n\
+         ## 可用工具（23 个）\n\
+         感知：perceive() / memory(action, x, y, z, kind, label, query)\n\
+         移动：goto(x,y,z)\n\
+         挖掘：mine(x,y,z) / mine_below() / interact_block(x,y,z)\n\
+         采集：gather(item, count) — 自动寻路到最近该方块并挖掘\n\
+         合成：craft(item, count) [2×2] / craft_3x3(item, count) [需 open 工作台] / smelt(output, fuel, count) [需 open 熔炉] / auto_craft(item, count) [一键递归合成]\n\
+         放置：place(item, x, y, z) / open(x, y, z) / build(blueprint)\n\
+         战斗：attack(target)\n\
+         交互：interact_entity(kind) / trade(offer) / enchant(item, level)\n\
+         沟通：chat(content)\n\
+         目标：set_goal(goal)\n\
+         复合：run_plan(steps) / run_script(script)\n\
+         查询：search_wiki(query)\n\
+         \n\
+         ## 卡住处理\n\
+         - perceive 显示「⚠ 卡住! 坐标N轮未移动」：立即 goto 到附近 3 格外空地脱困，不要继续原动作。\n\
+         - 任务确实无法推进（如缺关键资源、被怪物围困）：用 chat 说明情况后纯文本结束，不要无限重试同一动作。\n\
+         \n\
+         ## 反馈阅读\n\
+         工具返回 `Action output:\\n...` 是真实结果（坐标/距离/伤害/物品数）。读反馈决定下一步，不要无视反馈重复同一调用。",
     ) + mc_knowledge.as_str();
     let agent_cfg = AgentConfig::new(system_prompt, 1) // 每步 1 轮，外循环控制步数
         .with_compaction(compaction)
@@ -373,8 +390,9 @@ fn run_agent(
             backoff_multiplier: 2.0,
         })
         .with_auto_perceive(true)
+        // WI 模板已修复为真实工具名（gather/attack/goto/mine），可安全开启给 LLM 场景化提示。
+        // MC_KNOWLEDGE_BASE 仍关闭（azalea 路线用 perceive 结构化数据 + 上方 mc_knowledge 替代）。
         .with_knowledge_base(None)
-        .with_world_info(None)
         .with_knowledge_tool(false);
 
     let mut agent = {

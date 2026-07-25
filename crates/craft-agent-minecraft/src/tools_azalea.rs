@@ -1,4 +1,4 @@
-﻿//! Minecraft azalea 工具集（仅 `azalea-bot` 特性编译）。
+//! Minecraft azalea 工具集（仅 `azalea-bot` 特性编译）。
 //!
 //! 把 `MinecraftAzaleaAdapter`（GameAdapter）封装成 LLM 可调用的 `GameTool`。
 //! 这是 Phase 6 的关键：LLM 通过工具名输出 Action，adapter 翻译执行。
@@ -1167,9 +1167,33 @@ impl GameTool for RunPlanTool {
     ) -> anyhow::Result<ToolResult> {
         let steps = args.get("steps").and_then(|v| v.as_array()).ok_or_else(|| anyhow::anyhow!("缺少 steps 数组"))?;
         let mut results: Vec<String> = Vec::new();
+        // 上一步 mine 的坐标——用于检测并跳过"mine→goto 同坐标"这种无效组合。
+        // LLM 常写 [{mine (x,y,z)}, {goto (x,y,z)}] 想让 bot "挖完掉进洞"，
+        // 但 azalea bot 挖完脚下方块不会自动掉进去，goto 到空气位置必然超时。
+        // 检测到这种 plan 时直接跳过 goto，告知 LLM bot 已在附近。
+        let mut last_mined: Option<(i32, i32, i32)> = None;
         for (i, step) in steps.iter().enumerate() {
             let action_name = step.get("action").and_then(|v| v.as_str()).unwrap_or("?");
+            // 跳过无效 goto：目标是上一步 mine 的位置
+            if action_name == "goto" {
+                if let Some((mx, my, mz)) = last_mined {
+                    let gx = step.get("x").and_then(|v| v.as_i64()).map(|v| v as i32);
+                    let gy = step.get("y").and_then(|v| v.as_i64()).map(|v| v as i32);
+                    let gz = step.get("z").and_then(|v| v.as_i64()).map(|v| v as i32);
+                    if gx == Some(mx) && gy == Some(my) && gz == Some(mz) {
+                        results.push(format!("步骤{} (goto) 跳过: goto ({},{},{}) 是上一步刚挖的位置，bot 已在附近无需 goto。", i + 1, mx, my, mz));
+                        last_mined = None;
+                        continue;
+                    }
+                }
+            }
             let mc = parse_step(action_name, step)?;
+            // 记录 mine 坐标供下一步检测
+            if let MinecraftAction::MineBlock { x, y, z } = &mc {
+                last_mined = Some((*x, *y, *z));
+            } else {
+                last_mined = None;
+            }
             match self.ctx.adapter.execute_shared(Action::Minecraft(mc)) {
                 Ok(r) => {
                     results.push(format!("步骤{} ({}) 完成: {}", i + 1, action_name, r.detail));
@@ -1252,7 +1276,23 @@ fn parse_step(action: &str, step: &serde_json::Value) -> anyhow::Result<Minecraf
             item: str("item").ok_or_else(|| anyhow::anyhow!("enchant 缺少 item"))?,
             level: u32("level").unwrap_or(1),
         }),
-        other => Err(anyhow::anyhow!("不支持的 action: {other}（支持: goto/mine/craft/gather/place/open/interact/attack/chat/mine_below）")),
+        "trade" => Ok(MinecraftAction::Trade {
+            offer: u32("offer").unwrap_or(0),
+        }),
+        "interact_entity" => Ok(MinecraftAction::InteractEntity {
+            kind: str("kind").unwrap_or_else(|| "villager".to_string()),
+        }),
+        "set_goal" => Ok(MinecraftAction::Chat {
+            content: format!("[set_goal] {}", str("goal").unwrap_or_default()),
+        }),
+        // perceive 在 plan 里不执行实际动作，只返回提示（plan 是动作序列，perceive 由
+        // agent 主循环的 auto_perceive 处理）。
+        "perceive" | "look" | "look_at" => Err(anyhow::anyhow!(
+            "perceive 不支持在 run_plan 里调用（agent 主循环每轮自动注入 perceive，plan 里只放动作）"
+        )),
+        other => Err(anyhow::anyhow!(
+            "不支持的 action: {other}（支持: goto/mine/mine_below/interact/attack/chat/craft/craft_3x3/smelt/gather/place/open/auto_craft/enchant/trade/interact_entity）"
+        )),
     }
 }
 
@@ -1355,10 +1395,11 @@ impl GameTool for RunScriptTool {
         "run_script"
     }
     fn description(&self) -> &str {
-        "执行 rhai 脚本（嵌入式引擎）。支持变量、循环、条件。函数: goto(x,y,z), mine(x,y,z), \
+        "执行 rhai 脚本（嵌入式引擎）。支持变量、循环、条件。函数: go(x,y,z), mine(x,y,z), \
          gather(item,count), craft(item,count), place(item,x,y,z), open(x,y,z), mine_below(), \
          chat(msg), attack(), smelt(output,fuel,count), interact(x,y,z), sleep(ms), print(msg)。\
-         例: let r = goto(10, 64, 20); print(r); gather(\"oak_log\", 4)"
+         注意：寻路函数名是 go（不是 goto，goto 是 rhai 保留字）。\
+         例: let r = go(10, 64, 20); print(r); gather(\"oak_log\", 4)"
     }
     fn parameters(&self) -> Value {
         serde_json::json!({
@@ -1383,7 +1424,9 @@ impl GameTool for RunScriptTool {
         let mut engine = rhai::Engine::new();
 
         let a = adapter.clone();
-        engine.register_fn("goto", move |x: i64, y: i64, z: i64| -> String {
+        // 注册名为 go（不是 goto）：rhai 1.25 把 goto 列为保留字，LLM 写 goto(...) 会
+        // 触发 "Syntax error: 'goto' is a reserved keyword"。
+        engine.register_fn("go", move |x: i64, y: i64, z: i64| -> String {
             _exec_action(&a, MinecraftAction::Goto { x: x as i32, y: y as i32, z: z as i32 })
         });
         let a = adapter.clone();

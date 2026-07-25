@@ -156,16 +156,41 @@ impl WorldInfo {
         self.keys.iter().any(|k| lower.contains(k))
     }
 
-    /// 从感知文本中找到第一个包含任一关键词的行（保留原文，含坐标/距离信息）。
-    /// 用于把真实的方块/实体信息填入提示，而非占位符 "当前场景"。
+    /// 从感知文本中找到匹配的关键词片段，作为模板 `{label}` 的填充值。
+    ///
+    /// 设计目的：避免把整行（如 "10x10: [stone:571, dirt:206, darkoaklog:8, ...]"
+    /// 或 "实体: [player:1, zombie:6, creeper:3, ...]"）原样塞进 label，
+    /// 导致 WI 提示变成 "Wood source: 10x10: [整个方块列表]" 这种 LLM 看不懂的串。
+    ///
+    /// 规则：
+    /// 1. 扫描每一行；行内若出现任一关键词，提取该关键词 + 紧邻的数字/计数
+    ///    （如 "darkoaklog:8" / "zombie:6"），多个匹配用 ", " 连接
+    /// 2. 若行内没出现数字（如 "脚下: darkoaklog"），返回关键词本身
+    /// 3. 没匹配则返回 None（由调用方填占位符 "当前场景"）
     pub fn find_match_line(&self, text: &str) -> Option<String> {
         if self.keys.is_empty() {
             return None;
         }
+        let mut hits: Vec<String> = Vec::new();
         for line in text.lines() {
             let lower = line.to_lowercase();
-            if self.keys.iter().any(|k| lower.contains(k)) {
-                return Some(line.trim().to_string());
+            for k in &self.keys {
+                if let Some(idx) = lower.find(k) {
+                    // 从关键词起点向后截取至多 32 字符，覆盖 "darkoaklog:8" / "zombie:6" 这类片段
+                    let start = idx;
+                    let end = lower.len().min(idx + k.len() + 16);
+                    let snippet = line[start..end].trim_end_matches(|c: char| {
+                        // 截到第一个非 [字母数字_:.-] 字符为止
+                        !c.is_alphanumeric() && c != '_' && c != ':' && c != '-' && c != '.'
+                    });
+                    let s = snippet.to_string();
+                    if !hits.contains(&s) {
+                        hits.push(s);
+                    }
+                }
+            }
+            if !hits.is_empty() {
+                return Some(hits.join(", "));
             }
         }
         None
@@ -275,40 +300,62 @@ impl Default for WorldInfoLib {
 ///
 /// {label} 会被替换为 perceive 文本中匹配关键词的那一行（含方块名、坐标、距离）。
 /// azalea 路线下 offset_x/offset_y 无意义（用世界坐标 goto），已从模板移除。
+///
+/// **重要**：模板里的工具名必须与 `tools_azalea.rs::create_mc_azalea_tools` 注册的真实
+/// 工具名 100% 一致——否则 LLM 抄示例时就会调到不存在的工具。当前真实工具：
+/// perceive / goto / mine / mine_below / interact_block / attack / craft / craft_3x3 /
+/// smelt / gather / place / open / auto_craft / enchant / trade / interact_entity /
+/// chat / memory / set_goal / run_plan / search_wiki / run_script / build。
 pub fn default_mc_world_info() -> WorldInfoLib {
     let mut lib = WorldInfoLib::new();
+    // 木材：dark_oak_log / oak_log / birch_log 等原木都用 gather
     lib.add(WorldInfo::new(
         vec![
             "tree".into(),
             "oak".into(),
             "birch".into(),
+            "darkoaklog".into(),
+            "dark_oak".into(),
+            "spruce".into(),
+            "log".into(),
             "橡树".into(),
             "树".into(),
+            "原木".into(),
         ],
-        "Wood source: {label}. Use collect(\"oak_log\", N) to gather.",
+        "Wood source: {label}. Call gather(item=\"oak_log\", count=N) — bot 会自动走到最近的该方块并挖掘直到背包有 N 个。",
     ));
+    // 石头：必须用 gather（需镐）；cobblestone 是已挖的掉落物，用 gather 也能拾取
     lib.add(WorldInfo::new(
-        vec!["stone".into(), "石头".into(), "cobblestone".into()],
-        "Stone source: {label}. Use collect(\"stone\", N) with a pickaxe equipped.",
+        vec!["stone".into(), "石头".into(), "cobblestone".into(), "圆石".into()],
+        "Stone source: {label}. Call gather(item=\"stone\", count=N). 需镐；木镐可挖石头→cobblestone。",
     ));
+    // 矿石：coal_ore / iron_ore / copper_ore / diamond_ore 等。注意 iron/diamond 需石镐+
     lib.add(WorldInfo::new(
         vec![
             "ore".into(),
             "coal".into(),
             "iron".into(),
             "copper".into(),
+            "diamond".into(),
+            "gold".into(),
+            "redstone".into(),
             "矿石".into(),
+            "煤矿".into(),
+            "铁矿".into(),
+            "铜矿".into(),
         ],
-        "Ore detected: {label}. Mine with appropriate pickaxe via collect().",
+        "Ore detected: {label}. Call gather(item=\"coal_ore\", count=N) 自动挖；如需指定坐标挖用 mine(x,y,z)。铁/钻石需石镐+。",
     ));
     lib.add(WorldInfo::new(
-        vec!["water".into(), "水".into(), "lava".into(), "岩浆".into()],
-        "Hazard: {label}. Avoid drowning/burning.",
+        vec!["water".into(), "水".into(), "lava".into(), "岩浆".into(), "fire".into(), "火".into()],
+        "Hazard: {label}. 避开；如已陷入，handler 会自动 push Goto 脱困。",
     ));
+    // 敌对生物：handler 每 5s 自动 self_defense，但 LLM 也可主动 attack
     lib.add(WorldInfo::new(
-        vec!["creeper".into(), "zombie".into(), "skeleton".into(), "spider".into()],
-        "Hostile mob: {label}. Use combat(mode, ticks) — melee for zombie/spider, kite for skeleton/creeper.",
+        vec!["creeper".into(), "zombie".into(), "skeleton".into(), "spider".into(), "witch".into(), "pillager".into(), "enderman".into(), "phantom".into()],
+        "Hostile mob: {label}. Call attack(target=\"zombie\") — bot 自动找最近非玩家实体攻击直到其消失。或直接走开 (goto)。creeper 建议远离。",
     ));
+    // 食物：动物
     lib.add(WorldInfo::new(
         vec![
             "cow".into(),
@@ -318,8 +365,9 @@ pub fn default_mc_world_info() -> WorldInfoLib {
             "牛".into(),
             "猪".into(),
             "羊".into(),
+            "鸡".into(),
         ],
-        "Food source: {label}. move_to(coords) then attack(60) to hunt for food.",
+        "Food source: {label}. 先 goto 走到动物附近，再 attack(target=\"cow\") 击杀，掉落肉用炉 smelt 熟食恢复饥饿。",
     ));
     lib
 }
@@ -361,5 +409,38 @@ mod tests {
         assert_ne!(lib.entries[0].id.as_deref(), Some("mob_creeper"));
         lib.remove_by_keys(&["zombie".to_string()]);
         assert!(lib.is_empty());
+    }
+
+    /// 回归：find_match_line 必须只提取匹配的关键词片段，不能返回整行。
+    /// 旧 bug：WI 模板 label 取整行，导致 "Wood source: 10x10: [stone:571, darkoaklog:8, ...]"
+    /// / "Hostile mob: 实体: [player:1, zombie:6, creeper:3, ...]" 这种 LLM 看不懂的串。
+    #[test]
+    fn world_info_find_match_line_extracts_keyword_not_whole_line() {
+        let wi_wood = WorldInfo::new(vec!["darkoaklog".into(), "oak".into()], "Wood: {label}");
+        let wi_mob = WorldInfo::new(vec!["zombie".into(), "creeper".into()], "Mob: {label}");
+
+        let perceive = "位置: (-488, 88, -164)\n\
+            10x10: [stone:571, dirt:206, darkoaklog:8, coalore:16]\n\
+            实体: [player:1, zombie:6, creeper:3, cow:4]";
+
+        let wood_label = wi_wood.find_match_line(perceive).unwrap();
+        assert!(
+            wood_label.contains("darkoaklog"),
+            "wood_label 应包含 darkoaklog，实际: {wood_label}"
+        );
+        assert!(
+            !wood_label.contains("stone:571"),
+            "wood_label 不应包含整行 stone:571，实际: {wood_label}"
+        );
+
+        let mob_label = wi_mob.find_match_line(perceive).unwrap();
+        assert!(
+            mob_label.contains("zombie") || mob_label.contains("creeper"),
+            "mob_label 应包含 zombie/creeper，实际: {mob_label}"
+        );
+        assert!(
+            !mob_label.contains("player:1"),
+            "mob_label 不应包含整行 player:1，实际: {mob_label}"
+        );
     }
 }

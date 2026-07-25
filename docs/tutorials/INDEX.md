@@ -6,7 +6,7 @@ Start here if you are new to the project.
 
 1. Read `getting-started.md`.
 2. Read `project-structure.md`.
-3. Run the azalea-bot example (`agent_azalea_demo`).
+3. Run the viewer (`cargo run -p craft-agent-viewer -- --goal "explore" --steps 20 --port 8080`).
 4. Read `agent-loop.md`.
 5. Pick a task and read the matching tutorial.
 

@@ -40,7 +40,7 @@ async fn main() {
             BotEvent::Chat { content } => {
                 println!("[demo] 收到聊天: {content}");
             }
-            BotEvent::State { position, inventory, player_count, yaw, pitch, block_under, block_ahead, health, food, saturation: _, held_item, biome, nearby, game_state: _ } => {
+            BotEvent::State { position, inventory, player_count, yaw, pitch, block_under, block_ahead, health, food, saturation: _, held_item, biome, nearby, nearby_blocks: _, nearby_entities: _, game_state: _ } => {
                 println!(
                     "[demo] 状态: pos=({:.1},{:.1},{:.1}) yaw={:.0} pitch={:.0} hp={:.1}/{} food={}/{} held={} biome={} under={} ahead={} nearby=[{}] inv=[{}] players={}",
                     position.x, position.y, position.z, yaw, pitch,

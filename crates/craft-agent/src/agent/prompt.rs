@@ -5,6 +5,13 @@ use serde_json::Value;
 use super::{Agent, Context, MANAGE_KNOWLEDGE_TOOL};
 
 /// Few-shot 示例：场景关键词 + 成功工具调用模式
+///
+/// **重要约束**（务必保持，否则 LLM 会抄错签名）：
+/// - 工具调用以 OpenAI tool_calls 形式呈现（assistant 调用 → system 返回结果）
+/// - 工具名必须与 `tools_azalea.rs::create_mc_azalea_tools` 注册的 23 个工具 100% 一致
+/// - 参数名必须与各工具的 `parameters()` schema 一致（如 gather 用 item/count，
+///   goto 用 x/y/z，attack 用 target 字符串，非位置参数）
+/// - 不要用假坐标 (10,64,20) — 用占位变量或感知真实坐标
 struct Example {
     keywords: &'static [&'static str],
     /// (role, content) 对，role 为 "user"/"system"/"assistant"
@@ -12,149 +19,164 @@ struct Example {
 }
 
 const FEW_SHOT_EXAMPLES: &[Example] = &[
+    // 探索场景：最常用，必须放在最前
     Example {
-        keywords: &["oak_log", "wood", "tree", "砍树", "木头", "原木"],
+        keywords: &["explore", "探索", "find", "找", "look", "看看", "附近", "周围", "周围"],
         turns: &[
-            ("assistant", "gather(\"oak_log\", 4)"),
-            ("system", "成功采集 4 个 oak_log"),
-            ("assistant", "craft(\"oak_planks\", 4)"),
-            ("system", "成功合成 16 个 oak_planks"),
+            ("assistant", "我先 perceive 看看周围，然后选个方向走 20 格探索。"),
+            ("system", "[perceive 结果: 群系 dark_forest, 木材 darkoaklog:8, 矿石 coalore:16]"),
+            ("assistant", "向南走 20 格探索。调用 goto(x=-489, y=88, z=-144)"),
+            ("system", "已到达目标 (-489,88,-144)"),
+            ("assistant", "perceive 看看新位置有什么。"),
+            ("system", "[perceive 结果: 发现村庄/villager:2]"),
+            ("assistant", "memory(action=\"save\", x=-489, y=88, z=-144, kind=\"structure\", label=\"村庄\") 记下来。"),
+            ("system", "已记录记忆 @(-489,88,-144) kind=Structure label=村庄"),
         ],
     },
+    // 砍树 → 木板 → 工作台 → 棒子（最经典开局）
     Example {
-        keywords: &["crafting_table", "工作台", "craft"],
+        keywords: &["oak_log", "darkoaklog", "dark_oak", "wood", "tree", "砍树", "木头", "原木", "log"],
         turns: &[
-            ("assistant", "craft(\"crafting_table\", 1)"),
-            ("system", "成功合成 crafting_table"),
-            ("assistant", "place(\"crafting_table\", 10, 64, 20)"),
-            ("system", "已放置 crafting_table"),
+            ("assistant", "gather(item=\"darkoaklog\", count=4) 砍 4 根原木。"),
+            ("system", "Action output:\nSuccessfully gathered 4 darkoaklog, you now have 4 darkoaklog."),
+            ("assistant", "craft(item=\"oak_planks\", count=4) 把原木合成木板（2×2 背包网格）。"),
+            ("system", "Action output:\nSuccessfully crafted oak_planks, you now have 16 oak_planks."),
+            ("assistant", "craft(item=\"crafting_table\", count=1) 合成工作台。"),
+            ("system", "Action output:\nSuccessfully crafted crafting_table, you now have 1 crafting_table."),
+            ("assistant", "place(item=\"crafting_table\", x=-489, y=88, z=-144) 把工作台放在脚边。"),
+            ("system", "Action output:\nPlaced crafting_table at (-489, 88, -144)."),
         ],
     },
+    // 制作石镐（开局第二阶段）
     Example {
-        keywords: &["stone_pickaxe", "石镐", "pickaxe", "镐"],
+        keywords: &["stone_pickaxe", "石镐", "pickaxe", "镐", "cobblestone", "圆石"],
         turns: &[
-            ("assistant", "gather(\"oak_log\", 4)"),
-            ("system", "成功采集 4 个 oak_log"),
-            ("assistant", "craft(\"crafting_table\", 1); place(\"crafting_table\", 10, 64, 20)"),
-            ("system", "已放置 crafting_table"),
-            ("assistant", "open(10, 64, 20); craft(\"stick\", 2)"),
-            ("system", "成功合成 stick"),
-            ("assistant", "gather(\"cobblestone\", 3)"),
-            ("system", "成功采集 3 个 cobblestone"),
-            ("assistant", "craft(\"stone_pickaxe\", 1)"),
-            ("system", "成功合成 stone_pickaxe"),
+            ("assistant", "先确认有工作台（用 perceive 检查 10x10 是否有 crafting_table）。然后 gather(item=\"stone\", count=3) 挖 3 个石头得 cobblestone。"),
+            ("system", "Action output:\nSuccessfully gathered 3 cobblestone, you now have 3 cobblestone."),
+            ("assistant", "open(x=-489, y=88, z=-144) 打开工作台。"),
+            ("system", "Action output:\nOpened crafting_table at (-489, 88, -144)."),
+            ("assistant", "先 craft(item=\"stick\", count=2) 用木板做棒子（2×2 即可），再 craft_3x3(item=\"stone_pickaxe\", count=1) 用工作台合石镐。"),
+            ("system", "Action output:\nSuccessfully crafted stone_pickaxe, you now have 1 stone_pickaxe."),
         ],
     },
+    // 铁矿 → 熔炼铁锭
     Example {
-        keywords: &["iron_ore", "铁矿", "iron", "铁", "smelt", "熔炼"],
+        keywords: &["iron_ore", "铁矿", "iron", "铁", "smelt", "熔炼", "furnace", "熔炉"],
         turns: &[
-            ("assistant", "goto(15, 30, -10); mine(15, 30, -10)"),
-            ("system", "已挖掉 iron_ore"),
-            ("assistant", "gather(\"coal\", 4); craft(\"furnace\", 1); place(\"furnace\", 10, 64, 20)"),
-            ("system", "已放置 furnace"),
-            ("assistant", "open(10, 64, 20); smelt(\"iron_ingot\", \"coal\", 3)"),
-            ("system", "成功熔炼 3 个 iron_ingot"),
+            ("assistant", "gather(item=\"iron_ore\", count=3) 挖铁矿。需石镐+。"),
+            ("system", "Action output:\nSuccessfully gathered 3 iron_ore, you now have 3 iron_ore."),
+            ("assistant", "auto_craft(item=\"furnace\", count=1) 一键合成并放置熔炉。"),
+            ("system", "Action output:\nPlaced furnace at (-489, 88, -145)."),
+            ("assistant", "open(x=-489, y=88, z=-145) 打开熔炉，再 smelt(output=\"iron_ingot\", fuel=\"coal\", count=3) 烧 3 个铁锭。"),
+            ("system", "Action output:\nSuccessfully smelted 3 iron_ingot, you now have 3 iron_ingot."),
         ],
     },
+    // 战斗：攻击僵尸 / 自卫
     Example {
-        keywords: &["torch", "火把", "light", "照明", "暗"],
+        keywords: &["zombie", "僵尸", "creeper", "苦力怕", "skeleton", "骷髅", "spider", "蜘蛛", "attack", "攻击", "fight", "打", "combat"],
         turns: &[
-            ("assistant", "craft(\"stick\", 2); craft(\"torch\", 4)"),
-            ("system", "成功合成 4 个 torch"),
-            ("assistant", "place(\"torch\", 10, 64, 20)"),
-            ("system", "已放置 torch"),
+            ("assistant", "perceive 看到附近 zombie:3。attack(target=\"zombie\") 攻击最近僵尸。"),
+            ("system", "Action output:\nSuccessfully killed zombie, health: 20/20."),
+            ("assistant", "继续 attack(target=\"zombie\") 打下一个。"),
+            ("system", "Action output:\nCould not find any zombie nearby. Health: 19/20."),
         ],
     },
+    // 食物：狩猎 + 烤肉
     Example {
-        keywords: &["chest", "箱子", "存储", "store"],
+        keywords: &["cow", "pig", "sheep", "chicken", "牛", "猪", "羊", "鸡", "food", "hungry", "饿", "饱食"],
         turns: &[
-            ("assistant", "gather(\"oak_log\", 8); craft(\"oak_planks\", 8)"),
-            ("system", "成功合成 32 个 oak_planks"),
-            ("assistant", "craft(\"chest\", 1); place(\"chest\", 10, 64, 20)"),
-            ("system", "已放置 chest"),
+            ("assistant", "附近 cow:3。goto 走过去后 attack(target=\"cow\") 击杀。"),
+            ("system", "Action output:\nSuccessfully killed cow, dropped raw_beef x2."),
+            ("assistant", "auto_craft(item=\"furnace\", count=1); open 后 smelt(output=\"cooked_beef\", fuel=\"coal\", count=2) 烤熟。"),
+            ("system", "Action output:\nSuccessfully smelted 2 cooked_beef, you now have 2 cooked_beef."),
         ],
     },
+    // 火把
     Example {
-        keywords: &["bed", "床", "sleep", "睡觉", "夜晚", "night"],
+        keywords: &["torch", "火把", "light", "照明", "暗", "夜晚", "night"],
         turns: &[
-            ("assistant", "gather(\"white_wool\", 3); gather(\"oak_log\", 4)"),
-            ("system", "成功采集材料"),
-            ("assistant", "craft(\"oak_planks\", 4); craft(\"bed\", 1)"),
-            ("system", "成功合成 bed"),
-            ("assistant", "place(\"bed\", 10, 64, 20)"),
-            ("system", "已放置 bed"),
+            ("assistant", "gather(item=\"coal_ore\", count=1) 挖煤，craft(item=\"stick\", count=1) 做棒子。"),
+            ("system", "Action output:\nSuccessfully gathered 1 coal, crafted 1 stick."),
+            ("assistant", "craft(item=\"torch\", count=4) 用 1 煤 + 1 棒合 4 火把。"),
+            ("system", "Action output:\nSuccessfully crafted 4 torch, you now have 4 torch."),
         ],
     },
+    // 箱子存储
     Example {
-        keywords: &["furnace", "熔炉", "smelt", "熔炼", "cook", "烧"],
+        keywords: &["chest", "箱子", "存储", "store", "store"],
         turns: &[
-            ("assistant", "gather(\"cobblestone\", 8); craft(\"furnace\", 1); place(\"furnace\", 10, 64, 20)"),
-            ("system", "已放置 furnace"),
-            ("assistant", "open(10, 64, 20); smelt(\"iron_ingot\", \"coal\", 3)"),
-            ("system", "成功熔炼 3 个 iron_ingot"),
+            ("assistant", "gather(item=\"oak_log\", count=8); craft(item=\"oak_planks\", count=8) 准备 32 木板。"),
+            ("system", "Action output:\nSuccessfully crafted 32 oak_planks."),
+            ("assistant", "craft(item=\"chest\", count=1); place(item=\"chest\", x=-489, y=88, z=-146) 放箱子。"),
+            ("system", "Action output:\nPlaced chest at (-489, 88, -146)."),
         ],
     },
+    // 床
     Example {
-        keywords: &["enchant", "附魔", "enchanting", "附魔台"],
+        keywords: &["bed", "床", "sleep", "睡觉", "夜晚"],
         turns: &[
-            ("assistant", "gather(\"diamond\", 2); craft(\"enchanting_table\", 1); place(\"enchanting_table\", 10, 64, 20)"),
-            ("system", "已放置 enchanting_table"),
-            ("assistant", "open(10, 64, 20); enchant(\"iron_sword\", 2)"),
-            ("system", "附魔完成"),
+            ("assistant", "杀 3 只羊得 white_wool:3，砍 4 原木合木板。"),
+            ("system", "Action output:\nGot 3 white_wool, 12 oak_planks."),
+            ("assistant", "open 工作台后 craft_3x3(item=\"bed\", count=1) 合床。"),
+            ("system", "Action output:\nSuccessfully crafted bed, you now have 1 bed."),
         ],
     },
+    // 村民交易
     Example {
         keywords: &["villager", "村民", "trade", "交易"],
         turns: &[
-            ("assistant", "interact_entity(\"villager\")"),
-            ("system", "已打开村民交易界面"),
-            ("assistant", "trade(0)"),
-            ("system", "交易完成"),
+            ("assistant", "interact_entity(kind=\"villager\") 打开附近村民交易界面。"),
+            ("system", "Action output:\nOpened villager trade UI."),
+            ("assistant", "trade(offer=0) 买第 1 个报价。"),
+            ("system", "Action output:\nTrade completed, got 1 bread."),
         ],
     },
+    // 下矿：用 mine_below 挖矿井
     Example {
-        keywords: &["zombie", "僵尸", "creeper", "苦力怕", "skeleton", "骷髅", "spider", "蜘蛛", "attack", "攻击", "fight", "打"],
+        keywords: &["mine_below", "下矿", "dig", "挖矿", "挖矿井"],
         turns: &[
-            ("assistant", "attack(\"nearest\")"),
-            ("system", "攻击完成"),
+            ("assistant", "mine_below() 挖脚下方块开始下探。"),
+            ("system", "Action output:\nMined block below, now at y=87."),
+            ("assistant", "perceive 看看新方块，发现 iron_ore。mine(x=-489, y=85, z=-144) 挖矿。"),
+            ("system", "Action output:\nMined block at (-489,85,-144), got iron_ore."),
         ],
     },
+    // 建造：用 build 工具执行蓝图
     Example {
-        keywords: &["explore", "探索", "find", "找", "look", "看看", "附近", "周围"],
+        keywords: &["build", "建造", "house", "房子", "shelter", "庇护所", "蓝", "蓝图"],
         turns: &[
-            ("assistant", "goto(0, 64, 0)"),
-            ("system", "已到达 (0, 64, 0)"),
-            ("assistant", "memory(\"query\", 32)"),
-            ("system", "附近记忆查询结果"),
+            ("assistant", "先 gather(item=\"oak_log\", count=16) 准备材料，craft 成 32 oak_planks。"),
+            ("system", "Action output:\nGot 32 oak_planks."),
+            ("assistant", "build(blueprint=\"{\\\"blocks\\\":[{\\\"x\\\":-489,\\\"y\\\":88,\\\"z\\\":-144,\\\"block\\\":\\\"oak_planks\\\"},{\\\"x\\\":-489,\\\"y\\\":89,\\\"z\\\":-144,\\\"block\\\":\\\"oak_planks\\\"}]}\") 按蓝图放 2 个方块。"),
+            ("system", "Action output:\n第1个: placed oak_planks @(-489,88,-144)\n第2个: placed oak_planks @(-489,89,-144)"),
         ],
     },
+    // 附魔
     Example {
-        keywords: &["build", "建造", "house", "房子", "shelter", "庇护所"],
+        keywords: &["enchant", "附魔", "enchanting", "附魔台"],
         turns: &[
-            ("assistant", "gather(\"oak_log\", 16); craft(\"oak_planks\", 16); gather(\"cobblestone\", 32)"),
-            ("system", "材料已备齐"),
-            ("assistant", "craft(\"crafting_table\", 1); place(\"crafting_table\", 10, 64, 20)"),
-            ("system", "已放置 crafting_table"),
-            ("assistant", "open(10, 64, 20); craft(\"oak_planks\", 8)"),
-            ("system", "合成完成"),
+            ("assistant", "需钻石+黑曜石+书。gather(item=\"diamond_ore\", count=2); craft(item=\"enchanting_table\", count=1); place 放置。"),
+            ("system", "Action output:\nPlaced enchanting_table at (-489,88,-144)."),
+            ("assistant", "open(x=-489, y=88, z=-144) 后 enchant(item=\"iron_sword\", level=2) 附魔 2 级。"),
+            ("system", "Action output:\nEnchanted iron_sword with Sharpness II."),
         ],
     },
+    // 多步计划：用 run_plan 一次跑多步
     Example {
-        keywords: &["mine_below", "下矿", "dig", "挖矿", "mine", "mine"],
+        keywords: &["plan", "计划", "多步", "step", "run_plan", "依次"],
         turns: &[
-            ("assistant", "mine_below()"),
-            ("system", "已挖掉脚下方块"),
-            ("assistant", "mine_below()"),
-            ("system", "已挖掉脚下方块"),
+            ("assistant", "用 run_plan 一次执行多步：先走到资源点，再挖矿，回工作台合成。"),
+            ("assistant", "run_plan(steps=[{\"action\":\"goto\",\"x\":-490,\"y\":80,\"z\":-156},{\"action\":\"mine\",\"x\":-490,\"y\":80,\"z\":-156},{\"action\":\"goto\",\"x\":-489,\"y\":88,\"z\":-144},{\"action\":\"craft\",\"item\":\"torch\",\"count\":4}])"),
+            ("system", "Action output:\n步骤1 (goto) 完成: 已到达目标 (-490,80,-156)\n步骤2 (mine) 完成: 已挖掉方块 (-490,80,-156), got coal_ore\n步骤3 (goto) 完成: 已到达目标 (-489,88,-144)\n步骤4 (craft) 完成: Successfully crafted 4 torch"),
         ],
     },
+    // 卡住脱困（与 jailbreak 规则呼应）
     Example {
-        keywords: &["coal", "煤", "charcoal", "木炭", "fuel", "燃料"],
+        keywords: &["stuck", "卡住", "未移动", "脱困", "trap"],
         turns: &[
-            ("assistant", "gather(\"coal_ore\", 4)"),
-            ("system", "成功采集 4 个 coal"),
-            ("assistant", "craft(\"torch\", 4)"),
-            ("system", "成功合成 4 个 torch"),
+            ("assistant", "perceive 提示「⚠ 卡住! 坐标5轮未移动」。改用 goto 到侧前方 3 格空地脱困。"),
+            ("assistant", "goto(x=-486, y=88, z=-161) 走到附近空地。"),
+            ("system", "Action output:\n已到达目标 (-486,88,-161)"),
         ],
     },
 ];
@@ -220,6 +242,8 @@ impl Agent {
         }
 
         // Few-shot 示例注入：词重叠检索最相关场景（离线可用，无需 embedding）
+        // 关键：必须明确告诉 LLM 这是「预期 function calling 形态」的示例，
+        // 否则 LLM 会模仿成在 assistant 文字里写 `tool(...)` 伪调用（实测反模式）。
         let mut scored: Vec<(f64, &Example)> = FEW_SHOT_EXAMPLES
             .iter()
             .map(|ex| (word_overlap_score(&recent_perception, ex.keywords), ex))
@@ -227,14 +251,16 @@ impl Agent {
             .collect();
         scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
         if !scored.is_empty() {
-            let mut example_text = String::from("【参考示例】\n");
+            let mut example_text = String::from(
+                "【参考示例】（以下展示预期的 function calling 形态：assistant 文字简短说明意图 + 真实 tool_calls JSON。**禁止**在 assistant 文字里写 `tool(...)` 伪调用，必须通过 function calling 输出工具调用。）\n",
+            );
             for (i, (_, ex)) in scored.iter().take(2).enumerate() {
                 example_text.push_str(&format!("场景 {}:\n", i + 1));
                 for (role, content) in ex.turns {
                     let label = match *role {
-                        "assistant" => "行动",
-                        "system" => "结果",
-                        _ => "输入",
+                        "assistant" => "assistant (含 tool_call)",
+                        "system" => "tool result",
+                        _ => "user",
                     };
                     example_text.push_str(&format!("  {label}: {content}\n"));
                 }
@@ -244,10 +270,10 @@ impl Agent {
 
         if self.obs_streak >= 5 {
             if self.obs_streak >= 10 {
-                parts.push("【循环警告】你已经连续观察 10+ 步没有实际行动！STOP repeating the same action. Pick a COMPLETELY DIFFERENT tool RIGHT NOW — nav_to, collect, craft, build, combat — anything but what you've been doing.".to_string());
+                parts.push("【循环警告】你已经连续观察 10+ 步没有实际行动！STOP repeating perceive. Pick a COMPLETELY DIFFERENT tool RIGHT NOW — goto / gather / mine / craft / attack / build — anything but perceive.".to_string());
             } else {
                 parts.push(format!(
-                    "【观察提醒】已连续 {} 步纯观察。选一个工具立即行动。",
+                    "【观察提醒】已连续 {} 步纯观察。选一个工具立即行动（goto/gather/mine/craft/attack）。",
                     self.obs_streak
                 ));
             }

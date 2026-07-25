@@ -15,7 +15,7 @@ We use semver-like tags for milestones:
 - [ ] `cargo test --workspace` passes
 - [ ] `cargo clippy --workspace` clean (or known exceptions documented)
 - [ ] `cargo fmt --check` passes
-- [ ] Example runs: `agent_azalea_demo` (with `--features azalea-bot`) compiles and starts
+- [ ] Viewer runs: `cargo run -p craft-agent-viewer -- --goal "explore" --steps 5 --port 8080` compiles and starts
 - [ ] All crate READMEs reflect current API
 - [ ] `docs/tutorials/` consistent with release
 

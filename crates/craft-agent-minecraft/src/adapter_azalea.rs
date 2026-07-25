@@ -22,9 +22,11 @@ pub struct MinecraftAzaleaAdapter {
     bot: Arc<AzaleaBot>,
     /// 缓存最近一次结构化状态（perceive 后供 execute / harness 使用）。
     last: Mutex<Option<WorldState>>,
-    /// 卡住检测：上次 Y 与连续未变化的次数（挖到基岩/空气时坐标不动）。
+    /// 卡住检测：上次位置 + 首次卡住的时间戳（秒）。
+    /// 旧实现用 stuck_count 每 State 事件 +1，1 秒 20 tick 就累计成"50 轮"误导 LLM。
+    /// 改为时间制：记录首次未移动的秒数，显示"卡住 N 秒"而非"轮"。
     last_y: Mutex<Option<azalea::Vec3>>,
-    stuck_count: Mutex<u32>,
+    stuck_since: Mutex<Option<u64>>,
     /// 共享世界记忆库（由 Agent 传入，perceive/action 后回填）。可为空（不记录）。
     memory: Option<WorldMemory>,
     /// 玩家聊天消息队列（agent loop 每步前消费）
@@ -105,7 +107,7 @@ impl MinecraftAzaleaAdapter {
             bot: bot.clone(),
             last: Mutex::new(None),
             last_y: Mutex::new(None),
-            stuck_count: Mutex::new(0),
+            stuck_since: Mutex::new(None),
             memory,
             chat_queue: chat_queue.clone(),
         }));
@@ -152,10 +154,16 @@ impl MinecraftAzaleaAdapter {
                             game_state,
                         } = ev
                         {
-                            // 卡住检测：仅当 X/Y/Z 三轴都几乎没动才算"卡住"。
-                            // 旧逻辑只看 Y，导致 bot 在平地行走（Y 恒定）也被误判卡住。
+                            // 卡住检测：按时间（秒）计，不是按 State 事件计数。
+                            // 旧实现用 stuck_count 每 State +1，但 State 每 20 tick（1 秒）发一次，
+                            // 50 秒就累计成"50 轮"误导 LLM 以为已经卡了 50 轮对话。
+                            // 改为记录首次卡住的秒数，显示"卡住 N 秒"。
                             let mut last_pos = g.last_y.lock().unwrap();
-                            let mut stuck = g.stuck_count.lock().unwrap();
+                            let mut stuck_since = g.stuck_since.lock().unwrap();
+                            let now_secs = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs())
+                                .unwrap_or(0);
                             let moved = match *last_pos {
                                 Some(p) => {
                                     (position.x - p.x).abs() > 0.5
@@ -165,25 +173,28 @@ impl MinecraftAzaleaAdapter {
                                 None => true,
                             };
                             if moved {
-                                *stuck = 0;
-                            } else {
-                                *stuck += 1;
+                                *stuck_since = None;
+                            } else if stuck_since.is_none() {
+                                *stuck_since = Some(now_secs);
                             }
                             *last_pos = Some(position);
-                            // 只回报客观事实（卡住计数），不给指令性结论——
-                            // "卡住怎么办"由 system 行为准则统一处理，避免感知层越界决策。
-                            let stuck_hint = if *stuck >= 15 {
-                                format!(" ⚠ 卡住! 坐标{}轮未移动", *stuck)
-                            } else {
-                                String::new()
-                            };
-                            drop(stuck);
+                            // 注：原"卡住 N 秒"提示词已移除——挖掘/合成/采集时 position 不变
+                            // 但 bot 实际在工作，时间制误报严重，反复误导 LLM 触发 goto 脱困
+                            // 死循环。卡住检测由 agent 层的死循环检测（recent_calls 4+ 重复）
+                            // 兜底，perceive 不再注入此 hint。
+                            drop(stuck_since);
                             drop(last_pos);
+                            let stuck_hint = String::new();
+                            // 资源分类摘要：把 10x10 方块列表归纳为 木材/石头/矿石 三类总量。
+                            // 避免 WI 模板把整个 10x10 行作为 label（"Wood source: 10x10: [stone:571, ...]"）。
+                            // LLM 看摘要即可决策；需要精确坐标时用 memory 工具查询。
+                            let resource_summary = summarize_resources(&nearby_blocks);
                             let scene = format!(
                                 "位置: ({:.0}, {:.0}, {:.0})\n\
                                  生命: {:.0}/20  饱食: {}/20  主手: {}\n\
                                  群系: {}  脚下: {}  前方: {}\n\
                                  附近: [{}]\n\
+                                 资源: {}\n\
                                  10x10: [{}]\n\
                                  实体: [{}]\n\
                                  背包: [{}]\n\
@@ -191,7 +202,7 @@ impl MinecraftAzaleaAdapter {
                                 position.x, position.y, position.z,
                                 health, food, held_item,
                                 biome, block_under, block_ahead,
-                                nearby, nearby_blocks, nearby_entities, inventory,
+                                nearby, resource_summary, nearby_blocks, nearby_entities, inventory,
                                 player_count, stuck_hint
                             );
                             *g.last.lock().unwrap() = Some(WorldState {
@@ -303,5 +314,48 @@ fn mc_to_cmd(mc: MinecraftAction) -> BotCommand {
         MinecraftAction::Trade { offer } => BotCommand::Trade { offer },
         MinecraftAction::InteractEntity { kind } => BotCommand::InteractEntity { kind },
     }
+}
+
+/// 把 10x10 方块列表（"stone:571, dirt:206, darkoaklog:8, coalore:16, ..."）
+/// 归纳为三类资源摘要："木材:13 石头:874 矿石:24"。
+///
+/// 作用：
+/// - LLM 看摘要就能决策（要不要砍树/挖矿），无需翻一长串方块名
+/// - 避免 WI 模板把整个 10x10 行作为 label 重复堆砌
+///
+/// 分类规则：
+/// - 木材：原木/木板/树叶/树苗类（log/stem/planks/leaves/sapling）
+/// - 石头：石头/泥土/沙/沙砾/基岩/草方块等基础地形（含下半部分空白）
+/// - 矿石：所有 _ore 结尾 + ancient_debris
+fn summarize_resources(nearby_blocks: &str) -> String {
+    let mut wood = 0u32;
+    let mut stone = 0u32;
+    let mut ore = 0u32;
+    for tok in nearby_blocks.split(',') {
+        let tok = tok.trim();
+        let Some((name, cnt)) = tok.split_once(':') else {
+            continue;
+        };
+        let name = name.trim().to_lowercase();
+        let cnt: u32 = cnt.trim().parse().unwrap_or(0);
+        if name.ends_with("log")
+            || name.ends_with("stem")
+            || name.ends_with("planks")
+            || name.ends_with("leaves")
+            || name.ends_with("sapling")
+            || name.ends_with("wood")
+        {
+            wood = wood.saturating_add(cnt);
+        } else if name.ends_with("ore")
+            || name == "ancientdebris"
+            || name == "ancient_debris"
+        {
+            ore = ore.saturating_add(cnt);
+        } else {
+            // 其余归石头/泥土类基础地形
+            stone = stone.saturating_add(cnt);
+        }
+    }
+    format!("木材:{wood} 石头:{stone} 矿石:{ore}")
 }
 

@@ -559,6 +559,18 @@ mod tests {
             }],
             self_hint: "血量满，快捷栏有斧头".into(),
             screenshot: std::sync::Arc::new(vec![]),
+            health: None,
+            hunger: None,
+            experience_level: None,
+            experience_progress: None,
+            position: None,
+            yaw: None,
+            pitch: None,
+            biome: None,
+            gamemode: None,
+            inventory: None,
+            held_item: None,
+            selected_slot: None,
         }
     }
 

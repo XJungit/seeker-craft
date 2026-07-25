@@ -27,6 +27,7 @@ use azalea::prelude::*;
 use azalea::pathfinder::goals::BlockPosGoal;
 use azalea::BlockPos;
 use azalea_registry::builtin::{BlockKind, EntityKind};
+use azalea_registry::DataRegistryKey;
 use azalea_client::client_chat::ChatPacket;
 use bevy_ecs::component::Component;
 use craft_agent::core::memory::{MemoryKind, MemoryPos, WorldMemory};
@@ -486,7 +487,9 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                         *state.pending_since.lock().unwrap() = Some(bot.ticks_connected() as u64);
                     }
                 }
-                // 轮询非阻塞命令（Goto/Mine）完成状态，超时（40 tick≈2s）强制释放。
+                // 轮询非阻塞命令（Goto/Mine）完成状态，超时（60 tick≈3s）强制释放。
+                // 旧值 200 tick(10s) 太长——bot 卡在 goto 10 秒会拖死 vanilla 服 TPS，
+                // 导致同服玩家 WASD 输入丢失。3 秒足够短距离 goto 完成，超时让 LLM 改策略。
                 if let Some(qc) = pending.as_ref() {
                     let done = match &qc.cmd {
                         BotCommand::Mine { x, y, z } => {
@@ -514,26 +517,42 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                     let timed_out = {
                         let since = *state.pending_since.lock().unwrap();
                         match since {
-                            Some(t0) => (bot.ticks_connected() as u64).saturating_sub(t0) > 200,
+                            Some(t0) => (bot.ticks_connected() as u64).saturating_sub(t0) > 60,
                             None => false,
                         }
                     };
                     if done || timed_out {
+                        // 统一用 Mindcraft 风格 "Action output:\n..." 让 LLM 看到一致的反馈。
+                        // 加副作用信息：goto 带距离 + 当前坐标，mine 带方块类型 + 挖后背包获得数。
                         let result_msg = match &qc.cmd {
                             BotCommand::Goto { x, y, z } if done => {
-                                format!("已到达目标 ({},{},{})", x, y, z)
+                                let (cx, cy, cz) = bot.position().ok()
+                                    .map(|p| (p.x, p.y, p.z))
+                                    .unwrap_or((0.0, 0.0, 0.0));
+                                let dist = ((cx - *x as f64).powi(2)
+                                    + (cy - *y as f64).powi(2)
+                                    + (cz - *z as f64).powi(2)).sqrt();
+                                format!("Action output:\nArrived at ({},{},{}). Distance traveled: {:.1}m. Current pos: ({:.0},{:.0},{:.0}).",
+                                    x, y, z, dist, cx, cy, cz)
                             }
                             BotCommand::Goto { x, y, z } => {
-                                format!("goto ({},{},{}) 超时", x, y, z)
+                                format!("Action output:\ngoto ({},{},{}) 超时——可能路径被阻或目标不可达。建议改 goto 附近 3 格外空地脱困。", x, y, z)
                             }
                             BotCommand::Mine { x, y, z } if done => {
-                                format!("已挖掉方块 ({},{},{})", x, y, z)
+                                // 挖完后方块已是 air，无法得知类型；但可读背包获得数变化（需调用方对比）。
+                                // 返回 bot 当前坐标——LLM 写 plan 时常误以为挖完会自动掉进洞里
+                                // (e.g. mine→goto 同坐标)，告知实际位置避免无意义 goto 超时。
+                                let (cx, cy, cz) = bot.position().ok()
+                                    .map(|p| (p.x, p.y, p.z))
+                                    .unwrap_or((0.0, 0.0, 0.0));
+                                format!("Action output:\nMined block at ({},{},{}). Block removed. Bot still at ({:.0},{:.0},{:.0}) — 挖完不会自动掉进洞，无需 goto 刚挖的位置。",
+                                    x, y, z, cx, cy, cz)
                             }
                             BotCommand::Mine { x, y, z } => {
-                                format!("mine ({},{},{}) 超时", x, y, z)
+                                format!("Action output:\nmine ({},{},{}) 超时——可能方块太硬（需更高品质镐）或距离太远。建议 gather(item=..., count=...) 自动寻路挖掘。", x, y, z)
                             }
-                            _ if done => "命令完成".to_string(),
-                            _ => "命令超时".to_string(),
+                            _ if done => "Action output:\n命令完成".to_string(),
+                            _ => "Action output:\n命令超时".to_string(),
                         };
                         if let Some(tx) = &qc.result_tx {
                             let _ = tx.send(result_msg);
@@ -567,6 +586,27 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                 match cmd {
                     BotCommand::Goto { x, y, z } => {
                         *state.mining_below.lock().unwrap() = false;
+                        // 距离限制：>32 格的 goto 拒绝执行，让 LLM 拆成多段。
+                        // 原因：azalea pathfinder 的 A* 在长距离/复杂地形上计算量大，
+                        // 每 tick 发 MovePlayerPos+PlayerInput 包会拖死 vanilla 服 TPS，
+                        // 导致同服真实玩家 WASD 输入丢失（服务器来不及处理）。
+                        if let Ok(p) = bot.position() {
+                            let dist = ((p.x - x as f64).powi(2)
+                                + (p.y - y as f64).powi(2)
+                                + (p.z - z as f64).powi(2)).sqrt();
+                            if dist > 32.0 {
+                                if let Some(tx) = &result_tx {
+                                    let _ = tx.send(format!(
+                                        "Action output:\ngoto ({},{},{}) 距离 {:.0}m 过远（>32m），\
+                                         请拆成多段：先 goto 中间点（距当前 16-24m），到达后再 goto 目标。",
+                                        x, y, z, dist
+                                    ));
+                                }
+                                *state.pending.lock().unwrap() = None;
+                                *state.pending_since.lock().unwrap() = None;
+                                return bot;
+                            }
+                        }
                         bot.start_goto(BlockPosGoal(BlockPos::new(x, y, z)));
                     }
                     BotCommand::Mine { x, y, z } => {
@@ -598,7 +638,7 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                     BotCommand::Chat { content } => {
                         bot.chat(&content);
                         if let Some(tx) = &result_tx {
-                            let _ = tx.send(format!("chat: {content}"));
+                            let _ = tx.send(format!("Action output:\nSent chat: {content}"));
                         }
                     }
                     BotCommand::Attack { target: _target } => {
@@ -606,29 +646,43 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                             bot.nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>()
                         {
                             let self_id = bot.entity().id();
-                            let mut hit = false;
+                            // 记录攻击前的生命，便于反馈损血
+                            let health_before = bot.health().unwrap_or(20.0);
+                            let mut hit_kind: Option<String> = None;
                             for e in entities.iter() {
                                 if e.id() == self_id { continue; }
+                                let kind = e.kind().map(|k| format!("{k:?}").to_lowercase()).unwrap_or_else(|_| "entity".to_string());
                                 e.attack();
-                                hit = true;
+                                hit_kind = Some(kind);
                                 break;
                             }
-                            if let Some(tx) = &result_tx {
-                                let _ = tx.send(if hit { "攻击完成".to_string() } else { "附近无可攻击实体".to_string() });
-                            }
+                            let health_after = bot.health().unwrap_or(20.0);
+                            let msg = match hit_kind {
+                                Some(k) => {
+                                    let dmg = (health_before - health_after).max(0.0);
+                                    if dmg > 0.0 {
+                                        format!("Action output:\nAttacked {k}. Took {dmg:.0} damage. Health: {health_after:.0}/20.")
+                                    } else {
+                                        format!("Action output:\nAttacked {k}. Health: {health_after:.0}/20.")
+                                    }
+                                }
+                                None => "Action output:\nCould not find any non-player entity nearby to attack.".to_string(),
+                            };
+                            if let Some(tx) = &result_tx { let _ = tx.send(msg.clone()); }
+                            let _ = evt_tx.send(BotEvent::Chat { content: msg });
                         }
                     }
                     BotCommand::Craft2x2 { item, count } => {
                         match crate::azalea::craft::do_craft_2x2(&bot, &item, count).await {
                             Ok(msg) => {
                                 let chat = format!("[合成] {msg}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
-                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nSuccessfully crafted {item}, you now have it. ({msg})")); }
                             }
                             Err(e) => {
                                 let chat = format!("[合成失败] {e}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
-                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nFailed to craft {item}: {e}")); }
                             }
                         }
                     }
@@ -636,13 +690,13 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                         match crate::azalea::craft::do_craft_3x3(&bot, &item, count).await {
                             Ok(msg) => {
                                 let chat = format!("[合成] {msg}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
-                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nSuccessfully crafted {item}, you now have it. ({msg})")); }
                             }
                             Err(e) => {
                                 let chat = format!("[合成失败] {e}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
-                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nFailed to craft {item}: {e}")); }
                             }
                         }
                     }
@@ -650,13 +704,13 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                         match crate::azalea::craft::do_smelt(&bot, &output, &fuel, count).await {
                             Ok(msg) => {
                                 let chat = format!("[熔炼] {msg}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
-                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nSuccessfully smelted {output}, you now have it. ({msg})")); }
                             }
                             Err(e) => {
                                 let chat = format!("[熔炼失败] {e}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
-                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nFailed to smelt {output}: {e}")); }
                             }
                         }
                     }
@@ -664,13 +718,13 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                         match crate::azalea::gather::do_gather(&bot, &item, count).await {
                             Ok(msg) => {
                                 let chat = format!("[采集] {msg}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
-                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nSuccessfully gathered {item}, {msg}")); }
                             }
                             Err(e) => {
                                 let chat = format!("[采集失败] {e}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
-                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nFailed to gather {item}: {e}")); }
                             }
                         }
                     }
@@ -678,13 +732,13 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                         match crate::azalea::place::do_place(&bot, &item, BlockPos::new(x, y, z)).await {
                             Ok(msg) => {
                                 let chat = format!("[放置] {msg}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
-                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nPlaced {item} at ({},{},{}). ({msg})", x, y, z)); }
                             }
                             Err(e) => {
                                 let chat = format!("[放置失败] {e}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
-                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nFailed to place {item} at ({},{},{}): {e}", x, y, z)); }
                             }
                         }
                     }
@@ -692,13 +746,13 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                         match crate::azalea::place::do_open_container(&bot, BlockPos::new(x, y, z)).await {
                             Ok(msg) => {
                                 let chat = format!("[开容器] {msg}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
-                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nOpened container at ({},{},{}). ({msg})", x, y, z)); }
                             }
                             Err(e) => {
                                 let chat = format!("[开容器失败] {e}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
-                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nFailed to open container at ({},{},{}): {e}", x, y, z)); }
                             }
                         }
                     }
@@ -706,13 +760,13 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                         match crate::azalea::auto_craft::do_auto_craft(&bot, &item, count).await {
                             Ok(msg) => {
                                 let chat = format!("[自动合成] {msg}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
-                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nAuto-crafted {item}. ({msg})")); }
                             }
                             Err(e) => {
                                 let chat = format!("[自动合成失败] {e}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
-                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nFailed to auto-craft {item}: {e}")); }
                             }
                         }
                     }
@@ -720,13 +774,13 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                         match crate::azalea::craft::do_enchant(&bot, &item, level).await {
                             Ok(msg) => {
                                 let chat = format!("[附魔] {msg}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
-                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nEnchanted {item} at level {level}. ({msg})")); }
                             }
                             Err(e) => {
                                 let chat = format!("[附魔失败] {e}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
-                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nFailed to enchant {item}: {e}")); }
                             }
                         }
                     }
@@ -735,13 +789,13 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                         match crate::azalea::trade::do_trade(&bot, &ext, offer).await {
                             Ok(msg) => {
                                 let chat = format!("[交易] {msg}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
-                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nTrade offer {offer} completed. ({msg})")); }
                             }
                             Err(e) => {
                                 let chat = format!("[交易失败] {e}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
-                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nFailed to trade offer {offer}: {e}")); }
                             }
                         }
                     }
@@ -757,13 +811,13 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                             Ok(e) => {
                                 bot.entity_interact(e);
                                 let chat = format!("[交互] 已右键 {kind}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
-                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nInteracted with {kind}.")); }
                             }
                             Err(e) => {
                                 let chat = format!("[交互失败] {e}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat.clone() });
-                                if let Some(tx) = &result_tx { let _ = tx.send(chat); }
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nFailed to interact with {kind}: {e}")); }
                             }
                         }
                     }
@@ -785,37 +839,61 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
             }
             // 持续下挖：只要标志为真且当前未在挖，就续挖（对齐 POC 逻辑，
             // 避免单次 start_mining 因中断失效导致 bot 停在原地不下降）。
+            // **Y 下限保护**：Y<=-61 是深板岩+基岩层（1.18+ 基岩层 Y=-64~-59），
+            // 继续下挖毫无意义且徒手挖深板岩极慢。到达后自动停止 mining_below 并提示。
             if *state.mining_below.lock().unwrap() && !bot.is_mining() {
                 if let Ok(p) = bot.position() {
-                    let foot = BlockPos::new(
-                        p.x.floor() as i32,
-                        (p.y - 1.0).floor() as i32,
-                        p.z.floor() as i32,
-                    );
-                    bot.start_mining(foot);
+                    let y = p.y.floor() as i32;
+                    if y <= -61 {
+                        // 到达深岩层，停止下挖
+                        *state.mining_below.lock().unwrap() = false;
+                        let _ = state.evt_tx.send(BotEvent::Chat {
+                            content: format!(
+                                "Action output:\nMineBelow stopped at Y={y} (深板岩/基岩层，继续下挖无意义)。\
+                                 当前坐标 ({:.0},{y},{:.0})。建议改用 mine(x,y,z) 精确挖附近矿石，或 goto 上返回地面。",
+                                p.x, p.z
+                            ),
+                        });
+                    } else {
+                        let foot = BlockPos::new(
+                            p.x.floor() as i32,
+                            (p.y - 1.0).floor() as i32,
+                            p.z.floor() as i32,
+                        );
+                        bot.start_mining(foot);
+                    }
                 }
             }
             // 每 20 tick 推送状态快照。
             let t = bot.ticks_connected();
             if t % 20 == 0 {
                 if let Ok(p) = bot.position() {
-                    // 全量背包：列出所有非空格，格式 `oak_log:3, cobblestone:64`
+                    // 全量背包：列出所有非空格，**按物品 ID 聚合后输出**（旧版每个槽位单独
+                    // 输出，导致 `dirt:46, dirt:64, leaflitter:64, leaflitter:26` 这种重复条目，
+                    // LLM 困惑且浪费 token）。聚合后输出 `dirt:110, leaflitter:90`。
                     let inventory = match bot.get_inventory() {
                         Ok(inv) => match inv.slots() {
                             Some(slots) => {
-                                let items: Vec<String> = slots
-                                    .iter()
-                                    .filter(|s| !s.is_empty())
-                                    .map(|s| {
-                                        let kind = format!("{:?}", s.kind()).to_lowercase();
-                                        let cnt = s.count();
-                                        format!("{kind}:{cnt}")
-                                    })
-                                    .collect();
-                                if items.is_empty() {
+                                let mut agg: std::collections::HashMap<String, u32> =
+                                    std::collections::HashMap::new();
+                                for s in slots.iter() {
+                                    if s.is_empty() { continue; }
+                                    let kind = format!("{:?}", s.kind()).to_lowercase();
+                                    let cnt = s.count() as u32;
+                                    *agg.entry(kind).or_insert(0) += cnt;
+                                }
+                                if agg.is_empty() {
                                     "空背包".to_string()
                                 } else {
-                                    items.join(", ")
+                                    // 按数量降序输出（多的在前，LLM 重点看前几个）
+                                    let mut items: Vec<(String, u32)> =
+                                        agg.into_iter().collect();
+                                    items.sort_by(|a, b| b.1.cmp(&a.1));
+                                    items
+                                        .iter()
+                                        .map(|(k, c)| format!("{k}:{c}"))
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
                                 }
                             }
                             None => "slots=None".to_string(),
@@ -883,6 +961,8 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                         }
                         _ => "air".to_string(),
                     };
+                    // biome 通过 registry 解析为可读 Identifier（如 "minecraft:dark_forest"）。
+                    // 旧实现 `format!("{b:?}")` 会输出 "biome { id: 30 }" 这种调试串，LLM 看不懂。
                     let biome = bot
                         .world()
                         .ok()
@@ -894,8 +974,15 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                                     p.z.floor() as i32,
                                 ))
                         })
-                        .map(|b| format!("{b:?}").to_lowercase())
-                        .unwrap_or_else(|| "?".to_string());
+                        .and_then(|b| bot.resolve_registry_key(&b).ok().flatten())
+                        .map(|key| key.into_ident().to_string())
+                        .map(|s| {
+                            // "minecraft:dark_forest" → "dark_forest"
+                            s.strip_prefix("minecraft:")
+                                .map(|x| x.to_string())
+                                .unwrap_or(s)
+                        })
+                        .unwrap_or_else(|| "unknown".to_string());
                     // 附近方块摘要：3x3 地面区域
                     let nearby = {
                         let foot_x = p.x.floor() as i32;
@@ -996,6 +1083,34 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                         let mut items: Vec<_> = counts.into_iter().collect();
                         items.sort_by(|a, b| b.1.cmp(&a.1));
                         items.iter().map(|(k, v)| format!("{k}:{v}")).collect::<Vec<_>>().join(", ")
+                    };
+                    // 资源分类摘要：把 10x10 里的方块按 wood/stone/ore/other 分组，
+                    // 让 WorldInfo 的 find_match_line 能为每类找到独立的 label 行，
+                    // 避免【场景提示】里 Wood/Stone/Ore 三条都粘同一份 10x10 字符串。
+                    let resource_summary = {
+                        let wood_kinds = ["oaklog", "darkoaklog", "birchlog", "sprucelog", "acalog", "junglelog", "mangrovelog", "cherrylog", "oakplanks", "darkoakplanks"];
+                        let stone_kinds = ["stone", "cobblestone", "dirt", "grassblock", "sand", "gravel", "andesite", "granite", "diorite"];
+                        let ore_kinds = ["coalore", "ironore", "copperore", "goldore", "diamondore", "emeraldore", "redstoneore", "lapisore", "netherquartzore"];
+                        let mut wood = Vec::new();
+                        let mut stone = Vec::new();
+                        let mut ore = Vec::new();
+                        for (k, v) in nearby_blocks.split(", ").map(|s| {
+                            let mut it = s.split(':');
+                            (it.next().unwrap_or("").to_string(), it.next().and_then(|x| x.parse::<u32>().ok()).unwrap_or(0))
+                        }) {
+                            if wood_kinds.iter().any(|x| *x == k) {
+                                wood.push(format!("{k}:{v}"));
+                            } else if stone_kinds.iter().any(|x| *x == k) {
+                                stone.push(format!("{k}:{v}"));
+                            } else if ore_kinds.iter().any(|x| *x == k) {
+                                ore.push(format!("{k}:{v}"));
+                            }
+                        }
+                        let mut lines = Vec::new();
+                        if !wood.is_empty() { lines.push(format!("木材: {}", wood.join(", "))); }
+                        if !stone.is_empty() { lines.push(format!("石头: {}", stone.join(", "))); }
+                        if !ore.is_empty() { lines.push(format!("矿石: {}", ore.join(", "))); }
+                        lines.join("\n")
                     };
                     // 附近实体列表：按类型分组计数
                     let nearby_entities = {

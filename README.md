@@ -37,9 +37,9 @@ Craft-Agent/
 # 构建全部成员（azalea-bot 特性按需开启）
 cargo build --workspace
 
-# azalea bot 示例（连入本地 MC 局域网服，端口 4444）
-cargo run -p craft-agent-minecraft --example agent_azalea_demo --features azalea-bot \
-  -- --steps=40 --goal="收集木头做工作台" --session=sessions/mc_run_azalea.jsonl
+# 主入口：LLM 驱动 bot + Web 仪表盘（连入本地 MC 局域网服，端口 4444）
+cargo run -p craft-agent-viewer -- --goal "收集木头做工作台" --steps 40 --port 8080
+# 浏览器打开 http://127.0.0.1:8080 查看实时对话与启停控制
 ```
 
 ### 配置后端

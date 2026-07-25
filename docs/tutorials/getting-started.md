@@ -20,9 +20,10 @@ cargo build -p craft-agent-minecraft --features azalea-bot
 ## Run
 
 ```bash
-cargo run -p craft-agent-minecraft --example agent_azalea_demo --features azalea-bot \
-  -- --steps=40 --goal="collect wood" --session=sessions/mc_run_azalea.jsonl
+cargo run -p craft-agent-viewer -- --goal "collect wood" --steps 40 --port 8080
 ```
+
+打开浏览器 http://127.0.0.1:8080 查看实时对话与启停控制。
 
 ## Debug
 
