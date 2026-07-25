@@ -79,6 +79,12 @@ pub struct AgentController {
     goal_queue: std::sync::Mutex<VecDeque<String>>,
     /// 共享的 azalea 适配器引用（agent 启动后填充，viewer 从中读取游戏状态）。
     pub game_adapter: Arc<RwLock<Option<ArcAzaleaAdapter>>>,
+    /// 模式 profile 名（如 "survival" / "creative" / "assistant" / "god_mode"）。
+    /// 加载 `profiles/defaults/{mode}.json` 叠加到 _default 之上。
+    pub mode_profile: Option<String>,
+    /// 个体 profile 名（如 "deepseek" / "claude" / "gpt"）。
+    /// 加载 `profiles/{individual}.json` 叠加到 _default + mode 之上。
+    pub individual_profile: Option<String>,
 }
 
 impl AgentController {
@@ -98,6 +104,8 @@ impl AgentController {
             }),
             goal_queue: std::sync::Mutex::new(VecDeque::new()),
             game_adapter: Arc::new(RwLock::new(None)),
+            mode_profile: None,
+            individual_profile: None,
         }
     }
 
@@ -318,69 +326,52 @@ fn run_agent(
         }
     }
 
-// MC 常识知识库（注入 system prompt，提升 bot 的玩法认知，降低"瞎操作"概率）。
-    let mc_knowledge = String::from(
-        "\n\
-         ===== Minecraft 常识（vanilla 26.2）=====\n\
-         矿物分布（Y 层，越深越多）：煤 coal 在 Y=0~136 随处可见，Y=90 附近多；\n\
-         铁 iron 在 Y=-24~80，Y=15 附近最富；铜 copper 同 iron；金 gold 在 Y=-64~32；\n\
-         红石 redstone 在 Y=-59~-32；青金石 lapis 在 Y=-64~-32；钻石 diamond 在 Y=-58~-51 最富；\n\
-         绿宝石 emerald 只在山地 biome。深层（Y<0）矿物密度远高于地表，\n\
-         想挖矿就 mine_below 一路下到 Y≈-20~-50。\n\
-         工具规则：徒手挖木头/沙子/泥土/砾石；挖石头/矿石必须先用 wooden_pickaxe 以上镐，\n\
-         否则不掉掉落物。先用 gather(\"oak_log\") 砍树→auto_craft(\"crafting_table\")→auto_craft(\"wooden_pickaxe\")→下矿。\n\
-         合成链路：要铁锭先挖 iron_ore→开熔炉 smelt(\"iron_ingot\",\"coal\")； coal 既是燃料也是熔炼燃料。\n\
-         没煤炭可烧木炭：gather 木头→auto_craft(\"charcoal\")（熔炉里烧木头得木炭当燃料）。\n\
-         脱困：若卡在方块里或悬空，先 mine_below 挖脚下方块下落；若被墙挡 goto 不过去，\n\
-         改 goto 到侧前方 3~5 格空地（x±3 或 z±3），不要反复 goto 同一个到不了的点。\n\
-         照明与怪物：黑暗处（亮度<7）会刷怪，下矿前 auto_craft(\"torch\") 并沿途 place；\n白天安全、夜里或洞穴有僵尸/骷髅/苦力怕，遇怪用 attack 或逃跑 goto 到亮处。\n\
-         体力：吃饱才跑得快，饥饿见底会缓慢掉血；有食材先 auto_craft 熟食。\n\
-         目标拆解：拿到一个大目标（如\"造铁镐\"）先想依赖链——\n\
-         树→木板→木棍→工具台→木镐→下矿挖铁→熔铁→铁镐，按链用高层工具逐段推进。\n\
-         优先用 auto_craft/gather/run_plan：它们内部已自主完成多步任务，比手写单个工具可靠。\n\
-         首日生存：1) gather oak_log 4-8 → 2) auto_craft crafting_table → 3) place crafting_table →\n\
-         4) auto_craft wooden_pickaxe → 5) gather stone 8 → 6) auto_craft stone_pickaxe\n\
-         7) 天黑前 gather 羊/牛/猪 3-4 只获取食物 → 8) 挖个 2x1 地洞插火把过夜\n\
-         ",
-    );
-    let system_prompt = String::from(
-        "你是 Minecraft AI 玩家，通过 azalea 客户端协议控制 bot（纯 vanilla 26.2）。\n\
-         \n\
-         ## 核心规则（最重要）\n\
-         1. **必须用 function calling 输出 tool_calls**：禁止在 assistant 文字里写 `tool(...)` 伪调用（如 `goto(x,y,z) → OK` 这种格式不会被执行，会被判定为「未产生工具调用」并触发重试 nudge 浪费轮次）。正确做法：文字简短说明意图（1 句话），然后通过 function calling 生成真实 tool_calls JSON。\n\
-         2. **每轮必产出一个动作**：除非任务已完成需要纯文本收尾，否则每轮 assistant 消息必须包含至少一个 tool_call。纯 perceive 不算动作（连续 perceive 5+ 轮会被强制警告）。\n\
-         3. **perceive 不是行动**：perceive 只在「需要确认状态再决策」时调一次。已有近轮 perceive 结果就复用，不要重复 perceive。\n\
-         \n\
-         ## 任务分解策略（收到目标后这样思考）\n\
-         - **explore/探索**：选一个方向（如东/南/西/北），goto 走 20-30 格 → perceive 看新区域 → 发现资源/结构就前往，没有就继续走。不要原地 perceive 多次。\n\
-         - **采集 X**：gather(item=\"X\", count=N) 一次搞定（自动寻路+挖掘）。不要先 goto 再 mine 这种拆步。\n\
-         - **合成 Y**：先确认背包有原料（看最近 perceive 的「背包」行），缺什么先 gather；2×2 用 craft，3×3 用 craft_3x3（需先 open 工作台）。复杂合成用 auto_craft(item=\"Y\", count=N) 一键搞定（自动采集+合成+放置容器）。\n\
-         - **战斗**：attack(target=\"zombie\") 自动锁最近敌对生物。creeper 建议先 goto 拉开距离。\n\
-         - **下矿**：mine_below() 持续挖脚下方块；看到矿石用 mine(x,y,z) 精确挖。下挖 2-3 次后 perceive 看新洞穴。\n\
-         - **建造**：用 build(blueprint=\"...\") 一次放多个方块，比逐个 place 高效。\n\
-         - **复杂多步**：run_plan(steps=[...]) 一次执行多步；run_script(rhai 脚本) 用代码控制流程（含 sleep/print/条件分支）。\n\
-         \n\
-         ## 可用工具（23 个）\n\
-         感知：perceive() / memory(action, x, y, z, kind, label, query)\n\
-         移动：goto(x,y,z)\n\
-         挖掘：mine(x,y,z) / mine_below() / interact_block(x,y,z)\n\
-         采集：gather(item, count) — 自动寻路到最近该方块并挖掘\n\
-         合成：craft(item, count) [2×2] / craft_3x3(item, count) [需 open 工作台] / smelt(output, fuel, count) [需 open 熔炉] / auto_craft(item, count) [一键递归合成]\n\
-         放置：place(item, x, y, z) / open(x, y, z) / build(blueprint)\n\
-         战斗：attack(target)\n\
-         交互：interact_entity(kind) / trade(offer) / enchant(item, level)\n\
-         沟通：chat(content)\n\
-         目标：set_goal(goal)\n\
-         复合：run_plan(steps) / run_script(script)\n\
-         查询：search_wiki(query)\n\
-         \n\
-         ## 卡住处理\n\
-         - perceive 显示「⚠ 卡住! 坐标N轮未移动」：立即 goto 到附近 3 格外空地脱困，不要继续原动作。\n\
-         - 任务确实无法推进（如缺关键资源、被怪物围困）：用 chat 说明情况后纯文本结束，不要无限重试同一动作。\n\
-         \n\
-         ## 反馈阅读\n\
-         工具返回 `Action output:\\n...` 是真实结果（坐标/距离/伤害/物品数）。读反馈决定下一步，不要无视反馈重复同一调用。",
-    ) + mc_knowledge.as_str();
+// ============= Prompt Profile 加载（三层叠加：_default → mode → individual）=============
+    // 学习自 Mindcraft 的 profile 系统：system prompt 从 JSON 文件加载，无需重编译即可调优。
+    // 默认从 ./profiles/_default.json 加载，叠加 defaults/{mode}.json，再叠加 {individual}.json
+    //
+    // CLI 参数 --profile 可指定 individual profile 名（如 deepseek/claude/gpt）。
+    // CLI 参数 --mode 可指定模式 profile 名（如 survival/creative/assistant/god_mode）。
+    // 都不指定时只加载 _default.json。
+    let profiles_dir = std::env::var("CRAFT_AGENT_PROFILES_DIR")
+        .unwrap_or_else(|_| "profiles".to_string());
+    let profiles_path = Path::new(&profiles_dir);
+    let profile = craft_agent::profile::Profile::load(
+        profiles_path,
+        ctrl.mode_profile.as_deref(),
+        ctrl.individual_profile.as_deref(),
+    )
+    .unwrap_or_else(|e| {
+        let _ = event_tx.send(AgentEvent::Log {
+            text: format!("⚠ Profile 加载失败，回退默认空 prompt: {e}"),
+        });
+        craft_agent::profile::Profile::default()
+    });
+
+    let _ = event_tx.send(AgentEvent::Log {
+        text: format!(
+            "📄 Profile 加载: name={} modes={:?} cooldown={}ms examples={}",
+            profile.name,
+            profile.modes,
+            profile.cooldown_ms,
+            profile.conversation_examples.len()
+        ),
+    });
+
+    // 渲染最终 system prompt（替换 $NAME / $SELF_PROMPT 等占位符）
+    let mut replacements = std::collections::HashMap::new();
+    replacements.insert("NAME".to_string(), "craftbot".to_string());
+    replacements.insert("SELF_PROMPT".to_string(), "".to_string()); // SelfPrompter 在 agent loop 内每轮重注
+    replacements.insert("MEMORY".to_string(), "".to_string());
+    replacements.insert("STATS".to_string(), "".to_string());
+    replacements.insert("INVENTORY".to_string(), "".to_string());
+    replacements.insert("COMMAND_DOCS".to_string(), "".to_string());
+    replacements.insert("EXAMPLES".to_string(), "".to_string());
+    let system_prompt = profile.render(&replacements);
+
+    let _ = event_tx.send(AgentEvent::Log {
+        text: format!("📄 System prompt 长度: {} 字符", system_prompt.chars().count()),
+    });
     let agent_cfg = AgentConfig::new(system_prompt, 1) // 每步 1 轮，外循环控制步数
         .with_compaction(compaction)
         .with_retry(RetryConfig {

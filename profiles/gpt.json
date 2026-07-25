@@ -1,0 +1,15 @@
+{
+    "name": "gpt",
+    "system_prompt": null,
+    "mc_knowledge": null,
+    "conversation_examples": [
+        [
+            {"role": "user", "content": "目标：下矿挖钻石"},
+            {"role": "assistant", "content": "下挖到 Y=-55 钻石层，再沿途挖矿。先 mine_below 下到深层。", "tool_calls": [{"id": "call_g1", "type": "function", "function": {"name": "mine_below", "arguments": "{}"}}]}
+        ],
+        [
+            {"role": "user", "content": "目标：和村民交易"},
+            {"role": "assistant", "content": "先找附近村民并交互打开交易界面。", "tool_calls": [{"id": "call_g2", "type": "function", "function": {"name": "interact_entity", "arguments": "{\"kind\":\"villager\"}"}}]}
+        ]
+    ]
+}

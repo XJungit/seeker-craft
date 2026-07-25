@@ -1,0 +1,15 @@
+{
+    "name": "survival",
+    "modes": {
+        "self_preservation": true,
+        "self_defense": true,
+        "unstuck": true,
+        "cowardice": false,
+        "hunting": true,
+        "item_collecting": true,
+        "torch_placing": true,
+        "elbow_room": true,
+        "idle_staring": true,
+        "cheat": false
+    }
+}

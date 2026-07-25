@@ -1,0 +1,31 @@
+{
+    "name": "deepseek",
+    "system_prompt": null,
+    "mc_knowledge": null,
+    "conversation_examples": [
+        [
+            {"role": "user", "content": "目标：收集 4 个橡木原木"},
+            {"role": "assistant", "content": "我去砍附近橡树。", "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "gather", "arguments": "{\"item\":\"oak_log\",\"count\":4}"}}]}
+        ],
+        [
+            {"role": "user", "content": "目标：做一张工作台"},
+            {"role": "assistant", "content": "用 auto_craft 一键合成工作台（自动采集+合成+放置）。", "tool_calls": [{"id": "call_2", "type": "function", "function": {"name": "auto_craft", "arguments": "{\"item\":\"crafting_table\",\"count\":1}"}}]}
+        ],
+        [
+            {"role": "user", "content": "目标：探索世界"},
+            {"role": "assistant", "content": "向东走 25 格探索新区域。", "tool_calls": [{"id": "call_3", "type": "function", "function": {"name": "goto", "arguments": "{\"x\":25,\"y\":64,\"z\":0}"}}]}
+        ],
+        [
+            {"role": "user", "content": "目标：挖到 8 个石头"},
+            {"role": "assistant", "content": "自动采集 8 个石头（寻路+挖掘）。", "tool_calls": [{"id": "call_4", "type": "function", "function": {"name": "gather", "arguments": "{\"item\":\"stone\",\"count\":8}"}}]}
+        ],
+        [
+            {"role": "user", "content": "目标：做木镐"},
+            {"role": "assistant", "content": "auto_craft 自动满足原料（木板+木棍）并合成。", "tool_calls": [{"id": "call_5", "type": "function", "function": {"name": "auto_craft", "arguments": "{\"item\":\"wooden_pickaxe\",\"count\":1}"}}]}
+        ],
+        [
+            {"role": "user", "content": "附近有僵尸，血量 6/20"},
+            {"role": "assistant", "content": "血量低，先攻击最近的僵尸清除威胁。", "tool_calls": [{"id": "call_6", "type": "function", "function": {"name": "attack", "arguments": "{\"target\":\"zombie\"}"}}]}
+        ]
+    ]
+}

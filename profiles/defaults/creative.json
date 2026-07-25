@@ -1,0 +1,15 @@
+{
+    "name": "creative",
+    "modes": {
+        "self_preservation": false,
+        "self_defense": false,
+        "unstuck": true,
+        "cowardice": false,
+        "hunting": false,
+        "item_collecting": false,
+        "torch_placing": false,
+        "elbow_room": true,
+        "idle_staring": true,
+        "cheat": true
+    }
+}

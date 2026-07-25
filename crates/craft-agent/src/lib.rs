@@ -10,3 +10,4 @@
 pub mod adapters;
 pub mod agent;
 pub mod core;
+pub mod profile;

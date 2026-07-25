@@ -1,0 +1,15 @@
+{
+    "name": "god_mode",
+    "modes": {
+        "self_preservation": false,
+        "self_defense": false,
+        "unstuck": false,
+        "cowardice": false,
+        "hunting": false,
+        "item_collecting": false,
+        "torch_placing": false,
+        "elbow_room": false,
+        "idle_staring": false,
+        "cheat": true
+    }
+}

@@ -59,6 +59,8 @@ async fn main() -> anyhow::Result<()> {
     let mut max_steps: u32 = 0; // 0 = 无限循环，仅手动停止才退出
     let mut config_path = "config/agent.toml".to_string();
     let mut mc_addr = "localhost:4444".to_string();
+    let mut mode_profile: Option<String> = None;
+    let mut individual_profile: Option<String> = None;
 
     let mut i = 1;
     while i < args.len() {
@@ -109,16 +111,31 @@ async fn main() -> anyhow::Result<()> {
                 }
                 i += if has_inline { 1 } else { 2 };
             }
+            "--mode" => {
+                if let Some(v) = get_val() {
+                    mode_profile = Some(v);
+                }
+                i += if has_inline { 1 } else { 2 };
+            }
+            "--profile" => {
+                if let Some(v) = get_val() {
+                    individual_profile = Some(v);
+                }
+                i += if has_inline { 1 } else { 2 };
+            }
             _ => i += 1,
         }
     }
 
     let (event_tx, _) = broadcast::channel::<AgentEvent>(128);
-    let controller = Arc::new(AgentController::new(
+    let mut controller = AgentController::new(
         goal,
         max_steps,
         session_path.display().to_string(),
-    ));
+    );
+    controller.mode_profile = mode_profile;
+    controller.individual_profile = individual_profile;
+    let controller = Arc::new(controller);
 
     let state = Arc::new(AppState {
         session_path: session_path.clone(),

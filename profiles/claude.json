@@ -1,0 +1,15 @@
+{
+    "name": "claude",
+    "system_prompt": null,
+    "mc_knowledge": null,
+    "conversation_examples": [
+        [
+            {"role": "user", "content": "目标：建造一个 3x3 木屋地基"},
+            {"role": "assistant", "content": "用 build 工具一次性放置 9 个橡木板。", "tool_calls": [{"id": "call_b1", "type": "function", "function": {"name": "build", "arguments": "{\"blueprint\":\"[{x:0,y:64,z:0,item:oak_planks},{x:1,y:64,z:0,item:oak_planks},{x:2,y:64,z:0,item:oak_planks},{x:0,y:64,z:1,item:oak_planks},{x:1,y:64,z:1,item:oak_planks},{x:2,y:64,z:1,item:oak_planks},{x:0,y:64,z:2,item:oak_planks},{x:1,y:64,z:2,item:oak_planks},{x:2,y:64,z:2,item:oak_planks}]\"}"}}]}
+        ],
+        [
+            {"role": "user", "content": "目标：熔炼 4 个铁锭"},
+            {"role": "assistant", "content": "先开熔炉，再熔炼铁矿石。需要先 gather 4 个铁矿石和煤炭。", "tool_calls": [{"id": "call_b2", "type": "function", "function": {"name": "run_plan", "arguments": "{\"steps\":[{\"action\":\"gather\",\"item\":\"iron_ore\",\"count\":4},{\"action\":\"gather\",\"item\":\"coal\",\"count\":4},{\"action\":\"open\",\"x\":0,\"y\":64,\"z\":0},{\"action\":\"smelt\",\"output\":\"iron_ingot\",\"fuel\":\"coal\",\"count\":4}]}"}}]}
+        ]
+    ]
+}
