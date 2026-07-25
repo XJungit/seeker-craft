@@ -21,6 +21,7 @@ pub mod perception;
 pub mod place;
 pub mod recipe_book;
 pub mod recipes;
+pub mod smart_actions;
 pub mod trade;
 
 use azalea::prelude::*;
@@ -223,6 +224,12 @@ pub enum BotCommand {
     /// 实体右键交互（打开村民/动物/展示框等）：与最近的指定种类实体交互。
     /// kind 为实体种类关键词，如 "villager"。
     InteractEntity { kind: String },
+    /// 捡起附近掉落物：bot 走 4 个方向扫一圈，让物理引擎自然吸取掉落物。
+    /// 无参数。挖矿/战斗后调用一次，避免"挖了 8 个石头但只捡到 3 个"。
+    Pickup,
+    /// 自动防御：等待 5 秒让 handler 层 self_defense mode 自动攻击附近敌人。
+    /// 期间监测血量，若受到严重伤害提前返回建议撤退。
+    Defend,
 }
 
 /// 队列中的命令包装：携带结果回传通道（None 表示 fire-and-forget，如聊天指令）。
@@ -715,7 +722,9 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                         }
                     }
                     BotCommand::Gather { item, count } => {
-                        match crate::azalea::gather::do_gather(&bot, &item, count).await {
+                        // 用 smart_actions::collect_block_smart 替代 gather::do_gather：
+                        // 支持别名展开（"oak_log" 匹配 9 种原木变体），多轮渐扩半径扫描。
+                        match crate::azalea::smart_actions::collect_block_smart(&bot, &item, count).await {
                             Ok(msg) => {
                                 let chat = format!("[采集] {msg}");
                                 let _ = evt_tx.send(BotEvent::Chat { content: chat });
@@ -818,6 +827,30 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                                 let chat = format!("[交互失败] {e}");
                                 let _ = evt_tx.send(BotEvent::Chat { content: chat });
                                 if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nFailed to interact with {kind}: {e}")); }
+                            }
+                        }
+                    }
+                    BotCommand::Pickup => {
+                        match crate::azalea::smart_actions::pickup_nearby_items(&bot).await {
+                            Ok(msg) => {
+                                let chat = format!("[捡物] {msg}");
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\n{msg}")); }
+                            }
+                            Err(e) => {
+                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nPickup failed: {e}")); }
+                            }
+                        }
+                    }
+                    BotCommand::Defend => {
+                        match crate::azalea::smart_actions::defend_self(&bot).await {
+                            Ok(msg) => {
+                                let chat = format!("[防御] {msg}");
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\n{msg}")); }
+                            }
+                            Err(e) => {
+                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nDefend failed: {e}")); }
                             }
                         }
                     }

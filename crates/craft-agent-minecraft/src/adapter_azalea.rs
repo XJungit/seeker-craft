@@ -313,6 +313,8 @@ fn mc_to_cmd(mc: MinecraftAction) -> BotCommand {
         MinecraftAction::Enchant { item, level } => BotCommand::Enchant { item, level },
         MinecraftAction::Trade { offer } => BotCommand::Trade { offer },
         MinecraftAction::InteractEntity { kind } => BotCommand::InteractEntity { kind },
+        MinecraftAction::Pickup => BotCommand::Pickup,
+        MinecraftAction::Defend => BotCommand::Defend,
     }
 }
 

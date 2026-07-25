@@ -1282,6 +1282,8 @@ fn parse_step(action: &str, step: &serde_json::Value) -> anyhow::Result<Minecraf
         "interact_entity" => Ok(MinecraftAction::InteractEntity {
             kind: str("kind").unwrap_or_else(|| "villager".to_string()),
         }),
+        "pickup" => Ok(MinecraftAction::Pickup),
+        "defend" => Ok(MinecraftAction::Defend),
         "set_goal" => Ok(MinecraftAction::Chat {
             content: format!("[set_goal] {}", str("goal").unwrap_or_default()),
         }),
@@ -1291,7 +1293,7 @@ fn parse_step(action: &str, step: &serde_json::Value) -> anyhow::Result<Minecraf
             "perceive 不支持在 run_plan 里调用（agent 主循环每轮自动注入 perceive，plan 里只放动作）"
         )),
         other => Err(anyhow::anyhow!(
-            "不支持的 action: {other}（支持: goto/mine/mine_below/interact/attack/chat/craft/craft_3x3/smelt/gather/place/open/auto_craft/enchant/trade/interact_entity）"
+            "不支持的 action: {other}（支持: goto/mine/mine_below/interact/attack/chat/craft/craft_3x3/smelt/gather/place/open/auto_craft/enchant/trade/interact_entity/pickup/defend）"
         )),
     }
 }
@@ -1397,9 +1399,10 @@ impl GameTool for RunScriptTool {
     fn description(&self) -> &str {
         "执行 rhai 脚本（嵌入式引擎）。支持变量、循环、条件。函数: go(x,y,z), mine(x,y,z), \
          gather(item,count), craft(item,count), place(item,x,y,z), open(x,y,z), mine_below(), \
-         chat(msg), attack(), smelt(output,fuel,count), interact(x,y,z), sleep(ms), print(msg)。\
+         chat(msg), attack(), smelt(output,fuel,count), interact(x,y,z), pickup(), defend(), \
+         sleep(ms), print(msg)。\
          注意：寻路函数名是 go（不是 goto，goto 是 rhai 保留字）。\
-         例: let r = go(10, 64, 20); print(r); gather(\"oak_log\", 4)"
+         例: let r = go(10, 64, 20); print(r); gather(\"oak_log\", 4); pickup();"
     }
     fn parameters(&self) -> Value {
         serde_json::json!({
@@ -1468,6 +1471,14 @@ impl GameTool for RunScriptTool {
         let a = adapter.clone();
         engine.register_fn("interact", move |x: i64, y: i64, z: i64| -> String {
             _exec_action(&a, MinecraftAction::InteractBlock { x: x as i32, y: y as i32, z: z as i32 })
+        });
+        let a = adapter.clone();
+        engine.register_fn("pickup", move || -> String {
+            _exec_action(&a, MinecraftAction::Pickup)
+        });
+        let a = adapter.clone();
+        engine.register_fn("defend", move || -> String {
+            _exec_action(&a, MinecraftAction::Defend)
         });
         engine.register_fn("sleep", |ms: i64| {
             std::thread::sleep(std::time::Duration::from_millis(ms as u64));
@@ -1596,5 +1607,93 @@ pub fn create_mc_azalea_tools(
         Box::new(SearchWikiTool::new(ctx.clone())),
         Box::new(RunScriptTool::new(ctx.clone())),
         Box::new(BuildTool::new(ctx.clone())),
+        Box::new(PickupTool::new(ctx.clone())),
+        Box::new(DefendTool::new(ctx)),
     ]
+}
+
+/// 捡起附近掉落物。学习自 Mindcraft pickupNearbyItems。
+/// bot 挖矿/战斗后掉落物散落，调用此工具走一圈吸取。
+pub struct PickupTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl PickupTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for PickupTool {
+    fn name(&self) -> &str {
+        "pickup"
+    }
+    fn description(&self) -> &str {
+        "捡起附近掉落物。bot 走 4 个方向扫一圈，让物理引擎吸取掉落物（vanilla 自动捡半径 1.5）。\n\
+         挖矿/战斗后调用一次，避免\"挖了 8 个石头但只捡到 3 个\"。\n\
+         无参数。返回捡到的物品总数。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({ "type": "object", "properties": {} })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        _args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::Pickup))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}
+
+/// 自动防御：等待 5 秒让 handler 层 self_defense mode 攻击附近敌人。
+/// 学习自 Mindcraft defendSelf。期间监测血量，受到严重伤害提前建议撤退。
+pub struct DefendTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl DefendTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for DefendTool {
+    fn name(&self) -> &str {
+        "defend"
+    }
+    fn description(&self) -> &str {
+        "自动防御 5 秒：等待 handler 层 self_defense mode 自动攻击附近敌对生物。\n\
+         期间监测血量，若受到严重伤害（>5 点）提前返回建议撤退。\n\
+         无参数。适合被多只怪围攻时调用。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({ "type": "object", "properties": {} })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        _args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::Defend))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
 }

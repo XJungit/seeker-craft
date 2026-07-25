@@ -147,6 +147,10 @@ pub enum MinecraftAction {
     Trade { offer: u32 },
     /// 实体右键交互（打开村民/动物/展示框等）。kind 为实体种类关键词（如 "villager"）。
     InteractEntity { kind: String },
+    /// 捡起附近掉落物：bot 走 4 个方向扫一圈，让物理引擎吸取掉落物。
+    Pickup,
+    /// 自动防御：等待 5 秒让 handler self_defense mode 攻击附近敌人。
+    Defend,
 }
 
 /// 动作执行结果
