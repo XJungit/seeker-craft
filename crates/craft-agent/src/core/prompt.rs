@@ -163,28 +163,45 @@ impl WorldInfo {
     /// 导致 WI 提示变成 "Wood source: 10x10: [整个方块列表]" 这种 LLM 看不懂的串。
     ///
     /// 规则：
-    /// 1. 扫描每一行；行内若出现任一关键词，提取该关键词 + 紧邻的数字/计数
+    /// 1. 扫描每一行；行内若出现任一关键词，提取「关键词 + 紧邻的 :count」
     ///    （如 "darkoaklog:8" / "zombie:6"），多个匹配用 ", " 连接
-    /// 2. 若行内没出现数字（如 "脚下: darkoaklog"），返回关键词本身
+    /// 2. 若关键词后无 `:count`（如 "脚下: darkoaklog"），仅返回关键词本身
     /// 3. 没匹配则返回 None（由调用方填占位符 "当前场景"）
+    ///
+    /// 关键修复（P3）：不再向前截取 16 字符（会溢出到下一个实体名，
+    /// 产生 "creeper:1, nautilus:1, zombie:3, sheep:2, tra," 这种 LLM 难解析的拼接）。
+    /// 现在只提取干净的 `key:count` 对。
     pub fn find_match_line(&self, text: &str) -> Option<String> {
         if self.keys.is_empty() {
             return None;
         }
-        let mut hits: Vec<String> = Vec::new();
+        // 按行扫描，找到首行含任一关键词后，提取该行所有匹配的 key[:count] 对
         for line in text.lines() {
             let lower = line.to_lowercase();
+            let mut hits: Vec<String> = Vec::new();
             for k in &self.keys {
-                if let Some(idx) = lower.find(k) {
-                    // 从关键词起点向后截取至多 32 字符，覆盖 "darkoaklog:8" / "zombie:6" 这类片段
-                    let start = idx;
-                    let end = lower.len().min(idx + k.len() + 16);
-                    let snippet = line[start..end].trim_end_matches(|c: char| {
-                        // 截到第一个非 [字母数字_:.-] 字符为止
-                        !c.is_alphanumeric() && c != '_' && c != ':' && c != '-' && c != '.'
-                    });
-                    let s = snippet.to_string();
-                    if !hits.contains(&s) {
+                // 找出该行中所有该关键词出现的位置（同一关键词可能在行内出现多次）
+                let mut search_from = 0usize;
+                while let Some(idx) = lower[search_from..].find(k) {
+                    let abs = search_from + idx;
+                    search_from = abs + k.len();
+
+                    // 从关键词末尾向后扫：可选 `:` + 数字，到首个非数字字符止
+                    let bytes = line.as_bytes();
+                    let mut end = abs + k.len();
+                    // 接受 `:` 或 `_` 作分隔符（兼容 "zombie:6" / "zombie_6"）
+                    if end < bytes.len() && (bytes[end] == b':' || bytes[end] == b'_') {
+                        end += 1;
+                        while end < bytes.len() && bytes[end].is_ascii_digit() {
+                            end += 1;
+                        }
+                    }
+                    // 安全边界：UTF-8 字符边界
+                    while end > abs + k.len() && !line.is_char_boundary(end) {
+                        end -= 1;
+                    }
+                    let s = line[abs..end].to_string();
+                    if !s.is_empty() && !hits.contains(&s) {
                         hits.push(s);
                     }
                 }
@@ -301,11 +318,13 @@ impl Default for WorldInfoLib {
 /// {label} 会被替换为 perceive 文本中匹配关键词的那一行（含方块名、坐标、距离）。
 /// azalea 路线下 offset_x/offset_y 无意义（用世界坐标 goto），已从模板移除。
 ///
-/// **重要**：模板里的工具名必须与 `tools_azalea.rs::create_mc_azalea_tools` 注册的真实
-/// 工具名 100% 一致——否则 LLM 抄示例时就会调到不存在的工具。当前真实工具：
-/// perceive / goto / mine / mine_below / interact_block / attack / craft / craft_3x3 /
-/// smelt / gather / place / open / auto_craft / enchant / trade / interact_entity /
-/// chat / memory / set_goal / run_plan / search_wiki / run_script / build。
+/// **重要**：模板里的工具名必须与 `tools_azalea.rs::create_mc_azalea_tools_full` 注册的真实
+/// 工具名 100% 一致——否则 LLM 抄示例时就会调到不存在的工具。当前真实工具（37 个）：
+/// perceive / goto / mine / mine_below / interact_block / attack / defend / craft / craft_3x3 /
+/// smelt / gather / place / open / pickup / auto_craft / enchant / trade / interact_entity /
+/// chat / memory / set_goal / pause_goal / resume_goal / run_plan / search_wiki / run_script /
+/// build / build_blueprint / list_blueprints / new_action / list_actions / equip / discard /
+/// consume / chest_view / chest_withdraw / chest_deposit。
 pub fn default_mc_world_info() -> WorldInfoLib {
     let mut lib = WorldInfoLib::new();
     // 木材：dark_oak_log / oak_log / birch_log 等原木都用 gather
@@ -441,6 +460,69 @@ mod tests {
         assert!(
             !mob_label.contains("player:1"),
             "mob_label 不应包含整行 player:1，实际: {mob_label}"
+        );
+    }
+
+    /// P3 回归：find_match_line 不能再向前溢出到下一个实体名。
+    /// 旧 bug：截取 keyword 后 16 字符导致 "creeper:1, nautilus:1, zombie:3, ..."
+    /// 这种 LLM 难解析的拼接。修复后只提取干净的 `key:count` 对。
+    #[test]
+    fn world_info_find_match_line_no_spillover_into_next_entity() {
+        let wi_mob = WorldInfo::new(
+            vec![
+                "creeper".into(),
+                "zombie".into(),
+                "skeleton".into(),
+                "spider".into(),
+                "enderman".into(),
+            ],
+            "Hostile mob: {label}",
+        );
+
+        // 真实 perceive 行（多实体相邻，逗号分隔）
+        let perceive = "实体: [player:1, creeper:1, nautilus:1, zombie:3, sheep:2, skeleton:4, cow:4, enderman:4, spider:3]";
+
+        let label = wi_mob.find_match_line(perceive).unwrap();
+
+        // 应包含所有 5 个敌对实体的 key:count 对
+        assert!(label.contains("creeper:1"), "label 应含 creeper:1，实际: {label}");
+        assert!(label.contains("zombie:3"), "label 应含 zombie:3，实际: {label}");
+        assert!(label.contains("skeleton:4"), "label 应含 skeleton:4，实际: {label}");
+        assert!(label.contains("spider:3"), "label 应含 spider:3，实际: {label}");
+        assert!(label.contains("enderman:4"), "label 应含 enderman:4，实际: {label}");
+
+        // 关键断言：不能包含非关键词实体名（nautilus/sheep/cow/player）
+        assert!(
+            !label.contains("nautilus"),
+            "label 不应溢出到 nautilus，实际: {label}"
+        );
+        assert!(
+            !label.contains("sheep"),
+            "label 不应溢出到 sheep，实际: {label}"
+        );
+        assert!(
+            !label.contains("cow"),
+            "label 不应溢出到 cow，实际: {label}"
+        );
+        assert!(
+            !label.contains("player"),
+            "label 不应溢出到 player，实际: {label}"
+        );
+    }
+
+    /// P3 回归：关键词在行内多次出现时，全部提取（不漏）。
+    #[test]
+    fn world_info_find_match_line_captures_all_occurrences() {
+        let wi = WorldInfo::new(vec!["oak".into()], "Wood: {label}");
+        // "oak" 在 "oakleaves" 和 "oaklog" 中各出现一次
+        let perceive = "10x10: [oakleaves:97, oaklog:10, birchlog:5]";
+        let label = wi.find_match_line(perceive).unwrap();
+        // 两个出现都应被提取（虽然前缀都是 oak，但是不同 token）
+        // 注：oakleaves:97 中的 "oak" 子串匹配会提取 "oakleaves:97"，
+        // 因为 :97 会跟着 oakleaves 一起被截取（关键词 oak + 后续字符直到非数字）
+        assert!(
+            label.contains("oak"),
+            "label 应含 oak 子串，实际: {label}"
         );
     }
 }

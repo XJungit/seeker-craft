@@ -8,7 +8,7 @@ use super::{Agent, Context, MANAGE_KNOWLEDGE_TOOL};
 ///
 /// **重要约束**（务必保持，否则 LLM 会抄错签名）：
 /// - 工具调用以 OpenAI tool_calls 形式呈现（assistant 调用 → system 返回结果）
-/// - 工具名必须与 `tools_azalea.rs::create_mc_azalea_tools` 注册的 23 个工具 100% 一致
+/// - 工具名必须与 `tools_azalea.rs::create_mc_azalea_tools_full` 注册的 37 个工具 100% 一致
 /// - 参数名必须与各工具的 `parameters()` schema 一致（如 gather 用 item/count，
 ///   goto 用 x/y/z，attack 用 target 字符串，非位置参数）
 /// - 不要用假坐标 (10,64,20) — 用占位变量或感知真实坐标
@@ -355,6 +355,147 @@ impl Agent {
             system_prompt: full_prompt,
             messages: chatml,
             tools: tool_defs,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::agent::Agent;
+    use crate::core::tool::ToolRegistry;
+
+    use super::*;
+
+    // ── word_overlap_score ──
+
+    #[test]
+    fn word_overlap_full_match() {
+        let score = word_overlap_score("砍树 木头 原木", &["砍树", "木头", "原木"]);
+        assert!((score - 1.0).abs() < 1e-6, "all keywords matched: {score}");
+    }
+
+    #[test]
+    fn word_overlap_partial_match() {
+        let score = word_overlap_score("砍树 木头 石头", &["砍树", "木头", "原木"]);
+        assert!((score - 2.0 / 3.0).abs() < 1e-6, "2/3 keywords matched: {score}");
+    }
+
+    #[test]
+    fn word_overlap_no_match() {
+        let score = word_overlap_score("石头 铁矿 钻石", &["砍树", "木头", "原木"]);
+        assert!((score - 0.0).abs() < 1e-6, "no keywords matched: {score}");
+    }
+
+    #[test]
+    fn word_overlap_empty_keywords() {
+        let score = word_overlap_score("anything", &[]);
+        assert!((score - 0.0).abs() < 1e-6, "empty keywords: {score}");
+    }
+
+    #[test]
+    fn word_overlap_case_insensitive() {
+        let score = word_overlap_score("OAK_LOG DARK_OAK", &["oak_log", "dark_oak"]);
+        assert!((score - 1.0).abs() < 1e-6, "case insensitive: {score}");
+    }
+
+    #[test]
+    fn word_overlap_substring_match() {
+        let score = word_overlap_score("explore the world", &["explore"]);
+        assert!((score - 1.0).abs() < 1e-6, "substring match: {score}");
+    }
+
+    // ── build_context 字节稳定性 ──
+
+    /// 回归测试：system prompt 不能包含随轮变化的动态变量。
+    /// 这是 DeepSeek prefix cache 的前提条件。
+    #[test]
+    fn regression_build_context_system_prompt_byte_stable() {
+        let tools = ToolRegistry::new();
+        let mut agent = Agent::new(
+            Box::new(StopProvider),
+            tools,
+            crate::agent::AgentConfig::new("test agent".into(), 5),
+        );
+
+        let ctx1 = agent.build_context();
+        let ctx2 = agent.build_context();
+
+        assert_eq!(
+            ctx1.system_prompt, ctx2.system_prompt,
+            "system prompt 两次调用必须字节一致（prefix cache 前提）"
+        );
+    }
+
+    /// 回归测试：system prompt 不得包含 obs_streak 等动态变量
+    #[test]
+    fn regression_build_context_no_dynamic_markers_in_system_prompt() {
+        let tools = ToolRegistry::new();
+        let mut agent = Agent::new(
+            Box::new(StopProvider),
+            tools,
+            crate::agent::AgentConfig::new("sys".into(), 5),
+        );
+
+        let ctx = agent.build_context();
+        let sys = &ctx.system_prompt;
+
+        // 这些动态标记已移出 system prompt，改为 user message 注入
+        assert!(!sys.contains("观察提醒"), "system prompt 不得含 obs_streak 动态文本");
+        assert!(!sys.contains("不需要重新输入"), "system prompt 不得含 bootstrap 动态文本");
+    }
+
+    // ── build_context 工具定义完整性 ──
+
+    #[test]
+    fn build_context_includes_knowledge_tool_when_enabled() {
+        let tools = ToolRegistry::new();
+        let mut config = crate::agent::AgentConfig::new("sys".into(), 5);
+        config.enable_knowledge_tool = true;
+        let mut agent = Agent::new(Box::new(StopProvider), tools, config);
+
+        let ctx = agent.build_context();
+        let has_manage_knowledge = ctx.tools.iter().any(|t| {
+            t.get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(|n| n.as_str())
+                == Some("manage_knowledge")
+        });
+        assert!(has_manage_knowledge, "knowledge tool should be in tools when enabled");
+    }
+
+    #[test]
+    fn build_context_skips_knowledge_tool_when_disabled() {
+        let tools = ToolRegistry::new();
+        let mut config = crate::agent::AgentConfig::new("sys".into(), 5);
+        config.enable_knowledge_tool = false;
+        let mut agent = Agent::new(Box::new(StopProvider), tools, config);
+
+        let ctx = agent.build_context();
+        let has_manage_knowledge = ctx.tools.iter().any(|t| {
+            t.get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(|n| n.as_str())
+                == Some("manage_knowledge")
+        });
+        assert!(!has_manage_knowledge, "knowledge tool should be absent when disabled");
+    }
+
+    // ── 辅助 mock ──
+
+    struct StopProvider;
+    impl crate::agent::LlmProvider for StopProvider {
+        fn complete(
+            &self,
+            _messages: &[serde_json::Value],
+            _tools: &[serde_json::Value],
+        ) -> anyhow::Result<crate::core::message::AssistantResponse> {
+            Ok(crate::core::message::AssistantResponse {
+                content: Some("ok".into()),
+                reasoning: None,
+                tool_calls: vec![],
+                usage: crate::core::message::Usage::default(),
+                stop_reason: crate::core::message::StopReason::Stop,
+            })
         }
     }
 }

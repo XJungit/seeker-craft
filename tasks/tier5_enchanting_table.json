@@ -1,0 +1,14 @@
+{
+    "id": "tier5_enchanting_table",
+    "name": "合成附魔台",
+    "description": "附魔台是装备附魔的入口，可将经验和等级转化为武器/工具/防具的附魔加成。合成需要 4 个黑曜石 + 2 颗钻石 + 1 本书。黑曜石需用钻石镐挖（岩浆+水生成）。",
+    "goal": "合成 1 个附魔台。步骤：1) 用钻石镐 gather(item=\"obsidian\", count=4) 挖黑曜石（或 place 水/岩浆人工生成）；2) gather(item=\"diamond_ore\", count=2) 挖 2 颗钻石；3) 杀牛/马获取皮革 gather(item=\"leather\", count=3)，配合纸合成 book；4) craft_3x3(item=\"book\", count=1)（无纸时先 harvest 甘蔗 craft paper）；5) 放置工作台后 craft_3x3(item=\"enchanting_table\", count=1)。",
+    "tier": 5,
+    "success": {
+        "type": "InventoryHas",
+        "item": "enchanting_table",
+        "count": 1
+    },
+    "timeout_secs": 720,
+    "reward": "解锁装备附魔：可附魔锋利/保护/效率等强力附魔"
+}

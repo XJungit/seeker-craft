@@ -1,0 +1,10 @@
+{
+  "name": "torch_pillar",
+  "description": "标记柱：3 高石头柱 + 顶火把，用于标记出生点/矿点入口（4 方块）",
+  "blocks": [
+    {"dx": 0, "dy": 0, "dz": 0, "block": "cobblestone"},
+    {"dx": 0, "dy": 1, "dz": 0, "block": "cobblestone"},
+    {"dx": 0, "dy": 2, "dz": 0, "block": "cobblestone"},
+    {"dx": 0, "dy": 3, "dz": 0, "block": "torch"}
+  ]
+}

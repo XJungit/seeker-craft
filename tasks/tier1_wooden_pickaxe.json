@@ -1,0 +1,14 @@
+{
+    "id": "tier1_wooden_pickaxe",
+    "name": "制作木镐",
+    "description": "用木板+木棍合成木镐。木镐可挖石头/煤矿/铁矿，是从石器时代进入铁器时代的钥匙。",
+    "goal": "合成 1 把木镐。步骤：1) 若无木板 craft(item=\"oak_planks\", count=4)；2) craft(item=\"stick\", count=4) 合成木棍；3) 放置工作台后 craft_3x3(item=\"wooden_pickaxe\", count=1)。",
+    "tier": 1,
+    "success": {
+        "type": "InventoryHas",
+        "item": "wooden_pickaxe",
+        "count": 1
+    },
+    "timeout_secs": 90,
+    "reward": "解锁挖石头/煤矿/铁矿"
+}

@@ -291,87 +291,6 @@ pub mod real {
     }
 
     impl OpenAiLlmClient {
-        /// 折叠多轮 tool-calling 历史为纯文本，适配不支持多轮 tool 的上游端点。
-        /// - 删除 `role:"tool"` 消息（上游不认）
-        /// - 剥除 assistant 的 `tool_calls` 字段（仅留 content）
-        /// - 把工具结果以文本追进对应 assistant 的 content，保留语义
-        fn fold_tool_history(messages: &Value) -> Value {
-            let Some(arr) = messages.as_array() else { return messages.clone() };
-            let mut out: Vec<Value> = Vec::new();
-            // 收集 tool_call_id -> 工具结果文本，供回写 assistant content。
-            let mut tool_results: std::collections::HashMap<String, String> =
-                std::collections::HashMap::new();
-            for m in arr {
-                if m.get("role").and_then(|r| r.as_str()) == Some("tool") {
-                    let id = m
-                        .get("tool_call_id")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let content = m
-                        .get("content")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    tool_results.insert(id, content);
-                    continue; // 丢弃 role:tool 消息本身
-                }
-                out.push(m.clone());
-            }
-            // 第二遍：剥 assistant 的 tool_calls，并把对应结果回写 content。
-            for m in out.iter_mut() {
-                if m.get("role").and_then(|r| r.as_str()) != Some("assistant") {
-                    continue;
-                }
-                let calls = m.get("tool_calls").and_then(|v| v.as_array()).cloned();
-                if let Some(calls) = calls {
-                    let mut summary = String::new();
-                    for c in &calls {
-                        let name = c
-                            .get("function")
-                            .and_then(|f| f.get("name"))
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("?");
-                        let args = c
-                            .get("function")
-                            .and_then(|f| f.get("arguments"))
-                            .map(|v| v.to_string())
-                            .unwrap_or_default();
-                        let id = c
-                            .get("id")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("");
-                        let result = tool_results
-                            .get(id)
-                            .cloned()
-                            .unwrap_or_else(|| "(无结果)".to_string());
-                        summary.push_str(&format!(
-                            "\n【工具执行】{name}({args}) → {result}"
-                        ));
-                    }
-                    // 剥除 tool_calls，结果并入 content。
-                    if let Value::Object(map) = m {
-                        map.remove("tool_calls");
-                        let existing = map
-                            .get("content")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        let merged = if existing.is_empty() {
-                            summary.trim_start().to_string()
-                        } else {
-                            format!("{existing}{summary}")
-                        };
-                        map.insert("content".into(), Value::String(merged));
-                        if map.get("content").and_then(|v| v.as_str()) == Some("") {
-                            map.insert("content".into(), Value::String("（已执行工具）".into()));
-                        }
-                    }
-                }
-            }
-            Value::Array(out)
-        }
-
         /// 直接用三要素构造（temperature/max_tokens 取默认，无 extra_body）。
         pub fn new(
             endpoint: impl Into<String>,
@@ -425,14 +344,12 @@ pub mod real {
 
         /// 带工具的结构化 chat。保留 assistant 正文、推理、provider 原始 call id、usage 与终止原因。
         ///
-        /// 上游适配：部分端点（如本地 OC-DSV4F 代理背后的 deepseek-v4）不支持
-        /// 多轮 tool-calling 历史——只要 messages 里出现 `tool_calls` 或 `role:"tool"`
-        /// 就返回 invalid_request_error。这里在发送前把这类历史折叠为纯文本：
-        /// 删去 `role:"tool"` 消息，剥除 assistant 的 `tool_calls` 字段（仅留 content），
-        /// 并把工具结果以文本追进对应 assistant 的 content，保留语义不丢上下文。
-        /// agent 核心的多轮协议不受影响（它读的是自身内存的 messages）。
+        /// 上游适配：当前默认 `[llm]` 后端 OC-DSV4F 是官方 DeepSeek API，原生支持
+        /// 多轮 tool-calling 历史（messages 里保留 `tool_calls` 与 `role:"tool"` 即可）。
+        /// 历史折叠曾把 tool_calls 转成 `【工具执行】name(args) → result` 文本，导致
+        /// LLM 模仿此格式输出伪调用（如 `【工具调用】consume(...)` 文字而非真实 tool_calls
+        /// JSON），已移除。Agent 核心的多轮协议不受影响（它读自身内存 messages）。
         pub fn chat_tools(&self, messages: &Value, tools: &Value) -> Result<AssistantResponse> {
-            let messages = Self::fold_tool_history(messages);
             let mut body = json!({
                 "model": self.model,
                 "messages": messages,
@@ -440,8 +357,6 @@ pub mod real {
                 "max_tokens": self.max_tokens,
             });
             // 始终发送 tools 字段：模型每轮都需要工具 schema 才能发起 function calling。
-            // 注意：曾在折叠后"无 tool_calls 时不发 tools"导致首轮/纯文本轮模型拿不到
-            // 工具定义，退化为 markdown 伪调用（""> **gather**()"），这是致命回归，已撤销。
             if tools.as_array().is_some_and(|arr| !arr.is_empty()) {
                 body["tools"] = tools.clone();
             }

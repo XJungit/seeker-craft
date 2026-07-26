@@ -1,0 +1,14 @@
+{
+    "id": "tier4_diamond_sword",
+    "name": "合成钻石剑",
+    "description": "钻石剑单次伤害 7（高于铁剑的 6），耐久度 1561（铁剑仅 250），是后期战斗的主力武器。合成需要 2 颗钻石 + 1 根木棍。",
+    "goal": "合成 1 把钻石剑。步骤：1) 装备铁镐后 mine_below(y=-59) 在深层挖钻石矿，gather(item=\"diamond_ore\", count=2)；2) craft(item=\"stick\", count=1) 准备木棍；3) 放置工作台后 craft_3x3(item=\"diamond_sword\", count=1)。",
+    "tier": 4,
+    "success": {
+        "type": "InventoryHas",
+        "item": "diamond_sword",
+        "count": 1
+    },
+    "timeout_secs": 420,
+    "reward": "解锁高伤害长耐久战斗：伤害 7，耐久 1561"
+}

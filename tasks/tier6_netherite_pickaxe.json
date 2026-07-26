@@ -1,0 +1,14 @@
+{
+    "id": "tier6_netherite_pickaxe",
+    "name": "升级下界合金镐",
+    "description": "下界合金镐是游戏最强镐，由钻石镐在锻造台中升级而来（保留附魔），耐久 2031，挖掘速度比钻石镐更快。需要下界合金升级锻造模板 + 钻石镐 + 下界合金锭。",
+    "goal": "在锻造台升级出 1 把下界合金镐。步骤：1) 完成前置 tier6_netherite_ingot 取得 netherite_ingot:1；2) 在堡垒遗迹宝箱中搜寻 netherite_upgrade_smithing_template（下界合金升级锻造模板）；3) craft_3x3(item=\"diamond_pickaxe\", count=1) 准备钻石镐底材；4) craft_3x3(item=\"smithing_table\", count=1) 合成锻造台（4 木板 + 2 铁锭）；5) place(item=\"smithing_table\") 放置后 interact_block 打开，放入模板+钻石镐+下界合金锭完成升级。",
+    "tier": 6,
+    "success": {
+        "type": "InventoryHas",
+        "item": "netherite_pickaxe",
+        "count": 1
+    },
+    "timeout_secs": 1800,
+    "reward": "解锁最强挖掘工具：耐久 2031、挖掘速度最快、抗火不烧毁"
+}

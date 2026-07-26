@@ -9,13 +9,15 @@ use craft_agent::core::message::AssistantResponse;
 use craft_agent::core::session::Session;
 use craft_agent::core::tool::ToolRegistry;
 use craft_agent_minecraft::adapter_azalea::ArcAzaleaAdapter;
-use craft_agent_minecraft::tools_azalea::create_mc_azalea_tools;
+use craft_agent_minecraft::action_lib::ActionLibrary;
+use craft_agent_minecraft::blueprint::BlueprintLibrary;
+use craft_agent_minecraft::tools_azalea::create_mc_azalea_tools_full;
 use craft_agent_model::config::AgentConfig as ModelConfig;
 use craft_agent_model::decision::real::OpenAiLlmClient;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::VecDeque;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -205,7 +207,7 @@ pub fn spawn_agent_loop(
 #[allow(clippy::too_many_arguments)]
 fn run_agent(
     goal: &str,
-    _max_steps: u32,
+    max_steps: u32,
     session_path: &str,
     cfg_path: &str,
     ctrl: &AgentController,
@@ -266,7 +268,16 @@ fn run_agent(
     *ctrl.game_adapter.write().unwrap() = Some(adapter.clone());
 
     let mut registry = ToolRegistry::new();
-    for tool in create_mc_azalea_tools(adapter.clone(), world_mem.clone()) {
+    // 加载蓝图库 + LLM 自定义动作库（P2-1 + P2-4）：
+    // 优先从工作目录的 blueprints/ 与 actions/ 子目录载入；缺失时退化为空库。
+    let blueprints = BlueprintLibrary::load_dir(Path::new("blueprints"));
+    let actions = ActionLibrary::load_dir(Path::new("actions"));
+    eprintln!(
+        "[agent_loop] 加载蓝图 {} 个，自定义动作 {} 个",
+        blueprints.len(),
+        actions.len()
+    );
+    for tool in create_mc_azalea_tools_full(adapter.clone(), world_mem.clone(), blueprints, actions) {
         registry.register(tool);
     }
 
@@ -333,11 +344,12 @@ fn run_agent(
     // CLI 参数 --profile 可指定 individual profile 名（如 deepseek/claude/gpt）。
     // CLI 参数 --mode 可指定模式 profile 名（如 survival/creative/assistant/god_mode）。
     // 都不指定时只加载 _default.json。
-    let profiles_dir = std::env::var("CRAFT_AGENT_PROFILES_DIR")
-        .unwrap_or_else(|_| "profiles".to_string());
-    let profiles_path = Path::new(&profiles_dir);
+    //
+    // 路径解析顺序：$CRAFT_AGENT_PROFILES_DIR → cwd/profiles → exe 父目录向上查找 profiles/
+    // （这样从任何 cwd 启动 viewer 都能找到项目根的 profiles/）。
+    let profiles_path = resolve_profiles_path();
     let profile = craft_agent::profile::Profile::load(
-        profiles_path,
+        &profiles_path,
         ctrl.mode_profile.as_deref(),
         ctrl.individual_profile.as_deref(),
     )
@@ -439,6 +451,14 @@ fn run_agent(
         if ctrl.stop.load(Ordering::Relaxed) {
             let _ = event_tx.send(AgentEvent::Done {
                 reason: "用户手动停止".into(),
+            });
+            break;
+        }
+        // P4 修复：max_steps=0 表示无限循环；>0 时达到上限自动停止。
+        // 原 bug：参数名为 _max_steps（被忽略），导致 step 计数超过 max_steps 仍继续跑。
+        if max_steps > 0 && step >= max_steps {
+            let _ = event_tx.send(AgentEvent::Done {
+                reason: format!("已达到最大步数 {max_steps}"),
             });
             break;
         }
@@ -572,4 +592,44 @@ fn run_agent(
         }
     }
     Ok(())
+}
+
+/// 解析 profiles/ 目录路径。
+///
+/// 查找顺序：
+/// 1. `$CRAFT_AGENT_PROFILES_DIR` 环境变量（绝对路径优先）
+/// 2. `cwd/profiles`（默认相对路径，从启动 cwd 解析）
+/// 3. 从可执行文件所在目录向上查找，直到找到含 `profiles/_default.json` 的目录
+///    （让 viewer 从任何 cwd 启动都能定位到项目根的 profiles/）
+///
+/// 都找不到时返回 `cwd/profiles`，让上层报错信息可读。
+fn resolve_profiles_path() -> PathBuf {
+    // 1. 环境变量优先
+    if let Ok(dir) = std::env::var("CRAFT_AGENT_PROFILES_DIR") {
+        let p = PathBuf::from(&dir);
+        if p.join("_default.json").exists() {
+            return p;
+        }
+    }
+
+    // 2. cwd/profiles
+    let cwd_profiles = PathBuf::from("profiles");
+    if cwd_profiles.join("_default.json").exists() {
+        return cwd_profiles;
+    }
+
+    // 3. 从 exe 父目录向上查找
+    if let Ok(exe) = std::env::current_exe() {
+        let mut dir = exe.parent().map(|p| p.to_path_buf());
+        while let Some(d) = dir {
+            let candidate = d.join("profiles");
+            if candidate.join("_default.json").exists() {
+                return candidate;
+            }
+            dir = d.parent().map(|p| p.to_path_buf());
+        }
+    }
+
+    // 回退：返回相对路径让上层报错
+    cwd_profiles
 }

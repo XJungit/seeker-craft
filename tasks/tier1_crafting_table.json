@@ -1,0 +1,14 @@
+{
+    "id": "tier1_crafting_table",
+    "name": "制作工作台",
+    "description": "用原木合成木板，再用 4 个木板合成工作台。工作台是 3×3 合成的入口（木镐/石镐/熔炉等都需要它）。",
+    "goal": "合成 1 个工作台。步骤：1) craft(item=\"oak_planks\", count=4) 把原木变木板；2) craft(item=\"crafting_table\", count=1) 合成工作台。",
+    "tier": 1,
+    "success": {
+        "type": "InventoryHas",
+        "item": "crafting_table",
+        "count": 1
+    },
+    "timeout_secs": 60,
+    "reward": "解锁 3×3 合成：木镐/石镐/熔炉/箱子"
+}

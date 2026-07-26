@@ -17,3 +17,9 @@ pub mod adapter_azalea;
 #[cfg(feature = "azalea-bot")]
 pub mod tools_azalea;
 
+/// 蓝图系统：预定义可复用建筑模板（P2-1）。无 azalea 依赖，纯数据结构 + JSON。
+pub mod blueprint;
+
+/// LLM 自定义动作库（P2-4：newAction 等价物）。无 azalea 依赖，纯数据结构 + JSON。
+pub mod action_lib;
+

@@ -1,0 +1,17 @@
+{
+  "name": "small_shelter",
+  "description": "3x3 木屋：4 根木柱 + 屋顶木板 + 工作台 + 熔炉 + 火把（11 方块）",
+  "blocks": [
+    {"dx": 0, "dy": 0, "dz": 0, "block": "oak_planks"},
+    {"dx": 2, "dy": 0, "dz": 0, "block": "oak_planks"},
+    {"dx": 0, "dy": 0, "dz": 2, "block": "oak_planks"},
+    {"dx": 2, "dy": 0, "dz": 2, "block": "oak_planks"},
+    {"dx": 0, "dy": 1, "dz": 0, "block": "oak_log"},
+    {"dx": 2, "dy": 1, "dz": 0, "block": "oak_log"},
+    {"dx": 0, "dy": 1, "dz": 2, "block": "oak_log"},
+    {"dx": 2, "dy": 1, "dz": 2, "block": "oak_log"},
+    {"dx": 1, "dy": 2, "dz": 1, "block": "oak_planks"},
+    {"dx": 1, "dy": 0, "dz": 1, "block": "crafting_table"},
+    {"dx": 1, "dy": 0, "dz": 0, "block": "furnace"}
+  ]
+}

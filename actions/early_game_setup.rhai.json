@@ -1,0 +1,7 @@
+{
+  "name": "early_game_setup",
+  "description": "初期生存开局：采集木头→合成工作台→造木镐。适合游戏刚开始时调用。背包需清空或至少有空位。",
+  "script": "gather(\"oak_log\", 6);\ncraft(\"oak_planks\", 4);\ncraft(\"stick\", 2);\ncraft(\"crafting_table\", 1);\nplace(\"crafting_table\", -481, 98, -151);\ncraft_3x3(\"wooden_pickaxe\", 1);\nprint(\"早期生存开局完成：木头、工作台、木镐已就绪！\");",
+  "created_at": 1784996594341,
+  "call_count": 0
+}

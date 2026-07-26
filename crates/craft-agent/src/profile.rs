@@ -125,7 +125,7 @@ impl Profile {
         mode: Option<&str>,
         individual: Option<&str>,
     ) -> Result<Profile> {
-        let mut merged = Profile::default();
+        let mut merged;
 
         // 1. 加载 _default.json
         let default_path = profiles_dir.join("_default.json");

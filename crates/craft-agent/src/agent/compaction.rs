@@ -151,14 +151,24 @@ impl Agent {
                 String::new()
             })
             .unwrap_or_default();
-        // 序列化旧历史时剔除"易变瞬时注入"（perceive 状态、邻近世界记忆），
-        // 它们每轮重生且易过期，进入摘要会污染压缩结果（如矛盾坐标）。
+        // 序列化旧历史时剔除"易变瞬时注入"（perceive 状态、邻近世界记忆、
+        // [当前目标] 重注、nudge 提示词），它们每轮重生且易过期，
+        // 进入摘要会污染压缩结果（如矛盾坐标、过时目标）。
         let old: Vec<String> = self.messages[..cut]
             .iter()
             .filter(|m| match m {
                 Message::User(u) => {
                     !(u.content.starts_with("【当前游戏状态（自动注入）】")
-                        || u.content.starts_with("【邻近世界记忆】"))
+                        || u.content.starts_with("【邻近世界记忆】")
+                        || u.content.starts_with("[当前目标]")
+                        // P1 改进5: 过滤 nudge 提示词 — 它们是瞬时纠正，不应进入摘要
+                        || u.content.starts_with("【纠正】")
+                        || u.content.starts_with("【继续】")
+                        || u.content.starts_with("【强制行动】")
+                        || u.content.starts_with("【死循环警告】")
+                        || u.content.starts_with("【连续失败警告】")
+                        || u.content.starts_with("【探索建议】")
+                        || u.content.starts_with("【系统提示】"))
                 }
                 _ => true,
             })
@@ -339,4 +349,170 @@ impl Agent {
 
 pub fn is_obs_tool(name: &str) -> bool {
     matches!(name, "perceive" | "visual_perceive" | "look" | "look_at")
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::core::message::{AssistantMsg, Message, ToolCall, Usage};
+    use serde_json::json;
+
+    use super::*;
+
+    // ── is_obs_tool ──
+
+    #[test]
+    fn is_obs_tool_recognizes_perceive() {
+        assert!(is_obs_tool("perceive"));
+        assert!(is_obs_tool("visual_perceive"));
+        assert!(is_obs_tool("look"));
+        assert!(is_obs_tool("look_at"));
+    }
+
+    #[test]
+    fn is_obs_tool_rejects_non_obs() {
+        assert!(!is_obs_tool("goto"));
+        assert!(!is_obs_tool("mine"));
+        assert!(!is_obs_tool("craft"));
+        assert!(!is_obs_tool("gather"));
+        assert!(!is_obs_tool(""));
+    }
+
+    // ── json_byte_len ──
+
+    #[test]
+    fn json_byte_len_matches_serde_for_empty() {
+        let v = json!({});
+        assert_eq!(Agent::json_byte_len(&v), serde_json::to_string(&v).unwrap().len());
+    }
+
+    #[test]
+    fn json_byte_len_matches_serde_for_nested() {
+        let v = json!({
+            "name": "gather",
+            "args": {"item": "oak_log", "count": 5},
+            "nested": {"a": [1, 2, 3], "b": "text"}
+        });
+        assert_eq!(Agent::json_byte_len(&v), serde_json::to_string(&v).unwrap().len());
+    }
+
+    // ── msg_tokens ──
+
+    #[test]
+    fn msg_tokens_user_text_only() {
+        let m = Message::user("hello world");
+        let tokens = Agent::msg_tokens(&m);
+        // "hello world" = 11 chars / 2 = 5 tokens
+        assert!(tokens >= 5 && tokens <= 10, "expected ~5 tokens, got {tokens}");
+    }
+
+    #[test]
+    fn msg_tokens_user_with_images() {
+        let m = Message::user_with_images("hello", vec!["data:image/png;base64,A".into()]);
+        let tokens = Agent::msg_tokens(&m);
+        // text: 5/2 = 2, image: 1 * 1200 = 1200
+        assert!(tokens >= 1200, "should include image tokens: {tokens}");
+    }
+
+    #[test]
+    fn msg_tokens_assistant_plain_text() {
+        let m = Message::assistant_text("test message");
+        let tokens = Agent::msg_tokens(&m);
+        assert!(tokens > 0, "assistant text should have tokens");
+    }
+
+    #[test]
+    fn msg_tokens_assistant_with_tool_calls() {
+        let m = Message::Assistant(AssistantMsg {
+            content: Some("let me gather".into()),
+            reasoning: None,
+            tool_calls: vec![ToolCall {
+                id: "c1".into(),
+                name: "gather".into(),
+                arguments: json!({"item": "oak_log", "count": 4}),
+            }],
+            timestamp: 0,
+            usage: Usage::default(),
+        });
+        let tokens = Agent::msg_tokens(&m);
+        assert!(tokens > 0, "assistant with tool calls should have tokens");
+    }
+
+    #[test]
+    fn msg_tokens_assistant_reasoning() {
+        let m = Message::assistant_with_reasoning("thought process", "final answer");
+        let tokens = Agent::msg_tokens(&m);
+        assert!(tokens > 0, "assistant with reasoning should have tokens");
+    }
+
+    #[test]
+    fn msg_tokens_tool_result() {
+        let m = Message::tool_result("c1", "gather", "got 4 oak_log");
+        let tokens = Agent::msg_tokens(&m);
+        assert!(tokens > 0, "tool result should have tokens");
+    }
+
+    #[test]
+    fn msg_tokens_empty_content() {
+        let m = Message::Assistant(AssistantMsg {
+            content: None,
+            reasoning: None,
+            tool_calls: vec![],
+            timestamp: 0,
+            usage: Usage::default(),
+        });
+        let tokens = Agent::msg_tokens(&m);
+        assert_eq!(tokens, 0, "empty assistant should have 0 tokens");
+    }
+
+    // ── serialize_msg ──
+
+    #[test]
+    fn serialize_msg_user() {
+        let m = Message::user("hello");
+        let s = Agent::serialize_msg(&m);
+        assert_eq!(s, "user: hello");
+    }
+
+    #[test]
+    fn serialize_msg_user_with_images() {
+        let m = Message::user_with_images("look", vec!["base64data".into()]);
+        let s = Agent::serialize_msg(&m);
+        assert!(s.contains("[1 images]"), "should include image count: {s}");
+    }
+
+    #[test]
+    fn serialize_msg_assistant_text() {
+        let m = Message::assistant_text("ok");
+        let s = Agent::serialize_msg(&m);
+        assert_eq!(s, "ok");
+    }
+
+    #[test]
+    fn serialize_msg_assistant_tool_call() {
+        let m = Message::assistant_tool_call("c1", "gather", json!({"item":"oak_log"}));
+        let s = Agent::serialize_msg(&m);
+        assert!(s.contains("-> gather("), "should show tool call: {s}");
+    }
+
+    #[test]
+    fn serialize_msg_assistant_reasoning() {
+        let m = Message::assistant_with_reasoning("think step", "do action");
+        let s = Agent::serialize_msg(&m);
+        assert!(s.contains("[Think]"), "should include reasoning: {s}");
+        assert!(s.contains("do action"), "should include content: {s}");
+    }
+
+    #[test]
+    fn serialize_msg_tool_result() {
+        let m = Message::tool_result("c1", "gather", "got 4 oak_log");
+        let s = Agent::serialize_msg(&m);
+        assert!(s.starts_with("result(gather)"), "should start with result(tool_name): {s}");
+    }
+
+    #[test]
+    fn serialize_msg_tool_error() {
+        let m = Message::tool_error("c1", "gather", "block not found");
+        let s = Agent::serialize_msg(&m);
+        assert!(s.starts_with("result(gather)"), "error should still format as result: {s}");
+    }
 }

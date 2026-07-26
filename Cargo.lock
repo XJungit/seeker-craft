@@ -1291,6 +1291,7 @@ dependencies = [
  "dotenvy",
  "reqwest 0.12.28",
  "rhai",
+ "serde",
  "serde_json",
  "tokio",
  "windows-sys 0.61.2",
@@ -1310,6 +1311,18 @@ dependencies = [
  "serde",
  "serde_json",
  "toml",
+]
+
+[[package]]
+name = "craft-agent-test-harness"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "craft-agent",
+ "craft-agent-minecraft",
+ "craft-agent-model",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

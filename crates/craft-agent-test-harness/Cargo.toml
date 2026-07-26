@@ -1,0 +1,13 @@
+[package]
+name = "craft-agent-test-harness"
+version.workspace = true
+edition.workspace = true
+description = "Craft-Agent 全自动测试工具链 — 程序化测试运行、失败分析、自动修复循环"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+craft-agent = { path = "../craft-agent" }
+craft-agent-minecraft = { path = "../craft-agent-minecraft" }
+craft-agent-model = { path = "../craft-agent-model" }

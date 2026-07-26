@@ -1,0 +1,14 @@
+{
+    "id": "tier2_furnace",
+    "name": "建造熔炉",
+    "description": "挖 8 个圆石合成熔炉。熔炉用于熔炼铁矿/金矿/熟食/玻璃等。",
+    "goal": "合成 1 个熔炉。步骤：1) 用木镐/石镐 gather(item=\"stone\", count=8)；2) craft_3x3(item=\"furnace\", count=1)。",
+    "tier": 2,
+    "success": {
+        "type": "InventoryHas",
+        "item": "furnace",
+        "count": 1
+    },
+    "timeout_secs": 120,
+    "reward": "解锁熔炼：铁矿/金矿/熟食/玻璃"
+}

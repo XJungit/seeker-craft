@@ -3,7 +3,7 @@
 //! 子模块拆分：
 //! - [`prompt`] — 提示词构建（知识字符串自动生成 / build_context / WorldInfo 注入）
 //! - [`compaction`] — token 估算 + 上下文压缩
-//! - [`modes`] — 模式响应系统（self_preservation / self_defense / unstuck）
+//! - [`modes`] — 模式响应系统（self_preservation / self_defense / unstuck 等 10 个 mode）
 //! - [`session`] — 会话持久化 + 知识管理
 
 mod compaction;
@@ -86,6 +86,11 @@ pub enum AgentEvent {
         success: bool,
         attempt: u32,
         final_error: Option<String>,
+    },
+    /// Mode 触发强制重 prompt（如血量危急/敌对生物靠近）。
+    /// 外部循环（viewer/agent_loop）应在下一轮立即再跑 step()，不延迟。
+    ModeForceReprompt {
+        mode_id: u32,
     },
 }
 
@@ -193,7 +198,142 @@ fn is_retryable_error(msg: &str) -> bool {
         || lower.contains("connection")
 }
 
+/// P0 改进2: 检测交替模式死循环 (A→B→A→B→A→B)
+/// 返回 Some((sig_a, sig_b, cycles)) 当检测到 ≥3 轮交替时
+fn detect_alternating_pattern(
+    recent: &std::collections::VecDeque<String>,
+) -> Option<(String, String, usize)> {
+    if recent.len() < 6 {
+        return None;
+    }
+    // 取最后 6 个签名，检查是否构成 A B A B A B 模式
+    let tail: Vec<&String> = recent.iter().rev().take(6).collect();
+    // tail[0] 是最新的，反转回正序
+    let seq: Vec<&String> = tail.into_iter().rev().collect();
+    let a = &seq[0];
+    let b = &seq[1];
+    if a == b {
+        return None; // 不是交替，是重复
+    }
+    // 检查 A B A B A B
+    if seq[2] == *a && seq[3] == *b && seq[4] == *a && seq[5] == *b {
+        // 计算总交替轮数（往前再数）
+        let mut cycles = 3;
+        let mut idx = 6;
+        while idx + 1 < recent.len() {
+            // 从尾部往前数
+            let rev: Vec<&String> = recent.iter().rev().collect();
+            if idx < rev.len() && rev[idx] == *b && idx + 1 < rev.len() && rev[idx + 1] == *a {
+                cycles += 1;
+                idx += 2;
+            } else {
+                break;
+            }
+        }
+        return Some((a.to_string(), b.to_string(), cycles));
+    }
+    None
+}
+
+/// P2 改进7: 从 perceive 文本中提取位置键（用于位置卡死检测）
+/// 返回 "x,y,z" 格式的粗粒度位置键（取整），None 表示无法提取
+fn extract_position_key(perceive_msg: &str) -> Option<String> {
+    // 匹配 "位置: (x, y, z)" 格式
+    let marker = "位置:";
+    let pos = perceive_msg.find(marker)?;
+    let after = &perceive_msg[pos + marker.len()..];
+    let paren_start = after.find('(')?;
+    let paren_content = &after[paren_start + 1..];
+    let paren_end = paren_content.find(')')?;
+    let coords = &paren_content[..paren_end];
+    let parts: Vec<&str> = coords.split(',').collect();
+    if parts.len() < 3 {
+        return None;
+    }
+    let x: i32 = parts[0].trim().parse().ok()?;
+    let y: i32 = parts[1].trim().parse().ok()?;
+    let z: i32 = parts[2].trim().parse().ok()?;
+    Some(format!("{x},{y},{z}"))
+}
+
+/// P1 改进4: 自动回退链 — 根据失败的工具名生成回退建议
+fn build_fallback_suggestion(failed_tools: &[&str]) -> String {
+    let mut suggestions = Vec::new();
+    for &tool in failed_tools {
+        let suggestion = match tool {
+            "gather" => Some("gather 失败 → 尝试 mine（手动挖指定坐标）或 go 到新区域再 gather"),
+            "mine" => Some("mine 失败 → 检查是否需要更好的镐（craft 木镐/石镐），或 mine_above 脱困"),
+            "go" | "goto" => Some("go 失败 → 距离可能超 32m，尝试分段走或换方向"),
+            "place" => Some("place 失败 → 检查坐标是否被占，尝试附近 3 格内其他位置"),
+            "craft" | "craft_3x3" => Some("craft 失败 → 检查背包是否有足够原料，先 gather 原料再 craft"),
+            "attack" => Some("attack 失败 → 目标可能已离开或死亡，perceive 确认后换目标"),
+            "open" => Some("open 失败 → 检查方块是否在 reach 范围内，先 go 靠近"),
+            "equip" => Some("equip 失败 → 检查背包是否有该物品"),
+            "smelt" => Some("smelt 失败 → 检查是否有熔炉+燃料+原料，先 craft 熔炉"),
+            _ => None,
+        };
+        if let Some(s) = suggestion {
+            suggestions.push(s);
+        }
+    }
+    if suggestions.is_empty() {
+        String::new()
+    } else {
+        format!("建议回退方案:\n{}", suggestions.iter().map(|s| format!("  - {s}")).collect::<Vec<_>>().join("\n"))
+    }
+}
+
 // ── Config ──
+
+/// SelfPrompter 三态状态机（学习自 Mindcraft self_prompter.js）。
+///
+/// 取代原 `self_prompt: Option<String>` 的二态语义，新增 `Paused` 态：
+/// 紧急情况（self_preservation / self_defense 触发 force_reprompt）时
+/// 自动暂停目标注入，避免 LLM 被 `[当前目标] 做木镐` 干扰而忽略
+/// `[MODE: self_preservation] 立即逃跑！` 的紧急指令。
+///
+/// - `Stopped`：无目标，agent 自由行动
+/// - `Active`：目标激活，每轮注入 [当前目标]，agent 持续朝目标行动
+/// - `Paused`：目标暂停，不注入但保留 goal；紧急情况结束后自动/手动恢复
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PromptState {
+    Stopped,
+    Active { goal: String, since_turn: u32 },
+    Paused {
+        goal: String,
+        /// 暂停时所处的轮次（用于日志/调试）
+        paused_since: u32,
+        /// 是否为自动暂停（mode 触发）。true 时无 mode 触发 N 轮后自动恢复；
+        /// false（LLM 主动 pause）时只能由 LLM 主动 resume。
+        auto_paused: bool,
+    },
+}
+
+impl PromptState {
+    /// 当前持有的目标文本（Stopped 返回 None）。
+    pub fn goal(&self) -> Option<&str> {
+        match self {
+            PromptState::Stopped => None,
+            PromptState::Active { goal, .. } | PromptState::Paused { goal, .. } => Some(goal),
+        }
+    }
+
+    /// 是否处于 Active 态（每轮注入目标）。
+    pub fn is_active(&self) -> bool {
+        matches!(self, PromptState::Active { .. })
+    }
+
+    /// 是否有目标（Active 或 Paused，排除 Stopped）。
+    pub fn has_goal(&self) -> bool {
+        !matches!(self, PromptState::Stopped)
+    }
+}
+
+impl Default for PromptState {
+    fn default() -> Self {
+        PromptState::Stopped
+    }
+}
 
 pub struct AgentConfig {
     pub prompt: String,
@@ -284,7 +424,7 @@ impl AgentConfig {
 // execute_plan/look_at/discard）。虽然标了 #[allow(dead_code)] 没被直接使用，
 // 但留在源码里是定时炸弹——日后有人引用就会污染 LLM。已彻底清空。
 //
-// 真实 system prompt 在 viewer/agent_loop.rs 里注入（中文版，列了真实 23 个工具）。
+// 真实 system prompt 在 viewer/agent_loop.rs 里注入（中文版，列了真实 37 个工具）。
 // modes.rs 的 [MODE: ...] 提示也只引用真实工具名（attack/goto/gather/craft）。
 
 #[allow(dead_code)]
@@ -370,7 +510,12 @@ pub struct Agent {
     skill_lib: SkillLibrary,
     knowledge_bootstrapped: bool,
     obs_streak: u32,
-    self_prompt: Option<String>,
+    /// SelfPrompter 三态状态机（Stopped / Active / Paused）。
+    /// 取代原 `self_prompt: Option<String>`。
+    prompt_state: PromptState,
+    /// 连续无 mode 触发的轮数（用于自动恢复 Paused 目标）。
+    /// 每次有 mode 触发重置为 0；无触发 +1；≥2 时自动恢复 auto_paused 目标。
+    turns_since_mode: u32,
     last_mode_trigger: u32,
     pub session: Option<Session>,
     pending_checkpoint: bool,
@@ -380,6 +525,14 @@ pub struct Agent {
     pub last_compaction: Option<CompactionResult>,
     pub retry_abort: Arc<AtomicBool>,
     recent_calls: std::collections::VecDeque<String>,
+    /// P8 连续纯文字回复计数（≥2 时强制注入更强 nudge）。
+    text_only_count: u32,
+    /// P8 连续工具失败计数（用于检测"反复尝试同一件事都失败"模式）。
+    consecutive_failures: u32,
+    /// P8 上次位置记录（用于检测位置卡死）。
+    last_position_key: Option<String>,
+    /// P8 位置未变轮数。
+    position_stale_turns: u32,
 }
 impl Agent {
     pub fn abort(&self) {
@@ -419,7 +572,8 @@ impl Agent {
             skill_lib: SkillLibrary::new(20),
             knowledge_bootstrapped: false,
             obs_streak: 0,
-            self_prompt: None,
+            prompt_state: PromptState::Stopped,
+            turns_since_mode: 0,
             last_mode_trigger: 0,
             session: None,
             pending_checkpoint: false,
@@ -430,6 +584,10 @@ impl Agent {
             retry_abort: Arc::new(AtomicBool::new(false)),
             recent_calls: std::collections::VecDeque::with_capacity(10),
             compaction_provider,
+            text_only_count: 0,
+            consecutive_failures: 0,
+            last_position_key: None,
+            position_stale_turns: 0,
         }
     }
 
@@ -456,15 +614,73 @@ impl Agent {
         }
     }
 
-    // ── SelfPrompter ──
+    // ── SelfPrompter 三态状态机 ──
+    //
+    // 学习自 Mindcraft self_prompter.js：目标有 Stopped/Active/Paused 三态，
+    // 紧急 mode 触发时自动暂停（避免 [当前目标] 噪声干扰紧急决策），
+    // 紧急情况结束后自动恢复。
+
+    /// 设置/更新目标 → 进入 Active 态。
+    /// 取代旧 `set_self_prompt`，保留旧名为兼容别名。
     pub fn set_self_prompt(&mut self, goal: impl Into<String>) {
-        self.self_prompt = Some(goal.into());
+        self.set_goal(goal);
     }
+    /// 设置/更新目标 → 进入 Active 态。
+    pub fn set_goal(&mut self, goal: impl Into<String>) {
+        self.prompt_state = PromptState::Active {
+            goal: goal.into(),
+            since_turn: self.turn,
+        };
+    }
+    /// 清空目标 → 进入 Stopped 态。
     pub fn clear_self_prompt(&mut self) {
-        self.self_prompt = None;
+        self.stop_goal();
     }
+    /// 清空目标 → 进入 Stopped 态。
+    pub fn stop_goal(&mut self) {
+        self.prompt_state = PromptState::Stopped;
+    }
+    /// 暂停目标（Active → Paused）。
+    /// `auto_paused=true` 表示由 mode 自动触发（无 mode 时自动恢复）；
+    /// `auto_paused=false` 表示 LLM 主动暂停（只能由 LLM 主动恢复）。
+    pub fn pause_goal(&mut self, auto_paused: bool) {
+        if let PromptState::Active { goal, .. } = &self.prompt_state {
+            self.prompt_state = PromptState::Paused {
+                goal: goal.clone(),
+                paused_since: self.turn,
+                auto_paused,
+            };
+        }
+    }
+    /// 恢复目标（Paused → Active）。Stopped/Active 时无操作。
+    pub fn resume_goal(&mut self) {
+        if let PromptState::Paused { goal, .. } = &self.prompt_state {
+            self.prompt_state = PromptState::Active {
+                goal: goal.clone(),
+                since_turn: self.turn,
+            };
+        }
+    }
+    /// 当前 PromptState（供外部 viewer/调试读取）。
+    pub fn prompt_state(&self) -> &PromptState {
+        &self.prompt_state
+    }
+    /// 是否有目标（Active 或 Paused）。
     pub fn has_goal(&self) -> bool {
-        self.self_prompt.is_some()
+        self.prompt_state.has_goal()
+    }
+    /// 当前目标文本（Stopped 返回 None）。
+    pub fn current_goal(&self) -> Option<&str> {
+        self.prompt_state.goal()
+    }
+    /// 自动恢复检查：若处于 auto_paused 态且连续 N 轮无 mode 触发，恢复为 Active。
+    /// 由 run_one_turn 在无 mode 触发的轮次调用。
+    fn maybe_auto_resume(&mut self) {
+        if let PromptState::Paused { auto_paused: true, .. } = self.prompt_state {
+            if self.turns_since_mode >= 2 {
+                self.resume_goal();
+            }
+        }
     }
 }
 
@@ -603,6 +819,16 @@ impl Agent {
         {
             match tool.execute("auto_perceive", serde_json::json!({}), None) {
                 Ok(result) => {
+                    // P2 改进7: 从 perceive 结果提取坐标，跟踪位置卡死
+                    let pos_key = extract_position_key(&result.message);
+                    if let Some(ref pk) = pos_key {
+                        if self.last_position_key.as_ref() == Some(pk) {
+                            self.position_stale_turns = self.position_stale_turns.saturating_add(1);
+                        } else {
+                            self.position_stale_turns = 0;
+                        }
+                        self.last_position_key = Some(pk.clone());
+                    }
                     let state_msg = format!("【当前游戏状态（自动注入）】\n{}", result.message);
                     self.messages
                         .push(Message::user_with_images(state_msg, result.images));
@@ -614,20 +840,72 @@ impl Agent {
             }
         }
 
-        // Modes reaction system
-        if self.config.enable_modes
-            && let Some(mode_msg) = self.check_modes()
-        {
-            self.messages.push(Message::user(mode_msg.clone()));
-            log.push(format!("[t{turn}] {mode_msg}"));
+        // P2 改进7: 探索策略 — 位置卡死 5+ 轮时注入"换区域"提示
+        if self.position_stale_turns >= 5 {
+            let nudge = format!(
+                "【探索建议】你已在同一位置停留 {} 轮，可能资源已耗尽。请：\n\
+                 1. 向一个新方向走 20-30 格（用 go 工具）\n\
+                 2. 探索新区域寻找资源\n\
+                 3. 如果在做地下挖掘，尝试换一个方向或回到地表",
+                self.position_stale_turns
+            );
+            self.messages.push(Message::user(nudge));
+            log.push(format!(
+                "[t{turn}] 位置卡死 {} 轮，注入探索建议",
+                self.position_stale_turns
+            ));
+            // 注入后重置，避免每轮都注入
+            self.position_stale_turns = 0;
         }
 
-        // SelfPrompter
+        // Modes reaction system（支持 force_reprompt 通道 + 自动暂停目标）
+        if self.config.enable_modes
+            && let Some(reaction) = self.check_modes()
+        {
+            // mode 触发：重置无 mode 计数
+            self.turns_since_mode = 0;
+            if let Some(prompt) = &reaction.prompt {
+                self.messages.push(Message::user(prompt.clone()));
+                log.push(format!("[t{turn}] {prompt}"));
+            }
+            if reaction.force_reprompt {
+                self.events.push(AgentEvent::ModeForceReprompt {
+                    mode_id: reaction.mode_id,
+                });
+                log.push(format!(
+                    "[t{turn}] mode {} 触发 force_reprompt，本轮将立即重跑 LLM",
+                    reaction.mode_id
+                ));
+                // 紧急 mode（force_reprompt=true）自动暂停目标注入：
+                // 避免 [当前目标] 做木镐 干扰 [MODE: self_preservation] 立即逃跑 的紧急决策。
+                // 仅 Active → Paused（Stopped/Paused 无操作）。auto_paused=true 标记可自动恢复。
+                if self.prompt_state.is_active() {
+                    self.pause_goal(true);
+                    log.push(format!(
+                        "[t{turn}] 紧急 mode 触发，自动暂停目标注入（auto_paused）"
+                    ));
+                }
+            }
+        } else {
+            // 无 mode 触发：累加计数 + 检查自动恢复
+            self.turns_since_mode = self.turns_since_mode.saturating_add(1);
+            self.maybe_auto_resume();
+            if let PromptState::Active { goal, .. } = &self.prompt_state {
+                if self.turn > 0 && self.turns_since_mode == 2 {
+                    // 刚从 auto_paused 恢复（maybe_auto_resume 已切换为 Active）
+                    log.push(format!(
+                        "[t{turn}] 紧急情况结束，自动恢复目标注入：{goal}"
+                    ));
+                }
+            }
+        }
+
+        // SelfPrompter：仅 Active 态注入目标（Paused/Stopped 不注入）
         if self.config.enable_self_prompt
-            && let Some(prompt) = &self.self_prompt
+            && let PromptState::Active { goal, .. } = &self.prompt_state
         {
             self.messages
-                .push(Message::user(format!("[当前目标] {prompt}")));
+                .push(Message::user(format!("[当前目标] {goal}")));
         }
 
         // Dynamic context (WorldInfo + Skill)
@@ -732,6 +1010,8 @@ impl Agent {
         let calls = response.tool_calls.clone();
         if calls.is_empty() {
             self.obs_streak += 1;
+            // P0 改进1: SelfPrompter 强制执行 — 连续纯文字回复计数
+            self.text_only_count = self.text_only_count.saturating_add(1);
             self.events.push(AgentEvent::Assistant {
                 content: response.content.clone(),
                 reasoning: response.reasoning.clone(),
@@ -739,10 +1019,31 @@ impl Agent {
             });
             self.messages.push(Message::assistant_response(&response));
             let content = response.content.as_deref().unwrap_or("");
-            let goal_hint = self.self_prompt.as_ref().map(|g| format!("你的目标是: {g}。")).unwrap_or_default();
+            let goal_hint = self
+                .current_goal()
+                .map(|g| format!("你的目标是: {g}。"))
+                .unwrap_or_default();
+            // P12 修复（2026-07-26）：思考用尽 token 的专门检测。
+            // deepseek-v4-flash-free 默认开启 thinking 模式，reasoning_content 会消耗大量 token。
+            // 当 max_tokens 不足以同时容纳 reasoning + content + tool_calls 时，
+            // 会出现 content="" + tool_calls=[] + finish_reason="length" + reasoning_content 非空，
+            // 此时通用的"纯文字回复"nudge 无效（LLM 并没有产出文字，只是在思考），
+            // 需要专门提示 LLM 跳过思考直接输出工具调用。
+            let is_thinking_timeout = matches!(response.stop_reason, crate::core::message::StopReason::Length)
+                && content.is_empty()
+                && response.reasoning.is_some()
+                && response.reasoning.as_deref().map_or(false, |r| !r.is_empty());
+            // P12 修复（2026-07-26）：过早宣告任务完成检测。
+            // LLM 在纯文字回复里宣告"任务完成/目标完成"但未实际验证，
+            // 此时目标仍在 Active 态，应强制 perceive 验证而非停止行动。
+            let is_premature_completion = content.contains("任务完成")
+                || content.contains("目标完成")
+                || content.contains("目标已全部完成")
+                || content.contains("全部完成")
+                || content.contains("任务已全部完成")
+                || content.contains("已完成所有")
+                || content.contains("最终成果");
             // 文字伪调用检测：LLM 在 assistant 文字里写 `tool(...)` 伪调用而不产生真实 tool_calls。
-            // 扩展检测模式（旧版只检测 `[工具` / `[tool `，遗漏了 `【工具执行】` / `【工具调用】` /
-            // `→ 命令完成` / `→ OK` / `gather(...)` 等常见反模式）。
             let _lower = content.to_lowercase();
             let is_pseudo_call = content.contains("【工具")
                 || content.contains("【tool")
@@ -755,7 +1056,6 @@ impl Agent {
                 || content.contains("→ 已完成")
                 || content.contains("工具执行】")
                 || content.contains("工具调用】")
-                // 纯文字里出现 `toolname(...)` 且没有 tool_calls（常见：goto(...) / mine(...) / gather(...)）
                 || (content.contains("goto(")
                     || content.contains("mine(")
                     || content.contains("gather(")
@@ -763,24 +1063,51 @@ impl Agent {
                     || content.contains("attack(")
                     || content.contains("place("))
                     && response.tool_calls.is_empty();
-            let nudge = if is_pseudo_call {
+            // P0 改进1: 连续 ≥2 次纯文字回复时注入更强提示，列出可用工具
+            let nudge = if is_thinking_timeout {
+                format!("{goal_hint}【纠偏】你上一轮的思考（reasoning）用尽了全部 max_tokens，\
+                 没有产出任何文字或工具调用——bot 实际上什么都没做！\n\
+                 请立即通过 function calling 输出工具调用，**不要做长篇思考**。\
+                 根据当前感知到的状态直接选一个工具调用，1 句话说明意图即可。")
+            } else if is_pseudo_call {
                 format!("{goal_hint}【纠正】你的回复里写了文字伪调用（如 `【工具执行】xxx(...)` 或 `xxx(...) → 命令完成`），\
                  这**不会被执行**——只有 function calling 输出的 tool_calls 才会被真正执行。\
                  你刚才的所有「工具执行」都是幻觉，bot 实际上没做任何动作！\n\
                  必须用 function calling 输出工具调用（系统自动附加 tool_calls 字段，\
                  不要在文字里写任何 tool() 调用）。请重新回复：文字只说 1 句意图，\
                  然后通过 function calling 输出真实 tool_calls。")
+            } else if is_premature_completion && self.current_goal().is_some() {
+                // P12：LLM 过早宣告完成但目标仍 Active，强制 perceive 验证
+                let goal = self.current_goal().unwrap_or("");
+                format!("{goal_hint}【验证】你宣告「任务完成」，但目标仍在执行中：{goal}\n\
+                 文字宣告**不算完成**——必须通过 function calling 调用 perceive 查看实际状态，\
+                 确认目标物品在背包/目标位置已到达，才算真正完成。\n\
+                 请立即调用 perceive 验证当前状态，不要只用文字说完成了。")
+            } else if self.text_only_count >= 2 {
+                // 连续 2+ 次纯文字：列出可用工具强制行动
+                let tool_list: Vec<&str> = self.tools.tools().iter().map(|t| t.name()).collect();
+                format!("{goal_hint}【强制行动】你已连续 {} 次只回复文字而不调用工具！\n\
+                 这是不允许的——每轮必须通过 function calling 调用至少一个工具。\n\
+                 可用工具: {}\n\
+                 根据当前状态立即选择一个工具调用。不要解释，直接调用工具。",
+                 self.text_only_count,
+                 tool_list.join(", "))
             } else {
                 format!("{goal_hint}【继续】你刚才只用了文字回复，没有产生真正的工具调用。\
                  请用 function calling 输出工具调用（不要用 markdown 写 `tool()` 伪调用，那不会被执行）。\
                  根据当前状态选一个工具立即行动。")
             };
             self.messages.push(Message::user(nudge));
-            log.push(format!("[t{turn}] 提醒: 纯文字回复，已注入续跑指令"));
+            log.push(format!(
+                "[t{turn}] 提醒: 纯文字回复 (连续 {} 次)，已注入续跑指令",
+                self.text_only_count
+            ));
             self.events.push(AgentEvent::TurnEnd { turn });
             self.persist_turn()?;
             return Ok((log, true));
         }
+        // 有工具调用：重置纯文字计数
+        self.text_only_count = 0;
 
         // Track obs streak from tool names
         let obs_tools: &[&str] = &["perceive", "visual_perceive", "look"];
@@ -806,7 +1133,19 @@ impl Agent {
         // Dead-loop detection
         // #15 修复：签名归一化——把参数里的数字（坐标等）替换为 #，
         // 这样"每次换不同坐标的重复 move_to"也能被识别为同一循环，而非永不触发。
-        let normalize = |arg_json: &str| -> String {
+        // P5 修复：位置类工具（goto/mine/place/interact_block/chest_*）的坐标
+        // 不应被归一化——bot 探索时正常会 goto 不同坐标，归一化会导致误报死循环。
+        // 这些工具只在「精确相同参数」重复时才算死循环。
+        let positional_tools: &[&str] = &[
+            "goto", "go", "mine", "place", "interact_block",
+            "chest_view", "chest_withdraw", "chest_deposit", "open",
+        ];
+        let normalize = |arg_json: &str, tool_name: &str| -> String {
+            if positional_tools.contains(&tool_name) {
+                // 位置类工具：保留原参数（坐标不同则视为不同调用）
+                return arg_json.to_string();
+            }
+            // 其他工具：数字归一化（捕捉"perceive 4 次"等无参数或同参数循环）
             let mut out = String::with_capacity(arg_json.len());
             let mut in_num = false;
             for ch in arg_json.chars() {
@@ -821,7 +1160,7 @@ impl Agent {
         };
         let call_sig = calls
             .iter()
-            .map(|tc| format!("{}|{}", tc.name, normalize(&tc.arguments.to_string())))
+            .map(|tc| format!("{}|{}", tc.name, normalize(&tc.arguments.to_string(), &tc.name)))
             .collect::<Vec<_>>()
             .join(";");
         self.recent_calls.push_back(call_sig.clone());
@@ -829,18 +1168,61 @@ impl Agent {
             self.recent_calls.pop_front();
         }
         let repeat_count = self.recent_calls.iter().filter(|c| **c == call_sig).count();
+        // P0 改进2: 交替模式检测 (A→B→A→B→A→B)
+        // 即使单个调用没重复 4 次，但两个调用交替出现也是死循环
+        let alternating = detect_alternating_pattern(&self.recent_calls);
         // 注意：死循环 nudge 不能在 assistant(tool_calls) 与后续 tool result 之间插入
         // user 消息（否则 DeepSeek/OpenAI 报 400：tool 消息必须紧跟其 tool_calls）。
         // 故先暂存，待本轮 tool result 全部 push 之后再注入。
         let mut loop_nudge: Option<String> = None;
         if repeat_count >= 4 {
+            // P12 修复（2026-07-26）：针对 mine_below 的死循环给出具体建议。
+            // mine_below 无参数，连续调用签名必然相同，但 bot 实际在向下挖。
+            // 真正的问题是 LLM 不知道何时停止 mine_below（应该 perceive 检查 Y 坐标和背包）。
+            let tool_names: Vec<&str> = calls.iter().map(|tc| tc.name.as_str()).collect();
+            let specific_hint = if tool_names.iter().any(|n| *n == "mine_below") {
+                "你在不断 mine_below 向下挖。问题：mine_below 没有终点反馈，你需要：\n\
+                 1. **立即调用 perceive** 查看当前 Y 坐标、背包、附近方块\n\
+                 2. 如果 Y 已到目标深度（如煤矿 Y=15-0、铁矿 Y=15-(-30)、钻石 Y=-59），停止 mine_below\n\
+                 3. 改用 mine 挖指定坐标的目标矿石，或 gather 让 bot 自动找矿\n\
+                 4. 如果挖到基岩（Y=-64），立即 mine_above 向上脱困\n\
+                 5. 如果背包已有目标矿石，直接 craft/equip 后继续任务，不要再挖"
+            } else if tool_names.iter().any(|n| *n == "mine_above") {
+                "你在不断 mine_above 向上挖脱困。问题：可能卡在 1x1 竖井里出不来。你需要：\n\
+                 1. **立即调用 perceive** 查看当前 Y 坐标和周围方块\n\
+                 2. 如果已到地表（头顶是空气），停止 mine_above，改用 goto 走到目标位置\n\
+                 3. 如果还在地下，尝试 goto 走出竖井（先 mine 挖水平方向拓宽）\n\
+                 4. 如果背包有方块，可以 place 在脚下垫高（向上搭方块）脱困\n\
+                 5. 实在出不来用 chat('/tp @s ~ 70 ~') 传送到地表"
+            } else if tool_names.iter().any(|n| *n == "gather") {
+                "你在反复 gather 同一物品但失败。问题可能是：\n\
+                 1. 没装备镐（先 equip wooden_pickaxe/stone_pickaxe/iron_pickaxe）\n\
+                 2. 附近没有该方块（先 perceive 看资源标签，或 goto 换区域）\n\
+                 3. 工具等级不足（钻石矿需要 iron_pickaxe 以上，参考错误提示合成更高 tier 的镐）\n\
+                 立即 perceive 检查状态，再决定下一步"
+            } else if tool_names.iter().any(|n| *n == "goto" || *n == "go") {
+                "你在反复 goto 同一坐标但走不到。问题可能是：\n\
+                 1. 距离超过 32m 限制（分段走，或换中间目标）\n\
+                 2. 路径被阻挡（先 mine 挖通，或绕路）\n\
+                 3. 坐标错误（perceive 确认实际坐标）\n\
+                 立即 perceive 检查位置，或换一个目标"
+            } else if tool_names.iter().any(|n| *n == "craft" || *n == "craft_3x3") {
+                "你在反复 craft 但失败。问题可能是：\n\
+                 1. 缺少原料（perceive 查看背包，先 gather 采集缺的原料）\n\
+                 2. 没有 crafting_table（先 craft('crafting_table') 造一个，或 place 已有的）\n\
+                 3. 配方不对（检查 profiles/_default.json 里的配方知识）\n\
+                 立即 perceive 查看背包，确认原料后再 craft"
+            } else {
+                ""
+            };
             let nudge = format!(
                 "【死循环警告】你已连续 {repeat_count} 次执行相同操作 ({}). 请：\n\
                  1. 检查 perceive 返回的状态，确认当前实际情况\n\
                  2. 换一种完全不同的方法\n\
                  3. 如果在建造，改用 build 蓝图工具而不是手动 place\n\
                  4. 如果在采集，先 goto 到新位置再 gather\n\
-                 5. 如果目标已达成，停止调用工具",
+                 5. 如果目标已达成，停止调用工具\n\
+                 {specific_hint}",
                 calls
                     .iter()
                     .map(|tc| tc.name.clone())
@@ -850,6 +1232,18 @@ impl Agent {
             loop_nudge = Some(nudge);
             log.push(format!(
                 "[t{turn}] 死循环检测: 相同调用重复 {repeat_count} 次，注入打断指令"
+            ));
+        } else if let Some((a, b, cycles)) = alternating {
+            // 交替模式：A→B→A→B 重复 cycles 轮
+            let nudge = format!(
+                "【死循环警告】你正在交替重复两个操作 ({a} ↔ {b})，已循环 {cycles} 轮。\n\
+                 这种左右摇摆不会推进目标。请：\n\
+                 1. 停止在两个操作间来回切换\n\
+                 2. 检查 perceive 状态，确认当前实际进度\n\
+                 3. 选择一个全新的方法推进目标");
+            loop_nudge = Some(nudge);
+            log.push(format!(
+                "[t{turn}] 死循环检测: 交替模式 {a}↔{b} 循环 {cycles} 轮，注入打断指令"
             ));
         }
 
@@ -864,6 +1258,7 @@ impl Agent {
             })
             .collect();
         let batches = plan_tool_effect_batches(&effects);
+        let mut turn_had_error = false;
 
         for batch in &batches {
             let mut parallel_indices = Vec::new();
@@ -922,6 +1317,9 @@ impl Agent {
             batch_results.sort_by_key(|(idx, _, _, _, _)| *idx);
             for (idx, msg, is_err, call_id, tool_name) in batch_results {
                 let tc = &calls[idx];
+                if is_err {
+                    turn_had_error = true;
+                }
                 self.events.push(AgentEvent::ToolExecutionStart {
                     tool_call_id: call_id.clone(),
                     name: tool_name.clone(),
@@ -963,10 +1361,19 @@ impl Agent {
                 {
                     let goal = goal_val.as_str().unwrap_or("");
                     if goal.is_empty() {
-                        self.self_prompt = None;
+                        // 空目标 → 停止（Stopped）
+                        self.stop_goal();
                     } else {
-                        self.self_prompt = Some(goal.to_string());
+                        // 非空目标 → 进入 Active 态（覆盖任何 Paused/Stopped）
+                        self.set_goal(goal);
                     }
+                }
+                // pause_goal / resume_goal 工具响应（由 LLM 主动控制）
+                if tool_name == "pause_goal" && !is_err {
+                    self.pause_goal(false); // LLM 主动暂停：auto_paused=false，不会自动恢复
+                }
+                if tool_name == "resume_goal" && !is_err {
+                    self.resume_goal();
                 }
 
                 self.session_entries.push(SessionEntry {
@@ -985,10 +1392,34 @@ impl Agent {
             }
         }
 
+        // P1 改进6: 连续失败检测 — 3+ 轮工具失败时注入诊断提示
+        if turn_had_error {
+            self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+        } else {
+            self.consecutive_failures = 0;
+        }
+
         // 死循环 nudge 在所有 tool result 之后注入，避免插在 assistant(tool_calls)
         // 与 tool result 之间导致 DeepSeek/OpenAI 400。
         if let Some(nudge) = loop_nudge.take() {
             self.messages.push(Message::user(nudge));
+        } else if self.consecutive_failures >= 3 {
+            // P1 改进4+6: 连续 3+ 轮失败 — 注入诊断提示 + 自动回退链建议
+            let failed_tools: Vec<&str> = calls.iter().map(|tc| tc.name.as_str()).collect();
+            let fallback = build_fallback_suggestion(&failed_tools);
+            let nudge = format!(
+                "【连续失败警告】你已连续 {} 轮工具调用失败。请：\n\
+                 1. 调用 perceive 检查当前状态\n\
+                 2. 分析失败原因（距离太远？缺工具？缺材料？位置错误？）\n\
+                 3. 换一种方法，不要重复尝试相同的失败操作\n\
+                 {fallback}",
+                self.consecutive_failures
+            );
+            self.messages.push(Message::user(nudge));
+            log.push(format!(
+                "[t{turn}] 连续失败检测: {} 轮失败，注入诊断提示+回退建议",
+                self.consecutive_failures
+            ));
         }
 
         // Extract skill
@@ -1463,6 +1894,126 @@ mod tests {
         assert!(
             !summary.contains("【当前游戏状态（自动注入）】"),
             "压缩摘要不应包含易变 perceive 快照，实际摘要: {summary}"
+        );
+    }
+
+    // ── SelfPrompter 三态状态机回归测试（P1-3）──
+
+    #[test]
+    fn prompt_state_machine_transitions() {
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::new("test".into(), 3);
+        let mut agent = Agent::new(Box::new(FakeProvider), tools, config);
+
+        // 初始：Stopped
+        assert_eq!(agent.prompt_state(), &PromptState::Stopped);
+        assert!(!agent.has_goal());
+        assert_eq!(agent.current_goal(), None);
+
+        // set_goal → Active
+        agent.set_goal("做木镐");
+        assert!(matches!(
+            agent.prompt_state(),
+            PromptState::Active { goal, .. } if goal == "做木镐"
+        ));
+        assert!(agent.has_goal());
+        assert_eq!(agent.current_goal(), Some("做木镐"));
+
+        // pause_goal(auto=true) → Paused(auto_paused=true)
+        agent.pause_goal(true);
+        assert!(matches!(
+            agent.prompt_state(),
+            PromptState::Paused { goal, auto_paused: true, .. } if goal == "做木镐"
+        ));
+        assert!(agent.has_goal(), "Paused 仍持有 goal");
+
+        // resume_goal → Active
+        agent.resume_goal();
+        assert!(matches!(
+            agent.prompt_state(),
+            PromptState::Active { goal, .. } if goal == "做木镐"
+        ));
+
+        // pause_goal(auto=false) → Paused(auto_paused=false)（LLM 主动暂停）
+        agent.pause_goal(false);
+        assert!(matches!(
+            agent.prompt_state(),
+            PromptState::Paused { auto_paused: false, .. }
+        ));
+
+        // stop_goal → Stopped
+        agent.stop_goal();
+        assert_eq!(agent.prompt_state(), &PromptState::Stopped);
+        assert!(!agent.has_goal());
+    }
+
+    #[test]
+    fn maybe_auto_resume_only_for_auto_paused() {
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::new("test".into(), 3);
+        let mut agent = Agent::new(Box::new(FakeProvider), tools, config);
+
+        // Active → auto_paused
+        agent.set_goal("挖矿");
+        agent.pause_goal(true);
+        // turns_since_mode=0，不应恢复
+        agent.turns_since_mode = 0;
+        agent.maybe_auto_resume();
+        assert!(matches!(agent.prompt_state(), PromptState::Paused { .. }));
+
+        // turns_since_mode=1，仍不应恢复
+        agent.turns_since_mode = 1;
+        agent.maybe_auto_resume();
+        assert!(matches!(agent.prompt_state(), PromptState::Paused { .. }));
+
+        // turns_since_mode=2，应恢复
+        agent.turns_since_mode = 2;
+        agent.maybe_auto_resume();
+        assert!(matches!(agent.prompt_state(), PromptState::Active { .. }));
+
+        // LLM 主动暂停（auto_paused=false）不应被自动恢复
+        agent.pause_goal(false);
+        agent.turns_since_mode = 100;
+        agent.maybe_auto_resume();
+        assert!(
+            matches!(agent.prompt_state(), PromptState::Paused { auto_paused: false, .. }),
+            "LLM 主动暂停只能由 LLM 主动 resume"
+        );
+    }
+
+    #[test]
+    fn paused_state_does_not_inject_goal_message() {
+        // 用 step() 而非 run()，避免 run() 内部 set_self_prompt 覆盖 paused 状态
+        let tools = ToolRegistry::new();
+        let config = AgentConfig::new("test".into(), 1);
+        let mut agent = Agent::new(Box::new(FakeProvider), tools, config);
+        agent.set_goal("做木镐");
+        agent.pause_goal(true); // 紧急情况自动暂停
+        agent.messages.push(Message::user("start"));
+        agent.step().unwrap();
+
+        let goal_msgs: Vec<_> = agent
+            .messages
+            .iter()
+            .filter(|m| matches!(m, Message::User(u) if u.content.starts_with("[当前目标]")))
+            .collect();
+        assert!(
+            goal_msgs.is_empty(),
+            "Paused 态不应注入 [当前目标]，实际有 {:?}",
+            goal_msgs
+        );
+
+        // 对照组：Active 态应注入 [当前目标]
+        agent.resume_goal();
+        agent.step().unwrap();
+        let goal_msgs_active: Vec<_> = agent
+            .messages
+            .iter()
+            .filter(|m| matches!(m, Message::User(u) if u.content.starts_with("[当前目标]")))
+            .collect();
+        assert!(
+            !goal_msgs_active.is_empty(),
+            "Active 态应注入 [当前目标]"
         );
     }
 }

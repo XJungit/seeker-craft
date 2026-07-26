@@ -19,6 +19,12 @@ impl AzaleaBot {
         self.push_cmd(BotCommand::MineBelow);
     }
 
+    /// 向上挖：从 bot 头顶逐格挖到空气（地下脱困用）。
+    /// 与 mine_below 反向，用于 bot 被困在 1x1 竖井/地下空间时挖通到地表。
+    pub fn mine_above(&self) {
+        self.push_cmd(BotCommand::MineAbove);
+    }
+
     /// 对着指定方块交互（放置方块 / 右键交互）。
     pub fn block_interact(&self, x: i32, y: i32, z: i32) {
         self.push_cmd(BotCommand::BlockInteract { x, y, z });

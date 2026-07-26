@@ -1,0 +1,14 @@
+{
+  "name": "storage_corner",
+  "description": "储物角：双箱子+工作台+熔炉+4 火把照明（8 方块）",
+  "blocks": [
+    {"dx": 0, "dy": 0, "dz": 0, "block": "chest"},
+    {"dx": 1, "dy": 0, "dz": 0, "block": "chest"},
+    {"dx": 0, "dy": 0, "dz": 1, "block": "crafting_table"},
+    {"dx": 1, "dy": 0, "dz": 1, "block": "furnace"},
+    {"dx": 0, "dy": 2, "dz": 0, "block": "torch"},
+    {"dx": 1, "dy": 2, "dz": 0, "block": "torch"},
+    {"dx": 0, "dy": 2, "dz": 1, "block": "torch"},
+    {"dx": 1, "dy": 2, "dz": 1, "block": "torch"}
+  ]
+}

@@ -347,11 +347,46 @@ mod tests {
     fn effects_bitmask() {
         let r = ToolEffects::read();
         let w = ToolEffects::write();
+        let a = ToolEffects::append();
+        let n = ToolEffects::network();
+        let p = ToolEffects::process();
         assert!(r.parallel_safe());
         assert!(!w.parallel_safe()); // WRITE 是屏障
+        assert!(!a.parallel_safe()); // APPEND 是屏障
+        assert!(!p.parallel_safe()); // PROCESS 是屏障
+        assert!(n.parallel_safe()); // NETWORK 不是屏障，可并行
         assert!(r.compatible_with(&r)); // read + read 可并行 (同批)
         assert!(!r.compatible_with(&w)); // read + write 不可并行
-        assert!(!w.compatible_with(&w)); // write+write 都非 parallel_safe → 不同批 (串行屏障)
+        assert!(!w.compatible_with(&w)); // write+write 都非 parallel_safe → 不同批
+        assert!(n.compatible_with(&r)); // network + read 可并行
+        assert!(!n.compatible_with(&w)); // network + write 不可并行
+        assert!(!a.compatible_with(&r)); // append + read 不可并行
+        assert!(n.compatible_with(&n)); // network + network 可并行
+    }
+
+    #[test]
+    fn effects_labels() {
+        let r = ToolEffects::read();
+        let labels = r.labels();
+        assert!(labels.contains(&"read"));
+        assert_eq!(labels.len(), 1);
+
+        let rw = r.union(ToolEffects::write());
+        let labels = rw.labels();
+        assert!(labels.contains(&"read"));
+        assert!(labels.contains(&"write"));
+    }
+
+    #[test]
+    fn effects_barrier_union() {
+        let bar = ToolEffects { bits: ToolEffects::BARRIER };
+        assert!(!bar.parallel_safe());
+        // BARRIER = WRITE | APPEND | PROCESS, 不含 READ 和 NETWORK
+        assert!(!bar.reads(), "BARRIER 不含 READ");
+        assert!(bar.writes(), "BARRIER 含 WRITE");
+        assert!(bar.appends(), "BARRIER 含 APPEND");
+        assert!(bar.processes(), "BARRIER 含 PROCESS");
+        assert!(!bar.networks(), "BARRIER 不含 NETWORK");
     }
 
     #[test]
@@ -365,6 +400,77 @@ mod tests {
         ];
         let b = plan_tool_effect_batches(&eff);
         assert_eq!(b, vec![vec![0, 1], vec![2], vec![3]]);
+    }
+
+    #[test]
+    fn plan_batches_all_reads_in_one_batch() {
+        let eff = [
+            ToolEffects::read(),
+            ToolEffects::read(),
+            ToolEffects::read(),
+        ];
+        let b = plan_tool_effect_batches(&eff);
+        assert_eq!(b, vec![vec![0, 1, 2]]);
+    }
+
+    #[test]
+    fn plan_batches_network_and_read_together() {
+        let eff = [
+            ToolEffects::read(),
+            ToolEffects::network(),
+            ToolEffects::read(),
+        ];
+        let b = plan_tool_effect_batches(&eff);
+        assert_eq!(b, vec![vec![0, 1, 2]]);
+    }
+
+    #[test]
+    fn plan_batches_every_write_separate() {
+        let eff = [
+            ToolEffects::write(),
+            ToolEffects::write(),
+            ToolEffects::write(),
+        ];
+        let b = plan_tool_effect_batches(&eff);
+        assert_eq!(b, vec![vec![0], vec![1], vec![2]]);
+    }
+
+    #[test]
+    fn plan_batches_mixed_network_read_write() {
+        let eff = [
+            ToolEffects::read(),
+            ToolEffects::network(),
+            ToolEffects::write(),
+            ToolEffects::read(),
+        ];
+        let b = plan_tool_effect_batches(&eff);
+        assert_eq!(b, vec![vec![0, 1], vec![2], vec![3]]);
+    }
+
+    #[test]
+    fn plan_batches_append_and_process_barrier() {
+        let eff = [
+            ToolEffects::read(),
+            ToolEffects::append(),
+            ToolEffects::process(),
+            ToolEffects::read(),
+        ];
+        let b = plan_tool_effect_batches(&eff);
+        assert_eq!(b, vec![vec![0], vec![1], vec![2], vec![3]]);
+    }
+
+    #[test]
+    fn plan_batches_single_element() {
+        let eff = [ToolEffects::read()];
+        let b = plan_tool_effect_batches(&eff);
+        assert_eq!(b, vec![vec![0]]);
+    }
+
+    #[test]
+    fn plan_batches_empty() {
+        let eff: [ToolEffects; 0] = [];
+        let b = plan_tool_effect_batches(&eff);
+        assert!(b.is_empty());
     }
 
     #[test]
@@ -394,5 +500,36 @@ mod tests {
         assert!(reg.get("y").is_none());
         reg.extend(vec![Box::new(T)]);
         assert_eq!(reg.len(), 2);
+    }
+
+    #[test]
+    fn registry_to_openai_defs_returns_valid_json() {
+        struct Dummy;
+        impl GameTool for Dummy {
+            fn name(&self) -> &str {
+                "dummy"
+            }
+            fn description(&self) -> &str {
+                "a test tool"
+            }
+            fn parameters(&self) -> Value {
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "arg1": {"type": "string"}
+                    }
+                })
+            }
+            fn execute(&self, _: &str, _: Value, _: Option<ToolUpdateFn>) -> Result<ToolResult> {
+                Ok(ToolResult { message: "ok".into(), is_error: false, images: vec![] })
+            }
+        }
+        let mut reg = ToolRegistry::new();
+        reg.register(Box::new(Dummy));
+        let defs = reg.to_openai_defs();
+        assert_eq!(defs.len(), 1);
+        let def = &defs[0];
+        assert_eq!(def["function"]["name"], "dummy");
+        assert!(def["function"]["description"].as_str().unwrap().contains("test tool"));
     }
 }

@@ -1,0 +1,14 @@
+{
+    "id": "tier6_shulker_box",
+    "name": "合成潜影盒",
+    "description": "潜影盒是游戏中最强的存储容器，可保留内部物品堆叠（不会掉落），极大扩展背包容量。合成需要 2 个潜影壳 + 1 个箱子。潜影壳需在末地城击杀潜影贝获取。",
+    "goal": "合成 1 个潜影盒。步骤：1) 进入末地外岛寻找末地城（参考 tier6_elytra 流程）；2) attack(item=\"shulker\") 击杀潜影贝收集 shulker_shell:2（潜影贝会漂浮射击，注意躲避子弹）；3) gather(item=\"oak_log\", count=2) 取原木 craft(item=\"chest\", count=1)（8 木板合成箱子）；4) 放置工作台后 craft_3x3(item=\"shulker_box\", count=1)（2 潜影壳 + 1 箱子）。",
+    "tier": 6,
+    "success": {
+        "type": "InventoryHas",
+        "item": "shulker_box",
+        "count": 1
+    },
+    "timeout_secs": 1500,
+    "reward": "解锁便携存储：潜影盒保留物品堆叠，背包容量大幅扩展"
+}

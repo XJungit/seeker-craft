@@ -118,6 +118,9 @@ pub enum MinecraftAction {
     MineBlock { x: i32, y: i32, z: i32 },
     /// 挖掉 bot 脚下方块（向下挖矿井）。
     MineBelow,
+    /// 向上挖：从 bot 头顶逐格挖到空气，用于地下脱困/上到地表。
+    /// 与 MineBelow 反向——MineBelow 是向下挖矿井，MineAbove 是向上挖竖井脱困。
+    MineAbove,
     /// 对着指定方块交互（放置/右键）。
     InteractBlock { x: i32, y: i32, z: i32 },
     /// 发送聊天消息（也用作 LLM 指令回显）。
@@ -127,11 +130,23 @@ pub enum MinecraftAction {
     Attack { target: String },
     /// 合成物品（2×2 背包网格，无需工作台）。item 为配方 id（如 "oak_planks"），count 为数量。
     Craft { item: String, count: u32 },
-    /// 3×3 工作台合成（需已打开工作台）。item 为配方 id（如 "furnace"），count 为数量。
-    Craft3x3 { item: String, count: u32 },
-    /// 熔炼（需已打开熔炉/高炉/烟熏炉）。output 为产物 id（如 "iron_ingot"），
-    /// fuel 为燃料 id（如 "coal"），count 为数量。
-    Smelt { output: String, fuel: String, count: u32 },
+    /// 3×3 工作台合成（P1-4：自动放收桌）。
+    /// item 为配方 id（如 "furnace"），count 为数量。
+    /// table_pos=Some((x,y,z)) 时使用该坐标的现有工作台；None 时 bot 自动放置+打开+关闭工作台。
+    Craft3x3 {
+        item: String,
+        count: u32,
+        table_pos: Option<(i32, i32, i32)>,
+    },
+    /// 熔炼（P1-4：自动放收炉）。
+    /// output 为产物 id（如 "iron_ingot"），fuel 为燃料 id（如 "coal"），count 为数量。
+    /// table_pos=Some((x,y,z)) 时使用该坐标的现有熔炉；None 时 bot 自动放置+打开+关闭熔炉。
+    Smelt {
+        output: String,
+        fuel: String,
+        count: u32,
+        table_pos: Option<(i32, i32, i32)>,
+    },
     /// 采集最近的指定方块（如 "oak_log" / "stone" / "coal_ore"）并挖掘，直到背包有 count 个。
     Gather { item: String, count: u32 },
     /// 放置：把手持物品 item 放到世界坐标 (x,y,z) 旁（右键放置）。
@@ -151,6 +166,22 @@ pub enum MinecraftAction {
     Pickup,
     /// 自动防御：等待 5 秒让 handler self_defense mode 攻击附近敌人。
     Defend,
+    /// 装备背包中的指定物品到指定槽位。
+    /// item 为物品 id（如 "wooden_pickaxe"），slot 为 "hand"/"helmet"/"chestplate"/"leggings"/"boots"。
+    Equip { item: String, slot: String },
+    /// 丢弃背包中的指定物品。item 为物品 id，count 为丢弃数量（默认全部）。
+    Discard { item: String, count: u32 },
+    /// 消耗（吃/喝）背包中的指定物品。item 如 "cooked_beef"/"bread"/"apple"/"potion"。
+    Consume { item: String },
+    /// 查看世界坐标 (x,y,z) 处容器（箱子/熔炉等）的物品列表。
+    /// 打开容器 → 读槽位 → 关闭，返回 "iron_ingot:32, coal:16, ..." 格式。
+    ChestView { x: i32, y: i32, z: i32 },
+    /// 从世界坐标 (x,y,z) 处容器取出 item（count 个）到 bot 背包。
+    /// count=0 表示取全部。bot 会打开容器、shift_click 移动物品、关闭容器。
+    ChestWithdraw { x: i32, y: i32, z: i32, item: String, count: u32 },
+    /// 把背包中的 item（count 个）存入世界坐标 (x,y,z) 处容器。
+    /// count=0 表示存全部。bot 会打开容器、shift_click 移动物品、关闭容器。
+    ChestDeposit { x: i32, y: i32, z: i32, item: String, count: u32 },
 }
 
 /// 动作执行结果

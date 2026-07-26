@@ -189,20 +189,26 @@ impl MinecraftAzaleaAdapter {
                             // 避免 WI 模板把整个 10x10 行作为 label（"Wood source: 10x10: [stone:571, ...]"）。
                             // LLM 看摘要即可决策；需要精确坐标时用 memory 工具查询。
                             let resource_summary = summarize_resources(&nearby_blocks);
+                            // P0 改进3: 语义压缩 — 只保留有价值的方块，过滤空气/石头/泥土
+                            let compressed_blocks = compress_block_list(&nearby_blocks);
+                            let blocks_line = if compressed_blocks.is_empty() {
+                                String::new()
+                            } else {
+                                format!("\n特殊方块: [{}]", compressed_blocks)
+                            };
                             let scene = format!(
                                 "位置: ({:.0}, {:.0}, {:.0})\n\
                                  生命: {:.0}/20  饱食: {}/20  主手: {}\n\
                                  群系: {}  脚下: {}  前方: {}\n\
                                  附近: [{}]\n\
-                                 资源: {}\n\
-                                 10x10: [{}]\n\
+                                 资源: {}{}\n\
                                  实体: [{}]\n\
                                  背包: [{}]\n\
                                  玩家: {}{}",
                                 position.x, position.y, position.z,
                                 health, food, held_item,
                                 biome, block_under, block_ahead,
-                                nearby, resource_summary, nearby_blocks, nearby_entities, inventory,
+                                nearby, resource_summary, blocks_line, nearby_entities, inventory,
                                 player_count, stuck_hint
                             );
                             *g.last.lock().unwrap() = Some(WorldState {
@@ -240,12 +246,12 @@ impl MinecraftAzaleaAdapter {
         // 轮询等待最多 ~3s，避免返回占位串导致 LLM 首回合拿到无意义 context。
         for _ in 0..30 {
             if let Some(st) = self.last.lock().unwrap().clone() {
-                return Ok(st);
+                return Ok(self.refresh_position(st));
             }
             std::thread::sleep(std::time::Duration::from_millis(100));
         }
         if let Some(st) = self.last.lock().unwrap().clone() {
-            Ok(st)
+            Ok(self.refresh_position(st))
         } else {
             Ok(WorldState {
                 scene_desc: "等待首次状态快照...".to_string(),
@@ -279,11 +285,42 @@ impl MinecraftAzaleaAdapter {
         }
     }
 
+    /// P8 修复（2026-07-26）：用 bot 实时位置覆盖 WorldState 缓存中的 position 字段。
+    ///
+    /// 背景：BotEvent::State 每 20 tick（1s）推送一次，perceive 调用时拿到的 WorldState
+    /// 可能是 1 秒前的快照——bot 实际已移动到新位置，但 perceive 报告旧位置，
+    /// 导致 perception_drift（scan_run 检测到 8.4m 偏差）。
+    ///
+    /// 修复：perceive 返回前，从 `bot.last_position`（每 tick 更新的实时位置）读取最新坐标,
+    /// 覆盖 WorldState.position 和 scene_desc 中的"位置: (x, y, z)"行。
+    /// 同时刷新 scene_desc 中的位置行，确保 LLM 看到的文本与 position 字段一致。
+    fn refresh_position(&self, mut st: WorldState) -> WorldState {
+        if let Some(real_pos) = self.bot.last_position.lock().unwrap().clone() {
+            // 覆盖结构化 position 字段
+            st.position = Some(vec![real_pos.x, real_pos.y, real_pos.z]);
+            // 覆盖 scene_desc 中的"位置: (x, y, z)"行
+            let new_pos_line = format!("位置: ({:.0}, {:.0}, {:.0})", real_pos.x, real_pos.y, real_pos.z);
+            if let Some(idx) = st.scene_desc.find("位置: (") {
+                // 找到"位置: ("后到第一个换行符的范围,替换为新位置行
+                let line_end = st.scene_desc[idx..].find('\n').map(|e| idx + e).unwrap_or(st.scene_desc.len());
+                st.scene_desc.replace_range(idx..line_end, &new_pos_line);
+            }
+        }
+        st
+    }
+
     /// 将 MinecraftAction 转换为 BotCommand（同步等待结果）。
     pub fn exec_mc_sync(&self, mc: MinecraftAction, timeout_ms: u64) -> Result<ExecResult> {
         let cmd = mc_to_cmd(mc);
         match self.bot.push_cmd_and_wait(cmd, timeout_ms) {
-            Ok(msg) => Ok(ExecResult { ok: true, detail: msg }),
+            Ok(msg) => {
+                // P5 关键修复：handler 通过 String 通道回传结果，成功/失败都走 Ok(msg)。
+                // 原代码无条件 ok: true，导致 "Failed to..." 消息也被标记为成功，
+                // 工具层 is_error=false，scan_run.ps1 漏报失败率。
+                // 这里通过消息内容检测失败（所有失败消息都包含这些关键词）。
+                let ok = !is_failure_detail(&msg);
+                Ok(ExecResult { ok, detail: msg })
+            }
             Err(e) => Ok(ExecResult { ok: false, detail: format!("{e}") }),
         }
     }
@@ -294,18 +331,40 @@ impl MinecraftAzaleaAdapter {
     }
 }
 
+/// 检测 handler 回传的消息是否表示失败。
+///
+/// handler 通过 String 通道回传结果（成功/失败都是 String），无法直接区分。
+/// 所有失败消息都包含以下关键词之一（与 mod.rs 里 tx.send 的格式对齐）：
+/// - 英文："Failed to " / " failed: " / "Pickup failed"
+/// - 中文："失败" / "未持有" / "未知物品" / "无空间" / "不支持的槽位" / "获取背包失败"
+///
+/// 成功消息（"Successfully" / "Placed" / "Opened" / "已装备" / "已开始" 等）不含这些词。
+fn is_failure_detail(msg: &str) -> bool {
+    msg.contains("Failed to ")
+    || msg.contains(" failed: ")
+    || msg.contains("Pickup failed")
+    || msg.contains("失败")
+    || msg.contains("未持有")
+    || msg.contains("未知物品")
+    || msg.contains("无空间")
+    || msg.contains("不支持的槽位")
+    || msg.contains("获取背包失败")
+    || msg.contains("命令执行超时")
+}
+
 /// 将 MinecraftAction 转换为 BotCommand（供 push_cmd_and_wait 使用）。
 fn mc_to_cmd(mc: MinecraftAction) -> BotCommand {
     match mc {
         MinecraftAction::Goto { x, y, z } => BotCommand::Goto { x, y, z },
         MinecraftAction::MineBlock { x, y, z } => BotCommand::Mine { x, y, z },
         MinecraftAction::MineBelow => BotCommand::MineBelow,
+        MinecraftAction::MineAbove => BotCommand::MineAbove,
         MinecraftAction::InteractBlock { x, y, z } => BotCommand::BlockInteract { x, y, z },
         MinecraftAction::Chat { content } => BotCommand::Chat { content },
         MinecraftAction::Attack { target } => BotCommand::Attack { target },
         MinecraftAction::Craft { item, count } => BotCommand::Craft2x2 { item, count },
-        MinecraftAction::Craft3x3 { item, count } => BotCommand::Craft3x3 { item, count },
-        MinecraftAction::Smelt { output, fuel, count } => BotCommand::Smelt { output, fuel, count },
+        MinecraftAction::Craft3x3 { item, count, table_pos } => BotCommand::Craft3x3 { item, count, table_pos },
+        MinecraftAction::Smelt { output, fuel, count, table_pos } => BotCommand::Smelt { output, fuel, count, table_pos },
         MinecraftAction::Gather { item, count } => BotCommand::Gather { item, count },
         MinecraftAction::Place { item, x, y, z } => BotCommand::Place { item, x, y, z },
         MinecraftAction::OpenContainer { x, y, z } => BotCommand::OpenContainer { x, y, z },
@@ -315,6 +374,16 @@ fn mc_to_cmd(mc: MinecraftAction) -> BotCommand {
         MinecraftAction::InteractEntity { kind } => BotCommand::InteractEntity { kind },
         MinecraftAction::Pickup => BotCommand::Pickup,
         MinecraftAction::Defend => BotCommand::Defend,
+        MinecraftAction::Equip { item, slot } => BotCommand::Equip { item, slot },
+        MinecraftAction::Discard { item, count } => BotCommand::Discard { item, count },
+        MinecraftAction::Consume { item } => BotCommand::Consume { item },
+        MinecraftAction::ChestView { x, y, z } => BotCommand::ChestView { x, y, z },
+        MinecraftAction::ChestWithdraw { x, y, z, item, count } => {
+            BotCommand::ChestWithdraw { x, y, z, item, count }
+        }
+        MinecraftAction::ChestDeposit { x, y, z, item, count } => {
+            BotCommand::ChestDeposit { x, y, z, item, count }
+        }
     }
 }
 
@@ -326,7 +395,7 @@ fn mc_to_cmd(mc: MinecraftAction) -> BotCommand {
 /// - 避免 WI 模板把整个 10x10 行作为 label 重复堆砌
 ///
 /// 分类规则：
-/// - 木材：原木/木板/树叶/树苗类（log/stem/planks/leaves/sapling）
+/// - 木材：原木/木板/树叶/树苗/枯叶类（log/stem/planks/leaves/sapling/leaflitter/wood）
 /// - 石头：石头/泥土/沙/沙砾/基岩/草方块等基础地形（含下半部分空白）
 /// - 矿石：所有 _ore 结尾 + ancient_debris
 fn summarize_resources(nearby_blocks: &str) -> String {
@@ -346,6 +415,8 @@ fn summarize_resources(nearby_blocks: &str) -> String {
             || name.ends_with("leaves")
             || name.ends_with("sapling")
             || name.ends_with("wood")
+            || name == "leaflitter"
+            || name.ends_with("leaf")
         {
             wood = wood.saturating_add(cnt);
         } else if name.ends_with("ore")
@@ -359,5 +430,36 @@ fn summarize_resources(nearby_blocks: &str) -> String {
         }
     }
     format!("木材:{wood} 石头:{stone} 矿石:{ore}")
+}
+
+/// P0 改进3: 压缩 10x10 方块列表 — 只保留有价值的方块（过滤掉空气/石头/泥土等常见地形）
+/// 这样 perceive 输出从 ~200 token 降到 ~30 token，同时保留 LLM 决策所需的关键信息
+fn compress_block_list(nearby_blocks: &str) -> String {
+    /// 无信息量的基础地形方块（大量出现，不值得在 perceive 里列出）
+    const COMMON_BLOCKS: &[&str] = &[
+        "air", "stone", "dirt", "grass_block", "grass", "sand", "gravel",
+        "bedrock", "water", "lava", "clay", "snow", "ice", "packed_ice",
+        "cobblestone", "mossy_cobblestone", "deepslate", "tuff",
+        "netherrack", "end_stone", "terracotta",
+    ];
+    let mut interesting: Vec<&str> = Vec::new();
+    for tok in nearby_blocks.split(',') {
+        let tok = tok.trim();
+        let Some((name, cnt_str)) = tok.split_once(':') else {
+            continue;
+        };
+        let name = name.trim().to_lowercase();
+        let cnt: u32 = cnt_str.trim().parse().unwrap_or(0);
+        // 过滤：常见方块 或 数量为 0
+        if COMMON_BLOCKS.contains(&name.as_str()) || cnt == 0 {
+            continue;
+        }
+        interesting.push(tok);
+    }
+    if interesting.is_empty() {
+        String::new()
+    } else {
+        interesting.join(", ")
+    }
 }
 

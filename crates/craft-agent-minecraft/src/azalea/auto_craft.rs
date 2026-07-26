@@ -276,11 +276,18 @@ fn overhead_slot(bot: &Client) -> Option<BlockPos> {
 /// 确保背包有 `amount` 个 `item`：沿配方图递归满足原料。
 async fn ensure(bot: &Client, item: &str, amount: u32) -> Result<(), String> {
     // 已足够则直接返回
-    if has_item(bot, item).await >= amount {
+    let already = has_item(bot, item).await;
+    if already >= amount {
         return Ok(());
     }
+    // P11 修复（2026-07-26）：原代码无视背包已有的中间产物数量，
+    // 总是按 `amt * amount` 全量采集原料——例如要 4 planks 但已有 1 plank，
+    // 仍去采 4 logs（多采了 1 个 log，浪费 + 在地下找不到 log 时误报 100% 失败）。
+    // 修复：实际需要补足 `amount - already` 个，原料量按此差值计算。
+    let needed = amount.saturating_sub(already);
+
     // 优先用本地配方书（覆盖 3×3 合成 / 锻造 / 熔炼等），免手写表。
-    if let Some(res) = ensure_via_book(bot, item, amount).await {
+    if let Some(res) = ensure_via_book(bot, item, needed).await {
         return res;
     }
     let recipe = lookup(item)
@@ -288,17 +295,28 @@ async fn ensure(bot: &Client, item: &str, amount: u32) -> Result<(), String> {
 
     match &recipe.method {
         Method::Gather => {
-            crate::azalea::gather::do_gather(bot, item, amount).await?;
+            // P11 修复：地下（Y < 60）采集 surface 资源（oak_log/sand/sugar_cane 等）几乎必失败。
+            // 提前给出可操作建议：去地表/换区域，而不是浪费 32 格半径的搜索。
+            if is_surface_resource(item) && is_bot_underground(bot) {
+                return Err(format!(
+                    "auto_craft 失败：需要采集 {item}（地表资源）但 bot 当前在地下（Y<60），32 格内找不到。\
+                     建议：1) 先 go 到地表（Y>62）再 auto_craft；\
+                     2) 或换一个不依赖 {item} 的合成路径；\
+                     3) 或用 craft_3x3/craft_2x2 手动合成（背包已有部分原料时）。",
+                ));
+            }
+            crate::azalea::gather::do_gather(bot, item, needed).await?;
         }
         Method::Craft2x2 => {
             for (inp, amt) in recipe.inputs {
-                Box::pin(ensure(bot, inp, amt * amount)).await?;
+                // P11 修复：按 needed（差值）计算原料需求，而非全量 amount
+                Box::pin(ensure(bot, inp, amt * needed)).await?;
             }
-            crate::azalea::craft::do_craft_2x2(bot, item, amount).await?;
+            crate::azalea::craft::do_craft_2x2(bot, item, needed).await?;
         }
         Method::Smelt { fuel } => {
             for (inp, amt) in recipe.inputs {
-                Box::pin(ensure(bot, inp, amt * amount)).await?;
+                Box::pin(ensure(bot, inp, amt * needed)).await?;
             }
             // 确保有熔炉并放置/打开
             Box::pin(ensure(bot, "furnace", 1)).await?;
@@ -307,7 +325,7 @@ async fn ensure(bot: &Client, item: &str, amount: u32) -> Result<(), String> {
             sleep(Duration::from_millis(200)).await;
             do_open_container(bot, at).await?;
             sleep(Duration::from_millis(200)).await;
-            crate::azalea::craft::do_smelt(bot, item, fuel, amount).await?;
+            crate::azalea::craft::do_smelt(bot, item, fuel, needed).await?;
         }
         Method::Craft3x3 => {
             // 优先用服务端配方书（精确原料，免手写表）；否则走手写 SHAPED_RECIPES
@@ -317,7 +335,7 @@ async fn ensure(bot: &Client, item: &str, amount: u32) -> Result<(), String> {
                     match r {
                         StoredRecipe::Shaped { .. } | StoredRecipe::Shapeless { .. } => {
                             // 先满足配方书里的全部原料
-                            ensure_recipe_inputs(bot, r, amount).await?;
+                            ensure_recipe_inputs(bot, r, needed).await?;
                             // 确保有工作台并放置/打开
                             Box::pin(ensure(bot, "crafting_table", 1)).await?;
                             let at = overhead_slot(bot).ok_or("无法计算放置点")?;
@@ -325,13 +343,13 @@ async fn ensure(bot: &Client, item: &str, amount: u32) -> Result<(), String> {
                             sleep(Duration::from_millis(200)).await;
                             do_open_container(bot, at).await?;
                             sleep(Duration::from_millis(200)).await;
-                            return crate::azalea::craft::do_craft_3x3_recipe(bot, r, amount)
+                            return crate::azalea::craft::do_craft_3x3_recipe(bot, r, needed)
                                 .await
                                 .map(|_| ());
                         }
                         StoredRecipe::Smithing { .. } => {
                             // 先满足模板/基础/附加三类原料
-                            ensure_recipe_inputs(bot, r, amount).await?;
+                            ensure_recipe_inputs(bot, r, needed).await?;
                             // 确保有锻造台并放置/打开
                             Box::pin(ensure(bot, "smithing_table", 1)).await?;
                             let at = overhead_slot(bot).ok_or("无法计算放置点")?;
@@ -339,7 +357,7 @@ async fn ensure(bot: &Client, item: &str, amount: u32) -> Result<(), String> {
                             sleep(Duration::from_millis(200)).await;
                             do_open_container(bot, at).await?;
                             sleep(Duration::from_millis(200)).await;
-                            return crate::azalea::craft::do_craft_smithing(bot, r, amount)
+                            return crate::azalea::craft::do_craft_smithing(bot, r, needed)
                                 .await
                                 .map(|_| ());
                         }
@@ -348,7 +366,7 @@ async fn ensure(bot: &Client, item: &str, amount: u32) -> Result<(), String> {
                 }
             }
             for (inp, amt) in recipe.inputs {
-                Box::pin(ensure(bot, inp, amt * amount)).await?;
+                Box::pin(ensure(bot, inp, amt * needed)).await?;
             }
             // 确保有工作台并放置/打开
             Box::pin(ensure(bot, "crafting_table", 1)).await?;
@@ -357,10 +375,50 @@ async fn ensure(bot: &Client, item: &str, amount: u32) -> Result<(), String> {
             sleep(Duration::from_millis(200)).await;
             do_open_container(bot, at).await?;
             sleep(Duration::from_millis(200)).await;
-            crate::azalea::craft::do_craft_3x3(bot, item, amount).await?;
+            crate::azalea::craft::do_craft_3x3(bot, item, needed, None).await?;
         }
     }
     Ok(())
+}
+
+/// P11 新增：判断 item 是否为「地表资源」（地下找不到）。
+///
+/// 用于 auto_craft 提前检测「地下采集 oak_log 等地表资源」的徒劳场景，
+/// 给 LLM 一个可操作的错误（"先 go 到地表"），而不是浪费 32 格搜索后失败。
+fn is_surface_resource(item: &str) -> bool {
+    let b = item.strip_prefix("minecraft:").unwrap_or(item);
+    matches!(
+        b,
+        "oak_log" | "spruce_log" | "birch_log" | "jungle_log"
+            | "acacia_log" | "dark_oak_log" | "mangrove_log" | "cherry_log"
+            | "pale_oak_log" | "bamboo" | "sugar_cane" | "cactus"
+            | "sand" | "red_sand" | "lily_pad" | "vine" | "moss_block"
+            | "grass_block" | "tall_grass" | "fern" | "large_fern"
+            | "oak_leaves" | "spruce_leaves" | "birch_leaves" | "jungle_leaves"
+            | "acacia_leaves" | "dark_oak_leaves" | "mangrove_leaves" | "cherry_leaves"
+    )
+}
+
+/// P11 新增：判断 bot 是否在地下（Y < 60 且头顶非空气）。
+fn is_bot_underground(bot: &Client) -> bool {
+    let Ok(p) = bot.position() else { return false; };
+    if p.y >= 60.0 {
+        return false;
+    }
+    // 进一步检查：bot 头顶上方 1-3 格是否有实心方块（地道/洞穴也可能 Y<60 但头顶是空气）
+    let Ok(world_lock) = bot.world() else { return false; };
+    let world = world_lock.read();
+    let bx = p.x.floor() as i32;
+    let by = p.y.floor() as i32;
+    let bz = p.z.floor() as i32;
+    // 检查头顶 2-5 格是否有非空气方块（地表覆盖判定）
+    for dy in 2..=5 {
+        let pos = BlockPos::new(bx, by + dy, bz);
+        if world.get_block_state(pos).map(|s| !s.is_air()).unwrap_or(false) {
+            return true; // 头顶有方块遮挡 → 在地下
+        }
+    }
+    false
 }
 
 pub async fn do_auto_craft(bot: &Client, item: &str, count: u32) -> Result<String, String> {

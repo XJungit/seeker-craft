@@ -11,6 +11,8 @@ craft-agent-model.workspace = true
 anyhow.workspace = true
 # 项目根 .env 自动加载（示例里用它把 API_KEY 等注入环境，与 setx 持久化互补）
 dotenvy.workspace = true
+# blueprint.rs（蓝图模板）与 action_lib.rs（LLM 自定义动作库）用 derive 宏做 JSON 存取
+serde.workspace = true
 serde_json = "1"
 reqwest.workspace = true
 # Azalea 客户端协议层（Rust 全栈 bot 连入普通 MC 服务器，MC 26.2 原生支持）。

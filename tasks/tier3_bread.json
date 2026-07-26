@@ -1,0 +1,14 @@
+{
+    "id": "tier3_bread",
+    "name": "烤面包",
+    "description": "面包是稳定的高饱食度食物（每块恢复 5 饥饿 + 6 饱和），优于生肉和苹果。建立小麦农场后可持续产出，是长期探索和远征的主食来源。vanilla 26.2 中面包 = 3 小麦无形状合成。",
+    "goal": "合成 1 个面包。步骤：1) 寻找村庄或平原 gather(item=\"wheat\", count=3) 收集小麦（成熟小麦高 7 格，可用 interact_block 收割，或破坏村庄农田）；2) 放置工作台后 craft_3x3(item=\"bread\", count=1)（3 小麦无形状合成）；3) 若找不到小麦，可先破坏草获取小麦种子，place(item=\"wheat_seeds\") 在湿润耕地上种植等待成熟。",
+    "tier": 3,
+    "success": {
+        "type": "InventoryHas",
+        "item": "bread",
+        "count": 1
+    },
+    "timeout_secs": 240,
+    "reward": "解锁稳定食物来源：每块恢复 5 饥饿，可建立小麦农场量产"
+}

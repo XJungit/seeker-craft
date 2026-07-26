@@ -1,0 +1,23 @@
+{
+  "name": "farm_plot",
+  "description": "9x9 农田：周围 8 格水，中间耕地+水中心+4 火把（17 方块）",
+  "blocks": [
+    {"dx": 0, "dy": 0, "dz": 0, "block": "water"},
+    {"dx": 0, "dy": 0, "dz": 2, "block": "water"},
+    {"dx": 0, "dy": 0, "dz": 4, "block": "water"},
+    {"dx": 0, "dy": 0, "dz": 6, "block": "water"},
+    {"dx": 0, "dy": 0, "dz": 8, "block": "water"},
+    {"dx": 2, "dy": 0, "dz": 0, "block": "water"},
+    {"dx": 2, "dy": 0, "dz": 8, "block": "water"},
+    {"dx": 4, "dy": 0, "dz": 0, "block": "water"},
+    {"dx": 4, "dy": 0, "dz": 8, "block": "water"},
+    {"dx": 6, "dy": 0, "dz": 0, "block": "water"},
+    {"dx": 6, "dy": 0, "dz": 8, "block": "water"},
+    {"dx": 8, "dy": 0, "dz": 0, "block": "water"},
+    {"dx": 8, "dy": 0, "dz": 2, "block": "water"},
+    {"dx": 8, "dy": 0, "dz": 4, "block": "water"},
+    {"dx": 8, "dy": 0, "dz": 6, "block": "water"},
+    {"dx": 8, "dy": 0, "dz": 8, "block": "water"},
+    {"dx": 4, "dy": 1, "dz": 4, "block": "torch"}
+  ]
+}

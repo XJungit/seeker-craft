@@ -9,6 +9,11 @@
 //! 这些技能主要被 LLM 工具层（tools_azalea.rs）调用，不直接暴露给 LLM。
 //! LLM 调用的是高层工具（gather / attack / place），内部走到这里。
 
+use super::{
+    auto_equip_best_axe, auto_equip_best_pickaxe, best_pickaxe_tier_in_inventory,
+    block_required_pickaxe_tier, has_any_axe_in_inventory, has_any_pickaxe_in_inventory,
+    is_hard_block, is_log_block, pickaxe_tier, pickaxe_tier_name, pickaxe_to_craft_for_tier,
+};
 use azalea::BlockPos;
 use azalea::pathfinder::goals::BlockPosGoal;
 use azalea::prelude::*;
@@ -118,6 +123,27 @@ pub fn scan_blocks_multi(
 /// 1. 支持别名展开（"oak_log" 匹配 9 种原木变体）
 /// 2. 多种物品同时计数（挖到 oak_log 或 birch_log 都算）
 /// 3. 每轮失败时降低半径重试，最后报具体失败原因
+///
+/// P8 修复（2026-07-26）：
+/// - 预检背包工具（无镐且目标是硬方块 → 立即失败并提示合成镐）
+/// - 挖矿前自动装备最好的镐/斧（曾因主手 air 导致 gather 100% 失败）
+/// - 检测"方块消失但物品未增加" → 报告缺工具
+enum ToolNeed {
+    Pickaxe,
+    Axe,
+    None,
+}
+#[allow(dead_code)]
+impl ToolNeed {
+    fn label(&self) -> &'static str {
+        match self {
+            ToolNeed::Pickaxe => "镐",
+            ToolNeed::Axe => "斧",
+            ToolNeed::None => "工具",
+        }
+    }
+}
+
 pub async fn collect_block_smart(
     bot: &Client,
     item: &str,
@@ -131,19 +157,103 @@ pub async fn collect_block_smart(
 
     let need = count.max(1);
     let mut gathered = 0u32;
-    let max_rounds = 24;
+    // P3 修复：max_rounds 从 24 降到 8。
+    // 原 24 轮 × 10s/轮 = 240s 理论上限远超 ActionManager 120s 超时，
+    // 导致工具返回"命令超时"但采集仍在后台跑（最终产出 49 个 oak_log 的元凶）。
+    // 8 轮 × 10s = 80s，留 40s 余量给 ActionManager 超时（120s）。
+    let max_rounds = 8;
     let primary_kind = item_kinds[0];
+    let _ = primary_kind; // 保留语义，未来可用于 primary-only 计数
+
+    // P8 修复（2026-07-26）：预检工具。
+    // 根据目标 item 字符串判断是否需要镐/斧，若需要但背包完全没有该类工具，
+    // 立即返回明确错误——避免反复尝试 8 轮都失败浪费时间（曾导致 gather 100% 失败）。
+    let item_kind_str = {
+        let s = item_kinds[0].to_str();
+        s.strip_prefix("minecraft:").unwrap_or(s).to_string()
+    };
+    let needs_pickaxe = item_kind_str.ends_with("_ore")
+        || matches!(
+            item_kind_str.as_str(),
+            "stone" | "deepslate" | "cobblestone" | "granite" | "diorite" | "andesite"
+                | "tuff" | "netherrack" | "basalt" | "blackstone" | "end_stone"
+                | "sandstone" | "red_sandstone"
+        );
+    let needs_axe = item_kind_str.ends_with("_log") || item_kind_str.ends_with("_wood");
+    if needs_pickaxe && !has_any_pickaxe_in_inventory(bot).await {
+        // P10 修复（2026-07-26）：刚 craft 完镐但背包同步未完成时会误报"无镐"。
+        // 等待 + 重试 3 次，每次间隔 500ms。
+        let mut found_pickaxe = false;
+        for retry in 0..3u8 {
+            sleep(Duration::from_millis(500)).await;
+            if has_any_pickaxe_in_inventory(bot).await {
+                found_pickaxe = true;
+                eprintln!("[smart_gather] pickaxe found after {} retry(s)", retry + 1);
+                break;
+            }
+        }
+        if !found_pickaxe {
+            return Err(format!(
+                "采集 {item} 失败：背包无镐，矿石/石头类方块徒手挖不掉（不掉落物品）。\n\
+                 解决步骤：\n\
+                 1. 先 perceive 查看背包，确认是否已有镐（搜 *_pickaxe）\n\
+                 2a. 若已有镐：用 equip(item='xxx_pickaxe') 装备主手后重试 gather\n\
+                 2b. 若无镐：根据背包原料合成——\n\
+                     - wooden_pickaxe = oak_planks×3 + stick×2（craft 2×2 即可）\n\
+                     - stone_pickaxe = cobblestone×3 + stick×2（需 craft_3x3 工作台）\n\
+                     - iron_pickaxe = iron_ingot×3 + stick×2（需 craft_3x3 工作台）\n\
+                     stick 由 2 个 planks 合成 4 个\n\
+                 3. 合成后 equip 装备，再重试 gather"
+            ));
+        }
+    }
+
+    // P11 修复（2026-07-26）：工具等级检查（同 gather.rs）。
+    // vanilla 规则：等级不足的镐挖该方块时方块会消失但**不掉落物品**——
+    // 这是 smart_gather「方块消失但背包数量不增」误报的根因。
+    // 预检：若背包最好的镐 tier < 目标方块所需 tier，立即返回错误让 LLM 先合成更高 tier 的镐。
+    if needs_pickaxe {
+        // 取 block_kinds[0] 作为代表（aliases 展开后的第一个，通常是 LLM 指定的原始 item）
+        let required_tier = block_required_pickaxe_tier(block_kinds[0]);
+        if required_tier > 0 {
+            let mut best_tier = 0u8;
+            for retry in 0..3u8 {
+                best_tier = best_pickaxe_tier_in_inventory(bot).await;
+                if best_tier >= required_tier {
+                    break;
+                }
+                if retry < 2 {
+                    sleep(Duration::from_millis(500)).await;
+                }
+            }
+            if best_tier < required_tier {
+                return Err(format!(
+                    "采集 {item} 失败：背包最好的镐等级不足（{} tier {} < 需要 tier {}）。\n\
+                     vanilla 规则：等级不足的镐挖该方块时方块会消失但**不掉落物品**，\n\
+                     这会导致 gather 误判为「方块被挖掉但未掉落物品（缺工具）」死循环。\n\
+                     建议：先 craft 3x3 合成一把 {}，equip 装备主手后再 gather。",
+                    pickaxe_tier_name(best_tier),
+                    best_tier,
+                    required_tier,
+                    pickaxe_to_craft_for_tier(required_tier)
+                ));
+            }
+        }
+    }
+    if needs_axe && !has_any_axe_in_inventory(bot).await {
+        // 砍树徒手也能砍（只是慢），所以这里不直接失败，只警告。
+        eprintln!("[gather] 背包无斧，将徒手砍 {item}（效率低）");
+    }
 
     for round in 0..max_rounds {
         if gathered >= need {
             break;
         }
-        // 半径渐扩：4 → 8 → 16 → 24
+        // 半径渐扩：4 → 8 → 16（不再扩到 24，16 已经够大且 24^3 扫描太慢）
         let radius = match round {
             0 => 4,
             1..=2 => 8,
-            3..=5 => 16,
-            _ => 24,
+            _ => 16,
         };
         let pos = {
             let world = bot.world().map_err(|e| format!("读取世界失败: {e:?}"))?;
@@ -154,28 +264,90 @@ pub async fn collect_block_smart(
         let Some(target_pos) = pos else {
             if round == max_rounds - 1 {
                 return Err(format!(
-                    "半径 {radius} 内找不到 {item}（已采集 {gathered}/{need}）"
+                    "半径 {radius} 内找不到 {item}（已采集 {gathered}/{need}）。\
+                     若 {item} 在地下（如 stone 在地表下），先用 mine_below() 挖到 Y<60 暴露岩石层，再重试 gather。"
                 ));
             }
             continue;
         };
 
-        // 走到方块下方一格
-        let stand = BlockPos::new(target_pos.x, target_pos.y - 1, target_pos.z);
-        bot.start_goto(BlockPosGoal(stand));
-        for _ in 0..40 {
-            sleep(Duration::from_millis(100)).await;
-            if let Ok(p) = bot.position() {
-                let d = ((p.x - target_pos.x as f64).powi(2)
-                    + (p.y - target_pos.y as f64).powi(2)
-                    + (p.z - target_pos.z as f64).powi(2))
-                .sqrt();
-                if d < 3.0 {
+        // P4 修复：地下目标处理。当 target 在 bot 脚下 2+ 格时，pathfinder 无法
+        // 导航到 stand_pos（在实心方块内）。此时改为「垂直下挖」策略：
+        // 仅当 target 与 bot 同一 x,z 列时，从 bot 脚下逐格挖到 target.y+1，
+        // 让 bot 自然掉落进入挖出的竖井，然后挖 target 本体。
+        // 这是 surface bot 采集 stone 的关键路径。
+        // 若 target 水平偏移过大（>2 格），不适用此策略，回退到普通 goto
+        // （可能失败，但至少不会挖错方向）。
+        let bot_pos = bot.position().map_err(|e| format!("读取坐标失败: {e:?}"))?;
+        let bot_foot_y = (bot_pos.y - 1.0).floor() as i32;
+        let bot_x = bot_pos.x.floor() as i32;
+        let bot_z = bot_pos.z.floor() as i32;
+        let horiz_offset = ((target_pos.x - bot_x).abs() + (target_pos.z - bot_z).abs()).max(0);
+        let target_below_bot = target_pos.y < bot_foot_y - 1 && horiz_offset <= 1;
+
+        if target_below_bot {
+            // 垂直下挖：从 bot 脚下逐格挖到 target.y+1（不挖 target 本体，留给下面统一处理）
+            // 只挖 target 正上方那一列（同 x,z），保证 bot 能沿竖井掉落到 target 旁
+            for cy in (target_pos.y + 1..=bot_foot_y).rev() {
+                let b = BlockPos::new(target_pos.x, cy, target_pos.z);
+                let solid = bot
+                    .world()
+                    .ok()
+                    .and_then(|w| {
+                        w.read()
+                            .get_block_state(b)
+                            .map(|s| !s.is_air())
+                    })
+                    .unwrap_or(false);
+                if !solid {
+                    continue;
+                }
+                bot.start_mining(b);
+                // 等待方块消失（最多 3s）
+                let mut broke = false;
+                for _ in 0..30 {
+                    sleep(Duration::from_millis(100)).await;
+                    let gone = bot
+                        .world()
+                        .ok()
+                        .and_then(|w| {
+                            w.read()
+                                .get_block_state(b)
+                                .map(|s| s.is_air())
+                        })
+                        .unwrap_or(true);
+                    if gone {
+                        broke = true;
+                        break;
+                    }
+                }
+                if !broke {
+                    // 挖不动（可能没镐/硬度太高），跳出避免死循环
                     break;
                 }
             }
+            // 等待 bot 因重力掉入竖井
+            sleep(Duration::from_millis(800)).await;
+        } else {
+            // 走到方块下方一格
+            let stand = BlockPos::new(target_pos.x, target_pos.y - 1, target_pos.z);
+            bot.start_goto(BlockPosGoal(stand));
+            // P3：原 40 × 100ms = 4s 寻路等待太长；减到 25 × 100ms = 2.5s
+            // （半径 16 内的目标，2.5s 足够走到；走不到说明卡住了，应尽早换下个目标）
+            for _ in 0..25 {
+                sleep(Duration::from_millis(100)).await;
+                if let Ok(p) = bot.position() {
+                    let d = ((p.x - target_pos.x as f64).powi(2)
+                        + (p.y - target_pos.y as f64).powi(2)
+                        + (p.z - target_pos.z as f64).powi(2))
+                    .sqrt();
+                    if d < 3.0 {
+                        break;
+                    }
+                }
+            }
+            bot.stop_pathfinding();
         }
-        bot.stop_pathfinding();
 
         // 挖前统计
         let before: u32 = bot
@@ -190,10 +362,58 @@ pub async fn collect_block_smart(
             })
             .unwrap_or(0);
 
+        // P3：到达后再检查一次背包，可能路上自动捡到了掉落物已经满足 need
+        if before >= need {
+            // P5 修复：原代码这里直接 break，最后返回"采集 X 完成（背包 N 个）"，
+            // 让 LLM 误以为新采集了 N 个。实际是背包本来就有 N 个（含别名变体）。
+            // 现在明确报告"无需新采集"+ 各变体的明细，避免 LLM 困惑。
+            let breakdown = format_item_breakdown(&bot, &item_kinds).await;
+            return Ok(format!(
+                "背包已有 {before} 个 {item}（含别名变体）≥ 需求 {need}，无需新采集。明细: {breakdown}。\
+                 注意：若你需要的是「{item}」这一具体种类而非别名变体，请检查背包明细——\
+                 若该种类不足，本工具不会刻意只采该种类，会采所有别名变体。"
+            ));
+        }
+
+        // P8 修复（2026-07-26）：挖前装备合适工具。
+        // 根据 target_pos 的 BlockState 判断需要的工具类型，自动装备最好的镐/斧。
+        // 这是 gather 100% 失败的根因——之前 start_mining 时主手是 air，
+        // coal_ore/stone 类硬方块徒手挖不掉（不掉落物品）。
+        let tool_need = bot
+            .world()
+            .ok()
+            .and_then(|w| w.read().get_block_state(target_pos))
+            .map(|state| {
+                if is_log_block(state) {
+                    ToolNeed::Axe
+                } else if is_hard_block(state) {
+                    ToolNeed::Pickaxe
+                } else {
+                    ToolNeed::None
+                }
+            })
+            .unwrap_or(ToolNeed::None);
+        match tool_need {
+            ToolNeed::Pickaxe => {
+                if let Some(msg) = auto_equip_best_pickaxe(bot).await {
+                    eprintln!("[gather] round {round}: {msg}");
+                }
+            }
+            ToolNeed::Axe => {
+                if let Some(msg) = auto_equip_best_axe(bot).await {
+                    eprintln!("[gather] round {round}: {msg}");
+                }
+            }
+            ToolNeed::None => {}
+        }
+
         bot.start_mining(target_pos);
         // 等待挖掘完成（任一别名物品数量增加，或方块消失）
+        // P3：原 60 × 100ms = 6s；减到 30 × 100ms = 3s（普通方块 1-2s 挖完）
         let mut done = false;
-        for _ in 0..60 {
+        let mut block_disappeared = false;
+        let mut new_count: u32 = before;
+        for _ in 0..30 {
             sleep(Duration::from_millis(100)).await;
             let now: u32 = bot
                 .get_inventory()
@@ -207,7 +427,7 @@ pub async fn collect_block_smart(
                 })
                 .unwrap_or(0);
             if now > before {
-                gathered = now;
+                new_count = now;
                 done = true;
                 break;
             }
@@ -218,8 +438,77 @@ pub async fn collect_block_smart(
                     .map(|s| s.is_air())
                     .unwrap_or(true);
                 if disappeared {
+                    block_disappeared = true;
                     break;
                 }
+            }
+        }
+        if done {
+            // 实际挖到了，报告增量
+            let delta = new_count - before;
+            gathered = new_count;
+            let breakdown = format_item_breakdown(&bot, &item_kinds).await;
+            // 继续下一轮（若还不足 need 会再找下一个目标）
+            let _ = delta; // 调试用
+            let _ = breakdown; // 详细breakdown在最终返回里给
+        } else if block_disappeared && matches!(tool_need, ToolNeed::Pickaxe | ToolNeed::Axe) {
+            // P11 修复（2026-07-26）：原检查只报告"缺工具"，但没区分
+            // 「完全没镐」「镐等级不足」「主手未持镐」三种情况，导致错误提示不精准。
+            // 修复：分别判断并给针对性的合成建议。
+            let held_kind = bot.get_held_item().ok().and_then(|s| {
+                if s.is_empty() {
+                    None
+                } else {
+                    Some(s.kind())
+                }
+            });
+            let held_str = held_kind
+                .map(|k| {
+                    let s = k.to_str();
+                    s.strip_prefix("minecraft:").unwrap_or(s).to_string()
+                })
+                .unwrap_or_else(|| "(空手)".to_string());
+            let held_tier = held_kind.map(|k| pickaxe_tier(k)).unwrap_or(0);
+
+            if matches!(tool_need, ToolNeed::Pickaxe) {
+                let required_tier = block_required_pickaxe_tier(block_kinds[0]);
+                let best_tier = best_pickaxe_tier_in_inventory(bot).await;
+                if best_tier == 0 {
+                    return Err(format!(
+                        "采集 {item} 失败：方块被挖掉但未掉落物品（背包无镐）。\n\
+                         当前主手: {held_str}；建议先合成 {} 再 gather。",
+                        pickaxe_to_craft_for_tier(required_tier.max(1))
+                    ));
+                }
+                if required_tier > 0 && best_tier < required_tier {
+                    return Err(format!(
+                        "采集 {item} 失败：方块被挖掉但未掉落物品（镐等级不足）。\n\
+                         目标方块需要 {}（tier {}），背包最好的镐为 {}（tier {}），手持 {held_str}（tier {}）。\n\
+                         vanilla 规则：等级不足的镐挖该方块时方块会消失但**不掉落物品**。\n\
+                         建议：先 craft 3x3 合成 {}，equip 装备主手后再 gather。",
+                        pickaxe_tier_name(required_tier),
+                        required_tier,
+                        pickaxe_tier_name(best_tier),
+                        best_tier,
+                        held_tier,
+                        pickaxe_to_craft_for_tier(required_tier)
+                    ));
+                }
+                if held_tier == 0 && best_tier > 0 {
+                    return Err(format!(
+                        "采集 {item} 失败：方块被挖掉但未掉落物品（主手未持镐）。\n\
+                         背包有镐（{} tier {}）但 auto_equip 失败未切到主手。\n\
+                         建议：手动 equip 装备镐到主手后再 gather。",
+                        pickaxe_tier_name(best_tier),
+                        best_tier
+                    ));
+                }
+            }
+            if matches!(tool_need, ToolNeed::Axe) && !has_any_axe_in_inventory(bot).await {
+                return Err(format!(
+                    "采集 {item} 失败：方块被挖掉但未掉落物品（背包无斧）。\n\
+                     当前主手: {held_str}；建议先合成 wooden_axe 再 gather。"
+                ));
             }
         }
         if !done && round == max_rounds - 1 {
@@ -228,13 +517,52 @@ pub async fn collect_block_smart(
     }
 
     if gathered >= need {
+        // P5 修复：返回消息区分"实际新挖到"vs"已有足够数量"
+        let breakdown = format_item_breakdown(&bot, &item_kinds).await;
         Ok(format!(
-            "采集 {item} 完成（背包 {gathered} 个，含别名变体）"
+            "采集 {item} 完成（背包现有 {gathered} 个，含别名变体）。明细: {breakdown}"
         ))
     } else {
+        // P8 改进：根据预检状态给更针对性的错误
+        let hint = if needs_pickaxe {
+            "（提示：coal_ore/iron_ore 等矿石需要镐才能掉落物品；若已合成镐请 equip 装备主手）"
+        } else if needs_axe {
+            "（提示：徒手砍树效率极低，建议合成 wooden_axe）"
+        } else {
+            "；建议换一个区域或换一种采集目标"
+        };
         Err(format!(
-            "采集 {item} 未完成（仅 {gathered}/{need}，附近可能无更多）"
+            "采集 {item} 未完成（仅 {gathered}/{need}，附近可能无更多{hint}）"
         ))
+    }
+}
+
+/// 格式化背包中指定物品种类的明细（如 "oak_log:3, dark_oak_log:48"）。
+async fn format_item_breakdown(bot: &Client, kinds: &[ItemKind]) -> String {
+    let inv = match bot.get_inventory() {
+        Ok(i) => i,
+        Err(_) => return "(读取背包失败)".to_string(),
+    };
+    let mut counts: Vec<(String, u32)> = Vec::new();
+    for k in kinds {
+        let c = count_item_kind(&inv, *k);
+        if c > 0 {
+            // P5 修复：用 to_str() 拿到 snake_case minecraft id（如 "dark_oak_log"），
+            // 原 format!("{k:?}").to_lowercase() 得到 "darkoaklog"（无下划线），
+            // 与工具/craft 配方表期望的 snake_case id 不匹配 → LLM 困惑。
+            let full = k.to_str();
+            let name = full.strip_prefix("minecraft:").unwrap_or(full);
+            counts.push((name.to_string(), c));
+        }
+    }
+    if counts.is_empty() {
+        "(无)".to_string()
+    } else {
+        counts
+            .iter()
+            .map(|(n, c)| format!("{n}:{c}"))
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }
 
