@@ -240,7 +240,11 @@ async fn auto_discard_junk(bot: &Client) -> (String, u32) {
         Err(_) => return (String::new(), 0),
     };
     let empty_before = count_empty_player_slots(&inv);
-    if empty_before >= 2 {
+    // P22 修复（2026-07-27）：阈值从 2 提高到 6。
+    // 原阈值 2 太晚——craft 时产物 + 原料交换需要至少 2 空位，
+    // 但 bot 在两次 craft 之间会拾取垃圾，等 empty<2 才清理时已经积满 100+ 垃圾。
+    // 现在阈值 6：始终保持至少 6 个空位，给 craft 留足缓冲。
+    if empty_before >= 6 {
         return (String::new(), 0); // 空位足够，无需丢弃
     }
 
@@ -266,9 +270,20 @@ async fn auto_discard_junk(bot: &Client) -> (String, u32) {
         ("coarse_dirt", 0),
         ("rooted_dirt", 0),
         ("moss_block", 0),
+        // P22 新增：更多垃圾方块
+        ("terracotta", 0),
+        ("sandstone", 0),
+        ("red_sandstone", 0),
+        ("quartz_block", 0),
+        ("calcite", 0),
+        ("dripstone_block", 0),
+        ("pointed_dripstone", 0),
+        ("smooth_basalt", 0),
+        ("deepslate", 0),
+        ("stone", 0), // 石头挖掉得到 cobblestone，原石本身无用
+        ("cobblestone", 32), // P22: 保留数从 16 提到 32（合成熔炉/石镐需要 8+）
+        ("cobbled_deepslate", 32),
         // 保留少量的有用方块
-        ("cobblestone", 16),
-        ("cobbled_deepslate", 16),
         ("oak_sapling", 4),
         ("flint", 8),
         ("string", 4),
@@ -277,6 +292,12 @@ async fn auto_discard_junk(bot: &Client) -> (String, u32) {
         ("iron_hoe", 0),
         ("wooden_hoe", 0),
         ("stone_hoe", 0),
+        ("wooden_axe", 0), // P22: 升级后旧工具丢弃
+        ("stone_axe", 0),
+        ("wooden_pickaxe", 0),
+        ("stone_pickaxe", 0),
+        ("wooden_shovel", 0),
+        ("stone_shovel", 0),
     ];
 
     let mut dropped_log: Vec<String> = Vec::new();
@@ -731,14 +752,37 @@ pub async fn do_craft_2x2(bot: &Client, item: &str, count: u32) -> Result<String
         //    遍历 player_slots_range（含 hotbar）找空位，每次操作后重新读 inv 拿最新 state。
         let target_kind = ItemKind::from_str(&normalize_item(item))
             .map_err(|_| format!("未知目标物品 {item}"))?;
-        let before_count = count_item_in_player_slots(&inv, target_kind);
+
+        // P22 修复（2026-07-27）：检测 result slot 实际类型。
+        // 原 code 只数 target_kind（如 oak_planks），但 LLM 可能传 "oak_planks"
+        // 而背包只有 birch_log → 服务端产出 birch_planks → count(oak_planks) 永远 0 → 误报失败。
+        // 学习自 P20 对 3x3 的修复：读 slot 0 实际类型，按实际类型计数。
+        let actual_kind: Option<ItemKind> = inv
+            .slots()
+            .as_ref()
+            .and_then(|s| s.get(0))
+            .filter(|st| !st.is_empty())
+            .map(|st| st.kind());
+        let count_kind = actual_kind.unwrap_or(target_kind);
+        if let Some(ak) = actual_kind {
+            if ak != target_kind {
+                let ak_name = ak.to_str();
+                let tk_name = target_kind.to_str();
+                eprintln!(
+                    "[craft 2x2] 警告：result slot 是 {} 而非 {}（可能 LLM 传了别名，按实际类型计数）",
+                    ak_name.strip_prefix("minecraft:").unwrap_or(ak_name),
+                    tk_name.strip_prefix("minecraft:").unwrap_or(tk_name),
+                );
+            }
+        }
+        let before_count = count_item_in_player_slots(&inv, count_kind);
 
         // 先尝试 shift_click(0)（如果主背包有空位，这是最快的）
         let empty_before = count_empty_player_slots(&inv);
         if empty_before > 0 {
             inv.shift_click(0usize);
             sleep(Duration::from_millis(200)).await;
-            let after_count = count_item_in_player_slots(&inv, target_kind);
+            let after_count = count_item_in_player_slots(&inv, count_kind);
             if after_count > before_count {
                 crafted += output;
                 continue;
@@ -774,17 +818,37 @@ pub async fn do_craft_2x2(bot: &Client, item: &str, count: u32) -> Result<String
 
         // 3. 验证 count 增加
         let inv3 = bot.get_inventory().map_err(|e| format!("验证时读取背包失败: {e:?}"))?;
-        let after_count2 = count_item_in_player_slots(&inv3, target_kind);
+        let after_count2 = count_item_in_player_slots(&inv3, count_kind);
         if after_count2 > before_count {
             crafted += output;
             continue;
         }
 
-        // 都失败：清网格，报错
+        // P22 新增（2026-07-27）：clear_grid + 关背包兜底收集（学习自 P20 对 3x3 的修复）。
+        // shift_click + left_click 都失败时，清网格让服务端把光标/网格上的物品回背包。
+        // 对 2x2 没有"关容器"概念（Player 菜单始终打开），但 clear_grid 会触发服务端
+        // 重新计算 result slot，可能让产物自动进入背包。
+        eprintln!(
+            "[craft 2x2] shift_click + left_click 均失败，尝试 clear_grid 兜底收集 (before={before_count})"
+        );
         let _ = clear_grid(&inv3, GRID).await;
+        sleep(Duration::from_millis(400)).await;
+        let inv4 = bot.get_inventory().map_err(|e| format!("兜底后读取背包失败: {e:?}"))?;
+        let after_close = count_item_in_player_slots(&inv4, count_kind);
+        if after_close > before_count {
+            eprintln!(
+                "[craft 2x2] clear_grid 兜底成功：{} x{} 进入背包 (before={before_count} after={after_close})",
+                item, output
+            );
+            crafted += output;
+            continue;
+        }
+
+        // 都失败：清网格，报错
+        let _ = clear_grid(&inv4, GRID).await;
         return Err(format!(
-            "合成 {item} 失败：产物无法从结果槽移入背包（shift_click 与 left_click 均未让背包产物增加，\
-             before={before_count} after_left={after_count2}）。\
+            "合成 {item} 失败：产物无法从结果槽移入背包（shift_click、left_click、clear_grid 兜底 均未让背包产物增加，\
+             before={before_count} after_left={after_count2} after_close={after_close}）。\
              建议：关闭背包再重新打开后重试，或先 discard 腾出空位。"
         ));
     }
@@ -1442,6 +1506,32 @@ pub async fn do_smelt(
     let fuel_kind = ItemKind::from_str(&normalize_item(fuel))
         .map_err(|_| format!("未知燃料 {fuel}"))?;
 
+    // P22 新增（2026-07-27）：燃料 fallback 列表。
+    // 原代码只找 fuel_kind（如 oak_log），bot 有 birch_log 时报"缺少燃料 oak_log"→ smelt 100% 失败。
+    // vanilla 规则：任何原木/木板/煤炭/木炭/木棍都可做燃料，只是燃烧时间不同。
+    // 学习自 mindcraft furnaces.js：mindcraft 不指定燃料类型，直接用背包里任何可燃物。
+    // 这里按"燃烧效率"排序优先级：coal/charcoal > log > planks > stick。
+    let fuel_candidates: Vec<ItemKind> = {
+        let mut v = vec![fuel_kind]; // 优先用 LLM 指定的燃料
+        // 添加 fallback 燃料（去重）
+        let fallbacks = [
+            "coal", "charcoal",
+            "oak_log", "birch_log", "spruce_log", "jungle_log", "acacia_log",
+            "dark_oak_log", "mangrove_log", "cherry_log", "pale_oak_log",
+            "oak_planks", "birch_planks", "spruce_planks", "jungle_planks",
+            "acacia_planks", "dark_oak_planks", "mangrove_planks", "cherry_planks", "pale_oak_planks",
+            "stick", "coal_block",
+        ];
+        for f in fallbacks {
+            if let Ok(k) = ItemKind::from_str(&normalize_item(f)) {
+                if !v.contains(&k) {
+                    v.push(k);
+                }
+            }
+        }
+        v
+    };
+
     // Furnace 菜单槽位：ingredient=0, fuel=1, result=2
     let output_per = recipe.output_per_craft;
     let crafts_needed = (count.max(1) + output_per - 1) / output_per;
@@ -1450,8 +1540,19 @@ pub async fn do_smelt(
     for _ in 0..crafts_needed {
         let src_in = find_source_slot(&inv, input_kind)
             .ok_or_else(|| format!("背包缺少输入 {}", recipe.input))?;
-        let src_fuel = find_source_slot(&inv, fuel_kind)
-            .ok_or_else(|| format!("背包缺少燃料 {fuel}"))?;
+        // P22: 按优先级找燃料——LLM 指定的优先，找不到则 fallback 到任何可燃物
+        let src_fuel = fuel_candidates
+            .iter()
+            .find_map(|&fk| find_source_slot(&inv, fk))
+            .ok_or_else(|| {
+                format!(
+                    "背包缺少燃料 {fuel}（也无可用的替代燃料 coal/charcoal/log/planks/stick）。\
+                     vanilla 燃料燃烧时间：coal/charcoal=80s（8 个物品）、log=15s（1.5 个）、\
+                     planks=15s（1.5 个）、stick=5s（0.5 个）。\
+                     建议：1) gather oak_log/spruce_log 等原木；2) craft planks 后做燃料；\
+                     3) mine coal_ore 获得 coal（最佳燃料）。"
+                )
+            })?;
         move_stack(&inv, src_in, 0).await; // 输入槽
         move_stack(&inv, src_fuel, 1).await; // 燃料槽
 
