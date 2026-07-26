@@ -1014,9 +1014,31 @@ pub async fn do_craft_3x3(
         }
 
         // 3) 收产物（P15 修复：用 left_click 直接收集，绕过 azalea shift_click 只移主背包的 bug）
+        // P20 修复（2026-07-27）：增加 result 类型验证 + 关容器兜底收集策略。
+        // 原代码 shift_click 和 left_click 都失败时直接报错，但实际产物可能还在光标/网格上。
+        // 关闭容器时服务端会自动把光标和网格上的物品返回玩家背包——这是最可靠的兜底。
         let target_kind = ItemKind::from_str(&normalize_item(item))
             .map_err(|_| format!("未知目标物品 {item}"))?;
         let before_count = count_item_in_player_slots(&inv, target_kind);
+
+        // P20 新增：验证 result slot 里确实是 target_kind（不只是非空）
+        // 防止网格摆错导致产出错误物品时，count 永远不增加，误报"收集失败"
+        let result_kind = inv
+            .slots()
+            .as_ref()
+            .and_then(|s| s.get(0))
+            .filter(|st| !st.is_empty())
+            .map(|st| st.kind());
+        if let Some(rk) = result_kind {
+            if rk != target_kind {
+                let rk_name = rk.to_str();
+                eprintln!(
+                    "[craft 3x3] 警告：result slot 是 {} 而非 {}（网格可能摆错）",
+                    rk_name, item
+                );
+                // 不直接报错，继续尝试收集——可能 LLM 指定了别名
+            }
+        }
 
         // 先尝试 shift_click(0)（如果主背包有空位，这是最快的）
         let empty_before = count_empty_player_slots(&inv);
@@ -1061,11 +1083,61 @@ pub async fn do_craft_3x3(
             continue;
         }
 
+        // P20 关键修复：shift_click 和 left_click 都失败时，关闭容器让服务端
+        // 自动把光标/网格上的物品返回背包。这是最可靠的兜底——服务端在
+        // ContainerClose 时会强制归还所有悬空物品。
+        // 学习自 vanilla 客户端行为：玩家按 E 关闭工作台时，所有物品自动回背包。
+        eprintln!(
+            "[craft 3x3] shift_click + left_click 均失败，尝试关闭容器兜底收集 (before={before_count})"
+        );
+        // 先清网格（把网格上的原料回背包），再关容器（把光标上的产物回背包）
         let _ = clear_grid(&inv3, GRID).await;
+        // 关闭容器
+        crate::azalea::table_flow::close_container_if_open(bot);
+        sleep(Duration::from_millis(400)).await;
+        // 检查关容器后产物是否进入背包
+        let inv4 = bot.get_inventory().map_err(|e| format!("关容器后读取背包失败: {e:?}"))?;
+        let after_close = count_item_in_player_slots(&inv4, target_kind);
+        if after_close > before_count {
+            eprintln!(
+                "[craft 3x3] 关容器兜底成功：{} x{} 进入背包 (before={before_count} after={after_close})",
+                item, output
+            );
+            crafted += output;
+            // 重新打开工作台继续下一轮（如果有）
+            if crafted < crafts_needed * output {
+                if let Some(tp) = table_pos {
+                    // 走到桌旁并重新打开
+                    use azalea::pathfinder::goals::RadiusGoal;
+                    use azalea::Vec3;
+                    let target = Vec3::new(tp.x as f64 + 0.5, tp.y as f64 + 0.5, tp.z as f64 + 0.5);
+                    let goto_fut = bot.goto(RadiusGoal { pos: target, radius: 1.5 });
+                    let _ = tokio::time::timeout(Duration::from_secs(5), goto_fut).await;
+                    match bot.open_container_at(tp).await {
+                        Ok(Some(h)) => { std::mem::forget(h); }
+                        _ => {
+                            return Err(format!(
+                                "合成 {item} 部分完成（{crafted}）但重新打开工作台失败，无法继续"
+                            ));
+                        }
+                    }
+                    sleep(Duration::from_millis(300)).await;
+                } else {
+                    return Err(format!(
+                        "合成 {item} 部分完成（{crafted}）但缺少 table_pos，无法重新打开工作台继续"
+                    ));
+                }
+            }
+            continue;
+        }
+
+        // 关容器也没能收集到产物——真正的失败
+        let dump = dump_player_inventory(&inv4);
         return Err(format!(
-            "合成 {item} 失败：产物无法从结果槽移入背包（shift_click 与 left_click 均未让背包产物增加，\
-             before={before_count} after_left={after_count2}）。\
-             建议：关闭工作台再重新打开后重试，或先 discard 腾出空位。"
+            "合成 {item} 失败：产物无法从结果槽移入背包（shift_click、left_click、关容器兜底 均未让背包产物增加，\
+             before={before_count} after_left={after_count2} after_close={after_close}）。\
+             当前背包: {dump}\n\
+             建议：1) 先 discard 腾出空位；2) 关闭工作台再重新打开后重试；3) 检查背包是否同步正常。"
         ));
     }
 
