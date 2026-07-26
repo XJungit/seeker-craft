@@ -1292,20 +1292,28 @@ const SMELT_RECIPES: &[(&'static str, SmeltRecipe)] = &[
     ("baked_potato", SmeltRecipe { input: "potato", output_per_craft: 1 }),
 ];
 
-fn lookup_smelt(output: &str) -> Option<SmeltRecipe> {
+fn lookup_smelt_all(output: &str) -> Vec<SmeltRecipe> {
     // P17 修复（2026-07-27）：原代码用 normalize_item(output) 把 id 变成
     // "minecraft:iron_ingot"，但 SMELT_RECIPES 存的是裸 id "iron_ingot"，
     // 比较永远 false → lookup_smelt 100% 返回 None → smelt 报"不支持 iron_ingot"
     // 但错误消息里又列出 iron_ingot 作为支持项，自相矛盾。
     // 修复：用 bare() 去前缀（与 P12 lookup_shaped 修复同理）。
+    //
+    // P18 修复（2026-07-27）：返回**所有**候选配方（不再 .find().first()）。
+    // SMELT_RECIPES 中 iron_ingot 有两条候选：iron_ore 和 raw_iron。
+    // vanilla 中挖 iron_ore 掉 raw_iron（不是 iron_ore 本身），所以 bot
+    // 背包里通常是 raw_iron。原 lookup_smelt 只返回第一个（iron_ore），
+    // do_smelt 报"背包缺少输入 iron_ore"——但 bot 实际有 raw_iron×7！
+    // 修复：返回所有候选，do_smelt 优先选背包里有的原料。
     let norm = bare(output);
     SMELT_RECIPES
         .iter()
-        .find(|(id, _)| *id == norm)
+        .filter(|(id, _)| *id == norm)
         .map(|(_, r)| SmeltRecipe {
             input: r.input,
             output_per_craft: r.output_per_craft,
         })
+        .collect()
 }
 
 pub async fn do_smelt(
@@ -1314,17 +1322,53 @@ pub async fn do_smelt(
     fuel: &str,
     count: u32,
 ) -> Result<String, String> {
-    let recipe = lookup_smelt(output).ok_or_else(|| {
-        format!("不支持的熔炼产物 {output}（当前支持 iron_ingot/copper_ingot/gold_ingot/glass/stone/charcoal 等，需先打开熔炉）")
-    })?;
-    let input_kind = ItemKind::from_str(&normalize_item(recipe.input))
-        .map_err(|_| format!("未知输入 {}", recipe.input))?;
-    let fuel_kind = ItemKind::from_str(&normalize_item(fuel))
-        .map_err(|_| format!("未知燃料 {fuel}"))?;
+    // P18 修复：从所有候选配方中选一个 bot 背包里有的原料。
+    let candidates = lookup_smelt_all(output);
+    if candidates.is_empty() {
+        return Err(format!(
+            "不支持的熔炼产物 {output}（当前支持 iron_ingot/copper_ingot/gold_ingot/glass/stone/charcoal 等，需先打开熔炉）"
+        ));
+    }
 
     let inv = bot
         .get_inventory()
         .map_err(|e| format!("获取容器失败（确认已打开熔炉）: {e:?}"))?;
+
+    // 优先选背包里有的原料；若都没有，选第一个候选并报错（列出所有候选原料）
+    let recipe = {
+        let mut chosen: Option<SmeltRecipe> = None;
+        for c in &candidates {
+            let kind = match ItemKind::from_str(&normalize_item(c.input)) {
+                Ok(k) => k,
+                Err(_) => continue,
+            };
+            if find_source_slot(&inv, kind).is_some() {
+                chosen = Some(SmeltRecipe {
+                    input: c.input,
+                    output_per_craft: c.output_per_craft,
+                });
+                break;
+            }
+        }
+        match chosen {
+            Some(r) => r,
+            None => {
+                let inputs: Vec<&str> = candidates.iter().map(|c| c.input).collect();
+                return Err(format!(
+                    "背包缺少熔炼 {output} 的原料（候选: {}）。\
+                     vanilla 规则：挖 {} 矿掉的是 raw_xxx（不是 ore 本身）\
+                     ——请用 perceive 查看背包实际拥有的原料 id。",
+                    inputs.join(" / "),
+                    output
+                ));
+            }
+        }
+    };
+
+    let input_kind = ItemKind::from_str(&normalize_item(recipe.input))
+        .map_err(|_| format!("未知输入 {}", recipe.input))?;
+    let fuel_kind = ItemKind::from_str(&normalize_item(fuel))
+        .map_err(|_| format!("未知燃料 {fuel}"))?;
 
     // Furnace 菜单槽位：ingredient=0, fuel=1, result=2
     let output_per = recipe.output_per_craft;

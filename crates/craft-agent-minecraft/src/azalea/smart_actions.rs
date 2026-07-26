@@ -42,7 +42,30 @@ pub fn expand_block_aliases(item: &str) -> Vec<BlockKind> {
         ],
         // 石材类：圆石/石头都算
         "stone" | "cobblestone" => vec!["stone", "cobblestone", "granite", "diorite", "andesite"],
-        // 矿石类：各自单一（不展开，避免挖错）
+        // 矿石类：P18 修复（2026-07-27）—— 同时展开 deepslate 变体。
+        // vanilla 规则：Y<0 时矿石生成 deepslate_xxx_ore 版本（深岩层），
+        // 原 _ => vec![item] 只找 "iron_ore"，但 bot 在 Y=91 深岩层实际方块是
+        // deepslate_iron_ore → scan_blocks_multi 100% 找不到 → gather 100% 失败。
+        // 学习自 mindcraft collectBlock：mindcraft 用 mineflayer 的 findBlockRanges
+        // 自动匹配所有 matching block states，不需要手动展开。
+        // 本项目 azalea 无 findBlockRanges，手动列出 deepslate 变体。
+        "iron_ore" => vec!["iron_ore", "deepslate_iron_ore"],
+        "coal_ore" => vec!["coal_ore", "deepslate_coal_ore"],
+        "copper_ore" => vec!["copper_ore", "deepslate_copper_ore"],
+        "gold_ore" => vec!["gold_ore", "deepslate_gold_ore"],
+        "diamond_ore" => vec!["diamond_ore", "deepslate_diamond_ore"],
+        "emerald_ore" => vec!["emerald_ore", "deepslate_emerald_ore"],
+        "lapis_ore" => vec!["lapis_ore", "deepslate_lapis_ore"],
+        "redstone_ore" => vec!["redstone_ore", "deepslate_redstone_ore"],
+        // 兼容 LLM 直接传 deepslate_xxx_ore
+        "deepslate_iron_ore" => vec!["iron_ore", "deepslate_iron_ore"],
+        "deepslate_coal_ore" => vec!["coal_ore", "deepslate_coal_ore"],
+        "deepslate_copper_ore" => vec!["copper_ore", "deepslate_copper_ore"],
+        "deepslate_gold_ore" => vec!["gold_ore", "deepslate_gold_ore"],
+        "deepslate_diamond_ore" => vec!["diamond_ore", "deepslate_diamond_ore"],
+        "deepslate_emerald_ore" => vec!["emerald_ore", "deepslate_emerald_ore"],
+        "deepslate_lapis_ore" => vec!["lapis_ore", "deepslate_lapis_ore"],
+        "deepslate_redstone_ore" => vec!["redstone_ore", "deepslate_redstone_ore"],
         _ => vec![item],
     };
     candidates
@@ -71,6 +94,19 @@ pub fn expand_item_aliases(item: &str) -> Vec<ItemKind> {
             "dark_oak_planks", "mangrove_planks", "cherry_planks", "pale_oak_planks",
         ],
         "stone" | "cobblestone" => vec!["stone", "cobblestone", "granite", "diorite", "andesite"],
+        // 矿石类：P18 修复（2026-07-27）—— 挖矿后掉落 raw_xxx（不是 ore 本身）。
+        // vanilla 规则：铁/铜/金矿挖掉后掉 raw_iron/raw_copper/raw_gold（精准采集才掉 ore 本身），
+        // 煤矿掉 coal，钻石矿掉 diamond，红石矿掉 redstone，青金石矿掉 lapis_lazuli。
+        // 原 _ => vec![item] 计数 iron_ore，但实际背包增加的是 raw_iron → count 永远 0
+        // → gather 误判"挖掉了但没增加" → 100% 失败。
+        "iron_ore" | "deepslate_iron_ore" => vec!["iron_ore", "raw_iron"],
+        "copper_ore" | "deepslate_copper_ore" => vec!["copper_ore", "raw_copper"],
+        "gold_ore" | "deepslate_gold_ore" => vec!["gold_ore", "raw_gold"],
+        "coal_ore" | "deepslate_coal_ore" => vec!["coal_ore", "coal"],
+        "diamond_ore" | "deepslate_diamond_ore" => vec!["diamond_ore", "diamond"],
+        "emerald_ore" | "deepslate_emerald_ore" => vec!["emerald_ore", "emerald"],
+        "lapis_ore" | "deepslate_lapis_ore" => vec!["lapis_ore", "lapis_lazuli"],
+        "redstone_ore" | "deepslate_redstone_ore" => vec!["redstone_ore", "redstone"],
         _ => vec![item],
     };
     candidates
