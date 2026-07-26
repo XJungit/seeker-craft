@@ -312,6 +312,16 @@ fn extract_failure_for_test(test_name: &str, stderr: &str) -> Option<String> {
 // 2. IssueAnalyzer — Session 问题分析
 // ──────────────────────────────────────────────
 
+/// 单个工具的失败统计（P12 新增，用于 per-tool 错误粒度分析）。
+#[derive(Debug, Clone, Default)]
+struct ToolErrorStats {
+    calls: usize,
+    errors: usize,
+    /// 去重后的错误文本样本（最多 3 条，每条截断 400 字符）。
+    /// 让诊断报告直接显示「为什么失败」，免去手动翻 jsonl。
+    error_samples: Vec<String>,
+}
+
 /// 分析出的问题
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnalyzedIssue {
@@ -565,6 +575,105 @@ impl IssueAnalyzer {
                 suggested_fix_file: Some("crates/craft-agent-minecraft/src/azalea/".into()),
                 suggested_fix: Some("检查各工具的具体实现，看是超时问题、寻路问题还是服务端同步问题".into()),
             });
+        }
+
+        // P12 增强：按工具粒度统计失败率 + 收集真实错误文本样本。
+        // 原 harness 只报「整体失败率 X%」，调试时仍需手动翻 jsonl 找具体错误。
+        // 改为：对每个工具单独统计 calls/errors，失败率 >=30% 或 errors>=3 时单独发 issue，
+        // 并附带最多 3 条去重后的真实错误文本（每条截断 400 字符）。
+        // 与 scan_run.ps1 的 byTool 分析对齐，但提供 Rust 级 API 供程序化使用。
+        let mut by_tool: HashMap<String, ToolErrorStats> = HashMap::new();
+        // 重新遍历 tool result 收集 per-tool 错误（前面循环只累加了总数）
+        for line in &lines {
+            let val: serde_json::Value = match serde_json::from_str(line) {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            if val.get("type").and_then(|v| v.as_str()) != Some("message") {
+                continue;
+            }
+            let msg = match val.get("message") {
+                Some(m) => m,
+                None => continue,
+            };
+            let role = msg.get("role").and_then(|v| v.as_str()).unwrap_or("");
+            if role != "tool" && role != "toolresult" {
+                continue;
+            }
+            let tool_name = msg
+                .get("tool_name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("(unknown)")
+                .to_string();
+            let is_err = msg
+                .get("is_error")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let entry = by_tool.entry(tool_name.clone()).or_default();
+            if is_err {
+                entry.errors += 1;
+                // 收集错误文本样本（去重，最多 3 条，每条截断 400 字符）
+                let raw = msg
+                    .get("content")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .split_whitespace()
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                let truncated = if raw.len() > 400 {
+                    format!("{} ...", &raw[..400])
+                } else {
+                    raw
+                };
+                if !truncated.is_empty() && !entry.error_samples.contains(&truncated) {
+                    if entry.error_samples.len() < 3 {
+                        entry.error_samples.push(truncated);
+                    }
+                }
+            }
+        }
+        // 同时统计每个工具的总调用数（从 call_signatures）
+        for (_, sig) in &call_signatures {
+            let name = sig.split('|').next().unwrap_or("(unknown)").to_string();
+            let entry = by_tool.entry(name).or_default();
+            entry.calls += 1;
+        }
+        // 对失败率高的工具单独发 issue
+        for (tool_name, stats) in &by_tool {
+            if stats.calls == 0 {
+                continue;
+            }
+            let rate = stats.errors as f64 / stats.calls as f64;
+            if rate >= 0.3 || stats.errors >= 3 {
+                let sev = if rate >= 0.5 { "HIGH" } else { "MEDIUM" };
+                let mut detail = format!(
+                    "{} : {}/{} failed ({:.0}%)",
+                    tool_name,
+                    stats.errors,
+                    stats.calls,
+                    rate * 100.0
+                );
+                for (i, sample) in stats.error_samples.iter().enumerate() {
+                    detail.push_str(&format!("\n        why[{}]: {}", i + 1, sample));
+                }
+                if stats.error_samples.len() < stats.errors.min(3) {
+                    detail.push_str(&format!(
+                        "\n        ... and {} more error(s) not shown",
+                        stats.errors - stats.error_samples.len()
+                    ));
+                }
+                issues.push(AnalyzedIssue {
+                    category: "工具失败率高".into(),
+                    severity: sev.into(),
+                    step: None,
+                    detail,
+                    suggested_fix_file: Some("crates/craft-agent-minecraft/src/azalea/".into()),
+                    suggested_fix: Some(format!(
+                        "查看 {} 工具实现：检查超时/寻路/服务端同步问题，或加自愈重试逻辑",
+                        tool_name
+                    )),
+                });
+            }
         }
 
         Ok(AnalysisReport {
