@@ -168,25 +168,28 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
                 .map_err(|e| format!("移动物品后获取背包失败: {e:?}"))?;
             find_hotbar_slot(&inv2, kind)
                 .ok_or_else(|| {
-                    // P12 修复（2026-07-26）：shift_click 后仍未在 hotbar 找到，
-                    // 通常是 hotbar 9 格全满导致 shift_click 无效。
-                    // 列出 hotbar 内容让 LLM 知道该 discard 什么腾出空位。
+                    // P14 修复（2026-07-26）：原代码硬编码 `for s in 0..9usize` 读取 hotbar，
+                    // 但 azalea Player 菜单中 slot 0=craft_result, 1..=4=2×2 grid, 5..=8=盔甲,
+                    // 9..=35=主背包, 36..=44=hotbar。硬编码 0..9 读到的是 craft 网格+盔甲
+                    // （通常全空），导致诊断信息显示"hotbar 全空"但实际 hotbar 可能满。
+                    // 修复：用 menu.hotbar_slots_range() 读取真实 hotbar 范围。
                     let mut hotbar_contents: Vec<String> = Vec::new();
                     if let Some(menu) = inv2.menu().ok().flatten() {
-                        let _range = menu.player_slots_range();
+                        let hotbar_range = menu.hotbar_slots_range();
+                        let hotbar_start = *hotbar_range.start();
                         if let Some(slots) = inv2.slots() {
-                            // hotbar 是 slot 0-8（player inventory 的前 9 格）
-                            for s in 0..9usize {
+                            for s in hotbar_range {
+                                let idx = s - hotbar_start;
                                 if let Some(st) = slots.get(s) {
                                     if !st.is_empty() {
                                         let k = st.kind().to_str();
                                         let bare = k.strip_prefix("minecraft:").unwrap_or(k);
                                         hotbar_contents.push(format!(
-                                            "slot{s}={bare}x{}",
+                                            "slot{idx}={bare}x{}",
                                             st.count()
                                         ));
                                     } else {
-                                        hotbar_contents.push(format!("slot{s}=空"));
+                                        hotbar_contents.push(format!("slot{idx}=空"));
                                     }
                                 }
                             }

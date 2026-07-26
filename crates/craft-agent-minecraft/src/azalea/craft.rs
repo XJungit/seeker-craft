@@ -135,6 +135,28 @@ fn find_source_slot(inv: &ContainerHandleRef, kind: ItemKind) -> Option<usize> {
     None
 }
 
+/// 统计玩家背包（player_slots_range，含 hotbar）里指定物品的总数。
+///
+/// P14 修复（2026-07-26）：P13 引入的产物收集验证用「slot 0 是否为空」判断成功，
+/// 但 azalea 本地乐观更新对 result slot 的 QuickMove 语义不完整——服务端实际已把
+/// 产物给了玩家、消耗了原料，但本地 slot 0 可能仍显示非空（被服务端重新算出 result
+/// 填回，或本地 state 没同步）。导致 P13 验证逻辑误判「shift_click 失败」，
+/// 走兜底 left_click 反而把网格里的原料拿出来污染背包，craft 失败率从 14% 飙到 77%。
+///
+/// 正确做法：**验证背包里产物数量是否增加**（ground truth），而非 slot 0 是否为空。
+fn count_item_in_player_slots(inv: &ContainerHandleRef, kind: ItemKind) -> u32 {
+    let Some(menu) = inv.menu().ok().flatten() else { return 0; };
+    let Some(slots) = inv.slots() else { return 0; };
+    let range = menu.player_slots_range();
+    slots
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| range.contains(i))
+        .filter(|(_, s)| !s.is_empty() && s.kind() == kind)
+        .map(|(_, s)| s.count() as u32)
+        .sum()
+}
+
 /// 在玩家背包**以及合成网格**内找原料槽位。
 ///
 /// P9 修复：`find_source_slot` 只搜 `player_slots_range`，当上一次合成在网格里
@@ -490,54 +512,55 @@ pub async fn do_craft_2x2(bot: &Client, item: &str, count: u32) -> Result<String
             ));
         }
 
-        // 3) 收产物进背包（P13 修复：验证产物真的进了背包，否则假成功）
-        //    原 code 仅 shift_click(0) 后 sleep 150ms 就算成功，但服务端可能因
-        //    state_id 不同步静默拒绝 shift_click，导致结果留在 slot 0、产物 0 入包。
-        //    修复：shift_click 后检查 slot 0 是否已空；不空则尝试 left_click 手动收集；
-        //    仍失败则报错（不再假报成功）。
+        // 3) 收产物进背包（P14 修复：用「背包产物数量增加」判断成功，而非 slot 0 是否为空）
+        //    P13 用 slot 0 是否为空判断，但 azalea 本地乐观更新对 result slot QuickMove
+        //    语义不完整——服务端已给产物、消耗原料，本地 slot 0 可能仍显示非空（被重新
+        //    算出的 result 填回，或 state 没同步）。P13 误判失败 → 走 left_click 兜底
+        //    反而把网格原料拿出污染背包 → craft 失败率从 14% 飙到 77%。
+        //    P14 改用 ground truth：shift_click 前后背包产物数量是否增加。
+        let target_kind = ItemKind::from_str(&normalize_item(item))
+            .map_err(|_| format!("未知目标物品 {item}"))?;
+        let before_count = count_item_in_player_slots(&inv, target_kind);
+
         inv.shift_click(0usize);
         sleep(Duration::from_millis(200)).await;
 
-        let result_taken = inv
-            .slots()
-            .as_ref()
-            .and_then(|s| s.get(0))
-            .map(|s| s.is_empty())
-            .unwrap_or(false);
-        if !result_taken {
-            // 兜底：left_click 拿起结果，再 left_click 空背包槽放下
-            inv.left_click(0usize);
-            sleep(Duration::from_millis(100)).await;
-            if let Some(menu) = inv.menu().ok().flatten() {
-                let player_range = menu.player_slots_range();
-                if let Some(slots_data) = inv.slots() {
-                    for ps in player_range {
-                        let empty = slots_data.get(ps).map(|st| st.is_empty()).unwrap_or(false);
-                        if empty {
-                            inv.left_click(ps);
-                            sleep(Duration::from_millis(100)).await;
-                            break;
-                        }
+        let after_count = count_item_in_player_slots(&inv, target_kind);
+        if after_count > before_count {
+            // 成功：背包产物数量增加
+            crafted += output;
+            continue;
+        }
+
+        // 兜底 1：left_click 拿起 result，再 left_click 空背包槽放下
+        inv.left_click(0usize);
+        sleep(Duration::from_millis(100)).await;
+        if let Some(menu) = inv.menu().ok().flatten() {
+            let player_range = menu.player_slots_range();
+            if let Some(slots_data) = inv.slots() {
+                for ps in player_range {
+                    let empty = slots_data.get(ps).map(|st| st.is_empty()).unwrap_or(false);
+                    if empty {
+                        inv.left_click(ps);
+                        sleep(Duration::from_millis(100)).await;
+                        break;
                     }
                 }
             }
-            // 再次检查
-            let now_taken = inv
-                .slots()
-                .as_ref()
-                .and_then(|s| s.get(0))
-                .map(|s| s.is_empty())
-                .unwrap_or(false);
-            if !now_taken {
-                // 仍失败：清掉网格，返回错误（不再假报成功）
-                let _ = clear_grid(&inv, GRID).await;
-                return Err(format!(
-                    "合成 {item} 失败：产物无法从结果槽移入背包（shift_click 与 left_click 均失败，\
-                     可能服务端 state_id 不同步）。建议：关闭背包再重新打开后重试。"
-                ));
-            }
         }
-        crafted += output;
+        let after_count2 = count_item_in_player_slots(&inv, target_kind);
+        if after_count2 > before_count {
+            crafted += output;
+            continue;
+        }
+
+        // 都失败：清掉网格，返回错误
+        let _ = clear_grid(&inv, GRID).await;
+        return Err(format!(
+            "合成 {item} 失败：产物无法从结果槽移入背包（shift_click 与 left_click 均未让背包产物增加，\
+             before={before_count} after={after_count} after2={after_count2}）。\
+             建议：关闭背包再重新打开后重试。"
+        ));
     }
 
     // 收尾：清掉可能残留的网格与光标，保证下次合成从干净状态开始
@@ -719,48 +742,51 @@ pub async fn do_craft_3x3(
             ));
         }
 
-        // 3) 收产物（P13 修复：验证产物真的进了背包，否则假成功）
+        // 3) 收产物（P14 修复：用「背包产物数量增加」判断成功，而非 slot 0 是否为空）
+        //    P13 用 slot 0 是否为空判断，但 azalea 本地 state 对 result slot QuickMove
+        //    语义不完整——服务端已给产物、消耗原料，本地 slot 0 可能仍显示非空。
+        //    P14 改用 ground truth：shift_click 前后背包产物数量是否增加。
+        let target_kind = ItemKind::from_str(&normalize_item(item))
+            .map_err(|_| format!("未知目标物品 {item}"))?;
+        let before_count = count_item_in_player_slots(&inv, target_kind);
+
         inv.shift_click(0usize);
         sleep(Duration::from_millis(200)).await;
 
-        let result_taken = inv
-            .slots()
-            .as_ref()
-            .and_then(|s| s.get(0))
-            .map(|s| s.is_empty())
-            .unwrap_or(false);
-        if !result_taken {
-            // 兜底：left_click 拿起结果，再 left_click 空背包槽放下
-            inv.left_click(0usize);
-            sleep(Duration::from_millis(100)).await;
-            if let Some(menu) = inv.menu().ok().flatten() {
-                let player_range = menu.player_slots_range();
-                if let Some(slots_data) = inv.slots() {
-                    for ps in player_range {
-                        let empty = slots_data.get(ps).map(|st| st.is_empty()).unwrap_or(false);
-                        if empty {
-                            inv.left_click(ps);
-                            sleep(Duration::from_millis(100)).await;
-                            break;
-                        }
+        let after_count = count_item_in_player_slots(&inv, target_kind);
+        if after_count > before_count {
+            crafted += output;
+            continue;
+        }
+
+        // 兜底 1：left_click 拿起 result，再 left_click 空背包槽放下
+        inv.left_click(0usize);
+        sleep(Duration::from_millis(100)).await;
+        if let Some(menu) = inv.menu().ok().flatten() {
+            let player_range = menu.player_slots_range();
+            if let Some(slots_data) = inv.slots() {
+                for ps in player_range {
+                    let empty = slots_data.get(ps).map(|st| st.is_empty()).unwrap_or(false);
+                    if empty {
+                        inv.left_click(ps);
+                        sleep(Duration::from_millis(100)).await;
+                        break;
                     }
                 }
             }
-            let now_taken = inv
-                .slots()
-                .as_ref()
-                .and_then(|s| s.get(0))
-                .map(|s| s.is_empty())
-                .unwrap_or(false);
-            if !now_taken {
-                let _ = clear_grid(&inv, GRID).await;
-                return Err(format!(
-                    "合成 {item} 失败：产物无法从结果槽移入背包（shift_click 与 left_click 均失败，\
-                     可能服务端 state_id 不同步）。建议：关闭工作台再重新打开后重试。"
-                ));
-            }
         }
-        crafted += output;
+        let after_count2 = count_item_in_player_slots(&inv, target_kind);
+        if after_count2 > before_count {
+            crafted += output;
+            continue;
+        }
+
+        let _ = clear_grid(&inv, GRID).await;
+        return Err(format!(
+            "合成 {item} 失败：产物无法从结果槽移入背包（shift_click 与 left_click 均未让背包产物增加，\
+             before={before_count} after={after_count} after2={after_count2}）。\
+             建议：关闭工作台再重新打开后重试。"
+        ));
     }
 
     clear_cursor(&inv).await;
