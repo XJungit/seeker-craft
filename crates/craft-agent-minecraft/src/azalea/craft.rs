@@ -14,6 +14,7 @@
 use azalea::container::ContainerHandleRef;
 use azalea::inventory::operations::PickupClick;
 use azalea::prelude::*;
+use azalea::BlockPos;
 use azalea_registry::builtin::ItemKind;
 use std::str::FromStr;
 use std::time::Duration;
@@ -101,6 +102,180 @@ fn find_source_slot(inv: &ContainerHandleRef, kind: ItemKind) -> Option<usize> {
     None
 }
 
+/// 在玩家背包**以及合成网格**内找原料槽位。
+///
+/// P9 修复：`find_source_slot` 只搜 `player_slots_range`，当上一次合成在网格里
+/// 留了残料时找不到它，会误报「背包缺少原料 X」并触发多余的自动合成。
+/// 这里先搜玩家背包（优先用背包里的整堆），再兜底搜网格槽（1..=9）。
+fn find_ingredient_slot(
+    inv: &ContainerHandleRef,
+    kind: ItemKind,
+    grid_slots: std::ops::RangeInclusive<usize>,
+) -> Option<usize> {
+    if let Some(s) = find_source_slot(inv, kind) {
+        return Some(s);
+    }
+    // 兜底：网格里可能有上次残留的同种原料
+    let slots = inv.slots()?;
+    for s in grid_slots {
+        if let Some(stack) = slots.get(s) {
+            if !stack.is_empty() && stack.kind() == kind {
+                return Some(s);
+            }
+        }
+    }
+    None
+}
+
+/// 清空合成网格里的残留物品（回背包）。返回是否已全部清空。
+///
+/// P9 修复：残留物品会污染下一次合成——服务端按「网格现有内容」匹配配方，
+/// 多出来的格子会让配方不匹配，表现为「网格未产生结果」。
+///
+/// 两种方式依次尝试：
+/// 1. `shift_click`（QuickMove）——Minecraft 标准的从网格回背包方式；
+/// 2. `left_click` 拿起 + `left_click` 空背包槽放下——shift_click 对合成网格
+///    偶尔无效时的兜底。
+async fn clear_grid(inv: &ContainerHandleRef, slots: std::ops::RangeInclusive<usize>) -> bool {
+    let mut all_clear = true;
+    for s in slots {
+        let non_empty = inv
+            .slots()
+            .as_ref()
+            .and_then(|all| all.get(s))
+            .map(|st| !st.is_empty())
+            .unwrap_or(false);
+        if !non_empty {
+            continue;
+        }
+        inv.shift_click(s);
+        sleep(Duration::from_millis(80)).await;
+        let still_non_empty = inv
+            .slots()
+            .as_ref()
+            .and_then(|all| all.get(s))
+            .map(|st| !st.is_empty())
+            .unwrap_or(false);
+        if !still_non_empty {
+            continue;
+        }
+        // 兜底：手动拿起再放到第一个空背包槽
+        inv.left_click(s);
+        sleep(Duration::from_millis(80)).await;
+        if let Some(menu) = inv.menu().ok().flatten() {
+            let player_range = menu.player_slots_range();
+            if let Some(slots_data) = inv.slots() {
+                for ps in player_range {
+                    let empty = slots_data.get(ps).map(|st| st.is_empty()).unwrap_or(false);
+                    if empty {
+                        inv.left_click(ps);
+                        sleep(Duration::from_millis(80)).await;
+                        break;
+                    }
+                }
+            }
+        }
+        let still_non_empty = inv
+            .slots()
+            .as_ref()
+            .and_then(|all| all.get(s))
+            .map(|st| !st.is_empty())
+            .unwrap_or(false);
+        if still_non_empty {
+            all_clear = false;
+        }
+    }
+    all_clear
+}
+
+/// 把光标上可能残留的物品放回背包。
+///
+/// `place_one` 是「拿起→放下→放回」三步，中途失败会让物品留在光标上，
+/// 污染后续所有点击（服务端认为手里有东西）。azalea 没有查询光标的 API，
+/// 因此用 left_click 一个空背包槽来尝试放下（光标为空时是安全的 no-op）。
+async fn clear_cursor(inv: &ContainerHandleRef) {
+    for s in 9..=35usize {
+        let empty = inv
+            .slots()
+            .as_ref()
+            .and_then(|all| all.get(s))
+            .map(|st| st.is_empty())
+            .unwrap_or(false);
+        if empty {
+            inv.left_click(s);
+            sleep(Duration::from_millis(80)).await;
+            return;
+        }
+    }
+}
+
+/// 从 src 槽取 **1 个** 物品放到 dst 槽。
+///
+/// 三步：`left_click(src)` 拿起整堆 → `right_click(dst)` 放 1 个 → `left_click(src)` 放回剩余。
+///
+/// P8 修复：不能用 `shift_click`/`move_stack` 填网格——前者由服务端决定去哪一格
+/// （不按配方形状），后者会把整堆塞进一格，导致同种原料的其他格找不到料，
+/// 表现为 furnace/chest/工具类（镐斧剑）3×3 合成全部失败。
+///
+/// P10 修复：每个 click 间隔 80ms（>1 server tick=50ms）。azalea 的 `click()` 是
+/// fire-and-forget，且服务端用 `state_id` 做 desync 检测；20ms 间隔连发三个 click
+/// 会让后续 click 带着过期 state_id 被服务端静默拒绝，表现为 stone_pickaxe 配方
+/// 的 slot5（中中）总是空的。完成后校验 dst 槽，失败则退避重试最多 3 次。
+async fn place_one(inv: &ContainerHandleRef, src: usize, dst: usize) {
+    for attempt in 0..3u8 {
+        let expected_kind = inv
+            .slots()
+            .as_ref()
+            .and_then(|s| s.get(src))
+            .filter(|st| !st.is_empty())
+            .map(|st| st.kind());
+
+        inv.left_click(src);
+        sleep(Duration::from_millis(80)).await;
+        inv.right_click(dst);
+        sleep(Duration::from_millis(80)).await;
+        inv.left_click(src);
+        sleep(Duration::from_millis(80)).await;
+
+        let dst_ok = inv
+            .slots()
+            .as_ref()
+            .and_then(|s| s.get(dst))
+            .map(|st| {
+                if st.is_empty() {
+                    false
+                } else if let Some(k) = expected_kind {
+                    st.kind() == k
+                } else {
+                    true
+                }
+            })
+            .unwrap_or(false);
+        if dst_ok {
+            return;
+        }
+
+        let wait_ms = 100u64 * (attempt as u64 + 1);
+        eprintln!(
+            "[place_one] attempt {} failed: src={src}, dst={dst}（dst 空或物品不对），{wait_ms}ms 后重试",
+            attempt + 1
+        );
+        sleep(Duration::from_millis(wait_ms)).await;
+
+        let src_has_item = inv
+            .slots()
+            .as_ref()
+            .and_then(|s| s.get(src))
+            .map(|st| !st.is_empty())
+            .unwrap_or(false);
+        if !src_has_item {
+            eprintln!("[place_one] src={src} 已空，无法重试");
+            return;
+        }
+    }
+    eprintln!("[place_one] 警告：3 次尝试后仍未能把物品放入 dst={dst}（src={src}）");
+}
+
 /// 执行 2×2 合成。返回人类可读结果串（供 tool / 日志使用）。
 pub async fn do_craft_2x2(bot: &Client, item: &str, count: u32) -> Result<String, String> {
     let plan = lookup_recipe(item).ok_or_else(|| {
@@ -117,39 +292,91 @@ pub async fn do_craft_2x2(bot: &Client, item: &str, count: u32) -> Result<String
     let crafts_needed = (count.max(1) + output - 1) / output;
     let mut crafted = 0u32;
 
-    for _ in 0..crafts_needed {
-        // 1) 把每种原料 shift_click 进网格（服务端按配方填充所需数量）
-        for (kind, _amt) in &plan.ingredients {
-            let src = find_source_slot(&inv, *kind).ok_or_else(|| {
-                format!("背包缺少原料 {}", kind.to_str())
-            })?;
-            inv.shift_click(src);
-            // 让服务端处理点击并回填网格
-            sleep(Duration::from_millis(40)).await;
-        }
-        // 让服务端计算合成结果（slot 0）
-        sleep(Duration::from_millis(80)).await;
+    // Player 菜单的 2×2 合成网格是 slot 1..=4（slot 0 是结果槽）。
+    const GRID: std::ops::RangeInclusive<usize> = 1..=4;
 
-        // 2) 检查结果槽是否有产物
-        let has_result = {
-            let slots = inv.slots();
-            slots
-                .as_ref()
-                .and_then(|slots| slots.get(0))
-                .map(|s| !s.is_empty())
-                .unwrap_or(false)
-        };
-        if !has_result {
+    for round in 0..crafts_needed {
+        // 0) 清空上一轮/上一次合成的网格残留，否则服务端按「网格现有内容」
+        //    匹配配方时会因多出的格子而不匹配（表现为「网格未产生结果」）。
+        clear_cursor(&inv).await;
+        if !clear_grid(&inv, GRID).await {
             return Err(format!(
-                "合成 {item} 失败：网格未产生结果（原料可能不足或配方不匹配）"
+                "合成 {item} 失败：无法清空 2×2 网格残留（第 {} 轮）。建议先关闭再重开容器。",
+                round + 1
+            ));
+        }
+
+        // 1) 按配方逐格放料，每格 1 个。
+        //    P8：不能用 shift_click——服务端自行决定落到哪一格，不按配方形状；
+        //    也不能整堆塞一格，否则同种原料的其他格找不到料。
+        let mut grid_slot = *GRID.start();
+        for (kind, amt) in &plan.ingredients {
+            for _ in 0..*amt {
+                if grid_slot > *GRID.end() {
+                    return Err(format!(
+                        "合成 {item} 失败：配方需要的格子数超过 2×2 网格容量"
+                    ));
+                }
+                let src = find_ingredient_slot(&inv, *kind, GRID)
+                    .ok_or_else(|| format!("背包缺少原料 {}", kind.to_str()))?;
+                place_one(&inv, src, grid_slot).await;
+                grid_slot += 1;
+            }
+        }
+
+        // 2) 等服务端算出结果并检查结果槽（最多等 2s）
+        let mut has_result = false;
+        for _ in 0..20 {
+            sleep(Duration::from_millis(100)).await;
+            let r = inv
+                .slots()
+                .as_ref()
+                .and_then(|s| s.get(0))
+                .map(|s| !s.is_empty())
+                .unwrap_or(false);
+            if r {
+                has_result = true;
+                break;
+            }
+        }
+        if !has_result {
+            let diag = inv
+                .slots()
+                .map(|s| {
+                    s.iter()
+                        .take(5)
+                        .enumerate()
+                        .map(|(i, st)| {
+                            format!(
+                                "slot{i}={}",
+                                if st.is_empty() {
+                                    "空".to_string()
+                                } else {
+                                    format!("{}x{}", st.kind().to_str(), st.count())
+                                }
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_else(|| "无法读取 slots".to_string());
+            // 失败也要清网格，否则残料会污染下一次合成
+            let _ = clear_grid(&inv, GRID).await;
+            return Err(format!(
+                "合成 {item} 失败：网格未产生结果（等待 2s slot 0 仍空）。网格状态: [{diag}]。\
+                 可能原因：原料类型/位置不对、原料不足、或服务端回包延迟"
             ));
         }
 
         // 3) 收产物进背包
         inv.shift_click(0usize);
-        sleep(Duration::from_millis(40)).await;
+        sleep(Duration::from_millis(150)).await;
         crafted += output;
     }
+
+    // 收尾：清掉可能残留的网格与光标，保证下次合成从干净状态开始
+    clear_cursor(&inv).await;
+    let _ = clear_grid(&inv, GRID).await;
 
     Ok(format!(
         "合成 {item} x{count} 完成（实际产出约 {crafted}，共 {crafts_needed} 次）"
@@ -183,24 +410,31 @@ const SHAPED_RECIPES: &[(&'static str, ShapedRecipe)] = &[
     ("oak_door", ShapedRecipe { cells: &[(1,"oak_planks"),(2,"oak_planks"),(4,"oak_planks"),(5,"oak_planks"),(7,"oak_planks"),(8,"oak_planks")], output_per_craft: 3 }),
     // 栅栏：上下木板 + 中间棍
     ("oak_fence", ShapedRecipe { cells: &[(1,"oak_planks"),(2,"oak_planks"),(4,"stick"),(5,"stick"),(7,"oak_planks"),(8,"oak_planks")], output_per_craft: 3 }),
-    // 工具：木镐
-    ("wooden_pickaxe", ShapedRecipe { cells: &[(1,"oak_planks"),(3,"oak_planks"),(4,"oak_planks"),(5,"stick"),(7,"stick")], output_per_craft: 1 }),
-    ("wooden_axe", ShapedRecipe { cells: &[(1,"oak_planks"),(2,"oak_planks"),(4,"oak_planks"),(5,"stick"),(7,"stick")], output_per_craft: 1 }),
+    // 工具类的 vanilla 形状（3×3 网格编号：1 2 3 / 4 5 6 / 7 8 9）
+    //   镐  XXX / .S. / .S.  → 头部占 1,2,3；柄占 5,8
+    //   斧  XX. / XS. / .S.  → 头部占 1,2,4；柄占 5,8
+    //   剑  .X. / .X. / .S.  → 刃占 2,5；柄占 8
+    //   锹  .X. / .S. / .S.  → 头占 2；柄占 5,8
+    //   锄  XX. / .S. / .S.  → 头占 1,2；柄占 5,8
+    // 旧版把柄写成 5,7（锄写成 4,7）——柄不在同一竖列，服务端配方匹配失败，
+    // 是「网格未产生结果」的一个独立成因。
+    ("wooden_pickaxe", ShapedRecipe { cells: &[(1,"oak_planks"),(2,"oak_planks"),(3,"oak_planks"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
+    ("wooden_axe", ShapedRecipe { cells: &[(1,"oak_planks"),(2,"oak_planks"),(4,"oak_planks"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
     ("wooden_sword", ShapedRecipe { cells: &[(2,"oak_planks"),(5,"oak_planks"),(8,"stick")], output_per_craft: 1 }),
     ("wooden_shovel", ShapedRecipe { cells: &[(2,"oak_planks"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
-    ("wooden_hoe", ShapedRecipe { cells: &[(1,"oak_planks"),(2,"oak_planks"),(4,"stick"),(7,"stick")], output_per_craft: 1 }),
+    ("wooden_hoe", ShapedRecipe { cells: &[(1,"oak_planks"),(2,"oak_planks"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
     // 石制工具（用 cobblestone 代替木板）
-    ("stone_pickaxe", ShapedRecipe { cells: &[(1,"cobblestone"),(3,"cobblestone"),(4,"cobblestone"),(5,"stick"),(7,"stick")], output_per_craft: 1 }),
-    ("stone_axe", ShapedRecipe { cells: &[(1,"cobblestone"),(2,"cobblestone"),(4,"cobblestone"),(5,"stick"),(7,"stick")], output_per_craft: 1 }),
+    ("stone_pickaxe", ShapedRecipe { cells: &[(1,"cobblestone"),(2,"cobblestone"),(3,"cobblestone"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
+    ("stone_axe", ShapedRecipe { cells: &[(1,"cobblestone"),(2,"cobblestone"),(4,"cobblestone"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
     ("stone_sword", ShapedRecipe { cells: &[(2,"cobblestone"),(5,"cobblestone"),(8,"stick")], output_per_craft: 1 }),
     ("stone_shovel", ShapedRecipe { cells: &[(2,"cobblestone"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
-    ("stone_hoe", ShapedRecipe { cells: &[(1,"cobblestone"),(2,"cobblestone"),(4,"stick"),(7,"stick")], output_per_craft: 1 }),
+    ("stone_hoe", ShapedRecipe { cells: &[(1,"cobblestone"),(2,"cobblestone"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
     // 铁制工具（需先熔炼 iron_ingot）
-    ("iron_pickaxe", ShapedRecipe { cells: &[(1,"iron_ingot"),(3,"iron_ingot"),(4,"iron_ingot"),(5,"stick"),(7,"stick")], output_per_craft: 1 }),
-    ("iron_axe", ShapedRecipe { cells: &[(1,"iron_ingot"),(2,"iron_ingot"),(4,"iron_ingot"),(5,"stick"),(7,"stick")], output_per_craft: 1 }),
+    ("iron_pickaxe", ShapedRecipe { cells: &[(1,"iron_ingot"),(2,"iron_ingot"),(3,"iron_ingot"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
+    ("iron_axe", ShapedRecipe { cells: &[(1,"iron_ingot"),(2,"iron_ingot"),(4,"iron_ingot"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
     ("iron_sword", ShapedRecipe { cells: &[(2,"iron_ingot"),(5,"iron_ingot"),(8,"stick")], output_per_craft: 1 }),
     ("iron_shovel", ShapedRecipe { cells: &[(2,"iron_ingot"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
-    ("iron_hoe", ShapedRecipe { cells: &[(1,"iron_ingot"),(2,"iron_ingot"),(4,"stick"),(7,"stick")], output_per_craft: 1 }),
+    ("iron_hoe", ShapedRecipe { cells: &[(1,"iron_ingot"),(2,"iron_ingot"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
     // 铁盔甲
     ("iron_helmet", ShapedRecipe { cells: &[(1,"iron_ingot"),(2,"iron_ingot"),(3,"iron_ingot"),(4,"iron_ingot"),(6,"iron_ingot")], output_per_craft: 1 }),
     ("iron_chestplate", ShapedRecipe { cells: &[(1,"iron_ingot"),(3,"iron_ingot"),(4,"iron_ingot"),(5,"iron_ingot"),(6,"iron_ingot"),(7,"iron_ingot"),(8,"iron_ingot"),(9,"iron_ingot")], output_per_craft: 1 }),
@@ -219,44 +453,111 @@ fn lookup_shaped(item: &str) -> Option<ShapedRecipe> {
         })
 }
 
-pub async fn do_craft_3x3(bot: &Client, item: &str, count: u32) -> Result<String, String> {
-    let recipe = lookup_shaped(item).ok_or_else(|| {
-        format!("不支持的 3×3 合成目标 {item}（需先打开工作台）")
-    })?;
+/// 3×3 工作台合成。**要求调用方已打开工作台**（Crafting 菜单）。
+///
+/// 调用方（`BotCommand::Craft3x3` 处理分支）负责整个「确保桌开 → 合成 → 关桌」
+/// 流程：先 [`crate::azalea::table_flow::ensure_table_open`]（背包无桌时会自动
+/// 合成并放置一个），再调用本函数，最后 `close_container_if_open`。
+///
+/// `table_pos` 是 `ensure_table_open` 返回的实际桌位，仅用于日志/错误信息定位；
+/// 合成本身只操作当前已打开的容器菜单。
+///
+/// 网格槽位：0=结果，1..=9=3×3 网格（1=左上、2=中上、3=右上、4=左中、5=正中、
+/// 6=右中、7=左下、8=中下、9=右下）。
+pub async fn do_craft_3x3(
+    bot: &Client,
+    item: &str,
+    count: u32,
+    table_pos: Option<BlockPos>,
+) -> Result<String, String> {
+    let recipe = lookup_shaped(item)
+        .ok_or_else(|| format!("不支持的 3×3 合成目标 {item}（需先打开工作台）"))?;
 
-    let inv = bot
-        .get_inventory()
-        .map_err(|e| format!("获取容器失败（确认已打开工作台）: {e:?}"))?;
+    let inv = bot.get_inventory().map_err(|e| {
+        let at = table_pos
+            .map(|p| format!("（桌位 ({},{},{})）", p.x, p.y, p.z))
+            .unwrap_or_default();
+        format!("获取容器失败{at}（确认已打开工作台）: {e:?}")
+    })?;
 
     let output = recipe.output_per_craft;
     let crafts_needed = (count.max(1) + output - 1) / output;
     let mut crafted = 0u32;
 
-    for _ in 0..crafts_needed {
-        // 按形状把每种原料摆进对应网格槽
+    // 工作台菜单：slot 0 = 结果，1..=9 = 3×3 网格
+    const GRID: std::ops::RangeInclusive<usize> = 1..=9;
+
+    for round in 0..crafts_needed {
+        // 0) 清网格 + 清光标（P9：残留物品会让服务端配方匹配失败）
+        clear_cursor(&inv).await;
+        if !clear_grid(&inv, GRID).await {
+            return Err(format!(
+                "合成 {item} 失败：无法清空 3×3 网格残留（第 {} 轮）。\
+                 建议关闭工作台再重新打开后重试。",
+                round + 1
+            ));
+        }
+
+        // 1) 按 vanilla 形状逐格放料，每格 1 个（P8：不能 shift_click / 不能整堆塞一格）
         for &(g, ing_id) in recipe.cells {
             let ing_kind = ItemKind::from_str(&normalize_item(ing_id))
                 .map_err(|_| format!("未知原料 {ing_id}"))?;
-            let src = find_source_slot(&inv, ing_kind)
-                .ok_or_else(|| format!("背包缺少原料 {}", ing_id))?;
-            move_stack(&inv, src, g).await;
+            let src = find_ingredient_slot(&inv, ing_kind, GRID)
+                .ok_or_else(|| format!("背包缺少原料 {ing_id}"))?;
+            place_one(&inv, src, g).await;
         }
-        sleep(Duration::from_millis(80)).await;
-        let has_result = {
-            let slots = inv.slots();
-            slots
+
+        // 2) 等服务端算出结果（最多 2s）
+        let mut has_result = false;
+        for _ in 0..20 {
+            sleep(Duration::from_millis(100)).await;
+            let r = inv
+                .slots()
                 .as_ref()
                 .and_then(|s| s.get(0))
                 .map(|s| !s.is_empty())
-                .unwrap_or(false)
-        };
-        if !has_result {
-            return Err(format!("合成 {item} 失败：网格未产生结果（原料可能不足）"));
+                .unwrap_or(false);
+            if r {
+                has_result = true;
+                break;
+            }
         }
+        if !has_result {
+            let diag = inv
+                .slots()
+                .map(|s| {
+                    s.iter()
+                        .take(10)
+                        .enumerate()
+                        .map(|(i, st)| {
+                            format!(
+                                "slot{i}={}",
+                                if st.is_empty() {
+                                    "空".to_string()
+                                } else {
+                                    format!("{}x{}", st.kind().to_str(), st.count())
+                                }
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_else(|| "无法读取 slots".to_string());
+            let _ = clear_grid(&inv, GRID).await;
+            return Err(format!(
+                "合成 {item} 失败：网格未产生结果（等待 2s slot 0 仍空）。网格状态: [{diag}]。\
+                 可能原因：原料类型/位置不对、原料不足、服务端配方未注册、或回包延迟"
+            ));
+        }
+
+        // 3) 收产物
         inv.shift_click(0usize);
-        sleep(Duration::from_millis(40)).await;
+        sleep(Duration::from_millis(150)).await;
         crafted += output;
     }
+
+    clear_cursor(&inv).await;
+    let _ = clear_grid(&inv, GRID).await;
 
     Ok(format!(
         "3×3 合成 {item} x{count} 完成（约 {crafted}，共 {crafts_needed} 次）"
@@ -313,26 +614,55 @@ pub async fn do_craft_3x3_recipe(
     let crafts_needed = count.max(1);
     let mut crafted = 0u32;
 
-    for _ in 0..crafts_needed {
-        for &(g, k) in &grid_items {
-            let src = find_source_slot(&inv, k)
-                .ok_or_else(|| format!("背包缺少原料 {:?}", k))?;
-            move_stack(&inv, src, g).await;
+    // 工作台菜单：slot 0 = 结果，1..=9 = 3×3 网格
+    const GRID: std::ops::RangeInclusive<usize> = 1..=9;
+
+    for round in 0..crafts_needed {
+        // P9：先清网格与光标，残留会让服务端配方匹配失败
+        clear_cursor(&inv).await;
+        if !clear_grid(&inv, GRID).await {
+            return Err(format!(
+                "配方书合成失败：无法清空 3×3 网格残留（第 {} 轮）",
+                round + 1
+            ));
         }
-        sleep(Duration::from_millis(80)).await;
-        let has_result = inv
-            .slots()
-            .as_ref()
-            .and_then(|s| s.get(0))
-            .map(|s| !s.is_empty())
-            .unwrap_or(false);
+
+        // P8：逐格放 1 个（shift_click 不按形状、整堆塞一格会让其他格缺料）
+        for &(g, k) in &grid_items {
+            let src = find_ingredient_slot(&inv, k, GRID)
+                .ok_or_else(|| format!("背包缺少原料 {k:?}"))?;
+            place_one(&inv, src, g).await;
+        }
+
+        // 等服务端算结果（最多 2s）
+        let mut has_result = false;
+        for _ in 0..20 {
+            sleep(Duration::from_millis(100)).await;
+            let r = inv
+                .slots()
+                .as_ref()
+                .and_then(|s| s.get(0))
+                .map(|s| !s.is_empty())
+                .unwrap_or(false);
+            if r {
+                has_result = true;
+                break;
+            }
+        }
         if !has_result {
-            return Err("配方书合成失败：网格未产生结果（原料可能不足）".to_string());
+            let _ = clear_grid(&inv, GRID).await;
+            return Err(
+                "配方书合成失败：网格未产生结果（等待 2s slot 0 仍空，原料可能不足或形状不匹配）"
+                    .to_string(),
+            );
         }
         inv.shift_click(0usize);
-        sleep(Duration::from_millis(40)).await;
+        sleep(Duration::from_millis(150)).await;
         crafted += 1;
     }
+
+    clear_cursor(&inv).await;
+    let _ = clear_grid(&inv, GRID).await;
 
     Ok(format!(
         "3×3 合成（配方书 {label}）x{count} 完成（约 {crafted} 次）"
@@ -490,21 +820,59 @@ pub async fn do_smelt(
             .ok_or_else(|| format!("背包缺少燃料 {fuel}"))?;
         move_stack(&inv, src_in, 0).await; // 输入槽
         move_stack(&inv, src_fuel, 1).await; // 燃料槽
-        // 等待熔炼完成（粗略等待；实际可轮询结果槽）
-        sleep(Duration::from_millis(1200)).await;
-        let has_result = {
-            let slots = inv.slots();
-            slots
+
+        // P10 修复：vanilla 单次熔炼需 200 ticks = 10s（燃料点燃还有额外延迟），
+        // 原来只等 1.2s，结果槽必然是空的 → smelt 稳定失败（实测 80% 失败率）。
+        // 改为轮询结果槽最多 30s，一有产物立刻继续，不必等满。
+        let mut has_result = false;
+        for _ in 0..300 {
+            sleep(Duration::from_millis(100)).await;
+            let r = inv
+                .slots()
                 .as_ref()
                 .and_then(|s| s.get(2))
                 .map(|s| !s.is_empty())
-                .unwrap_or(false)
-        };
-        if !has_result {
-            return Err(format!("熔炼 {output} 失败：结果槽无产物（输入/燃料不足或未完成）"));
+                .unwrap_or(false);
+            if r {
+                has_result = true;
+                break;
+            }
         }
+        if !has_result {
+            let diag = inv
+                .slots()
+                .map(|s| {
+                    s.iter()
+                        .take(3)
+                        .enumerate()
+                        .map(|(i, st)| {
+                            let name = match i {
+                                0 => "输入",
+                                1 => "燃料",
+                                _ => "产物",
+                            };
+                            format!(
+                                "{name}={}",
+                                if st.is_empty() {
+                                    "空".to_string()
+                                } else {
+                                    format!("{}x{}", st.kind().to_str(), st.count())
+                                }
+                            )
+                        })
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_else(|| "无法读取 slots".to_string());
+            return Err(format!(
+                "熔炼 {output} 失败：等待 30s 后结果槽仍无产物。熔炉状态: [{diag}]。\
+                 可能原因：燃料不足（1 煤=8 次熔炼）、输入物品不可熔炼、或打开的不是熔炉"
+            ));
+        }
+
+        // 取产物：shift_click 后要给服务端时间回包，否则下一轮读到的还是旧状态
         inv.shift_click(2usize);
-        sleep(Duration::from_millis(40)).await;
+        sleep(Duration::from_millis(150)).await;
         smelted += output_per;
     }
 

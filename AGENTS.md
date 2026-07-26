@@ -422,6 +422,67 @@ git branch -vv
 ❌ 不要提交 .env / credentials.json 等敏感文件
 ```
 
+### 8.1 破坏性 git 操作红线（2026-07-26 事故教训）
+
+**本项目大量修复长期以未提交的工作区改动形式存在。任何会覆盖工作区的 git 命令都可能永久销毁数小时的成果。**
+
+真实事故：为回退一处试验性改动执行了
+`git checkout -- crates/craft-agent-minecraft/src/azalea/craft.rs`，
+把 P8/P9/P10/P11 四轮已验证修复（`place_one` 逐格放料、`clear_grid` 网格清理、
+`clear_cursor` 光标清理、`find_ingredient_slot` 网格兜底搜索、`table_pos` 自动放桌、
+`do_smelt` 超时延长）全部冲掉，只剩数月前的旧版本，被迫手工重建。
+
+```
+❌ 绝对禁止（未经用户明确同意）
+   git checkout -- <file>        # 静默覆盖工作区，无法撤销
+   git checkout .                # 同上，范围更大
+   git restore <file>            # 同上
+   git reset --hard              # 丢弃工作区 + 暂存区
+   git clean -fd                 # 删除未跟踪文件
+   git stash（不加 pop 计划）      # 改动被藏起来，后续容易忘记恢复
+
+✅ 正确做法
+   1. 想回退自己刚做的改动 → 用 SearchReplace 反向编辑，把代码改回去。
+      这是唯一安全的方式：可见、可逐条确认、不影响同文件其他改动。
+   2. 动手做任何有风险的试验前 → 先建立恢复点：
+      git add -A && git commit --no-verify -m "wip: checkpoint before <试验内容>"
+   3. 必须用 git 回退时 → 先确认该文件没有其他未提交的有价值改动：
+      git diff --stat <file>      # 看改动量
+      git diff <file>             # 逐行确认要丢什么
+      再向用户说明将丢失什么，取得同意后执行。
+```
+
+**判断准则：** `git status` 里带 `M` 的文件，其改动可能是数小时的工作成果且从未提交。
+在对它执行任何覆盖类命令前，默认假设「这些改动很宝贵且无法恢复」。
+
+**另一条相关教训：** 不要用 PowerShell 管道改写配置文件
+（`(Get-Content x) -replace ... | Set-Content x`）——本次事故中它把
+`.cargo/config.toml` 和 `Cargo.toml` 截断成 1 行。改配置一律用 SearchReplace/Write 工具。
+
+### 8.2 魔改 vendor/azalea 的正确姿势（同日踩坑记录）
+
+vendor/azalea 是**独立 git 仓库 + 独立 cargo workspace**，改它有三个硬约束：
+
+1. **必须用 git 源 patch，不能用 path patch。** vendor 子 crate 的 manifest 里有
+   `azalea-auth.workspace = true` 这类 workspace 继承声明；path patch 会脱离 vendor
+   的 workspace 上下文，报 `dependency.azalea-auth was not found in workspace.dependencies`。
+2. **`[patch]` 的 rev 必须与 `crates/craft-agent-minecraft/Cargo.toml` 声明的 rev 完全一致。**
+   一旦为了带上本地 commit 而只改 patch 的 rev，patch 就不再匹配该依赖，
+   cargo 会回退去 github 抓那个 rev —— 离线环境直接失败。
+3. **cargo 按 rev 取快照，vendor 工作区未提交的改动不可见。** 改完必须 commit，
+   否则编译用的还是旧代码（会出现「明明加了方法却报 method not found」）。
+
+所以改 vendor 的完整流程是：改代码 → 在 vendor 里 commit → 拿到新 SHA →
+**同时**更新 `.cargo/config.toml` 与 `craft-agent-minecraft/Cargo.toml` 两处 rev →
+清 cargo git 缓存（`Remove-Item -Recurse "$env:USERPROFILE\.cargo\git\{db,checkouts}\azalea-*"`）
+→ 重新编译验证。
+
+**更重要的判断：改 vendor 之前先想清楚能否在上层解决。** 本次想暴露
+`ContainerHandleRef::state_id`，其实上层用
+`bot.get_component::<azalea::inventory::Inventory>().map(|i| i.state_id)`
+就能读到（`Inventory` 与 `state_id` 都是 pub），完全不必碰 vendor。
+优先选不动 vendor 的方案，能省掉上面整套 rev 同步的复杂度与风险。
+
 ---
 
 ## 九、与 Mindcraft 的关键差异
