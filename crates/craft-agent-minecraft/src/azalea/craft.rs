@@ -319,9 +319,39 @@ pub async fn do_craft_2x2(bot: &Client, item: &str, count: u32) -> Result<String
     // Player 菜单的 2×2 合成网格是 slot 1..=4（slot 0 是结果槽）。
     const GRID: std::ops::RangeInclusive<usize> = 1..=4;
 
+    // P13 修复（2026-07-26）：若容器（工作台/熔炉/箱子）还开着，2×2 网格槽位 1..=4
+    // 实际指向的是容器内的格子（不是玩家 2×2 网格），所有 click 都打到错误位置，
+    // place_one 误判成功（dst 看起来有东西，其实是容器槽的旧数据），最后 shift_click(0)
+    // 把容器内的物品移走，导致「合成报告成功但背包没东西」的假成功。
+    // 修复：开工前强制关闭任何已打开的容器，等菜单变回 Player 再继续。
+    if crate::azalea::table_flow::is_container_open(bot) {
+        crate::azalea::table_flow::close_container_if_open(bot);
+        // 等菜单变回 Player（最多 1s）
+        for _ in 0..10 {
+            sleep(Duration::from_millis(100)).await;
+            if let Ok(inv) = bot.get_inventory() {
+                if let Ok(Some(menu)) = inv.menu() {
+                    if matches!(menu, azalea::inventory::Menu::Player(_)) {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     let inv = bot
         .get_inventory()
         .map_err(|e| format!("获取背包失败: {e:?}"))?;
+
+    // 二次确认：菜单必须是 Player（2×2 网格只在此菜单下有效）
+    if let Ok(Some(menu)) = inv.menu() {
+        if !matches!(menu, azalea::inventory::Menu::Player(_)) {
+            return Err(format!(
+                "合成 {item} 失败：当前打开的不是玩家背包（2×2 网格不可用）。\
+                 请先关闭已打开的容器再调用 craft。"
+            ));
+        }
+    }
 
     // 决定 placement：[(slot, ItemKind)] 列表 + output_per_craft
     // 优先级：SHAPED_2X2 候选（含 coal/charcoal 多变体）> 顺序填充（lookup_recipe）
@@ -460,9 +490,53 @@ pub async fn do_craft_2x2(bot: &Client, item: &str, count: u32) -> Result<String
             ));
         }
 
-        // 3) 收产物进背包
+        // 3) 收产物进背包（P13 修复：验证产物真的进了背包，否则假成功）
+        //    原 code 仅 shift_click(0) 后 sleep 150ms 就算成功，但服务端可能因
+        //    state_id 不同步静默拒绝 shift_click，导致结果留在 slot 0、产物 0 入包。
+        //    修复：shift_click 后检查 slot 0 是否已空；不空则尝试 left_click 手动收集；
+        //    仍失败则报错（不再假报成功）。
         inv.shift_click(0usize);
-        sleep(Duration::from_millis(150)).await;
+        sleep(Duration::from_millis(200)).await;
+
+        let result_taken = inv
+            .slots()
+            .as_ref()
+            .and_then(|s| s.get(0))
+            .map(|s| s.is_empty())
+            .unwrap_or(false);
+        if !result_taken {
+            // 兜底：left_click 拿起结果，再 left_click 空背包槽放下
+            inv.left_click(0usize);
+            sleep(Duration::from_millis(100)).await;
+            if let Some(menu) = inv.menu().ok().flatten() {
+                let player_range = menu.player_slots_range();
+                if let Some(slots_data) = inv.slots() {
+                    for ps in player_range {
+                        let empty = slots_data.get(ps).map(|st| st.is_empty()).unwrap_or(false);
+                        if empty {
+                            inv.left_click(ps);
+                            sleep(Duration::from_millis(100)).await;
+                            break;
+                        }
+                    }
+                }
+            }
+            // 再次检查
+            let now_taken = inv
+                .slots()
+                .as_ref()
+                .and_then(|s| s.get(0))
+                .map(|s| s.is_empty())
+                .unwrap_or(false);
+            if !now_taken {
+                // 仍失败：清掉网格，返回错误（不再假报成功）
+                let _ = clear_grid(&inv, GRID).await;
+                return Err(format!(
+                    "合成 {item} 失败：产物无法从结果槽移入背包（shift_click 与 left_click 均失败，\
+                     可能服务端 state_id 不同步）。建议：关闭背包再重新打开后重试。"
+                ));
+            }
+        }
         crafted += output;
     }
 
@@ -645,9 +719,47 @@ pub async fn do_craft_3x3(
             ));
         }
 
-        // 3) 收产物
+        // 3) 收产物（P13 修复：验证产物真的进了背包，否则假成功）
         inv.shift_click(0usize);
-        sleep(Duration::from_millis(150)).await;
+        sleep(Duration::from_millis(200)).await;
+
+        let result_taken = inv
+            .slots()
+            .as_ref()
+            .and_then(|s| s.get(0))
+            .map(|s| s.is_empty())
+            .unwrap_or(false);
+        if !result_taken {
+            // 兜底：left_click 拿起结果，再 left_click 空背包槽放下
+            inv.left_click(0usize);
+            sleep(Duration::from_millis(100)).await;
+            if let Some(menu) = inv.menu().ok().flatten() {
+                let player_range = menu.player_slots_range();
+                if let Some(slots_data) = inv.slots() {
+                    for ps in player_range {
+                        let empty = slots_data.get(ps).map(|st| st.is_empty()).unwrap_or(false);
+                        if empty {
+                            inv.left_click(ps);
+                            sleep(Duration::from_millis(100)).await;
+                            break;
+                        }
+                    }
+                }
+            }
+            let now_taken = inv
+                .slots()
+                .as_ref()
+                .and_then(|s| s.get(0))
+                .map(|s| s.is_empty())
+                .unwrap_or(false);
+            if !now_taken {
+                let _ = clear_grid(&inv, GRID).await;
+                return Err(format!(
+                    "合成 {item} 失败：产物无法从结果槽移入背包（shift_click 与 left_click 均失败，\
+                     可能服务端 state_id 不同步）。建议：关闭工作台再重新打开后重试。"
+                ));
+            }
+        }
         crafted += output;
     }
 
