@@ -298,6 +298,88 @@ pub async fn collect_block_smart(
             scan_blocks_multi(&w, center, &block_kinds, radius)
         };
         let Some(target_pos) = pos else {
+            // P21 新增（2026-07-27）：矿石自动下挖探索。
+            // 原代码找不到矿就报错让 LLM 调 mine_below，但 LLM 常忽略提示直接重试 gather，
+            // 导致 gather 100% 失败死循环。现在对矿石类型自动下挖 5 格暴露新方块，再重扫。
+            // 学习自 mindcraft collectBlock：mindcraft 在找不到目标方块时会自动探索新区域。
+            let is_ore = item_kind_str.ends_with("_ore");
+            if is_ore && round == max_rounds - 1 {
+                // 尝试自动下挖探索（最多 2 轮，每轮挖 5 格）
+                for dig_round in 0..2u8 {
+                    eprintln!(
+                        "[gather] {item} 未找到，自动下挖探索第 {} 轮（挖 5 格暴露新方块）",
+                        dig_round + 1
+                    );
+                    if !auto_dig_down_explore(bot, 5).await {
+                        break; // 下挖失败（无镐/到基岩等），停止探索
+                    }
+                    // 重新扫描
+                    let pos2 = {
+                        let world = bot.world().map_err(|e| format!("读取世界失败: {e:?}"))?;
+                        let w = world.read();
+                        let center = bot.position().map_err(|e| format!("读取坐标失败: {e:?}"))?;
+                        scan_blocks_multi(&w, center, &block_kinds, 16)
+                    };
+                    if let Some(p) = pos2 {
+                        eprintln!(
+                            "[gather] 下挖探索后在 ({},{},{}) 找到 {item}",
+                            p.x, p.y, p.z
+                        );
+                        // 找到了！继续主循环采集这个目标
+                        // 用 goto 走到目标旁然后挖（简化路径，不走垂直下挖分支）
+                        let target = azalea::Vec3::new(
+                            p.x as f64 + 0.5,
+                            p.y as f64 + 1.0,
+                            p.z as f64 + 0.5,
+                        );
+                        let goto_fut = bot.goto(azalea::pathfinder::goals::RadiusGoal {
+                            pos: target,
+                            radius: 2.0,
+                        });
+                        let _ = tokio::time::timeout(Duration::from_secs(8), goto_fut).await;
+                        // 装备镐
+                        let _ = auto_equip_best_pickaxe(bot).await;
+                        // 挖
+                        bot.start_mining(p);
+                        // 等待方块消失（最多 5s）
+                        for _ in 0..50 {
+                            sleep(Duration::from_millis(100)).await;
+                            let still_there = bot
+                                .world()
+                                .ok()
+                                .and_then(|w| w.read().get_block_state(p).map(|s| !s.is_air()))
+                                .unwrap_or(false);
+                            if !still_there {
+                                break;
+                            }
+                        }
+                        sleep(Duration::from_millis(300)).await;
+                        // 计数
+                        let new_count = count_items_in_inventory(bot, &item_kinds).await;
+                        if new_count > gathered {
+                            gathered = new_count;
+                            eprintln!(
+                                "[gather] 下挖探索后采集到 {item}，累计 {gathered}/{need}"
+                            );
+                        }
+                        if gathered >= need {
+                            return Ok(format!(
+                                "采集 {item} x{gathered} 完成（含下挖探索 {}/2 轮）",
+                                dig_round + 1
+                            ));
+                        }
+                        // 继续下一轮下挖探索
+                        continue;
+                    }
+                    // 没找到，继续下一轮下挖
+                }
+                return Err(format!(
+                    "半径 16 内找不到 {item}（已采集 {gathered}/{need}），即使自动下挖 10 格也未暴露矿石。\
+                     vanilla 规则：{item} 通常生成在 Y=15~80 的石头层中。\
+                     建议：1) goto 到山体/洞穴入口再 gather；2) 用 mine_below 手动挖到 Y<60 后重试；\
+                     3) 换一个生物群系探索（沙漠/海洋下方矿石分布不同）。"
+                ));
+            }
             if round == max_rounds - 1 {
                 return Err(format!(
                     "半径 {radius} 内找不到 {item}（已采集 {gathered}/{need}）。\
@@ -845,6 +927,99 @@ pub async fn goto_nearest_block(
         }
     }
     Ok(target)
+}
+
+/// P21 新增：向下挖 N 格，暴露新方块（用于矿石自动探索）。
+///
+/// 每格：装备镐 → start_mining(脚下方块) → 等待消失 → bot 自然掉落 → 下一格。
+/// 遇到基岩/Y<=-61 时停止（深板岩层下方挖无意义）。
+/// 返回 true 表示成功挖完 N 格，false 表示中途停止（无镐/到基岩/超时）。
+async fn auto_dig_down_explore(bot: &Client, blocks: u32) -> bool {
+    // 先装备最好的镐
+    let _ = auto_equip_best_pickaxe(bot).await;
+    if !has_any_pickaxe_in_inventory(bot).await {
+        eprintln!("[auto_dig] 背包无镐，无法下挖探索");
+        return false;
+    }
+
+    for i in 0..blocks {
+        let pos = match bot.position() {
+            Ok(p) => BlockPos::new(
+                p.x.floor() as i32,
+                (p.y - 1.0).floor() as i32,
+                p.z.floor() as i32,
+            ),
+            Err(_) => return false,
+        };
+
+        // Y<=-61 是深板岩层底部，继续挖无意义
+        if pos.y <= -61 {
+            eprintln!("[auto_dig] 到达 Y={} 深板岩层底部，停止下挖", pos.y);
+            return false;
+        }
+
+        // 检查方块是否是基岩（不可破坏）
+        let is_bedrock = bot
+            .world()
+            .ok()
+            .and_then(|w| w.read().get_block_state(pos))
+            .map(|s| {
+                let kind: BlockKind = s.into();
+                kind == BlockKind::Bedrock
+            })
+            .unwrap_or(false);
+        if is_bedrock {
+            eprintln!("[auto_dig] 遇到基岩，停止下挖");
+            return false;
+        }
+
+        // 装备镐（每格都重新装备，防止挖矿后工具切换）
+        let _ = auto_equip_best_pickaxe(bot).await;
+
+        // 开始挖
+        bot.start_mining(pos);
+
+        // 等待方块消失（最多 4s）
+        let mut broken = false;
+        for _ in 0..40 {
+            sleep(Duration::from_millis(100)).await;
+            let still_there = bot
+                .world()
+                .ok()
+                .and_then(|w| w.read().get_block_state(pos).map(|s| !s.is_air()))
+                .unwrap_or(false);
+            if !still_there {
+                broken = true;
+                break;
+            }
+        }
+        if !broken {
+            eprintln!("[auto_dig] 第 {} 格挖矿超时，停止", i + 1);
+            return false;
+        }
+
+        // 等 bot 掉落到下一格
+        sleep(Duration::from_millis(400)).await;
+    }
+    true
+}
+
+/// P21 新增：统计背包里指定物品种类列表的总数。
+async fn count_items_in_inventory(bot: &Client, kinds: &[ItemKind]) -> u32 {
+    use azalea::container::ContainerHandleRef;
+    let Ok(inv) = bot.get_inventory() else { return 0; };
+    let Some(menu) = inv.menu().ok().flatten() else { return 0; };
+    let Some(slots) = inv.slots() else { return 0; };
+    let range = menu.player_slots_range();
+    let mut total = 0u32;
+    for s in range {
+        if let Some(st) = slots.get(s) {
+            if !st.is_empty() && kinds.contains(&st.kind()) {
+                total += st.count() as u32;
+            }
+        }
+    }
+    total
 }
 
 #[cfg(test)]
