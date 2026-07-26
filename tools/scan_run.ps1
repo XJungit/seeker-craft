@@ -154,12 +154,22 @@ $totalOutputTokens = ($assistantMsgs | ForEach-Object { $_.usage.output_tokens }
 # by_tool distribution
 $byTool = @{}
 foreach ($c in $allCalls) {
-    if (-not $byTool.ContainsKey($c.name)) { $byTool[$c.name] = [pscustomobject]@{ calls=0; errors=0 } }
+    if (-not $byTool.ContainsKey($c.name)) {
+        $byTool[$c.name] = [pscustomobject]@{ calls=0; errors=0; errorSamples=@() }
+    }
     $byTool[$c.name].calls++
 }
 foreach ($tr in $toolResults) {
     if ($byTool.ContainsKey($tr.tool_name) -and $tr.is_error) {
         $byTool[$tr.tool_name].errors++
+        # Keep the actual failure text (deduplicated). Without this the report only
+        # says "gather 3/3 failed" and every investigation has to re-dig the jsonl
+        # by hand to find out *why* -- which is where most debugging time went.
+        $txt = ($tr.content -replace '\s+', ' ').Trim()
+        if ($txt.Length -gt 400) { $txt = $txt.Substring(0, 400) + ' ...' }
+        if ($txt -and ($byTool[$tr.tool_name].errorSamples -notcontains $txt)) {
+            $byTool[$tr.tool_name].errorSamples += $txt
+        }
     }
 }
 
@@ -248,7 +258,15 @@ foreach ($k in $byTool.Keys) {
         $rate = [Math]::Round($v.errors / $v.calls * 100, 1)
         if ($rate -ge 30 -or $v.errors -ge 3) {
             $sev = if ($rate -ge 50) { "HIGH" } else { "MEDIUM" }
-            Add-Issue "high_failure_rate" $sev 0 "$k : $($v.errors)/$($v.calls) failed ($rate%)"
+            # Include the real error text so the report is actionable on its own.
+            $detail = "$k : $($v.errors)/$($v.calls) failed ($rate%)"
+            $n = 0
+            foreach ($s in $v.errorSamples) {
+                $n++
+                if ($n -gt 3) { $detail += "`n        ... and $($v.errorSamples.Count - 3) more distinct error(s)"; break }
+                $detail += "`n        why[$n]: $s"
+            }
+            Add-Issue "high_failure_rate" $sev 0 $detail
         }
     }
 }

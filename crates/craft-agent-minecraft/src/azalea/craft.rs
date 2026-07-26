@@ -28,6 +28,9 @@ struct CraftPlan {
 
 /// 静态配方表：目标物品 -> (原料 id 列表, 每次产出数)。
 /// 原料 id 用 `minecraft:` 命名空间，可省略前缀。
+/// 注意：此表只描述「需要哪些原料、各多少个」，不描述网格形状。
+/// 顺序填充（slot1, slot2, slot3, slot4）只对单原料配方（如 planks）正确；
+/// 竖直配方（stick/torch）必须走 SHAPED_2X2，否则横放导致服务端配方不匹配。
 const RECIPES: &[(&'static str, &'static [(&'static str, u32)], u32)] = &[
     ("oak_planks", &[("oak_log", 1)], 4),
     ("stick", &[("oak_planks", 2)], 4),
@@ -35,6 +38,36 @@ const RECIPES: &[(&'static str, &'static [(&'static str, u32)], u32)] = &[
     ("torch", &[("coal", 1), ("stick", 1)], 4),
     ("torch", &[("charcoal", 1), ("stick", 1)], 4),
 ];
+
+/// 2×2 形状配方表（P12 新增，2026-07-26）。
+///
+/// 槽位编号（Player 菜单 2×2 网格）：1=左上, 2=右上, 3=左下, 4=右下
+///
+/// vanilla 中 stick 和 torch 是竖直配方（["P","P"] / ["C","S"]），
+/// 原 do_craft_2x2 顺序填充会把原料横放在 slot1+slot2，服务端按 shape 匹配失败，
+/// 表现为「网格未产生结果：slot1=coal, slot2=stick, slot3=空, slot4=空」。
+/// 改用显式 (slot, ingredient) 映射，把原料放在正确竖列上。
+///
+/// 同一目标可有多个候选（如 torch 同时支持 coal/charcoal），按表中顺序尝试。
+const SHAPED_2X2: &[(&'static str, &'static [(usize, &'static str)], u32)] = &[
+    // stick: 2 planks 竖直（左列）—— vanilla shape ["P","P"]
+    ("stick", &[(1, "oak_planks"), (3, "oak_planks")], 4),
+    // torch (coal 变体): coal 在上, stick 在下 —— vanilla shape ["C","S"]
+    ("torch", &[(1, "coal"), (3, "stick")], 4),
+    // torch (charcoal 变体): charcoal 在上, stick 在下
+    ("torch", &[(1, "charcoal"), (3, "stick")], 4),
+];
+
+/// 查找 2×2 形状配方的所有候选（按表中顺序，coal 优先于 charcoal）。
+/// 返回 (cells, output_per_craft) 列表；空表示该物品无形状配方，应回退到顺序填充。
+fn lookup_shaped_2x2(item: &str) -> Vec<(&'static [(usize, &'static str)], u32)> {
+    let b = bare(item);
+    SHAPED_2X2
+        .iter()
+        .filter(|(id, _, _)| *id == b)
+        .map(|(_, cells, out)| (*cells, *out))
+        .collect()
+}
 
 /// 去掉 `minecraft:` 前缀，便于比较裸 id。
 fn bare(id: &str) -> &str {
@@ -277,23 +310,91 @@ async fn place_one(inv: &ContainerHandleRef, src: usize, dst: usize) {
 }
 
 /// 执行 2×2 合成。返回人类可读结果串（供 tool / 日志使用）。
+///
+/// P12 修复（2026-07-26）：优先使用 SHAPED_2X2 形状配方（正确竖列摆放），
+/// 没有形状配方时回退到顺序填充（仅对单原料配方如 planks 安全）。
+/// 原 code 顺序填充 stick/torch 把原料横放在 slot1+slot2，
+/// 服务端按 vanilla shape ["P","P"]/["C","S"] 匹配失败 → 100% 失败。
 pub async fn do_craft_2x2(bot: &Client, item: &str, count: u32) -> Result<String, String> {
-    let plan = lookup_recipe(item).ok_or_else(|| {
-        format!(
-            "不支持的合成目标 {item}（当前仅支持 2×2 配方：木板/木棍/工作台/火把/箱子/木镐/熔炉等）"
-        )
-    })?;
+    // Player 菜单的 2×2 合成网格是 slot 1..=4（slot 0 是结果槽）。
+    const GRID: std::ops::RangeInclusive<usize> = 1..=4;
 
     let inv = bot
         .get_inventory()
         .map_err(|e| format!("获取背包失败: {e:?}"))?;
 
-    let output = plan.output_per_craft;
+    // 决定 placement：[(slot, ItemKind)] 列表 + output_per_craft
+    // 优先级：SHAPED_2X2 候选（含 coal/charcoal 多变体）> 顺序填充（lookup_recipe）
+    let placement: Vec<(usize, ItemKind)>;
+    let output: u32;
+
+    let shaped_candidates = lookup_shaped_2x2(item);
+    if !shaped_candidates.is_empty() {
+        // 尝试每个候选，选第一个原料齐全的（coal 优先于 charcoal）
+        let mut chosen: Option<(&'static [(usize, &'static str)], u32)> = None;
+        let mut missing_ingredient: Option<String> = None;
+        for (cells, out) in &shaped_candidates {
+            let mut all_present = true;
+            for (_, ing_id) in *cells {
+                let kind = ItemKind::from_str(&normalize_item(ing_id))
+                    .map_err(|_| format!("未知原料 {ing_id}"))?;
+                if find_ingredient_slot(&inv, kind, GRID).is_none() {
+                    all_present = false;
+                    if missing_ingredient.is_none() {
+                        missing_ingredient = Some(ing_id.to_string());
+                    }
+                    break;
+                }
+            }
+            if all_present {
+                chosen = Some((*cells, *out));
+                break;
+            }
+        }
+        let (cells, out) = chosen.ok_or_else(|| {
+            format!(
+                "合成 {item} 失败：背包缺少原料 {}（已尝试 {} 个候选配方均缺料）",
+                missing_ingredient.as_deref().unwrap_or("?"),
+                shaped_candidates.len()
+            )
+        })?;
+        output = out;
+        placement = cells
+            .iter()
+            .map(|(slot, ing_id)| {
+                (
+                    *slot,
+                    ItemKind::from_str(&normalize_item(ing_id))
+                        .unwrap_or_else(|_| ItemKind::Air),
+                )
+            })
+            .collect();
+    } else {
+        // 回退：无形状配方 → 顺序填充（仅对单原料配方安全，如 planks/crafting_table）
+        let plan = lookup_recipe(item).ok_or_else(|| {
+            format!(
+                "不支持的合成目标 {item}（当前仅支持 2×2 配方：木板/木棍/工作台/火把/箱子/木镐/熔炉等）"
+            )
+        })?;
+        output = plan.output_per_craft;
+        let mut seq: Vec<(usize, ItemKind)> = Vec::new();
+        let mut grid_slot = *GRID.start();
+        for (kind, amt) in &plan.ingredients {
+            for _ in 0..*amt {
+                if grid_slot > *GRID.end() {
+                    return Err(format!(
+                        "合成 {item} 失败：配方需要的格子数超过 2×2 网格容量"
+                    ));
+                }
+                seq.push((grid_slot, *kind));
+                grid_slot += 1;
+            }
+        }
+        placement = seq;
+    }
+
     let crafts_needed = (count.max(1) + output - 1) / output;
     let mut crafted = 0u32;
-
-    // Player 菜单的 2×2 合成网格是 slot 1..=4（slot 0 是结果槽）。
-    const GRID: std::ops::RangeInclusive<usize> = 1..=4;
 
     for round in 0..crafts_needed {
         // 0) 清空上一轮/上一次合成的网格残留，否则服务端按「网格现有内容」
@@ -306,22 +407,13 @@ pub async fn do_craft_2x2(bot: &Client, item: &str, count: u32) -> Result<String
             ));
         }
 
-        // 1) 按配方逐格放料，每格 1 个。
+        // 1) 按 placement 放料（形状配方用显式 slot，顺序配方用 1→2→3→4）
         //    P8：不能用 shift_click——服务端自行决定落到哪一格，不按配方形状；
         //    也不能整堆塞一格，否则同种原料的其他格找不到料。
-        let mut grid_slot = *GRID.start();
-        for (kind, amt) in &plan.ingredients {
-            for _ in 0..*amt {
-                if grid_slot > *GRID.end() {
-                    return Err(format!(
-                        "合成 {item} 失败：配方需要的格子数超过 2×2 网格容量"
-                    ));
-                }
-                let src = find_ingredient_slot(&inv, *kind, GRID)
-                    .ok_or_else(|| format!("背包缺少原料 {}", kind.to_str()))?;
-                place_one(&inv, src, grid_slot).await;
-                grid_slot += 1;
-            }
+        for (slot, kind) in &placement {
+            let src = find_ingredient_slot(&inv, *kind, GRID)
+                .ok_or_else(|| format!("背包缺少原料 {}", kind.to_str()))?;
+            place_one(&inv, src, *slot).await;
         }
 
         // 2) 等服务端算出结果并检查结果槽（最多等 2s）
@@ -443,7 +535,10 @@ const SHAPED_RECIPES: &[(&'static str, ShapedRecipe)] = &[
 ];
 
 fn lookup_shaped(item: &str) -> Option<ShapedRecipe> {
-    let norm = normalize_item(item);
+    // P12 修复（2026-07-26）：原代码用 normalize_item(item) 把 id 统一加上 "minecraft:" 前缀，
+    // 但 SHAPED_RECIPES 表里存的是裸 id（如 "stone_pickaxe"），导致查找永远不匹配，
+    // craft_3x3 100% 失败。改用 bare() 去掉前缀后比较。
+    let norm = bare(item);
     SHAPED_RECIPES
         .iter()
         .find(|(id, _)| *id == norm)
@@ -988,4 +1083,81 @@ pub async fn do_enchant(
     sleep(Duration::from_millis(40)).await;
 
     Ok(format!("附魔 {item}（等级 {level}）完成"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// P12 回归测试：lookup_shaped 必须能查到 SHAPED_RECIPES 表中的所有工具配方。
+    /// 历史bug：原 lookup_shaped 用 normalize_item() 给 id 加 "minecraft:" 前缀，
+    /// 但表里存的是裸 id（如 "stone_pickaxe"），导致查找永远不匹配 → craft_3x3 100% 失败。
+    #[test]
+    fn regression_lookup_shaped_finds_pickaxe_recipes() {
+        // 裸 id 必须能查到
+        assert!(lookup_shaped("wooden_pickaxe").is_some(), "wooden_pickaxe 必须可查");
+        assert!(lookup_shaped("stone_pickaxe").is_some(), "stone_pickaxe 必须可查");
+        assert!(lookup_shaped("iron_pickaxe").is_some(), "iron_pickaxe 必须可查");
+        // 带 minecraft: 前缀也必须能查到（LLM 经常输出带前缀的形式）
+        assert!(lookup_shaped("minecraft:stone_pickaxe").is_some(), "minecraft:stone_pickaxe 必须可查");
+        assert!(lookup_shaped("minecraft:wooden_axe").is_some(), "minecraft:wooden_axe 必须可查");
+        // 熔炉/箱子等环形配方
+        assert!(lookup_shaped("furnace").is_some(), "furnace 必须可查");
+        assert!(lookup_shaped("chest").is_some(), "chest 必须可查");
+        // 不存在的物品应返回 None
+        assert!(lookup_shaped("nonexistent_item").is_none());
+        assert!(lookup_shaped("torch").is_none(), "torch 是 2×2 配方，不应在 3×3 表中");
+    }
+
+    /// P12 回归测试：lookup_shaped 返回的 cells 必须是 vanilla 正确形状。
+    /// 镐形状：头部占 1,2,3（顶行），柄占 5,8（中列）。
+    #[test]
+    fn regression_lookup_shaped_pickaxe_shape_is_vanilla_correct() {
+        let r = lookup_shaped("stone_pickaxe").expect("stone_pickaxe 必须可查");
+        // 顶部 3 格 cobblestone
+        assert!(r.cells.contains(&(1, "cobblestone")), "slot1 应为 cobblestone");
+        assert!(r.cells.contains(&(2, "cobblestone")), "slot2 应为 cobblestone");
+        assert!(r.cells.contains(&(3, "cobblestone")), "slot3 应为 cobblestone");
+        // 柄竖直：slot5（中中）+ slot8（中下）
+        assert!(r.cells.contains(&(5, "stick")), "slot5 应为 stick");
+        assert!(r.cells.contains(&(8, "stick")), "slot8 应为 stick");
+        // 不应包含 slot7（左下）——柄不在左列
+        assert!(!r.cells.contains(&(7, "stick")), "slot7 不应有 stick（柄应在正中竖列）");
+    }
+
+    /// P12 回归测试：lookup_shaped_2x2 必须返回 stick/torch 的形状候选。
+    /// 历史bug：原 do_craft_2x2 顺序填充把 stick/torch 的 2 个原料横放在 slot1+slot2，
+    /// 但 vanilla 是竖直配方 → 服务端配方匹配失败 → 100% 失败。
+    #[test]
+    fn regression_lookup_shaped_2x2_returns_vertical_recipes() {
+        // stick 应有 1 个候选（2 planks 竖直）
+        let stick_candidates = lookup_shaped_2x2("stick");
+        assert_eq!(stick_candidates.len(), 1, "stick 应有 1 个候选");
+        let (cells, out) = &stick_candidates[0];
+        assert_eq!(*out, 4, "stick 每次产出 4 个");
+        // 必须是 slot1 + slot3（左列竖直），不是 slot1 + slot2（横放）
+        assert!(cells.contains(&(1, "oak_planks")), "slot1 应有 oak_planks");
+        assert!(cells.contains(&(3, "oak_planks")), "slot3 应有 oak_planks");
+        assert!(!cells.contains(&(2, "oak_planks")), "slot2 不应有 planks（会导致横放）");
+
+        // torch 应有 2 个候选（coal + charcoal 变体）
+        let torch_candidates = lookup_shaped_2x2("torch");
+        assert_eq!(torch_candidates.len(), 2, "torch 应有 2 个候选（coal/charcoal）");
+        // coal 变体（第一个）
+        let (coal_cells, _) = &torch_candidates[0];
+        assert!(coal_cells.contains(&(1, "coal")), "coal 变体 slot1 应为 coal");
+        assert!(coal_cells.contains(&(3, "stick")), "coal 变体 slot3 应为 stick");
+        // charcoal 变体（第二个）
+        let (charcoal_cells, _) = &torch_candidates[1];
+        assert!(charcoal_cells.contains(&(1, "charcoal")), "charcoal 变体 slot1 应为 charcoal");
+        assert!(charcoal_cells.contains(&(3, "stick")), "charcoal 变体 slot3 应为 stick");
+
+        // 带 minecraft: 前缀
+        assert_eq!(lookup_shaped_2x2("minecraft:stick").len(), 1);
+        assert_eq!(lookup_shaped_2x2("minecraft:torch").len(), 2);
+
+        // 不在表中的物品应返回空（回退到顺序填充）
+        assert!(lookup_shaped_2x2("oak_planks").is_empty(), "oak_planks 无形状配方，应回退顺序填充");
+        assert!(lookup_shaped_2x2("crafting_table").is_empty(), "crafting_table 无形状配方");
+    }
 }
