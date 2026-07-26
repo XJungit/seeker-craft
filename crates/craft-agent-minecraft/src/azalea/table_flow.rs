@@ -11,7 +11,7 @@
 use azalea::BlockPos;
 use azalea::container::ContainerHandleRef;
 use azalea::prelude::*;
-use azalea_registry::builtin::ItemKind;
+use azalea_registry::builtin::{BlockKind, ItemKind};
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -420,28 +420,152 @@ pub async fn ensure_table_open(
         .await
         .map_err(|e| format!("{e}（自动放桌失败，建议先 goto 到 2x2 空地再 craft_3x3）"))?;
 
-    // 打开刚放置的桌（用 placement_pos，不是原始 overhead pos）
-    // P8 关键修复：用 std::mem::forget 防止 ContainerHandle drop 时自动关闭容器。
-    // 容器会由调用方（mod.rs 中的 close_container_if_open）负责关闭。
-    match bot.open_container_at(placement_pos).await {
-        Ok(Some(h)) => {
-            std::mem::forget(h); // 防止自动关闭
+    // P19 关键修复（2026-07-27）：smelt 100% 失败的根因之一。
+    // 原代码 do_place 成功后立即调 open_container_at，但：
+    // 1. 服务端需要时间创建 block entity（Furnace 是带 BlockEntity 的方块）
+    //    —— block_interact 放置方块后，服务端异步创建 BlockEntity，
+    //    若 open_container_at 在 BlockEntity 创建前到达，服务端按"非容器"处理 → 返回 None。
+    // 2. azalea open_container_at 内部 block_interact(pos) 需要 bot 在 reach 范围内，
+    //    但 do_place 走动后 bot 朝向可能变了，LOS 检查失败 → 服务端不响应 → 5s 超时 → None。
+    //
+    // 修复策略：
+    // a. do_place 后等 400ms（8 ticks）让 BlockEntity 同步
+    // b. 验证 placement_pos 处确实是 table_kind 对应的方块（防止 do_place 内部重定位）
+    // c. 重试 open_container_at 3 次，每次间隔 300ms
+    // d. 若仍失败，扫描附近 3 格找刚放置的桌/炉，用实际坐标重试
+    // e. 每次重试前用 walk_to_reach 确保 bot 在 reach 范围内
+    sleep(Duration::from_millis(400)).await;
+
+    // 验证 placement_pos 处确实是我们刚放的桌/炉（do_place 可能内部重定位）
+    let expected_block = table_block_kind(table_kind);
+    let actual_pos = if verify_table_block_at(bot, placement_pos, expected_block) {
+        placement_pos
+    } else {
+        // placement_pos 处不是预期的桌/炉，扫描附近 3 格找
+        match find_table_block_nearby(bot, placement_pos, expected_block, 3) {
+            Some(actual) => {
+                eprintln!(
+                    "[table_flow] placement_pos=({},{},{}) 处无 {table_kind}，附近找到 ({},{},{})",
+                    placement_pos.x, placement_pos.y, placement_pos.z,
+                    actual.x, actual.y, actual.z
+                );
+                actual
+            }
+            None => {
+                return Err(format!(
+                    "放置 {item_id} 后验证失败：(,{},{},{}) 处不是 {table_kind}，\
+                     且附近 3 格内未找到该方块。do_place 可能误报成功。",
+                    placement_pos.x, placement_pos.y, placement_pos.z
+                ));
+            }
         }
-        Ok(None) => {
-            return Err(format!("放置 {item_id} 后 open_container_at 返回 None——可能被服务端拒绝"));
+    };
+
+    // 重试打开容器（最多 3 次）
+    let mut last_err = String::new();
+    for attempt in 0..3u8 {
+        // 每次重试前确保 bot 在 reach 范围内
+        walk_to_reach(bot, actual_pos).await;
+        // 短暂等待让 bot 位置/朝向稳定
+        sleep(Duration::from_millis(150)).await;
+
+        match bot.open_container_at(actual_pos).await {
+            Ok(Some(h)) => {
+                std::mem::forget(h); // 防止 ContainerHandle drop 自动关闭
+                // 等待菜单稳定打开
+                for _ in 0..20 {
+                    if is_container_open(bot) {
+                        sleep(Duration::from_millis(80)).await;
+                        return Ok(actual_pos);
+                    }
+                    sleep(Duration::from_millis(50)).await;
+                }
+                last_err = format!("open_container_at 返回 Ok(Some) 但菜单未稳定打开（尝试 {}）", attempt + 1);
+            }
+            Ok(None) => {
+                last_err = format!(
+                    "open_container_at 返回 None（尝试 {}）——服务端可能未识别 {table_kind} 为容器，\
+                     或 bot 距离/LOS 不满足",
+                    attempt + 1
+                );
+                eprintln!("[table_flow] open None (attempt {}): {}", attempt + 1, last_err);
+            }
+            Err(e) => {
+                last_err = format!("open_container_at 错误（尝试 {}）: {e:?}", attempt + 1);
+                eprintln!("[table_flow] open Err (attempt {}): {:?}", attempt + 1, e);
+            }
         }
-        Err(e) => {
-            return Err(format!("打开新放置的 {item_id} 失败: {e:?}"));
+        // 重试前等待
+        if attempt < 2 {
+            sleep(Duration::from_millis(300)).await;
         }
     }
-    for _ in 0..20 {
-        if is_container_open(bot) {
-            sleep(Duration::from_millis(80)).await;
-            return Ok(placement_pos);
+    Err(format!(
+        "放置 {item_id} 于 ({},{},{}) 后 3 次重试打开容器均失败。最后错误：{last_err}\
+         ——这是 P19 修复的目标场景，请检查：1) bot 是否被卡在墙角无法 LOS；2) 服务端是否拒绝 BlockEntity 创建",
+        actual_pos.x, actual_pos.y, actual_pos.z
+    ))
+}
+
+/// P19 新增：根据 table_kind 返回对应的 BlockKind，用于放置后验证。
+fn table_block_kind(table_kind: &str) -> Option<BlockKind> {
+    let id = match table_kind {
+        "crafting_table" | "table" | "workbench" => "minecraft:crafting_table",
+        "furnace" => "minecraft:furnace",
+        "blast_furnace" => "minecraft:blast_furnace",
+        "smoker" => "minecraft:smoker",
+        _ => return None,
+    };
+    BlockKind::from_str(id).ok()
+}
+
+/// P19 新增：验证 pos 处是否为指定的桌/炉方块。
+fn verify_table_block_at(
+    bot: &Client,
+    pos: BlockPos,
+    expected: Option<azalea_registry::builtin::BlockKind>,
+) -> bool {
+    let Some(expected_kind) = expected else { return false; };
+    let world = match bot.world() {
+        Ok(w) => w,
+        Err(_) => return false,
+    };
+    let world = world.read();
+    let Some(state) = world.get_block_state(pos) else {
+        return false;
+    };
+    let actual: BlockKind = state.into();
+    actual == expected_kind
+}
+
+/// P19 新增：扫描 center 附近 radius 格半径，找指定 BlockKind 的方块位置。
+fn find_table_block_nearby(
+    bot: &Client,
+    center: BlockPos,
+    expected: Option<azalea_registry::builtin::BlockKind>,
+    radius: i32,
+) -> Option<BlockPos> {
+    let Some(expected_kind) = expected else { return None; };
+    let world = bot.world().ok()?;
+    let world = world.read();
+    let mut best: Option<(BlockPos, i32)> = None;
+    for dx in -radius..=radius {
+        for dy in -radius..=radius {
+            for dz in -radius..=radius {
+                let pos = BlockPos::new(center.x + dx, center.y + dy, center.z + dz);
+                if let Some(state) = world.get_block_state(pos) {
+                    let kind: BlockKind = state.into();
+                    if kind == expected_kind {
+                        let dist = dx * dx + dy * dy + dz * dz;
+                        if best.map_or(true, |(_, d)| dist < d) {
+                            best = Some((pos, dist));
+                        }
+                    }
+                }
+            }
         }
-        sleep(Duration::from_millis(50)).await;
     }
-    Err(format!("放置并打开 {item_id} 超时"))
+    best.map(|(p, _)| p)
 }
 
 /// 找到背包里持有 item 的 hotbar 槽位（0..=8），无则 None。
