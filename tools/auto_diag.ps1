@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Auto diagnostic + fix loop: build verify -> run tests -> analyze issues -> auto fix -> rerun
 

@@ -630,8 +630,13 @@ pub async fn do_craft_2x2(bot: &Client, item: &str, count: u32) -> Result<String
     } else {
         // 回退：无形状配方 → 顺序填充（仅对单原料配方安全，如 planks/crafting_table）
         let plan = lookup_recipe(item).ok_or_else(|| {
+            // P17 修复（2026-07-27）：原错误消息提到"木镐"是 2×2 配方，
+            // 但 wooden_pickaxe 实际是 3×3 配方——误导 LLM 用 craft(2×2) 合成木镐，
+            // 必然失败。改为明确告诉 LLM 用 craft_3x3。
             format!(
-                "不支持的合成目标 {item}（当前仅支持 2×2 配方：木板/木棍/工作台/火把/箱子/木镐/熔炉等）"
+                "不支持的 2×2 合成目标 {item}（2×2 仅支持：木板/木棍/工作台/火把/箱子等单原料配方）。\
+                 若目标是工具（木镐/石镐/铁镐/剑/斧/锹/锄）或 3×3 配方（furnace/chest/ladder 等），\
+                 请改用 craft_3x3 工具（需先 place 工作台或由 craft_3x3 自动放桌）。"
             )
         })?;
         output = plan.output_per_craft;
@@ -901,8 +906,35 @@ pub async fn do_craft_3x3(
         eprintln!("[craft 3x3] 预清理: {discard_log}, 腾出 {freed} 空位");
     }
 
-    let recipe = lookup_shaped(item)
-        .ok_or_else(|| format!("不支持的 3×3 合成目标 {item}（需先打开工作台）"))?;
+    // P17 修复（2026-07-27）：手写 SHAPED_RECIPES 表只有 ~30 个配方，
+    // LLM 调用 craft_3x3 合成表外物品（如 bread/cake/bowl 等）时 100% 失败。
+    // 改为：先查手写表，未命中则回退到 RecipeBook（vanilla 26.2 全量配方书），
+    // 调用 do_craft_3x3_recipe 走 RecipeBook 路径。
+    // 学习自 mindcraft：mindcraft 用 mineflayer-prismarine-recipe 全量配方，
+    // 不需要手写配方表。本项目 azalea 无 prismarine-recipe，但 RecipeBook 是等价物。
+    let recipe = match lookup_shaped(item) {
+        Some(r) => r,
+        None => {
+            // 回退到 RecipeBook
+            let book = crate::azalea::auto_craft::recipe_book_of(bot);
+            match book.get_by_result(item) {
+                Some(stored) => {
+                    eprintln!(
+                        "[craft 3x3] '{item}' 不在手写表，回退到 RecipeBook ({})",
+                        stored.kind()
+                    );
+                    return do_craft_3x3_recipe(bot, stored, count).await;
+                }
+                None => {
+                    return Err(format!(
+                        "不支持的 3×3 合成目标 {item}（手写配方表和 RecipeBook 均无此配方）。\
+                         可能原因：1) 物品名拼写错误；2) 该物品不可合成（如 air/bedrock）；\
+                         3) 该物品是熔炼/切石产物，请用 smelt 工具。"
+                    ));
+                }
+            }
+        }
+    };
 
     let inv = bot.get_inventory().map_err(|e| {
         let at = table_pos
@@ -1261,7 +1293,12 @@ const SMELT_RECIPES: &[(&'static str, SmeltRecipe)] = &[
 ];
 
 fn lookup_smelt(output: &str) -> Option<SmeltRecipe> {
-    let norm = normalize_item(output);
+    // P17 修复（2026-07-27）：原代码用 normalize_item(output) 把 id 变成
+    // "minecraft:iron_ingot"，但 SMELT_RECIPES 存的是裸 id "iron_ingot"，
+    // 比较永远 false → lookup_smelt 100% 返回 None → smelt 报"不支持 iron_ingot"
+    // 但错误消息里又列出 iron_ingot 作为支持项，自相矛盾。
+    // 修复：用 bare() 去前缀（与 P12 lookup_shaped 修复同理）。
+    let norm = bare(output);
     SMELT_RECIPES
         .iter()
         .find(|(id, _)| *id == norm)

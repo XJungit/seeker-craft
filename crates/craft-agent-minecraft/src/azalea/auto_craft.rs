@@ -27,7 +27,8 @@ fn normalize(item: &str) -> String {
 }
 
 /// 从 ecs 资源读取服务端下发的配方书（若有）。
-fn recipe_book_of(bot: &Client) -> RecipeBook {
+/// P17 改为 pub：craft.rs::do_craft_3x3 在手写表未命中时回退到 RecipeBook。
+pub fn recipe_book_of(bot: &Client) -> RecipeBook {
     bot.ecs.read().resource::<BotExtResource>().0.lock().unwrap().recipes.clone()
 }
 
