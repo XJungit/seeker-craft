@@ -868,10 +868,25 @@ mod tests {
 
     #[test]
     fn test_expand_block_aliases_ore_no_expand() {
-        // 矿石不展开（避免挖错）
+        // P18 修复（2026-07-27）：矿石现在**展开** deepslate 变体。
+        // vanilla 规则：Y<0 时矿石生成 deepslate_xxx_ore 版本（深岩层）。
+        // 原 _ => vec![item] 只找 "iron_ore"，但 bot 在 Y=91 深岩层实际方块是
+        // deepslate_iron_ore -> scan_blocks_multi 100% 找不到 -> gather 100% 失败。
+        // 修复：iron_ore/coal_ore 等都展开为 [xxx_ore, deepslate_xxx_ore]。
         let kinds = expand_block_aliases("coal_ore");
-        assert_eq!(kinds.len(), 1);
-        assert_eq!(kinds[0], BlockKind::CoalOre);
+        assert!(kinds.contains(&BlockKind::CoalOre));
+        assert!(kinds.contains(&BlockKind::DeepslateCoalOre));
+        // 验证所有 8 种主要矿石都展开 deepslate 变体
+        let iron_kinds = expand_block_aliases("iron_ore");
+        assert!(iron_kinds.contains(&BlockKind::IronOre));
+        assert!(iron_kinds.contains(&BlockKind::DeepslateIronOre));
+        let gold_kinds = expand_block_aliases("gold_ore");
+        assert!(gold_kinds.contains(&BlockKind::GoldOre));
+        assert!(gold_kinds.contains(&BlockKind::DeepslateGoldOre));
+        // 兼容 LLM 直接传 deepslate_xxx_ore
+        let ds_iron = expand_block_aliases("deepslate_iron_ore");
+        assert!(ds_iron.contains(&BlockKind::IronOre));
+        assert!(ds_iron.contains(&BlockKind::DeepslateIronOre));
     }
 
     #[test]
