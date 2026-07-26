@@ -59,7 +59,8 @@
 [CmdletBinding()]
 param(
     [string]$Goal = "Explore the world, gather wood and craft a crafting table",
-    [int]$Steps = 60,
+    # 0 = 自动根据 goal 复杂度估算步数（推荐）；>0 = 用户指定
+    [int]$Steps = 0,
     [int]$Port = 8080,
     [string]$McAddr = "localhost:4444",
     [string]$Profile = "",
@@ -68,7 +69,10 @@ param(
     [int]$MaxFixIterations = 3,
     [switch]$ScanOnly,
     [switch]$NoBuild,
-    [switch]$TestOnly
+    [switch]$TestOnly,
+    # 归档策略：auto = 自动归档（默认），append = 接着上一轮写，archive_only = 仅归档不跑
+    [ValidateSet("auto","append","archive_only")]
+    [string]$SessionPolicy = "auto"
 )
 
 # Force UTF-8 output (avoid GBK garbling on Chinese Windows)
@@ -121,6 +125,113 @@ function Write-Result($ok, $msg) {
 
 function Get-Timestamp() {
     return Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+}
+
+# ============================================================
+# Dynamic step estimator
+#   根据 goal 复杂度自动估算需要的步数。
+#   规则：基础 20 步 + 每个识别到的子任务难度分。
+#   用户也可以 -Steps N 显式覆盖。
+# ============================================================
+function Estimate-Steps {
+    param([string]$GoalText)
+    $g = $GoalText.ToLower()
+    $steps = 20  # 基础步数（探索 + 1 个简单动作）
+
+    # ── 采集/合成链 ──
+    if ($g -match 'wood|log|原木|木头|oak')             { $steps += 8  }   # 砍树 + 合成木板
+    if ($g -match 'planks|木板')                          { $steps += 4  }
+    if ($g -match 'stick|木棍')                           { $steps += 4  }
+    if ($g -match 'crafting_table|工作台')                { $steps += 6  }
+    if ($g -match 'torch|火把')                           { $steps += 10 }   # 需要 coal + stick
+    if ($g -match 'wooden_pickaxe|木镐')                  { $steps += 8  }
+    if ($g -match 'stone_pickaxe|石镐')                   { $steps += 15 }   # 需要先有木镐挖石头
+    if ($g -match 'iron_pickaxe|铁镐')                    { $steps += 30 }   # 需要石镐挖铁矿 + 熔炼
+    if ($g -match 'diamond|钻石')                         { $steps += 50 }
+    if ($g -match 'furnace|熔炉')                         { $steps += 12 }
+    if ($g -match 'sword|axe|hoe|shovel|剑|斧|锄|铲')    { $steps += 8  }
+
+    # ── 战斗 / 防御 ──
+    if ($g -match 'attack|kill|hunt|战斗|击杀|狩猎')      { $steps += 15 }
+    if ($g -match 'dragon|末影龙|ender')                  { $steps += 100 }
+
+    # ── 探索 / 维度 ──
+    if ($g -match 'explore|探索|find|look')               { $steps += 15 }
+    if ($g -match 'nether|下界|黑曜石|obsidian')          { $steps += 60 }
+    if ($g -match 'end|末地|stronghold|要塞')             { $steps += 100 }
+    if ($g -match 'village|村庄|librarian|图书管理员')    { $steps += 30 }
+
+    # ── 建造 ──
+    if ($g -match 'build|建造|house|shelter|房子')        { $steps += 25 }
+    if ($g -match 'farm|农场')                            { $steps += 20 }
+
+    # ── 多任务串联（goal 里有多个独立目标）──
+    $taskCount = 0
+    foreach ($kw in @('craft','合成','make','做','gather','采集','mine','挖','smelt','熔炼','build','建造','find','找')) {
+        $matches2 = [regex]::Matches($g, $kw)
+        $taskCount += $matches2.Count
+    }
+    if ($taskCount -gt 1) { $steps += ($taskCount - 1) * 5 }
+
+    # ── 上限 / 下限 ──
+    if ($steps -lt 20) { $steps = 20 }
+    if ($steps -gt 300) { $steps = 300 }
+
+    return $steps
+}
+
+# ============================================================
+# Cross-run bug tracker
+#   对比 sessions/reports/ 下历史 scan 报告，找出反复出现的 bug。
+#   返回反复 bug 列表（用于提示 AI 必须联网学习开源项目）。
+# ============================================================
+function Find-RecurringBugs {
+    param([string]$CurrentReportDir = $ReportDir)
+
+    # 找最近 5 份 scan_*.md 报告
+    $reports = Get-ChildItem -Path $CurrentReportDir -Filter "scan_*.md" |
+               Sort-Object LastWriteTime -Descending |
+               Select-Object -First 5
+    if ($reports.Count -lt 2) { return @() }
+
+    # 对每份报告提取 high_failure_rate 的工具名
+    $toolFailureHistory = @{}  # tool -> list of (timestamp, error_rate)
+    foreach ($r in $reports) {
+        $content = Get-Content $r.FullName -Raw -ErrorAction SilentlyContinue
+        if (-not $content) { continue }
+        $ts = $r.BaseName -replace 'scan_', ''
+        # 匹配 "  tool_name         calls=N   errors=M   (P%) [!]"
+        $matches3 = [regex]::Matches($content, '^\s+(\w+)\s+calls=(\d+)\s+errors=(\d+)\s+\((\d+)%\)\s*(\[\!\])?',
+                       [System.Text.RegularExpressions.RegexOptions]::Multiline)
+        foreach ($m in $matches3) {
+            $tool = $m.Groups[1].Value
+            $errRate = [int]$m.Groups[4].Value
+            if ($errRate -ge 50) {  # 只追踪 ≥50% 失败的工具
+                if (-not $toolFailureHistory.ContainsKey($tool)) {
+                    $toolFailureHistory[$tool] = @()
+                }
+                $toolFailureHistory[$tool] += [pscustomobject]@{
+                    timestamp = $ts
+                    error_rate = $errRate
+                }
+            }
+        }
+    }
+
+    # 找出连续 2+ 轮失败的 bug
+    $recurring = @()
+    foreach ($tool in $toolFailureHistory.Keys) {
+        $hist = $toolFailureHistory[$tool]
+        if ($hist.Count -ge 2) {
+            $recurring += [pscustomobject]@{
+                tool = $tool
+                consecutive_runs = $hist.Count
+                error_rates = ($hist | ForEach-Object { "$($_.error_rate)%" }) -join ' -> '
+                latest_rate = $hist[0].error_rate
+            }
+        }
+    }
+    return $recurring
 }
 
 # ============================================================
@@ -483,16 +594,26 @@ function Step-RunViewer {
 
     Write-Section "6. Run end-to-end test (iteration $iteration)"
 
-    # Backup old session
+    # Session 归档策略：
+    #   auto   = 默认；每轮测试前归档上一轮的 mc_run.jsonl（避免叠加）
+    #   append = 不归档，下一轮接着写（用于跨多轮连续观察同一 bot）
     if (-not (Test-Path "sessions")) { New-Item -ItemType Directory -Path "sessions" | Out-Null }
-    if (Test-Path $SessionPath) {
-        $ts = Get-Date -Format "yyyyMMdd_HHmmss"
-        $backup = "sessions/archive/mc_run.$ts.jsonl"
-        if (-not (Test-Path "sessions/archive")) { New-Item -ItemType Directory -Path "sessions/archive" | Out-Null }
-        Move-Item $SessionPath $backup -Force
-        Write-Host "  Old session backed up -> $backup"
+    if ($SessionPolicy -eq "auto") {
+        if (Test-Path $SessionPath) {
+            $ts = Get-Date -Format "yyyyMMdd_HHmmss"
+            $backup = "sessions/archive/mc_run.$ts.jsonl"
+            if (-not (Test-Path "sessions/archive")) { New-Item -ItemType Directory -Path "sessions/archive" | Out-Null }
+            Move-Item $SessionPath $backup -Force
+            Write-Host "  Old session backed up -> $backup"
+        }
+        if (Test-Path $BotTracePath) { Remove-Item $BotTracePath -Force }
+    } else {
+        # append 模式：保留 session，但提示用户
+        if (Test-Path $SessionPath) {
+            $size = (Get-Item $SessionPath).Length
+            Write-Host "  [Append] 保留旧 session (size=$size bytes)，新一轮将追加"
+        }
     }
-    if (Test-Path $BotTracePath) { Remove-Item $BotTracePath -Force }
 
     # Check MC server
     $mcHost, $mcPortStr = $McAddr -split ':'
@@ -642,6 +763,28 @@ Write-Host @"
 ==================================================
 "@ -ForegroundColor Cyan
 
+# 动态步数：-Steps 0 时根据 goal 复杂度估算
+if ($Steps -eq 0) {
+    $Steps = Estimate-Steps -GoalText $Goal
+    Write-Host "[Goal] $Goal"
+    Write-Host "[Steps] 动态估算 = $Steps （用 -Steps N 显式覆盖）"
+} else {
+    Write-Host "[Goal] $Goal"
+    Write-Host "[Steps] 用户指定 = $Steps"
+}
+
+# 归档策略：archive_only 模式仅归档不跑
+if ($SessionPolicy -eq "archive_only") {
+    Write-Host "[SessionPolicy] archive_only: 仅归档当前 mc_run.jsonl 后退出"
+    if (Test-Path $SessionPath) {
+        $ts = Get-Date -Format "yyyyMMdd_HHmmss"
+        if (-not (Test-Path "sessions/archive")) { New-Item -ItemType Directory -Path "sessions/archive" | Out-Null }
+        Move-Item $SessionPath "sessions/archive/mc_run.$ts.jsonl" -Force
+        Write-Host "  [OK] Archived -> sessions/archive/mc_run.$ts.jsonl"
+    }
+    exit 0
+}
+
 $allReports = @()
 $allOk = $true
 
@@ -697,7 +840,32 @@ for ($iter = 0; $iter -lt $MaxFixIterations; $iter++) {
             Write-Host "  [OK] All issues fixed, exiting loop" -ForegroundColor Green
             break
         }
+
+        # 6.1 跨轮 bug 追踪：找出连续 2+ 轮未修的 bug，强制要求联网学习
+        $recurring = Find-RecurringBugs
+        if ($recurring.Count -gt 0) {
+            Write-Host ""
+            Write-Host "  [RECURRING] 以下工具连续多轮失败，必须联网学习开源项目（mindcraft/azalea）后修复：" -ForegroundColor Red
+            foreach ($r in $recurring) {
+                Write-Host "    - $($r.tool): 连续 $($r.consecutive_runs) 轮失败 [$($r.error_rates)]" -ForegroundColor Yellow
+            }
+            Write-Host "  >> AI 必须执行：" -ForegroundColor Cyan
+            Write-Host "     1. WebSearch 搜索 'mindcraft <tool> implementation' 或 'azalea-rs <tool>'" -ForegroundColor Cyan
+            Write-Host "     2. WebFetch 抓取 mindcraft 源码对应文件" -ForegroundColor Cyan
+            Write-Host "     3. 对比本项目 crates/craft-agent-minecraft/src/azalea/<tool>.rs 实现" -ForegroundColor Cyan
+            Write-Host "     4. 找出本质差异并重写（不是缝缝补补）" -ForegroundColor Cyan
+            Write-Host "     5. 改完 cargo build + cargo test 验证再重跑" -ForegroundColor Cyan
+        }
     } else {
+        # Non-AutoFix mode: 仍然输出 recurring bug 提示
+        $recurring = Find-RecurringBugs
+        if ($recurring.Count -gt 0) {
+            Write-Host ""
+            Write-Host "  [RECURRING] 跨轮反复 bug（建议 -AutoFix 让 AI 主动修复）：" -ForegroundColor Yellow
+            foreach ($r in $recurring) {
+                Write-Host "    - $($r.tool): 连续 $($r.consecutive_runs) 轮 [$($r.error_rates)]" -ForegroundColor Yellow
+            }
+        }
         # Non-AutoFix mode: exit after one iteration
         if ($iter -eq 0) {
             break

@@ -166,47 +166,55 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
             let inv2 = bot
                 .get_inventory()
                 .map_err(|e| format!("移动物品后获取背包失败: {e:?}"))?;
-            find_hotbar_slot(&inv2, kind)
-                .ok_or_else(|| {
-                    // P14 修复（2026-07-26）：原代码硬编码 `for s in 0..9usize` 读取 hotbar，
-                    // 但 azalea Player 菜单中 slot 0=craft_result, 1..=4=2×2 grid, 5..=8=盔甲,
-                    // 9..=35=主背包, 36..=44=hotbar。硬编码 0..9 读到的是 craft 网格+盔甲
-                    // （通常全空），导致诊断信息显示"hotbar 全空"但实际 hotbar 可能满。
-                    // 修复：用 menu.hotbar_slots_range() 读取真实 hotbar 范围。
-                    let mut hotbar_contents: Vec<String> = Vec::new();
-                    if let Some(menu) = inv2.menu().ok().flatten() {
-                        let hotbar_range = menu.hotbar_slots_range();
-                        let hotbar_start = *hotbar_range.start();
-                        if let Some(slots) = inv2.slots() {
-                            for s in hotbar_range {
-                                let idx = s - hotbar_start;
-                                if let Some(st) = slots.get(s) {
-                                    if !st.is_empty() {
-                                        let k = st.kind().to_str();
-                                        let bare = k.strip_prefix("minecraft:").unwrap_or(k);
-                                        hotbar_contents.push(format!(
-                                            "slot{idx}={bare}x{}",
-                                            st.count()
-                                        ));
-                                    } else {
-                                        hotbar_contents.push(format!("slot{idx}=空"));
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    let hotbar_str = if hotbar_contents.is_empty() {
-                        "(无法读取)".to_string()
-                    } else {
-                        hotbar_contents.join(", ")
-                    };
-                    format!(
-                        "放置 {item} 失败：物品在主背包但 shift_click 后仍未进入 hotbar（hotbar 9 格可能已满）。\n\
-                         当前 hotbar: {hotbar_str}\n\
-                         建议：先 discard 丢弃 hotbar 里的无用杂物（如 dirt/cobblestone/tuff/granite/diorite/flint），\
-                         腾出至少 1 个空位后再重试 place/craft_3x3。"
-                    )
-                })?
+            match find_hotbar_slot(&inv2, kind) {
+                Some(s) => s,
+                None => {
+                    // P16 修复（2026-07-26）：shift_click 失败（hotbar 满）时，
+                    // 学习 mineflayer 的 LRU round-robin 策略：选一个 hotbar 槽，
+                    // 把目标物品与该槽物品交换（原 hotbar 物品回到主背包）。
+                    // mineflayer 源码: lib/plugins/simple_inventory.js::equip()
+                    //   destSlot = QUICK_BAR_START + nextQuickBarSlot;
+                    //   nextQuickBarSlot = (nextQuickBarSlot + 1) % QUICK_BAR_COUNT;
+                    // 这里简化为选第一个 hotbar 槽（slot 36），用 left_click 三步交换。
+                    let menu = inv2.menu().ok().flatten()
+                        .ok_or_else(|| format!("放置 {item} 失败：读取菜单失败"))?;
+                    let hotbar_range = menu.hotbar_slots_range();
+                    let target_hotbar = *hotbar_range.start();
+
+                    // 找目标物品在主背包的槽位（shift_click 可能已经改变了位置，重新找）
+                    let source_slot = find_item_slot_in_main_inventory(&inv2, kind)
+                        .ok_or_else(|| format!("放置 {item} 失败：shift_click 后物品既不在 hotbar 也不在主背包"))?;
+
+                    eprintln!(
+                        "[place] hotbar 满，LRU 交换：source=slot{source_slot} ↔ target=slot{target_hotbar}"
+                    );
+
+                    // 三步交换：
+                    // 1. left_click(source) 拿起目标物品
+                    inv2.left_click(source_slot);
+                    sleep(Duration::from_millis(150)).await;
+                    // 2. left_click(target_hotbar) 放下目标物品，拿起原 hotbar 物品
+                    drop(inv2);
+                    let inv3 = bot.get_inventory()
+                        .map_err(|e| format!("交换中获取背包失败: {e:?}"))?;
+                    inv3.left_click(target_hotbar);
+                    sleep(Duration::from_millis(150)).await;
+                    // 3. left_click(source) 把原 hotbar 物品放回主背包
+                    drop(inv3);
+                    let inv4 = bot.get_inventory()
+                        .map_err(|e| format!("交换后获取背包失败: {e:?}"))?;
+                    inv4.left_click(source_slot);
+                    sleep(Duration::from_millis(200)).await;
+
+                    // 验证目标物品现在在 hotbar
+                    drop(inv4);
+                    let inv5 = bot.get_inventory()
+                        .map_err(|e| format!("验证时获取背包失败: {e:?}"))?;
+                    find_hotbar_slot(&inv5, kind).ok_or_else(|| {
+                        format!("放置 {item} 失败：LRU 交换后物品仍不在 hotbar（交换可能失败）")
+                    })?
+                }
+            }
         }
     };
     bot.set_selected_hotbar_slot(slot);
