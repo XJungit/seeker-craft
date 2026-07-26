@@ -12,7 +12,7 @@
 //! 结果后 shift_click(slot 0) 把产物收进背包。循环至满足数量。
 
 use azalea::container::ContainerHandleRef;
-use azalea::inventory::operations::PickupClick;
+use azalea::inventory::operations::{PickupClick, ThrowClick};
 use azalea::prelude::*;
 use azalea::BlockPos;
 use azalea_registry::builtin::ItemKind;
@@ -217,6 +217,145 @@ fn dump_player_inventory(inv: &ContainerHandleRef) -> String {
     }
 }
 
+/// P16 修复（2026-07-26）：合成前自动丢弃垃圾方块腾出空位。
+///
+/// 背景：session 中 craft_3x3 stone_pickaxe 失败，原因 "背包完全满（player_slots
+/// 无空位），产物无法收集"。背包塞满 dirt/cobblestone/granite/diorite/tuff 等
+/// 垃圾方块，LLM 又不主动 discard，导致每次 craft 都因产物无法收集而失败。
+///
+/// 修复：合成前若空位 < 2，自动丢弃常见垃圾方块（保留少量有用的）：
+/// - dirt, granite, diorite, andesite, tuff, gravel, sand, red_sand, clay_ball:
+///   全丢（早期游戏无用，可随时再挖）
+/// - cobblestone, cobbled_deepslate: 保留 16 个（合成石镐/石斧/熔炉需要）
+/// - oak_sapling: 保留 4 个（种树用）
+/// - flint: 保留 8 个（箭矢/打火石用）
+/// - string: 保留 4 个（弓用）
+/// - oak_planks, oak_log: 不丢（合成原料）
+/// - 所有工具/矿物/食物/燃料: 不丢
+///
+/// 返回 (丢弃的物品描述, 腾出的空位数)。
+async fn auto_discard_junk(bot: &Client) -> (String, u32) {
+    let inv = match bot.get_inventory() {
+        Ok(i) => i,
+        Err(_) => return (String::new(), 0),
+    };
+    let empty_before = count_empty_player_slots(&inv);
+    if empty_before >= 2 {
+        return (String::new(), 0); // 空位足够，无需丢弃
+    }
+
+    // (物品 kind, 保留数量) — 保留数量 0 表示全丢
+    const JUNK_KEEP: &[(&str, u32)] = &[
+        // 全丢的纯垃圾
+        ("dirt", 0),
+        ("grass_block", 0),
+        ("sand", 0),
+        ("red_sand", 0),
+        ("gravel", 0),
+        ("granite", 0),
+        ("diorite", 0),
+        ("andesite", 0),
+        ("tuff", 0),
+        ("clay_ball", 0),
+        ("netherrack", 0),
+        ("basalt", 0),
+        ("blackstone", 0),
+        ("end_stone", 0),
+        ("podzol", 0),
+        ("mycelium", 0),
+        ("coarse_dirt", 0),
+        ("rooted_dirt", 0),
+        ("moss_block", 0),
+        // 保留少量的有用方块
+        ("cobblestone", 16),
+        ("cobbled_deepslate", 16),
+        ("oak_sapling", 4),
+        ("flint", 8),
+        ("string", 4),
+        ("stick", 16), // 合成原料，保留 16 个够用
+        // 丢弃多余的同类工具（如多把 iron_hoe）
+        ("iron_hoe", 0),
+        ("wooden_hoe", 0),
+        ("stone_hoe", 0),
+    ];
+
+    let mut dropped_log: Vec<String> = Vec::new();
+    let mut total_dropped: u32 = 0;
+
+    for (item_name, keep) in JUNK_KEEP {
+        let kind = match ItemKind::from_str(item_name) {
+            Ok(k) => k,
+            Err(_) => continue,
+        };
+        // 重新读 inv（每次丢弃后状态变化）
+        let inv = match bot.get_inventory() {
+            Ok(i) => i,
+            Err(_) => break,
+        };
+        let Some(menu) = inv.menu().ok().flatten() else { break; };
+        let Some(slots) = inv.slots() else { break; };
+        let range = menu.player_slots_range();
+
+        // 收集所有该类物品的 (slot, count)
+        let mut stacks: Vec<(usize, u32)> = Vec::new();
+        for s in range {
+            if let Some(st) = slots.get(s) {
+                if !st.is_empty() && st.kind() == kind {
+                    stacks.push((s, st.count() as u32));
+                }
+            }
+        }
+        if stacks.is_empty() {
+            continue;
+        }
+
+        let total: u32 = stacks.iter().map(|(_, c)| *c).sum();
+        if total <= *keep {
+            continue; // 总量不超过保留数，不丢
+        }
+        let mut to_drop = total - keep;
+
+        for (s, stack_count) in &stacks {
+            if to_drop == 0 {
+                break;
+            }
+            let drop_from_this = (*stack_count).min(to_drop);
+            if drop_from_this >= *stack_count {
+                // 丢整堆
+                inv.click(ThrowClick::All { slot: *s as u16 });
+                sleep(Duration::from_millis(80)).await;
+            } else {
+                // 丢指定数量
+                for _ in 0..drop_from_this {
+                    inv.click(ThrowClick::Single { slot: *s as u16 });
+                    sleep(Duration::from_millis(40)).await;
+                }
+            }
+            to_drop -= drop_from_this;
+            total_dropped += drop_from_this;
+        }
+        dropped_log.push(format!("{item_name}x{}", total - keep));
+    }
+
+    // 等待服务端同步背包
+    sleep(Duration::from_millis(300)).await;
+    let inv = match bot.get_inventory() {
+        Ok(i) => i,
+        Err(_) => return (dropped_log.join(", "), total_dropped),
+    };
+    let empty_after = count_empty_player_slots(&inv);
+    let freed = empty_after.saturating_sub(empty_before);
+
+    if !dropped_log.is_empty() {
+        eprintln!(
+            "[craft] auto_discard_junk: 丢弃 {}，腾出 {} 个空位",
+            dropped_log.join(", "),
+            freed
+        );
+    }
+    (dropped_log.join(", "), freed)
+}
+
 /// 在玩家背包**以及合成网格**内找原料槽位。
 ///
 /// P9 修复：`find_source_slot` 只搜 `player_slots_range`，当上一次合成在网格里
@@ -400,6 +539,13 @@ async fn place_one(inv: &ContainerHandleRef, src: usize, dst: usize) {
 pub async fn do_craft_2x2(bot: &Client, item: &str, count: u32) -> Result<String, String> {
     // Player 菜单的 2×2 合成网格是 slot 1..=4（slot 0 是结果槽）。
     const GRID: std::ops::RangeInclusive<usize> = 1..=4;
+
+    // P16 修复（2026-07-26）：合成前自动丢弃垃圾方块腾出空位。
+    // 避免"背包完全满，产物无法收集"的失败。
+    let (discard_log, freed) = auto_discard_junk(bot).await;
+    if freed > 0 {
+        eprintln!("[craft 2x2] 预清理: {discard_log}, 腾出 {freed} 空位");
+    }
 
     // P13 修复（2026-07-26）：若容器（工作台/熔炉/箱子）还开着，2×2 网格槽位 1..=4
     // 实际指向的是容器内的格子（不是玩家 2×2 网格），所有 click 都打到错误位置，
@@ -665,6 +811,17 @@ struct ShapedRecipe {
 }
 
 const SHAPED_RECIPES: &[(&'static str, ShapedRecipe)] = &[
+    // P16 修复（2026-07-26）：2×2 配方也加入 3×3 表。
+    // vanilla 中这些配方在 2×2 和 3×3 网格中都能合成（形状放在左上角），
+    // 但原 lookup_shaped 只查 SHAPED_RECIPES，craft_3x3 对这些物品报
+    // "不支持的 3×3 合成目标"。LLM 常误用 craft_3x3 合成 crafting_table，
+    // 导致 100% 失败。加入这些配方让 craft_3x3 也能处理。
+    // 槽位编号：1 2 3 / 4 5 6 / 7 8 9，2×2 形状放在 1,2,4,5。
+    ("oak_planks", ShapedRecipe { cells: &[(1,"oak_log")], output_per_craft: 4 }),
+    ("stick", ShapedRecipe { cells: &[(1,"oak_planks"),(4,"oak_planks")], output_per_craft: 4 }),
+    ("crafting_table", ShapedRecipe { cells: &[(1,"oak_planks"),(2,"oak_planks"),(4,"oak_planks"),(5,"oak_planks")], output_per_craft: 1 }),
+    ("torch", ShapedRecipe { cells: &[(1,"coal"),(4,"stick")], output_per_craft: 4 }),
+    ("torch_charcoal", ShapedRecipe { cells: &[(1,"charcoal"),(4,"stick")], output_per_craft: 4 }),
     // 环形：8 格同种原料
     ("furnace", ShapedRecipe { cells: &[(1,"cobblestone"),(2,"cobblestone"),(3,"cobblestone"),(4,"cobblestone"),(6,"cobblestone"),(7,"cobblestone"),(8,"cobblestone"),(9,"cobblestone")], output_per_craft: 1 }),
     ("chest", ShapedRecipe { cells: &[(1,"oak_planks"),(2,"oak_planks"),(3,"oak_planks"),(4,"oak_planks"),(6,"oak_planks"),(7,"oak_planks"),(8,"oak_planks"),(9,"oak_planks")], output_per_craft: 1 }),
@@ -737,6 +894,13 @@ pub async fn do_craft_3x3(
     count: u32,
     table_pos: Option<BlockPos>,
 ) -> Result<String, String> {
+    // P16 修复（2026-07-26）：合成前自动丢弃垃圾方块腾出空位。
+    // 避免"背包完全满，产物无法收集"的失败。
+    let (discard_log, freed) = auto_discard_junk(bot).await;
+    if freed > 0 {
+        eprintln!("[craft 3x3] 预清理: {discard_log}, 腾出 {freed} 空位");
+    }
+
     let recipe = lookup_shaped(item)
         .ok_or_else(|| format!("不支持的 3×3 合成目标 {item}（需先打开工作台）"))?;
 
@@ -1328,7 +1492,12 @@ mod tests {
         assert!(lookup_shaped("chest").is_some(), "chest 必须可查");
         // 不存在的物品应返回 None
         assert!(lookup_shaped("nonexistent_item").is_none());
-        assert!(lookup_shaped("torch").is_none(), "torch 是 2×2 配方，不应在 3×3 表中");
+        // P16 修复（2026-07-26）：2×2 配方（crafting_table/torch/oak_planks/stick）
+        // 也加入 3×3 表，让 craft_3x3 能处理 LLM 误用 craft_3x3 合成这些物品的情况。
+        assert!(lookup_shaped("crafting_table").is_some(), "crafting_table 应在 3×3 表中（P16）");
+        assert!(lookup_shaped("torch").is_some(), "torch 应在 3×3 表中（P16）");
+        assert!(lookup_shaped("oak_planks").is_some(), "oak_planks 应在 3×3 表中（P16）");
+        assert!(lookup_shaped("stick").is_some(), "stick 应在 3×3 表中（P16）");
     }
 
     /// P12 回归测试：lookup_shaped 返回的 cells 必须是 vanilla 正确形状。

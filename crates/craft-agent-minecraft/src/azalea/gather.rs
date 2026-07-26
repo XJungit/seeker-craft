@@ -134,15 +134,19 @@ pub async fn do_gather(bot: &Client, item: &str, count: u32) -> Result<String, S
         || kind_str == "sandstone"
         || kind_str == "red_sandstone";
     if is_log_kind && !has_any_axe_in_inventory(bot).await {
-        // P10 修复（2026-07-26）：刚 craft 完斧头但背包同步未完成时会误报"无斧"。
-        // 等待 500ms 让服务端同步背包，再检查一次。
+        // P16 修复（2026-07-26）：徒手砍树是可行的（只是慢），不应阻止 gather。
+        // 原 P10 逻辑在这里直接 return Err，导致 LLM 永远无法用徒手砍树启动游戏——
+        // 这是死循环的根因：需要原木合成斧 → 需要斧砍树 → 没斧就砍不了树。
+        // 修复：改为警告（eprintln），让 gather 继续执行徒手砍树。
+        // 徒手砍树验证：vanilla 中徒手挖原木会掉落原木（只是速度慢，约 3s/块）。
+        // P10 的「等 500ms 再检查」逻辑保留——若刚 craft 完斧头但同步未完成，
+        // 等一下就能检测到斧头，正常装备斧头砍树。
         sleep(Duration::from_millis(500)).await;
         if !has_any_axe_in_inventory(bot).await {
-            return Err(format!(
-                "采集 {item} 失败：背包无斧，砍树效率极低。\n\
-                 建议：先 craft 3x3 合成一把斧（wooden_axe 需要 oak_planks×3 + stick×2；\n\
-                 stick 可由 oak_planks×2 合成 4 个）。若已合成请用 equip 装备到主手。"
-            ));
+            eprintln!(
+                "[gather] 警告：背包无斧，将徒手砍树（速度慢但可行）。\
+                 建议后续 craft wooden_axe 提升效率。"
+            );
         }
     }
     if is_ore_or_stone_like && !has_any_pickaxe_in_inventory(bot).await {
@@ -374,11 +378,41 @@ pub async fn do_gather(bot: &Client, item: &str, count: u32) -> Result<String, S
                 ));
             }
             // 斧类检查（徒手砍树只是慢，不掉物品几乎不会发生）
-            if matches!(tool_need, ToolNeed::Axe) && !has_any_axe_in_inventory(bot).await {
-                return Err(format!(
-                    "采集 {item} 失败：方块被挖掉但未掉落物品（背包无斧）。\n\
-                     建议：先合成 wooden_axe 再 gather。"
-                ));
+            // P15 修复（2026-07-26）：原代码在「方块消失但背包未增」时直接报失败，
+            // 但徒手砍树是会掉落的（只是慢）。方块消失后掉落物需要 1-2s 才被 bot 拾取，
+            // 原循环 100ms 检查一次发现方块消失就 break，没等拾取就误判「无斧失败」。
+            // 修复：方块消失后额外等 1.5s 让 bot 拾取掉落物；若拾取成功算正常完成；
+            // 若仍失败再判断是否真没斧（无斧时给警告但继续，因为徒手能砍树）。
+            if matches!(tool_need, ToolNeed::Axe) {
+                // 等待 1.5s 让 bot 拾取掉落物
+                for _ in 0..15 {
+                    sleep(Duration::from_millis(100)).await;
+                    let inv = match bot.get_inventory() {
+                        Ok(i) => i,
+                        Err(_) => continue,
+                    };
+                    let now = count_item(&inv, target);
+                    if now > before {
+                        gathered = now;
+                        done = true;
+                        break;
+                    }
+                }
+                if done {
+                    break;
+                }
+                // 仍没拾取到：如果背包无斧，给警告但继续下一轮（徒手能砍树，只是慢）
+                if !has_any_axe_in_inventory(bot).await {
+                    last_skip_reason = Some(
+                        "徒手砍树效率极低（无斧），建议合成 wooden_axe 后再 gather".to_string()
+                    );
+                    continue;
+                }
+                // 有斧但仍未拾取：可能是同步延迟，继续下一轮
+                last_skip_reason = Some(
+                    "方块消失但掉落物未拾取（可能服务端同步延迟）".to_string()
+                );
+                continue;
             }
         }
 

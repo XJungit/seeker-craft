@@ -443,6 +443,31 @@ pub async fn collect_block_smart(
                 }
             }
         }
+
+        // P16 修复（2026-07-26）：方块消失后掉落物需要 1-2s 才被 bot 拾取，
+        // 原循环 100ms 检查一次发现方块消失就 break，没等拾取就误判「无斧失败」。
+        // 修复：方块消失后额外等 1.5s 让 bot 拾取掉落物；若拾取成功算正常完成。
+        if !done && block_disappeared {
+            for _ in 0..15 {
+                sleep(Duration::from_millis(100)).await;
+                let now: u32 = bot
+                    .get_inventory()
+                    .ok()
+                    .and_then(|inv| {
+                        let mut total = 0u32;
+                        for k in &item_kinds {
+                            total += count_item_kind(&inv, *k);
+                        }
+                        Some(total)
+                    })
+                    .unwrap_or(0);
+                if now > before {
+                    new_count = now;
+                    done = true;
+                    break;
+                }
+            }
+        }
         if done {
             // 实际挖到了，报告增量
             let delta = new_count - before;
@@ -505,10 +530,16 @@ pub async fn collect_block_smart(
                 }
             }
             if matches!(tool_need, ToolNeed::Axe) && !has_any_axe_in_inventory(bot).await {
-                return Err(format!(
-                    "采集 {item} 失败：方块被挖掉但未掉落物品（背包无斧）。\n\
-                     当前主手: {held_str}；建议先合成 wooden_axe 再 gather。"
-                ));
+                // P16 修复（2026-07-26）：徒手砍树是可行的（vanilla 中徒手挖原木会掉落原木）。
+                // 原代码在这里 return Err，导致 LLM 永远无法用徒手砍树启动游戏——
+                // 这是死循环的根因：需要原木合成斧 → 需要斧砍树 → 没斧就砍不了树。
+                // 修复：改为警告并继续下一轮（可能只是拾取延迟，下一轮可能成功）。
+                // 若确实徒手挖不掉（不太可能），max_rounds 兜底会返回"未完成"错误。
+                eprintln!(
+                    "[smart_gather] 警告：方块消失但未拾取到物品（背包无斧，可能徒手砍树拾取延迟）。\
+                     继续下一轮尝试。"
+                );
+                continue;
             }
         }
         if !done && round == max_rounds - 1 {
