@@ -1,0 +1,16 @@
+P22+P23: aggressive auto-discard + fuel fallback + ingredient alias substitution
+
+P22 修复 (craft 100% 失败 + smelt 100% 失败):
+- auto_discard_junk 阈值从 empty<2 提到 empty<6，避免两次 craft 之间积满垃圾
+- 2x2 craft 检测 result slot 实际类型（LLM 传 oak_planks 但 bot 有 birch_log
+  → 服务端产出 birch_planks → 按 oak_planks 计数会误报失败）
+- smelt 燃料 fallback 列表 (coal/charcoal > log > planks > stick)
+  学习自 mindcraft furnaces.js：mindcraft 不指定燃料类型直接用任何可燃物
+
+P23 修复 (craft 100% 失败 - 缺 oak_planks 但有 birch_log):
+- find_ingredient_slot 增加 expand_ingredient_aliases 兜底
+- 支持 *_planks / *_log / *_wood / coal|charcoal 互替
+- vanilla 9 种木材 (oak/birch/spruce/jungle/acacia/dark_oak/mangrove/cherry/pale_oak)
+
+学习自 mindcraft getItemId mapping：mindcraft 用一个 mapping 表把 oak_planks
+映射到所有 planks 变体。本项目手动列出 vanilla 9 种木材。

@@ -1,4 +1,4 @@
 🎮 Craft-Agent 控制面板 → http://127.0.0.1:8080
-   目标: 先
-   步数: 35
+   目标: 挖铁矿(raw_iron),合成熔炉,熔炼
+   步数: 77
    Session: sessions/mc_run.jsonl

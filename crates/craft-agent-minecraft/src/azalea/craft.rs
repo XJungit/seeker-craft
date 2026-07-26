@@ -382,24 +382,98 @@ async fn auto_discard_junk(bot: &Client) -> (String, u32) {
 /// P9 修复：`find_source_slot` 只搜 `player_slots_range`，当上一次合成在网格里
 /// 留了残料时找不到它，会误报「背包缺少原料 X」并触发多余的自动合成。
 /// 这里先搜玩家背包（优先用背包里的整堆），再兜底搜网格槽（1..=9）。
+///
+/// P23 修复（2026-07-27）：木板/原木别名替换。
+/// LLM 常传 "oak_planks" 但 bot 实际有 birch_log/birch_planks——原 code 只找
+/// oak_planks → "背包缺少原料 oak_planks" → craft 100% 失败。
+/// 现在：找不到目标 kind 时，按别名表尝试所有变体（oak/birch/spruce/...）。
 fn find_ingredient_slot(
     inv: &ContainerHandleRef,
     kind: ItemKind,
     grid_slots: std::ops::RangeInclusive<usize>,
 ) -> Option<usize> {
+    // 先精确找
     if let Some(s) = find_source_slot(inv, kind) {
         return Some(s);
     }
     // 兜底：网格里可能有上次残留的同种原料
     let slots = inv.slots()?;
-    for s in grid_slots {
+    for s in grid_slots.clone() {
         if let Some(stack) = slots.get(s) {
             if !stack.is_empty() && stack.kind() == kind {
                 return Some(s);
             }
         }
     }
+    // P23: 别名替换——找不到精确 kind 时，尝试同类其他变体
+    for alt_kind in expand_ingredient_aliases(kind) {
+        if alt_kind == kind {
+            continue;
+        }
+        if let Some(s) = find_source_slot(inv, alt_kind) {
+            eprintln!(
+                "[craft] P23 别名替换：{} -> {}（背包无前者，用后者替代）",
+                kind.to_str(),
+                alt_kind.to_str()
+            );
+            return Some(s);
+        }
+        for s in grid_slots.clone() {
+            if let Some(stack) = slots.get(s) {
+                if !stack.is_empty() && stack.kind() == alt_kind {
+                    eprintln!(
+                        "[craft] P23 别名替换（网格）：{} -> {}",
+                        kind.to_str(),
+                        alt_kind.to_str()
+                    );
+                    return Some(s);
+                }
+            }
+        }
+    }
     None
+}
+
+/// P23 新增（2026-07-27）：返回原料的别名列表（同种类不同变体）。
+///
+/// 学习自 mindcraft 的 getItemId/grindstone：mindcraft 用一个 mapping 表把
+/// "oak_planks" 映射到所有 planks 变体。本项目手动列出 vanilla 9 种木材。
+///
+/// 规则：
+/// - oak_planks → [birch_planks, spruce_planks, jungle_planks, acacia_planks, ...]
+/// - oak_log → [birch_log, spruce_log, jungle_log, acacia_log, ...]
+/// - 其他物品：返回空（无别名）
+fn expand_ingredient_aliases(kind: ItemKind) -> Vec<ItemKind> {
+    let name = kind.to_str();
+    let bare = name.strip_prefix("minecraft:").unwrap_or(name);
+    let aliases: Vec<&str> = if bare.ends_with("_planks") {
+        vec![
+            "oak_planks", "birch_planks", "spruce_planks", "jungle_planks",
+            "acacia_planks", "dark_oak_planks", "mangrove_planks", "cherry_planks", "pale_oak_planks",
+        ]
+    } else if bare.ends_with("_log") {
+        vec![
+            "oak_log", "birch_log", "spruce_log", "jungle_log",
+            "acacia_log", "dark_oak_log", "mangrove_log", "cherry_log", "pale_oak_log",
+        ]
+    } else if bare.ends_with("_wood") {
+        vec![
+            "oak_wood", "birch_wood", "spruce_wood", "jungle_wood",
+            "acacia_wood", "dark_oak_wood", "mangrove_wood", "cherry_wood", "pale_oak_wood",
+        ]
+    } else if matches!(bare, "coal" | "charcoal") {
+        // 火把配方同时支持 coal 和 charcoal
+        vec!["coal", "charcoal"]
+    } else {
+        return Vec::new();
+    };
+    aliases
+        .iter()
+        .filter_map(|s| {
+            ItemKind::from_str(&format!("minecraft:{s}")).ok()
+        })
+        .collect()
+}
 }
 
 /// 清空合成网格里的残留物品（回背包）。返回是否已全部清空。
