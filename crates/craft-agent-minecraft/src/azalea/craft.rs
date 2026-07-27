@@ -1867,6 +1867,23 @@ pub async fn do_smelt(
         );
     }
 
+    // P57 分批熔炼（2026-07-27）：避免工具调用 120s 超时。
+    // 实测 scan_20260727_212144.md 显示 smelt(count=15) 超时 120s——
+    // 15 个 × 10s/个 = 150s > 120s 工具调用超时。
+    // 修复：单次最多熔炼 8 个（80s + 11s 无产物超时 + 放料/回收 ≈ 95s < 120s）。
+    // 剩余的让 LLM 看到返回结果后再次调用 smelt 继续。
+    // 这对齐 mindcraft 哲学：工具做能做的部分，LLM 决策下一步。
+    const MAX_SMELT_PER_BATCH: u32 = 8;
+    let original_count = actual_smelt_count;
+    let actual_smelt_count = actual_smelt_count.min(MAX_SMELT_PER_BATCH);
+    if actual_smelt_count < original_count {
+        eprintln!(
+            "[smelt] P57: 请求熔炼 {} 个，但单批上限 {} 个（避免 120s 超时），本次熔炼 {} 个，剩余 {} 个下次继续",
+            original_count, MAX_SMELT_PER_BATCH, actual_smelt_count,
+            original_count - actual_smelt_count
+        );
+    }
+
     // P47 对齐 mindcraft line 205-226：一次性放足燃料。
     // mindcraft: const put_fuel = Math.ceil(num / mc.getFuelSmeltOutput(fuel.name));
     // 我方：根据燃料类型算每单位能炼几个，再算需要的燃料数。
@@ -2170,6 +2187,17 @@ pub async fn do_smelt(
                  但背包只有 {actual_input} 个 {input}，已全部熔炼）。\
                  若需更多 {output}，请先 gather 采集 {input} 后再 smelt。",
                 input = recipe.input
+            )
+        } else if original_count > actual_smelt_count {
+            // P57 分批熔炼：本次只熔炼了 MAX_SMELT_PER_BATCH 个，还有剩余
+            format!(
+                "熔炼 {output} 完成：本次熔炼 {total_smelted} 个（请求 {requested_count}，\
+                 但 P57 单批上限 {MAX_SMELT_PER_BATCH} 个以避免 120s 工具超时）。\
+                 背包还剩 {remaining_raw} 个 {input} 未熔炼，请再次调用 smelt(output=\"{output}\", fuel=\"{fuel}\", count={remaining_raw}) 继续。",
+                input = recipe.input,
+                fuel = fuel,
+                remaining_raw = original_count - actual_smelt_count,
+                MAX_SMELT_PER_BATCH = MAX_SMELT_PER_BATCH
             )
         } else {
             format!("熔炼 {output} x{actual_smelt_count} 完成（共 {total_smelted} 个）")
@@ -2814,6 +2842,8 @@ mod tests {
             fuel_needed: u32,
             input_kind: &'static str,
             fuel_kind: &'static str,
+            /// P57: 分批前的原始数量（若 > actual_smelt_count 表示被分批了）
+            original_count: u32,
         },
     }
 
@@ -2939,12 +2969,25 @@ mod tests {
             (actual_smelt_count + fuel_per_item - 1) / fuel_per_item
         };
 
+        // P57 分批熔炼（2026-07-27）：避免工具调用 120s 超时。
+        // 单次最多 8 个（80s + 11s 无产物超时 ≈ 95s < 120s 工具超时）。
+        const MAX_SMELT_PER_BATCH: u32 = 8;
+        let original_count = actual_smelt_count;
+        let actual_smelt_count = actual_smelt_count.min(MAX_SMELT_PER_BATCH);
+        // 分批后燃料需求也要重新计算
+        let fuel_needed = if fuel_per_item == 0 {
+            actual_smelt_count
+        } else {
+            (actual_smelt_count + fuel_per_item - 1) / fuel_per_item
+        };
+
         SmeltDecision::Proceed {
             actual_smelt_count,
             fuel_per_item,
             fuel_needed,
             input_kind,
             fuel_kind,
+            original_count,
         }
     }
 
@@ -3197,14 +3240,18 @@ mod tests {
     /// 边界: 请求 9 个，1 coal → fuel_needed = 2 coal（ceil(9/8)）
     #[test]
     fn p54_smelt_fuel_needed_ceil_division() {
+        // P57 后：count > 8 会被分批为 8，所以用 log 燃料测 ceil 除法
+        // log 每个炼 1 个，8 个原料需要 8 个 log（ceil(8/1)=8）
         let mut inv = MockInventory::new();
-        inv.add("raw_iron", 9).add("coal", 2);
+        inv.add("raw_iron", 9).add("oak_log", 10);
         let furnace = MockFurnace::empty();
-        let decision = smelt_decide("iron_ingot", "coal", 9, &inv, &furnace);
+        let decision = smelt_decide("iron_ingot", "oak_log", 9, &inv, &furnace);
         match decision {
-            SmeltDecision::Proceed { actual_smelt_count, fuel_needed, .. } => {
-                assert_eq!(actual_smelt_count, 9);
-                assert_eq!(fuel_needed, 2, "ceil(9/8) = 2");
+            SmeltDecision::Proceed { actual_smelt_count, fuel_needed, original_count, .. } => {
+                // P57: 9 个请求被分批为 8 个
+                assert_eq!(original_count, 9, "P57: 原始请求 9 个");
+                assert_eq!(actual_smelt_count, 8, "P57: 分批后 8 个");
+                assert_eq!(fuel_needed, 8, "ceil(8/1) = 8 个 log");
             }
             _ => panic!("应通过，got {decision:?}"),
         }
@@ -3815,12 +3862,14 @@ mod tests {
                 fuel_needed,
                 input_kind,
                 fuel_kind,
+                original_count,
             } => {
                 assert_eq!(input_kind, "raw_iron", "P18: 应选 raw_iron");
                 assert_eq!(fuel_kind, "coal");
                 assert_eq!(actual_smelt_count, 7, "P43: 按实际数量 7 熔炼");
                 assert_eq!(fuel_per_item, 8);
                 assert_eq!(fuel_needed, 1, "1 coal 足够炼 7 个");
+                assert_eq!(original_count, 7, "P57: 7 < 8 不分批");
 
                 // 模拟 takeOutput 循环：7 个产物全部成功到达
                 let arrivals = [1u32; 7];
@@ -3887,5 +3936,92 @@ mod tests {
         let furnace4 = MockFurnace::empty();
         let d4 = smelt_decide("iron_ingot", "coal", 8, &inv4, &furnace4);
         assert!(matches!(d4, SmeltDecision::Proceed { .. }));
+    }
+
+    /// P57: 分批熔炼测试。
+    ///
+    /// 当请求 count > 8 时，actual_smelt_count 应被限制为 8，
+    /// original_count 保留原始请求值，fuel_needed 按 8 重新计算。
+    /// 这避免单次工具调用超过 120s 超时（15 个 × 10s = 150s > 120s）。
+    #[tokio::test]
+    async fn p57_batch_smelt_caps_at_8_to_avoid_120s_timeout() {
+        // 场景：背包有 15 个 raw_iron + 2 个 coal，请求熔炼 15 个
+        let mut inv = MockInventory::new();
+        inv.add("raw_iron", 15).add("coal", 2);
+        let furnace = MockFurnace::empty();
+
+        let decision = smelt_decide("iron_ingot", "coal", 15, &inv, &furnace);
+        match decision {
+            SmeltDecision::Proceed {
+                actual_smelt_count,
+                fuel_per_item,
+                fuel_needed,
+                original_count,
+                ..
+            } => {
+                // P57: 15 个请求被分批为 8 个
+                assert_eq!(original_count, 15, "P57: 原始请求 15 个");
+                assert_eq!(actual_smelt_count, 8, "P57: 分批后单次上限 8 个");
+                assert_eq!(fuel_per_item, 8, "coal 每个炼 8 个");
+                assert_eq!(fuel_needed, 1, "P57: 1 个 coal 足够炼 8 个");
+
+                // 模拟 takeOutput 循环：8 个产物全部成功到达
+                let arrivals = [1u32; 8];
+                let outcome = simulate_takeoutput_loop(
+                    actual_smelt_count,
+                    &arrivals,
+                    |_| true,
+                    |_| true,
+                );
+                assert_eq!(
+                    outcome,
+                    SmeltOutcome::Success { smelted: 8 },
+                    "P57: 8 个产物应全部收集成功"
+                );
+            }
+            other => panic!("P57: 应通过闸门进入 Proceed，实际: {other:?}"),
+        }
+    }
+
+    /// P57: 边界测试 - 请求恰好 8 个不分批。
+    #[tokio::test]
+    async fn p57_batch_smelt_exactly_8_no_split() {
+        let mut inv = MockInventory::new();
+        inv.add("raw_iron", 8).add("coal", 1);
+        let furnace = MockFurnace::empty();
+
+        let decision = smelt_decide("iron_ingot", "coal", 8, &inv, &furnace);
+        match decision {
+            SmeltDecision::Proceed {
+                actual_smelt_count,
+                original_count,
+                ..
+            } => {
+                assert_eq!(original_count, 8, "P57: 原始请求 8 个");
+                assert_eq!(actual_smelt_count, 8, "P57: 8 个不分批");
+            }
+            other => panic!("P57: 应通过闸门进入 Proceed，实际: {other:?}"),
+        }
+    }
+
+    /// P57: 边界测试 - 请求 9 个被分批为 8 个。
+    #[tokio::test]
+    async fn p57_batch_smelt_9_splits_to_8() {
+        let mut inv = MockInventory::new();
+        inv.add("raw_iron", 9).add("coal", 2);
+        let furnace = MockFurnace::empty();
+
+        let decision = smelt_decide("iron_ingot", "coal", 9, &inv, &furnace);
+        match decision {
+            SmeltDecision::Proceed {
+                actual_smelt_count,
+                original_count,
+                ..
+            } => {
+                assert_eq!(original_count, 9, "P57: 原始请求 9 个");
+                assert_eq!(actual_smelt_count, 8, "P57: 9 个被分批为 8 个");
+            }
+            other => panic!("P57: 应通过闸门进入 Proceed，实际: {other:?}"),
+        }
     }
 }
