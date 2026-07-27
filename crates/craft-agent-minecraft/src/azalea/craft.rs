@@ -3434,6 +3434,7 @@ mod tests {
 
     /// 模拟熔炉状态（input/fuel/result 三槽）。
     #[derive(Debug, Clone, Default)]
+    #[allow(dead_code)]
     struct MockFurnace {
         input: Option<(&'static str, u32)>,
         fuel: Option<(&'static str, u32)>,
@@ -3591,11 +3592,7 @@ mod tests {
         } else {
             1
         };
-        let fuel_needed = if fuel_per_item == 0 {
-            actual_smelt_count
-        } else {
-            (actual_smelt_count + fuel_per_item - 1) / fuel_per_item
-        };
+        // 燃料需求在分批后重新计算（见下方）
 
         // P57 分批熔炼（2026-07-27）：避免工具调用 120s 超时。
         // 单次最多 8 个（80s + 11s 无产物超时 ≈ 95s < 120s 工具超时）。
