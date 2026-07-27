@@ -1,0 +1,79 @@
+[
+  {
+    "symptom": ["伪调用", "伪工具", "文本伪调用", "【工具执行】", "【工具调用】"],
+    "root_cause": "fold_tool_history 将工具调用历史折叠为文本格式，导致 LLM 模仿输出伪调用",
+    "fix_files": ["crates/craft-agent-model/src/decision.rs"],
+    "fix_description": "删除 fold_tool_history 及其调用，直接透传原始 tool_calls 和 role:tool 消息给 LLM",
+    "regression_tests": ["regression_system_prompt_byte_stable"]
+  },
+  {
+    "symptom": ["坐标卡死", "position 不变", "卡住"],
+    "root_cause": "goto 超时太长或距离太远，导致 bot 卡住不动",
+    "fix_files": ["crates/craft-agent-minecraft/src/azalea/mod.rs"],
+    "fix_description": "最大 32m 距离限制，超时 3s（60 ticks），stuck 检测改为时间制",
+    "regression_tests": []
+  },
+  {
+    "symptom": ["mine_below", "挖到基岩", "Y≤"],
+    "root_cause": "mine_below 无 Y 检测，bot 会挖穿基岩继续下挖",
+    "fix_files": ["crates/craft-agent-minecraft/src/adapter_azalea.rs"],
+    "fix_description": "Y≤-61 自动停止并显示警告",
+    "regression_tests": []
+  },
+  {
+    "symptom": ["合成失败", "craft", "合成"],
+    "root_cause": "move_stack 放整堆导致配方形状错误，或 clear_grid 不彻底",
+    "fix_files": ["crates/craft-agent-minecraft/src/azalea/craft.rs"],
+    "fix_description": "用 place_one 每次 1 个，clear_grid 用 left_click 代替 shift_click",
+    "regression_tests": []
+  },
+  {
+    "symptom": ["熔炼超时", "smelt", "smelt 超时"],
+    "root_cause": "do_smelt 只等 1.2s 但熔炼需要 10-20s",
+    "fix_files": ["crates/craft-agent-minecraft/src/azalea/craft.rs"],
+    "fix_description": "等待 20s，并增加超时时间设置",
+    "regression_tests": []
+  },
+  {
+    "symptom": ["chat 不显示", "聊天不显示"],
+    "root_cause": "Event::Chat 用 Debug 格式化，内容不完整",
+    "fix_files": ["crates/craft-agent-minecraft/src/azalea/mod.rs"],
+    "fix_description": "用 packet.content() 替代 Debug 格式化",
+    "regression_tests": []
+  },
+  {
+    "symptom": ["选中的槽位不对", "selected_slot 硬编码"],
+    "root_cause": "selected_slot 硬编码 0，不读取 bot 实际手持槽",
+    "fix_files": ["crates/craft-agent-minecraft/src/azalea/mod.rs"],
+    "fix_description": "读 bot.selected_hotbar_slot() 获取实际槽位",
+    "regression_tests": []
+  },
+  {
+    "symptom": ["吃东西不生效", "consume", "吃东西"],
+    "root_cause": "consume 只调一次 start_use_item，MC 需要长按",
+    "fix_files": ["crates/craft-agent-minecraft/src/azalea/mod.rs"],
+    "fix_description": "每 50ms 循环 start_use_item() 持续 2.5s",
+    "regression_tests": []
+  },
+  {
+    "symptom": ["self_defense 自毁", "自毁"],
+    "root_cause": "self_defense 无距离检查，攻击远处的敌对生物",
+    "fix_files": ["crates/craft-agent-minecraft/src/azalea/mod.rs"],
+    "fix_description": "距离≤4 格 + !is_busy() 才触发",
+    "regression_tests": []
+  },
+  {
+    "symptom": ["开放失败", "is_error 标志误报", "is_error"],
+    "root_cause": "is_error 标志始终为 false，即使操作失败",
+    "fix_files": ["crates/craft-agent-minecraft/src/adapter_azalea.rs"],
+    "fix_description": "实现 is_failure_detail 函数，通过分析返回消息内容判断操作是否成功",
+    "regression_tests": []
+  },
+  {
+    "symptom": ["perceive 编号", "perceive 格式"],
+    "root_cause": "perceive 输出格式不匹配，导致 LLM 无法理解",
+    "fix_files": ["crates/craft-agent-minecraft/src/adapter_azalea.rs"],
+    "fix_description": "确保 perceive 输出包含位置、生命、饱食、群系、背包、资源摘要等关键信息",
+    "regression_tests": []
+  }
+]

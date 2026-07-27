@@ -773,11 +773,25 @@ pub struct FixEngine {
 
 impl FixEngine {
     /// 加载已知问题表
+    /// 优先从 tools/known_issues.json 加载，文件不存在时回退到硬编码表。
     pub fn load(workspace_root: &Path) -> Self {
+        let known_issues = Self::load_from_json(workspace_root)
+            .unwrap_or_else(|| build_known_issues());
         Self {
-            known_issues: build_known_issues(),
+            known_issues,
             workspace_root: workspace_root.to_path_buf(),
         }
+    }
+
+    /// 从 JSON 文件加载已知问题表
+    fn load_from_json(workspace_root: &Path) -> Option<Vec<KnownIssue>> {
+        let json_path = workspace_root.join("tools/known_issues.json");
+        if !json_path.exists() {
+            return None;
+        }
+        let content = std::fs::read_to_string(json_path).ok()?;
+        let issues: Vec<KnownIssue> = serde_json::from_str(&content).ok()?;
+        Some(issues)
     }
 
     /// 根据 IssueAnalyzer 的分析结果匹配已知问题
@@ -1296,5 +1310,34 @@ mod tests {
     fn test_fix_engine_load() {
         let engine = FixEngine::load(std::path::Path::new("."));
         assert!(!engine.known_issues.is_empty());
+    }
+
+    #[test]
+    fn test_fix_engine_json_load() {
+        let json_path = std::path::Path::new("../../tools/known_issues.json");
+        assert!(json_path.exists(), "known_issues.json should exist");
+        let content = std::fs::read_to_string(json_path).unwrap();
+        let issues: Vec<KnownIssue> = serde_json::from_str(&content).unwrap();
+        assert!(!issues.is_empty(), "JSON should have at least one issue");
+        for issue in &issues {
+            assert!(!issue.symptom.is_empty(), "each issue needs symptoms");
+            assert!(!issue.root_cause.is_empty(), "each issue needs root_cause");
+            assert!(!issue.fix_description.is_empty(), "each issue needs fix_description");
+        }
+    }
+
+    #[test]
+    fn test_fix_engine_matches_issues() {
+        let engine = FixEngine::load(std::path::Path::new("."));
+        let has_pseudo_call = engine.known_issues.iter().any(|i| {
+            i.symptom.contains(&"伪调用".to_string())
+                || i.symptom.contains(&"伪工具".to_string())
+        });
+        assert!(has_pseudo_call, "should have pseudo-call issue");
+        let has_craft = engine.known_issues.iter().any(|i| {
+            i.symptom.contains(&"craft".to_string())
+                || i.symptom.contains(&"合成".to_string())
+        });
+        assert!(has_craft, "should have craft issue");
     }
 }
