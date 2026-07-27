@@ -554,25 +554,64 @@ vendor/azalea 是**独立 git 仓库 + 独立 cargo workspace**，改它有三�
 
 > 不再打补丁，按以下四个方向系统性重构 craft/smelt。
 
-#### 方向 A：写 mock 容器集成测试
+#### 方向 A：写 mock 容器集成测试 — ✅ 已完成（P54）
 - 在不需要 MC server 的情况下验证 `do_craft_3x3` / `do_smelt` 的状态机正确性
 - 覆盖边界条件：背包满、原料不足、燃料不够、炉子已在使用、容器同步延迟
 - 目标：cargo test 即可验证工具逻辑，不需要跑 LLM 实机
+- **落地**：`crates/craft-agent-minecraft/src/azalea/craft.rs::tests` 引入
+  `MockInventory` / `MockFurnace` 纯函数模型 + `smelt_decide` / `craft_3x3_decide`
+  决策函数。43 个测试覆盖 mindcraft skills.js 所有边界条件（炉子被占用、
+  原料不足、燃料 fallback 链、背包满、产物收集失败等）。
+- **测试命令**：`cargo test -p craft-agent-minecraft --features azalea-bot`（115 passed）
 
-#### 方向 B：逐函数对齐 mindcraft skills.js
+#### 方向 B：逐函数对齐 mindcraft skills.js — ✅ 已完成（P47-P50）
 - 把 mindcraft craftRecipe/smeltItem 的每个边界条件列出来
 - 逐个写测试对齐：placedTable/placedFurnace 回收、takeOutput 循环、燃料灵活选择
 - mindcraft 源码位置：`src/agent/library/skills.js`（line 63 craftRecipe, line 274 smeltItem）
+- **落地**：
+  - `table_flow.rs` 实现 placedTable/placedFurnace 自动放置 + open + 用完回收
+  - `craft.rs::do_smelt` 实现 fallback 燃料链（coal → charcoal → log → planks → stick）
+  - `craft.rs::do_craft_3x3` 实现 place_one 逐格放料 + clear_grid 网格清理
+  - P50/P51 切石机/锻造台产物收集验证对齐
 
-#### 方向 C：用 RecipeBook 完全替代手写 SHAPED_RECIPES
+#### 方向 C：用 RecipeBook 完全替代手写 SHAPED_RECIPES — ✅ 已完成（P48）
 - mindcraft 用 prismarine-recipe 全量配方，我方手写表永远补不齐
 - 我方已有 `recipe_book.rs` + `builtin_recipes.json`（vanilla 26.2 全量配方书）
 - 目标：craft_3x3 优先查 RecipeBook，手写表仅作 fallback
+- **落地**：`craft.rs::do_craft_3x3` 查配方顺序：RecipeBook → SHAPED_RECIPES 手写表 → Err。
+  RecipeBook 覆盖 vanilla 26.2 全部方块/物品配方，手写表只兜底少量自定义配方。
 
-#### 方向 D：smelt 学习 mindcraft 的 takeOutput 循环
+#### 方向 D：smelt 学习 mindcraft 的 takeOutput 循环 — ✅ 已完成（P49）
 - mindcraft：`while (total < num) { await sleep(1s); if (furnace.outputItem()) { takeOutput() } }`
 - 我方现状：固定等 30s → 一次性 shift_click(2)
 - 目标：动态轮询结果槽，一有产物立刻取，11s 无产出才超时
+- **落地**：`craft.rs::do_smelt` 改为 1s 间隔轮询结果槽，shift_click 取产物后
+  验证结果槽已空（防止产物计数虚增）；失败时 left_click 兜底；11s 无产出超时。
+
+### 9.3.1 P55+ 后续改进点（基于 scan_20260727_205138.md 实测）
+
+> 方向 A-D 已全部完成，下一阶段聚焦以下三个改进点。
+
+**改进点 1：plain_text_reply 治理（HIGH 优先级）**
+- 实测：step 11/14/33/41 都出现 LLM 宣告"smelt 任务完成 ✅"但无 tool_call
+- 根因：LLM 在拿到 smelt Ok 结果后进入"总结陈词"模式，忘记 SelfPrompter 仍在推进目标
+- 方案：
+  - `agent/mod.rs::run_one_turn` Step 10 在注入续跑 nudge 时，检测 assistant 文本是否
+    包含「✅」「任务完成」「已验证」等总结性关键词，若 SelfPrompter 还有未完成目标，
+    则注入更强的"禁止宣告完成"nudge
+  - 在 `profiles/_default.json` system_prompt 中加规则：「未达成 SelfPrompter 终极目标前
+    禁止输出『任务完成 ✅』类总结文字，每轮必须产生 tool_call」
+
+**改进点 2：容器同步 / BlockEntity 延迟实测验证（MEDIUM 优先级）**
+- P49 takeOutput 循环依赖 `furnace.outputItem()` 真实读取，但 azalea 的 ContainerHandleRef
+  状态同步可能有 1-2 tick 延迟
+- 方案：在 LLM 实机测试中观察 smelt 是否出现"产物已烧好但 shift_click 取不到"现象；
+  若有，考虑用 9.4 节的 azalea 插件机制订阅 `ContainerStateChangedEvent` 做主动同步
+
+**改进点 3：azalea 插件化产物自动收集（LOW 优先级，P49 已兜底）**
+- 见 9.4 节评估：把"产物自动收集""容器状态同步"抽成 Bevy ECS 插件
+- P49 的轮询+left_click 兜底已能工作，插件化是优化项不是必需项
+- 触发条件：若改进点 2 实测发现同步延迟问题，再升级为插件化方案
 
 ### 9.4 azalea 插件能力评估（2026-07-27）
 
