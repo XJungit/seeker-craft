@@ -173,27 +173,40 @@ async fn walk_near(bot: &Client, pos: BlockPos) -> Result<(), String> {
 
 /// P5 新增：用 pathfinder 把 bot 走到 pos 旁 1-2m 内（reach 范围内）。
 /// 最多等 5 秒，超时也不报错（让后续 open_container_at 自己判定）。
-async fn walk_to_reach(bot: &Client, pos: BlockPos) {
+///
+/// P36 修复（2026-07-27）：返回最终距离，让调用方判断是否在 reach 范围内。
+/// 原代码 walk_to_reach 超时后不验证距离，直接让 open_container_at 尝试 3 次都失败，
+/// 浪费 4s+ 时间，最终报"打开容器超时"——但真正原因是 bot 离目标太远。
+/// 现在返回距离，调用方能明确区分"距离不够"vs"LOS 被挡"vs"服务端拒绝"。
+async fn walk_to_reach(bot: &Client, pos: BlockPos) -> f64 {
     use azalea::pathfinder::goals::RadiusGoal;
     use azalea::Vec3;
     let p = match bot.position() {
         Ok(p) => p,
-        Err(_) => return,
+        Err(_) => return f64::MAX,
     };
     let dx = p.x - pos.x as f64;
+    let dy = p.y - (pos.y as f64 + 0.5);
     let dz = p.z - pos.z as f64;
-    let dist = (dx * dx + dz * dz).sqrt();
+    let dist = (dx * dx + dy * dy + dz * dz).sqrt();
     // 已经在 reach 范围内（<3m），不需要走
     if dist < 3.0 {
-        return;
+        return dist;
     }
     // 用 RadiusGoal 走到 pos 旁 1.5m 范围
-    // P5 修复：bot.goto() 返回 Future 必须await才执行；这里用 tokio::select 加超时
-    // 避免goto future阻塞过久（pathfinder 找不到路时 future 不会结束）。
     let target = Vec3::new(pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5);
     let goto_fut = bot.goto(RadiusGoal { pos: target, radius: 1.5 });
     let _ = tokio::time::timeout(Duration::from_secs(5), goto_fut).await;
-    // 即使 pathfinder 没完全走到，也尝试打开容器（可能已经足够近）
+    // P36: 返回最终距离，让调用方判断
+    match bot.position() {
+        Ok(p) => {
+            let dx = p.x - (pos.x as f64 + 0.5);
+            let dy = p.y - (pos.y as f64 + 0.5);
+            let dz = p.z - (pos.z as f64 + 0.5);
+            (dx * dx + dy * dy + dz * dz).sqrt()
+        }
+        Err(_) => f64::MAX,
+    }
 }
 
 /// 确保 bot 当前已打开 table_kind 类型的容器。
@@ -226,7 +239,20 @@ pub async fn ensure_table_open(
         // P5 修复：实际走到容器旁（之前只检查距离不移动，导致 bot 离桌 3-4m 时
         // 服务端 reach 检查失败，open_container_at 超时）。用 pathfinder 走到
         // 距 pos 1-2m 的位置，确保在 4.5m reach 范围内。
-        walk_to_reach(bot, pos).await;
+        let final_dist = walk_to_reach(bot, pos).await;
+        // P36 本质修复：walk_to_reach 后验证距离，如果 bot 仍在 reach 范围外（>4.5m），
+        // 直接报错，不浪费 3 次 open_container_at 尝试（每次 1s+，总共浪费 4s+）。
+        // 这是"打开容器超时"错误的常见根因——bot 卡在 1x1 竖井/窄洞里，pathfinder
+        // 找不到路，walk_to_reach 超时后 bot 仍在远处，但原代码仍尝试 open 3 次。
+        if final_dist > 4.5 {
+            return Err(format!(
+                "无法走到容器 ({},{},{}) 附近（bot 距离 {final_dist:.1}m > 4.5m reach 范围）。\n\
+                 原因：pathfinder 5s 内未找到路（bot 可能被围墙卡住/在 1x1 竖井里）。\n\
+                 建议：1) 先 go 到开阔地带再重试；2) 若 bot 在竖井里，用 mine 挖出空间；\n\
+                 3) 重新 place 一个桌/炉在 bot 当前位置附近。",
+                pos.x, pos.y, pos.z
+            ));
+        }
         // P7 修复：open_container_at 返回 Ok 不等于菜单稳定打开。
         // 服务端可能先开 Container 后立刻 Close（reach 检查、block 被破坏等）。
         // 改为：开完后等待 300ms，再连续 3 次确认 is_container_open 都为 true，
@@ -286,6 +312,143 @@ pub async fn ensure_table_open(
             }
             // 重试前稍微等一下让服务端同步
             sleep(Duration::from_millis(200)).await;
+        }
+        // P37 本质修复（2026-07-27）：3 次 open 失败后，验证 pos 处是否真的有桌/炉方块。
+        // 原代码直接报错给 LLM，但常见根因是：
+        // 1) hint_pos 处的桌/炉方块已被破坏（爆炸/火灾/其他实体挖掉）
+        // 2) hint_pos 是 LLM 凭记忆给的旧坐标，桌从未在那里
+        // 3) 方块存在但 LOS 被新放置的方块挡住
+        //
+        // 修复策略：
+        // a. 验证 pos 处是否是预期的桌/炉方块
+        // b. 如果不是，且背包有桌/炉物品 → 在 bot 附近重新放置一个并打开（复用自动放置流程）
+        // c. 如果不是，且背包没有桌/炉物品 → 返回明确错误，告诉 LLM 桌不在那里
+        // d. 如果方块存在但仍打不开 → LOS 问题，报错让 LLM 换位置
+        let expected_block = table_block_kind(table_kind);
+        if let Some(expected_kind) = expected_block {
+            let block_exists = bot
+                .world()
+                .ok()
+                .and_then(|w| w.read().get_block_state(pos))
+                .map(|state| {
+                    let actual: BlockKind = state.into();
+                    actual == expected_kind
+                })
+                .unwrap_or(false);
+
+            if !block_exists {
+                // 桌/炉方块不存在，尝试在 bot 附近重新放置
+                eprintln!(
+                    "[table_flow] P37: hint_pos=({},{},{}) 处无 {} 方块（已被破坏或坐标错误），尝试重新放置",
+                    pos.x, pos.y, pos.z, table_kind
+                );
+                // 检查背包是否有桌/炉物品
+                if count_in_inventory(bot, item_id) > 0 {
+                    // 有物品，重新走自动放置流程（递归调用 ensure_table_open 但 hint_pos=None）
+                    // 但要避免无限递归，所以直接走自动放置逻辑
+                    match find_nearby_placement_spot(bot) {
+                        Some(new_pos) => {
+                            walk_to_reach(bot, new_pos).await;
+                            match crate::azalea::place::do_place(bot, item_id, new_pos).await {
+                                Ok(_) => {
+                                    sleep(Duration::from_millis(400)).await;
+                                    // 验证放置成功
+                                    if verify_table_block_at(bot, new_pos, expected_block) {
+                                        // 重试 open
+                                        for retry in 0..2u8 {
+                                            walk_to_reach(bot, new_pos).await;
+                                            sleep(Duration::from_millis(150)).await;
+                                            match bot.open_container_at(new_pos).await {
+                                                Ok(Some(h)) => {
+                                                    std::mem::forget(h);
+                                                    for _ in 0..20 {
+                                                        if is_container_open(bot) {
+                                                            sleep(Duration::from_millis(80)).await;
+                                                            return Ok(new_pos);
+                                                        }
+                                                        sleep(Duration::from_millis(50)).await;
+                                                    }
+                                                }
+                                                _ => {}
+                                            }
+                                            sleep(Duration::from_millis(300)).await;
+                                        }
+                                        return Err(format!(
+                                            "hint_pos=({},{},{}) 处 {} 已被破坏，重新放置于 ({},{},{}) 后仍打开失败。\
+                                             建议：go 到开阔地带再 craft_3x3。",
+                                            pos.x, pos.y, pos.z, table_kind,
+                                            new_pos.x, new_pos.y, new_pos.z
+                                        ));
+                                    }
+                                }
+                                Err(e) => {
+                                    return Err(format!(
+                                        "hint_pos=({},{},{}) 处 {} 不存在，重新放置失败：{e}",
+                                        pos.x, pos.y, pos.z, table_kind
+                                    ));
+                                }
+                            }
+                        }
+                        None => {
+                            // P34: 自动挖出空间再放
+                            match excavate_placement_spot(bot).await {
+                                Some(dug_pos) => {
+                                    eprintln!(
+                                        "[table_flow] P37+P34: 自动挖出空间 ({},{},{}) 用于重新放置 {}",
+                                        dug_pos.x, dug_pos.y, dug_pos.z, item_id
+                                    );
+                                    walk_to_reach(bot, dug_pos).await;
+                                    match crate::azalea::place::do_place(bot, item_id, dug_pos).await {
+                                        Ok(_) => {
+                                            sleep(Duration::from_millis(400)).await;
+                                            if verify_table_block_at(bot, dug_pos, expected_block) {
+                                                for retry in 0..2u8 {
+                                                    walk_to_reach(bot, dug_pos).await;
+                                                    sleep(Duration::from_millis(150)).await;
+                                                    match bot.open_container_at(dug_pos).await {
+                                                        Ok(Some(h)) => {
+                                                            std::mem::forget(h);
+                                                            for _ in 0..20 {
+                                                                if is_container_open(bot) {
+                                                                    sleep(Duration::from_millis(80)).await;
+                                                                    return Ok(dug_pos);
+                                                                }
+                                                                sleep(Duration::from_millis(50)).await;
+                                                            }
+                                                        }
+                                                        _ => {}
+                                                    }
+                                                    sleep(Duration::from_millis(300)).await;
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            return Err(format!(
+                                                "hint_pos 处 {} 不存在，挖空间后重放也失败：{e}",
+                                                table_kind
+                                            ));
+                                        }
+                                    }
+                                }
+                                None => {
+                                    return Err(format!(
+                                        "hint_pos=({},{},{}) 处 {} 方块不存在，且周围无空间可重放（挖空间也失败）。\
+                                         建议：go 到开阔地带再 craft_3x3。",
+                                        pos.x, pos.y, pos.z, table_kind
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    return Err(format!(
+                        "hint_pos=({},{},{}) 处 {} 方块不存在（已被破坏或坐标错误），\
+                         且背包无 {item_id} 可重放。\
+                         建议：1) 先 craft 一个 {item_id}；2) 用 perceive 查看当前位置；3) 重新 craft_3x3 让 bot 自动放桌。",
+                        pos.x, pos.y, pos.z, table_kind
+                    ));
+                }
+            }
         }
         return Err(format!(
             "{last_err}。建议：检查桌位置是否正确，或先 goto 到桌旁 1-2m 再 craft_3x3。"
@@ -399,18 +562,42 @@ pub async fn ensure_table_open(
     // 直接扫描附近 2-3 格半径找一个 bot 不占据的合法位置（air + 下方 solid）。
     // 原代码先试头顶再扫描附近 → 头顶 100% 失败 → 每次都浪费一次 do_place 尝试 +
     // 错误日志污染。改为直接用 find_nearby_placement_spot。
+    //
+    // P34 本质修复（2026-07-27）：原代码 find_nearby_placement_spot 返回 None 时直接报错给 LLM，
+    // 导致 smelt 100% 失败（bot 在 1x1 竖井里挖矿时，周围都是方块，找不到空气位放炉子）。
+    // 这是缝缝补补思维的产物——把问题甩给 LLM，LLM 又不会主动挖空间，进入死循环。
+    //
+    // 本质修复：找不到现成的空气位时，bot 自动挖出空间再放。具体策略：
+    // 1. 扫描周围 1-3 格找一个"挖一下就能放"的位置：pos 是实心方块，pos 下方也是实心方块
+    //    （挖掉 pos 后，pos 变空气 + 下方仍实心 = 合法放置位）
+    // 2. 跳过 bot 自己占据的两格（foot + head），跳过基岩
+    // 3. 优先挖 bot 同层的旁边一格（距离 1-2，reach 内，挖完直接放）
+    // 4. 挖完后调用 find_nearby_placement_spot 复用现有放置逻辑
+    // 5. 若挖了 3 次仍找不到合法位，再报错（极少数情况：bot 被基岩包围）
     let placement_pos = match find_nearby_placement_spot(bot) {
         Some(nearby) => {
-            // 走到附近位置旁（确保在 reach 范围内）
             walk_to_reach(bot, nearby).await;
             nearby
         }
         None => {
-            return Err(format!(
-                "当前位置附近 3 格内无空间放置 {item_id}（bot 可能在 1x1 竖井/窄洞里，或周围都站满方块）。\
-                 建议：1) goto 回到地面宽敞处再 craft_3x3；或 2) mine 旁边一格挖出 2x1 空间后重试；\
-                 3) 用 /tp @s ~ 70 ~ 传送到地表。"
-            ));
+            // P34: 自动挖出放置空间
+            match excavate_placement_spot(bot).await {
+                Some(dug_pos) => {
+                    eprintln!(
+                        "[table_flow] P34: 周围无现成空气位，已自动挖出空间于 ({},{},{}) 用于放置 {}",
+                        dug_pos.x, dug_pos.y, dug_pos.z, item_id
+                    );
+                    walk_to_reach(bot, dug_pos).await;
+                    dug_pos
+                }
+                None => {
+                    return Err(format!(
+                        "当前位置附近 3 格内无空间放置 {item_id}，且自动挖空间失败\
+                        （bot 可能被基岩包围或处于极端狭窄位置）。\
+                         建议：1) goto 回到地面宽敞处再 craft_3x3；或 2) 用 /tp @s ~ 70 ~ 传送到地表。"
+                    ));
+                }
+            }
         }
     };
 
@@ -614,4 +801,150 @@ fn check_placement_space(bot: &Client, pos: BlockPos) -> bool {
     w.get_block_state(below)
         .map(|s| !s.is_air())
         .unwrap_or(false)
+}
+
+/// P34 新增（2026-07-27）：bot 周围无现成空气位时，自动挖出一个合法放置位。
+///
+/// 解决场景：bot 在 1x1 竖井里挖矿，周围 3 格全是方块，find_nearby_placement_spot
+/// 返回 None，原代码直接报错给 LLM 导致 smelt 100% 失败。
+///
+/// 策略：
+/// 1. 扫描 bot 周围 1-3 格，找"挖一下就能放"的位置：
+///    - pos 当前是实心方块（挖掉后变空气）
+///    - pos 下方是实心方块（挖掉 pos 后下方仍实心，do_place 能放）
+///    - pos 不是 bot 自己占据的 foot/head
+///    - pos 不是基岩（不可破坏）
+/// 2. 按距离优先级排序：距离 1（紧邻 bot）> 距离 2 > 距离 3
+/// 3. 装备镐（挖石头类需要镐，徒手挖慢且可能不掉落）
+/// 4. start_mining(pos) + 等待方块变空气（最多 4s）
+/// 5. 挖完后返回 pos（此时 pos 是空气 + 下方实心 = 合法放置位）
+/// 6. 若第一个候选挖失败（如基岩/超时），尝试下一个候选
+/// 7. 最多尝试 3 个候选，全部失败才返回 None
+///
+/// 注意：不挖 bot 脚下方块（避免 bot 掉下去），不挖 bot 头顶方块（避免上方方块掉下来）。
+async fn excavate_placement_spot(bot: &Client) -> Option<BlockPos> {
+    let p = bot.position().ok()?;
+    let cx = p.x.floor() as i32;
+    let cy = p.y.floor() as i32;
+    let cz = p.z.floor() as i32;
+
+    // 收集候选位置：pos 实心 + pos 下方实心 + 非 bot 占据 + 非基岩
+    let mut candidates: Vec<(i32, BlockPos)> = Vec::new();
+    for dy in &[0, 1, -1] {
+        let y = cy + dy;
+        for dx in -3..=3 {
+            for dz in -3..=3 {
+                // 跳过 bot 自己占据的 foot + head
+                if dx == 0 && dz == 0 && (*dy == 0 || *dy == 1) {
+                    continue;
+                }
+                // 不挖脚下方块（dy=-1 且 dx=dz=0 已被上面跳过，但 dy=-1 的其他位置也跳过）
+                // 实际上 dy=-1 且 (dx,dz)≠(0,0) 是 bot 脚下一层的旁边，可以挖
+                let pos = BlockPos::new(cx + dx, y, cz + dz);
+                if is_excavatable_placement_spot(bot, pos) {
+                    let dist = dx.abs() + dz.abs() + dy.abs();
+                    candidates.push((dist, pos));
+                }
+            }
+        }
+    }
+
+    if candidates.is_empty() {
+        eprintln!("[P34] 周围无可挖的放置候选位");
+        return None;
+    }
+
+    // 按距离排序：距离 1 优先（紧邻 bot，挖完直接放）
+    candidates.sort_by_key(|(d, _)| *d);
+    candidates.truncate(5); // 最多尝试 5 个候选
+
+    // 装备镐（挖石头/矿石类需要镐）
+    let _ = crate::azalea::auto_equip_best_pickaxe(bot).await;
+
+    for (dist, pos) in &candidates {
+        eprintln!(
+            "[P34] 尝试挖 ({},{},{}) 腾出放置位（距离 {}）",
+            pos.x, pos.y, pos.z, dist
+        );
+
+        // 让 bot 看向目标方块（azalea mine 不强制视线，但 look_at 提高挖掘成功率）
+        let center = azalea::Vec3::new(pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5);
+        bot.look_at(center);
+        sleep(Duration::from_millis(100)).await;
+
+        // 开始挖
+        bot.start_mining(*pos);
+
+        // 等待方块变空气（最多 4s）
+        let mut broken = false;
+        for _ in 0..40 {
+            sleep(Duration::from_millis(100)).await;
+            let still_there = bot
+                .world()
+                .ok()
+                .and_then(|w| w.read().get_block_state(*pos).map(|s| !s.is_air()))
+                .unwrap_or(false);
+            if !still_there {
+                broken = true;
+                break;
+            }
+        }
+
+        if broken {
+            // 等一帧让服务端同步方块状态
+            sleep(Duration::from_millis(150)).await;
+            // 验证：pos 现在是空气 + 下方仍实心
+            if check_placement_space(bot, *pos) {
+                eprintln!("[P34] 成功挖出放置位 ({},{},{})", pos.x, pos.y, pos.z);
+                return Some(*pos);
+            } else {
+                eprintln!("[P34] 挖通了但下方不实心，继续下一个候选");
+            }
+        } else {
+            eprintln!("[P34] 挖 ({},{},{}) 超时，尝试下一个候选", pos.x, pos.y, pos.z);
+        }
+    }
+    None
+}
+
+/// P34 新增：判断 pos 是否适合"挖一下就能放"的位置。
+///
+/// 条件：
+/// - pos 当前是实心方块（非空气、非流体）
+/// - pos 下方是实心方块（挖掉 pos 后下方仍实心，do_place 能放）
+/// - pos 不是基岩（不可破坏）
+/// - pos 不是 bed/command_block 等不可破坏方块
+fn is_excavatable_placement_spot(bot: &Client, pos: BlockPos) -> bool {
+    let world = match bot.world() {
+        Ok(w) => w,
+        Err(_) => return false,
+    };
+    let w = world.read();
+    let pos_state = match w.get_block_state(pos) {
+        Some(s) => s,
+        None => return false,
+    };
+    // pos 必须是实心方块（非空气、非流体）
+    if pos_state.is_air() {
+        return false;
+    }
+    // 检查是否基岩等不可破坏方块
+    let pos_kind: BlockKind = pos_state.into();
+    if matches!(pos_kind, BlockKind::Bedrock) {
+        return false;
+    }
+    // pos 下方必须是实心方块
+    let below = BlockPos::new(pos.x, pos.y - 1, pos.z);
+    let below_state = match w.get_block_state(below) {
+        Some(s) => s,
+        None => return false,
+    };
+    if below_state.is_air() {
+        return false;
+    }
+    let below_kind: BlockKind = below_state.into();
+    if matches!(below_kind, BlockKind::Bedrock) {
+        return false;
+    }
+    true
 }

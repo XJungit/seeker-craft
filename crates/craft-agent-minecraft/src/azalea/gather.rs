@@ -437,9 +437,60 @@ pub async fn do_gather(bot: &Client, item: &str, count: u32) -> Result<String, S
         let reason = last_skip_reason
             .map(|r| format!("；最后原因: {r}"))
             .unwrap_or_default();
-        Err(format!(
-            "采集 {item} 未完成（仅 {gathered}/{need}，附近可能无更多{reason}）"
-        ))
+        // P35 本质修复（2026-07-27）：区分"部分成功"和"完全失败"，给 LLM 明确下一步。
+        // 原代码只返回"采集 X 未完成（仅 Y/Z）"，LLM 容易误判：
+        // - 看到"仅 5/6"以为够用，直接去 smelt 导致缺料
+        // - 看到"仅 0/4"不知道是该换区域还是该合成工具
+        //
+        // 修复：明确告知
+        // 1) 当前已有多少，差多少
+        // 2) 如果已有部分，是否够用（让 LLM 自行判断）
+        // 3) 如果完全没采到，根据 block_kind 判断需要什么工具，给针对性建议
+        let shortage = need.saturating_sub(gathered);
+        if gathered > 0 {
+            // 部分成功：明确告知已有数量，让 LLM 判断是否够用
+            Err(format!(
+                "采集 {item} 部分完成：已采集 {gathered}/{need}（差 {shortage} 个）{reason}。\n\
+                 当前背包已有 {gathered} 个 {item}，请判断：\n\
+                 - 若 {gathered} 个够用（如合成只需部分），可直接进行下一步（craft/smelt）；\n\
+                 - 若不够，请 go 到其他区域寻找更多 {item}，或换一个采集目标。"
+            ))
+        } else {
+            // 完全失败：根据 block_kind 判断需要什么工具，给针对性建议
+            let block_str = block_kind.to_str();
+            let bare_block = block_str.strip_prefix("minecraft:").unwrap_or(block_str);
+            let needs_pickaxe = !bare_block.ends_with("_log")
+                && !bare_block.ends_with("_wood")
+                && !bare_block.starts_with("stripped_")
+                && !matches!(
+                    bare_block,
+                    "grass" | "tall_grass" | "fern" | "dandelion" | "poppy" | "oak_sapling"
+                );
+            let needs_axe = bare_block.ends_with("_log")
+                || bare_block.ends_with("_wood")
+                || bare_block.starts_with("stripped_");
+            let tool_hint = if needs_pickaxe {
+                let best_tier = best_pickaxe_tier_in_inventory(bot).await;
+                if best_tier == 0 {
+                    "\n- 背包无镐：先 craft_3x3 合成 wooden_pickaxe（需 planks+stick），equip 装备主手后再 gather".to_string()
+                } else {
+                    format!("\n- 背包有镐（tier {}），可能需要更高等级的镐或换区域寻找 {item}", best_tier)
+                }
+            } else if needs_axe {
+                if !has_any_axe_in_inventory(bot).await {
+                    "\n- 背包无斧：徒手砍树极慢，建议 craft wooden_axe（需 planks+stick）后 equip 再 gather".to_string()
+                } else {
+                    format!("\n- 背包有斧，可能需要换区域寻找 {item}")
+                }
+            } else {
+                String::new()
+            };
+            Err(format!(
+                "采集 {item} 完全失败：未采集到任何 {item}（0/{need}）{reason}。\n\
+                 建议：\n\
+                 - go 到其他区域寻找 {item}（当前半径 32 内无该方块）{tool_hint}"
+            ))
+        }
     }
 }
 
