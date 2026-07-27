@@ -235,6 +235,58 @@ function Find-RecurringBugs {
 }
 
 # ============================================================
+# Known issues from tools/known_issues.json
+# ============================================================
+
+function Get-KnownIssues {
+    <#
+    .SYNOPSIS
+      Load known issues from tools/known_issues.json
+    .DESCRIPTION
+      Returns a list of known issues with symptoms, root causes, fix files, and descriptions.
+      Used to cross-reference with scan results for auto-diagnosis.
+    #>
+    $jsonPath = "$PSScriptRoot/../tools/known_issues.json"
+    if (-not (Test-Path $jsonPath)) {
+        Write-Host "  [WARN] known_issues.json not found at $jsonPath" -ForegroundColor Yellow
+        return @()
+    }
+    try {
+        $issues = Get-Content $jsonPath -Raw | ConvertFrom-Json
+        Write-Host "  [INFO] Loaded $($issues.Count) known issues from known_issues.json" -ForegroundColor Gray
+        return $issues
+    } catch {
+        Write-Host "  [WARN] Failed to parse known_issues.json: $_" -ForegroundColor Yellow
+        return @()
+    }
+}
+
+function Match-KnownIssues {
+    param(
+        [string]$ReportFile = ""
+    )
+    $knownIssues = Get-KnownIssues
+    if ($knownIssues.Count -eq 0) { return @() }
+    if (-not (Test-Path $ReportFile)) { return @() }
+    $reportContent = Get-Content $ReportFile -Raw
+    $matches = @()
+    foreach ($issue in $knownIssues) {
+        foreach ($symptom in $issue.symptom) {
+            if ($reportContent -match [regex]::Escape($symptom)) {
+                $matches += [pscustomobject]@{
+                    symptom = $symptom
+                    root_cause = $issue.root_cause
+                    fix_files = $issue.fix_files -join ", "
+                    fix_description = $issue.fix_description
+                }
+                break
+            }
+        }
+    }
+    return $matches
+}
+
+# ============================================================
 # Step 1: Build verification
 # ============================================================
 
