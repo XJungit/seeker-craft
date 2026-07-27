@@ -150,7 +150,12 @@ pub enum MinecraftAction {
     /// 采集最近的指定方块（如 "oak_log" / "stone" / "coal_ore"）并挖掘，直到背包有 count 个。
     Gather { item: String, count: u32 },
     /// 放置：把手持物品 item 放到世界坐标 (x,y,z) 旁（右键放置）。
-    Place { item: String, x: i32, y: i32, z: i32 },
+    Place {
+        item: String,
+        x: i32,
+        y: i32,
+        z: i32,
+    },
     /// 打开容器：打开世界坐标 (x,y,z) 处的容器（工作台/熔炉/箱子等）。
     OpenContainer { x: i32, y: i32, z: i32 },
     /// 高层自动合成（木链）：采集→2×2→放置工作台→开→3×3，一键造木制品（chest 等）。
@@ -178,10 +183,22 @@ pub enum MinecraftAction {
     ChestView { x: i32, y: i32, z: i32 },
     /// 从世界坐标 (x,y,z) 处容器取出 item（count 个）到 bot 背包。
     /// count=0 表示取全部。bot 会打开容器、shift_click 移动物品、关闭容器。
-    ChestWithdraw { x: i32, y: i32, z: i32, item: String, count: u32 },
+    ChestWithdraw {
+        x: i32,
+        y: i32,
+        z: i32,
+        item: String,
+        count: u32,
+    },
     /// 把背包中的 item（count 个）存入世界坐标 (x,y,z) 处容器。
     /// count=0 表示存全部。bot 会打开容器、shift_click 移动物品、关闭容器。
-    ChestDeposit { x: i32, y: i32, z: i32, item: String, count: u32 },
+    ChestDeposit {
+        x: i32,
+        y: i32,
+        z: i32,
+        item: String,
+        count: u32,
+    },
 }
 
 /// 动作执行结果

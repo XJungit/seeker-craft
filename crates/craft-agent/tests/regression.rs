@@ -6,7 +6,9 @@
 //! 3. 集成测试用确定性 mock provider，不调真 LLM。
 
 use craft_agent::agent::{Agent, AgentConfig, CompactionConfig, LlmProvider};
-use craft_agent::core::message::{AssistantMsg, AssistantResponse, Message, StopReason, ToolCall, Usage};
+use craft_agent::core::message::{
+    AssistantMsg, AssistantResponse, Message, StopReason, ToolCall, Usage,
+};
 use craft_agent::core::tool::ToolRegistry;
 use serde_json::Value;
 
@@ -378,7 +380,7 @@ fn integration_no_auto_perceive_when_disabled() {
 #[test]
 fn regression_estimate_tokens_no_double_count() {
     let tools = ToolRegistry::new();
-    let mut config = config_with_compaction(10_000);
+    let config = config_with_compaction(10_000);
     let mut agent = Agent::new(Box::new(StopProvider), tools, config);
 
     // 10 条 assistant 消息，每条挂真实 usage(total_tokens=9999) 用于"实测优先"路径

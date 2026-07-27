@@ -366,7 +366,14 @@ pub fn default_mc_world_info() -> WorldInfoLib {
         "Ore detected: {label}. Call gather(item=\"coal_ore\", count=N) 自动挖；如需指定坐标挖用 mine(x,y,z)。铁/钻石需石镐+。",
     ));
     lib.add(WorldInfo::new(
-        vec!["water".into(), "水".into(), "lava".into(), "岩浆".into(), "fire".into(), "火".into()],
+        vec![
+            "water".into(),
+            "水".into(),
+            "lava".into(),
+            "岩浆".into(),
+            "fire".into(),
+            "火".into(),
+        ],
         "Hazard: {label}. 避开；如已陷入，handler 会自动 push Goto 脱困。",
     ));
     // 敌对生物：handler 每 5s 自动 self_defense，但 LLM 也可主动 attack
@@ -485,11 +492,26 @@ mod tests {
         let label = wi_mob.find_match_line(perceive).unwrap();
 
         // 应包含所有 5 个敌对实体的 key:count 对
-        assert!(label.contains("creeper:1"), "label 应含 creeper:1，实际: {label}");
-        assert!(label.contains("zombie:3"), "label 应含 zombie:3，实际: {label}");
-        assert!(label.contains("skeleton:4"), "label 应含 skeleton:4，实际: {label}");
-        assert!(label.contains("spider:3"), "label 应含 spider:3，实际: {label}");
-        assert!(label.contains("enderman:4"), "label 应含 enderman:4，实际: {label}");
+        assert!(
+            label.contains("creeper:1"),
+            "label 应含 creeper:1，实际: {label}"
+        );
+        assert!(
+            label.contains("zombie:3"),
+            "label 应含 zombie:3，实际: {label}"
+        );
+        assert!(
+            label.contains("skeleton:4"),
+            "label 应含 skeleton:4，实际: {label}"
+        );
+        assert!(
+            label.contains("spider:3"),
+            "label 应含 spider:3，实际: {label}"
+        );
+        assert!(
+            label.contains("enderman:4"),
+            "label 应含 enderman:4，实际: {label}"
+        );
 
         // 关键断言：不能包含非关键词实体名（nautilus/sheep/cow/player）
         assert!(
@@ -520,9 +542,6 @@ mod tests {
         // 两个出现都应被提取（虽然前缀都是 oak，但是不同 token）
         // 注：oakleaves:97 中的 "oak" 子串匹配会提取 "oakleaves:97"，
         // 因为 :97 会跟着 oakleaves 一起被截取（关键词 oak + 后续字符直到非数字）
-        assert!(
-            label.contains("oak"),
-            "label 应含 oak 子串，实际: {label}"
-        );
+        assert!(label.contains("oak"), "label 应含 oak 子串，实际: {label}");
     }
 }

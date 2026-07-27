@@ -7,9 +7,9 @@
 use std::collections::HashMap;
 use std::str::FromStr;
 
+use azalea_protocol::common::recipe::{RecipeDisplayData, SlotDisplayData};
 use azalea_protocol::packets::game::c_recipe_book_add::Entry;
 use azalea_protocol::packets::game::c_update_recipes::SingleInputEntry;
-use azalea_protocol::common::recipe::{RecipeDisplayData, SlotDisplayData};
 use azalea_registry::builtin::ItemKind;
 use serde_json::Value;
 
@@ -142,7 +142,11 @@ fn parse_display(d: &RecipeDisplayData) -> Option<StoredRecipe> {
     match d {
         RecipeDisplayData::Shapeless(s) => {
             let result = slot_item(&s.result)?;
-            let ingredients = s.ingredients.iter().map(IngredientItems::from_slot).collect();
+            let ingredients = s
+                .ingredients
+                .iter()
+                .map(IngredientItems::from_slot)
+                .collect();
             Some(StoredRecipe::Shapeless {
                 ingredients,
                 result,
@@ -296,7 +300,9 @@ fn parse_builtin(e: &Value) -> Option<StoredRecipe> {
             let ingredient = ItemKind::from_str(&normalize_item(ingredient)).ok()?;
             let fuel = ItemKind::from_str(&normalize_item(fuel)).ok()?;
             Some(StoredRecipe::Furnace {
-                ingredient: IngredientItems { items: vec![ingredient] },
+                ingredient: IngredientItems {
+                    items: vec![ingredient],
+                },
                 fuel: IngredientItems { items: vec![fuel] },
                 result,
                 count,
@@ -323,13 +329,18 @@ fn parse_builtin(e: &Value) -> Option<StoredRecipe> {
             Some(StoredRecipe::Smithing {
                 template: IngredientItems { items: vec![t] },
                 base: IngredientItems { items: vec![base] },
-                addition: IngredientItems { items: vec![addition] },
+                addition: IngredientItems {
+                    items: vec![addition],
+                },
                 result,
             })
         }
         "brewing" => {
             let ingredient = e.get("ingredient")?.as_str()?;
-            let base = e.get("base").and_then(|v| v.as_str()).unwrap_or("water_bottle");
+            let base = e
+                .get("base")
+                .and_then(|v| v.as_str())
+                .unwrap_or("water_bottle");
             let ing = ItemKind::from_str(&normalize_item(ingredient)).ok()?;
             let base = ItemKind::from_str(&normalize_item(base)).ok()?;
             Some(StoredRecipe::Brewing {
@@ -341,4 +352,3 @@ fn parse_builtin(e: &Value) -> Option<StoredRecipe> {
         _ => None,
     }
 }
-

@@ -130,10 +130,7 @@ impl Profile {
         // 1. 加载 _default.json
         let default_path = profiles_dir.join("_default.json");
         if !default_path.exists() {
-            anyhow::bail!(
-                "_default.json 不存在：{}",
-                default_path.display()
-            );
+            anyhow::bail!("_default.json 不存在：{}", default_path.display());
         }
         let base: Profile = parse_json_file(&default_path)?;
         merged = base;
@@ -225,7 +222,7 @@ mod tests {
         };
         let overlay = Profile {
             name: "survival".into(),
-            system_prompt: None, // 不覆盖
+            system_prompt: None,                             // 不覆盖
             mc_knowledge: Some("survival knowledge".into()), // 覆盖
             modes: Modes {
                 cheat: true,
@@ -289,7 +286,8 @@ mod tests {
         writeln!(
             f,
             r#"{{"name":"deepseek","system_prompt":"deepseek prompt override"}}"#
-        ).unwrap();
+        )
+        .unwrap();
 
         let p = Profile::load(&tmp, Some("survival"), Some("deepseek")).unwrap();
         assert_eq!(p.system_prompt, Some("deepseek prompt override".into()));

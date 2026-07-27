@@ -121,9 +121,18 @@ impl GameTool for GotoTool {
         args: Value,
         _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
     ) -> anyhow::Result<ToolResult> {
-        let x = args.get("x").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 x"))? as i32;
-        let y = args.get("y").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 y"))? as i32;
-        let z = args.get("z").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 z"))? as i32;
+        let x = args
+            .get("x")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 x"))? as i32;
+        let y = args
+            .get("y")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 y"))? as i32;
+        let z = args
+            .get("z")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 z"))? as i32;
         let r = self
             .ctx
             .adapter
@@ -169,7 +178,9 @@ impl GameTool for MineBelowTool {
         // P5 修复：原代码无条件 forget_pos，挖掘失败时记忆也被清空。
         if r.ok {
             if let Some(p) = self.ctx.memory.find_anchor("__self__").and_then(|a| a.pos) {
-                self.ctx.memory.forget_pos(MemoryPos::new(p.x, p.y - 1, p.z));
+                self.ctx
+                    .memory
+                    .forget_pos(MemoryPos::new(p.x, p.y - 1, p.z));
             }
         }
         Ok(ToolResult {
@@ -217,7 +228,9 @@ impl GameTool for MineAboveTool {
         // P5 修复：原代码无条件 forget_pos，挖掘失败时记忆也被清空。
         if r.ok {
             if let Some(p) = self.ctx.memory.find_anchor("__self__").and_then(|a| a.pos) {
-                self.ctx.memory.forget_pos(MemoryPos::new(p.x, p.y + 1, p.z));
+                self.ctx
+                    .memory
+                    .forget_pos(MemoryPos::new(p.x, p.y + 1, p.z));
             }
         }
         Ok(ToolResult {
@@ -309,9 +322,18 @@ impl GameTool for MineTool {
         args: Value,
         _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
     ) -> anyhow::Result<ToolResult> {
-        let x = args.get("x").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 x"))? as i32;
-        let y = args.get("y").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 y"))? as i32;
-        let z = args.get("z").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 z"))? as i32;
+        let x = args
+            .get("x")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 x"))? as i32;
+        let y = args
+            .get("y")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 y"))? as i32;
+        let z = args
+            .get("z")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 z"))? as i32;
         let r = self
             .ctx
             .adapter
@@ -363,13 +385,26 @@ impl GameTool for InteractBlockTool {
         args: Value,
         _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
     ) -> anyhow::Result<ToolResult> {
-        let x = args.get("x").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 x"))? as i32;
-        let y = args.get("y").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 y"))? as i32;
-        let z = args.get("z").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 z"))? as i32;
-        let r = self
-            .ctx
-            .adapter
-            .execute_shared(Action::Minecraft(MinecraftAction::InteractBlock { x, y, z }))?;
+        let x = args
+            .get("x")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 x"))? as i32;
+        let y = args
+            .get("y")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 y"))? as i32;
+        let z = args
+            .get("z")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 z"))? as i32;
+        let r =
+            self.ctx
+                .adapter
+                .execute_shared(Action::Minecraft(MinecraftAction::InteractBlock {
+                    x,
+                    y,
+                    z,
+                }))?;
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,
@@ -470,10 +505,7 @@ impl GameTool for CraftTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("缺少 item"))?
             .to_string();
-        let count = args
-            .get("count")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1) as u32;
+        let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
         let r = self
             .ctx
             .adapter
@@ -534,10 +566,7 @@ impl GameTool for Craft3x3Tool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("缺少 item"))?
             .to_string();
-        let count = args
-            .get("count")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1) as u32;
+        let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
         // 三个 table 坐标同时提供才算指定桌位
         let table_pos = match (
             args.get("table_x").and_then(|v| v.as_i64()),
@@ -547,9 +576,14 @@ impl GameTool for Craft3x3Tool {
             (Some(x), Some(y), Some(z)) => Some((x as i32, y as i32, z as i32)),
             _ => None,
         };
-        let r = self.ctx.adapter.execute_shared(Action::Minecraft(
-            MinecraftAction::Craft3x3 { item, count, table_pos },
-        ))?;
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::Craft3x3 {
+                item,
+                count,
+                table_pos,
+            }))?;
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,
@@ -613,10 +647,7 @@ impl GameTool for SmeltTool {
             .and_then(|v| v.as_str())
             .unwrap_or("coal")
             .to_string();
-        let count = args
-            .get("count")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1) as u32;
+        let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
         let table_pos = match (
             args.get("table_x").and_then(|v| v.as_i64()),
             args.get("table_y").and_then(|v| v.as_i64()),
@@ -625,14 +656,15 @@ impl GameTool for SmeltTool {
             (Some(x), Some(y), Some(z)) => Some((x as i32, y as i32, z as i32)),
             _ => None,
         };
-        let r = self.ctx.adapter.execute_shared(Action::Minecraft(
-            MinecraftAction::Smelt {
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::Smelt {
                 output,
                 fuel,
                 count,
                 table_pos,
-            },
-        ))?;
+            }))?;
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,
@@ -682,10 +714,7 @@ impl GameTool for GatherTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("缺少 item"))?
             .to_string();
-        let count = args
-            .get("count")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1) as u32;
+        let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
         let r = self
             .ctx
             .adapter
@@ -742,12 +771,27 @@ impl GameTool for PlaceTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("缺少 item"))?
             .to_string();
-        let x = args.get("x").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 x"))? as i32;
-        let y = args.get("y").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 y"))? as i32;
-        let z = args.get("z").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 z"))? as i32;
-        let r = self.ctx.adapter.execute_shared(Action::Minecraft(
-            MinecraftAction::Place { item: item.clone(), x, y, z },
-        ))?;
+        let x = args
+            .get("x")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 x"))? as i32;
+        let y = args
+            .get("y")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 y"))? as i32;
+        let z = args
+            .get("z")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 z"))? as i32;
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::Place {
+                item: item.clone(),
+                x,
+                y,
+                z,
+            }))?;
         // 行动回写：仅当放置成功时才回写世界记忆。
         // P5 修复：原代码无条件 record，导致 do_place 失败后 LLM 仍能在记忆中看到
         // 「已放置 crafting_table」，下一轮 perceive 又因实际方块不存在而遗忘——
@@ -760,7 +804,9 @@ impl GameTool for PlaceTool {
                 "nether_portal" | "end_portal" => MemoryKind::Portal,
                 _ => MemoryKind::Structure,
             };
-            self.ctx.memory.record(pos, kind, Some(&item), &item.clone(), None);
+            self.ctx
+                .memory
+                .record(pos, kind, Some(&item), &item.clone(), None);
         }
         Ok(ToolResult {
             message: r.detail,
@@ -807,12 +853,26 @@ impl GameTool for OpenContainerTool {
         args: Value,
         _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
     ) -> anyhow::Result<ToolResult> {
-        let x = args.get("x").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 x"))? as i32;
-        let y = args.get("y").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 y"))? as i32;
-        let z = args.get("z").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 z"))? as i32;
-        let r = self.ctx.adapter.execute_shared(Action::Minecraft(
-            MinecraftAction::OpenContainer { x, y, z },
-        ))?;
+        let x = args
+            .get("x")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 x"))? as i32;
+        let y = args
+            .get("y")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 y"))? as i32;
+        let z = args
+            .get("z")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 z"))? as i32;
+        let r =
+            self.ctx
+                .adapter
+                .execute_shared(Action::Minecraft(MinecraftAction::OpenContainer {
+                    x,
+                    y,
+                    z,
+                }))?;
         // 行动回写：仅当打开成功时才回写世界记忆。
         // P5 修复：原代码无条件 record_container，导致 open 失败（距离过远/坐标错误）
         // 后 LLM 仍能在记忆中看到「已打开的容器」，下一轮 perceive 又遗忘，造成记忆矛盾。
@@ -872,13 +932,14 @@ impl GameTool for AutoCraftTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("缺少 item"))?
             .to_string();
-        let count = args
-            .get("count")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1) as u32;
-        let r = self.ctx.adapter.execute_shared(Action::Minecraft(
-            MinecraftAction::AutoCraft { item, count },
-        ))?;
+        let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::AutoCraft {
+                item,
+                count,
+            }))?;
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,
@@ -928,13 +989,11 @@ impl GameTool for EnchantTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("缺少 item"))?
             .to_string();
-        let level = args
-            .get("level")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(1) as u32;
-        let r = self.ctx.adapter.execute_shared(Action::Minecraft(
-            MinecraftAction::Enchant { item, level },
-        ))?;
+        let level = args.get("level").and_then(|v| v.as_u64()).unwrap_or(1) as u32;
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::Enchant { item, level }))?;
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,
@@ -982,9 +1041,10 @@ impl GameTool for TradeTool {
             .get("offer")
             .and_then(|v| v.as_u64())
             .ok_or_else(|| anyhow::anyhow!("缺少 offer"))? as u32;
-        let r = self.ctx.adapter.execute_shared(Action::Minecraft(
-            MinecraftAction::Trade { offer },
-        ))?;
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::Trade { offer }))?;
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,
@@ -1033,9 +1093,10 @@ impl GameTool for InteractEntityTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("缺少 kind"))?
             .to_string();
-        let r = self.ctx.adapter.execute_shared(Action::Minecraft(
-            MinecraftAction::InteractEntity { kind },
-        ))?;
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::InteractEntity { kind }))?;
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,
@@ -1116,7 +1177,10 @@ impl GameTool for MemoryTool {
                 let label = args["label"].as_str().unwrap_or("记忆点");
                 let item = args["item"].as_str();
                 mem.record(pos, kind, item, label, None);
-                format!("已记录记忆 @({},{},{}) kind={:?} label={}", pos.x, pos.y, pos.z, kind, label)
+                format!(
+                    "已记录记忆 @({},{},{}) kind={:?} label={}",
+                    pos.x, pos.y, pos.z, kind, label
+                )
             }
             "anchor" => {
                 let pos = MemoryPos::new(
@@ -1150,7 +1214,11 @@ impl GameTool for MemoryTool {
                             .collect::<Vec<_>>()
                             .join("\n")
                     };
-                    return Ok(ToolResult { message: s, is_error: false, images: vec![] });
+                    return Ok(ToolResult {
+                        message: s,
+                        is_error: false,
+                        images: vec![],
+                    });
                 }
                 let around = mem
                     .find_anchor("__self__")
@@ -1184,6 +1252,7 @@ impl GameTool for MemoryTool {
 }
 
 /// 设置/更新当前目标（self-prompt）。bot 会持续朝此目标行动直到调用 set_goal("") 清空。
+#[allow(dead_code)]
 pub struct SetGoalTool {
     ctx: Arc<AzaleaToolCtx>,
 }
@@ -1285,7 +1354,10 @@ impl GameTool for RunPlanTool {
         args: Value,
         _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
     ) -> anyhow::Result<ToolResult> {
-        let steps = args.get("steps").and_then(|v| v.as_array()).ok_or_else(|| anyhow::anyhow!("缺少 steps 数组"))?;
+        let steps = args
+            .get("steps")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| anyhow::anyhow!("缺少 steps 数组"))?;
         let mut results: Vec<String> = Vec::new();
         // 上一步 mine 的坐标——用于检测并跳过"mine→goto 同坐标"这种无效组合。
         // LLM 常写 [{mine (x,y,z)}, {goto (x,y,z)}] 想让 bot "挖完掉进洞"，
@@ -1316,7 +1388,12 @@ impl GameTool for RunPlanTool {
             }
             match self.ctx.adapter.execute_shared(Action::Minecraft(mc)) {
                 Ok(r) => {
-                    results.push(format!("步骤{} ({}) 完成: {}", i + 1, action_name, r.detail));
+                    results.push(format!(
+                        "步骤{} ({}) 完成: {}",
+                        i + 1,
+                        action_name,
+                        r.detail
+                    ));
                 }
                 Err(e) => {
                     results.push(format!("步骤{} ({}) 失败: {}", i + 1, action_name, e));
@@ -1335,7 +1412,11 @@ impl GameTool for RunPlanTool {
 /// 将 plan 步骤中的 action 名和参数解析为 MinecraftAction。
 fn parse_step(action: &str, step: &serde_json::Value) -> anyhow::Result<MinecraftAction> {
     let i64 = |key: &str| step.get(key).and_then(|v| v.as_i64()).map(|v| v as i32);
-    let str = |key: &str| step.get(key).and_then(|v| v.as_str()).map(|s| s.to_string());
+    let str = |key: &str| {
+        step.get(key)
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+    };
     let u32 = |key: &str| step.get(key).and_then(|v| v.as_u64()).map(|v| v as u32);
     match action {
         "goto" => Ok(MinecraftAction::Goto {
@@ -1435,6 +1516,7 @@ fn parse_step(action: &str, step: &serde_json::Value) -> anyhow::Result<Minecraf
 
 /// 搜索 Minecraft Wiki（中文源，国内可访问）。
 /// 使用 Bilibili 游戏 Wiki（wiki.biligame.com/mc）的 MediaWiki 搜索 API。
+#[allow(dead_code)]
 pub struct SearchWikiTool {
     ctx: Arc<AzaleaToolCtx>,
 }
@@ -1470,7 +1552,10 @@ impl GameTool for SearchWikiTool {
         args: Value,
         _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
     ) -> anyhow::Result<ToolResult> {
-        let query = args.get("query").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("缺少 query"))?;
+        let query = args
+            .get("query")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("缺少 query"))?;
         let params = [
             ("action", "opensearch"),
             ("search", query),
@@ -1481,14 +1566,23 @@ impl GameTool for SearchWikiTool {
             .map_err(|e| anyhow::anyhow!("URL error: {e}"))?;
         let resp = reqwest::blocking::get(url)?.text()?;
         let json: serde_json::Value = serde_json::from_str(&resp)?;
-        let results = json.as_array().and_then(|arr| arr.get(1)).and_then(|v| v.as_array());
-        let urls = json.as_array().and_then(|arr| arr.get(3)).and_then(|v| v.as_array());
+        let results = json
+            .as_array()
+            .and_then(|arr| arr.get(1))
+            .and_then(|v| v.as_array());
+        let urls = json
+            .as_array()
+            .and_then(|arr| arr.get(3))
+            .and_then(|v| v.as_array());
         match results {
             Some(items) if !items.is_empty() => {
                 let mut lines: Vec<String> = Vec::new();
                 for (i, item) in items.iter().enumerate() {
                     let title = item.as_str().unwrap_or("?");
-                    let link = urls.and_then(|u| u.get(i)).and_then(|v| v.as_str()).unwrap_or("");
+                    let link = urls
+                        .and_then(|u| u.get(i))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("");
                     lines.push(format!("{}. {} ({})", i + 1, title, link));
                 }
                 Ok(ToolResult {
@@ -1580,7 +1674,10 @@ impl GameTool for RunScriptTool {
         args: Value,
         _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
     ) -> anyhow::Result<ToolResult> {
-        let script = args.get("script").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("缺少 script"))?;
+        let script = args
+            .get("script")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("缺少 script"))?;
         // 1. lint：长度/禁用关键字/危险模式
         if let Err(reason) = lint_script(script) {
             return Ok(ToolResult {
@@ -1623,7 +1720,7 @@ impl GameTool for RunScriptTool {
 fn build_rhai_engine(ctx: &Arc<AzaleaToolCtx>) -> rhai::Engine {
     let adapter = ctx.adapter.0.clone();
     let blueprints = ctx.blueprints.clone();
-    let actions = ctx.actions.clone();
+    let _actions = ctx.actions.clone();
     let adapter_for_perceive = ctx.adapter.clone();
     let mut engine = rhai::Engine::new();
 
@@ -1632,19 +1729,47 @@ fn build_rhai_engine(ctx: &Arc<AzaleaToolCtx>) -> rhai::Engine {
     // LLM 在脚本里写任一别名都生效。
     let a = adapter.clone();
     engine.register_fn("walk_to", move |x: i64, y: i64, z: i64| -> String {
-        _exec_action(&a, MinecraftAction::Goto { x: x as i32, y: y as i32, z: z as i32 })
+        _exec_action(
+            &a,
+            MinecraftAction::Goto {
+                x: x as i32,
+                y: y as i32,
+                z: z as i32,
+            },
+        )
     });
     let a = adapter.clone();
     engine.register_fn("move_to", move |x: i64, y: i64, z: i64| -> String {
-        _exec_action(&a, MinecraftAction::Goto { x: x as i32, y: y as i32, z: z as i32 })
+        _exec_action(
+            &a,
+            MinecraftAction::Goto {
+                x: x as i32,
+                y: y as i32,
+                z: z as i32,
+            },
+        )
     });
     let a = adapter.clone();
     engine.register_fn("step_to", move |x: i64, y: i64, z: i64| -> String {
-        _exec_action(&a, MinecraftAction::Goto { x: x as i32, y: y as i32, z: z as i32 })
+        _exec_action(
+            &a,
+            MinecraftAction::Goto {
+                x: x as i32,
+                y: y as i32,
+                z: z as i32,
+            },
+        )
     });
     let a = adapter.clone();
     engine.register_fn("mine", move |x: i64, y: i64, z: i64| -> String {
-        _exec_action(&a, MinecraftAction::MineBlock { x: x as i32, y: y as i32, z: z as i32 })
+        _exec_action(
+            &a,
+            MinecraftAction::MineBlock {
+                x: x as i32,
+                y: y as i32,
+                z: z as i32,
+            },
+        )
     });
     let a = adapter.clone();
     engine.register_fn("mine_below", move || -> String {
@@ -1656,18 +1781,34 @@ fn build_rhai_engine(ctx: &Arc<AzaleaToolCtx>) -> rhai::Engine {
     });
     let a = adapter.clone();
     engine.register_fn("interact", move |x: i64, y: i64, z: i64| -> String {
-        _exec_action(&a, MinecraftAction::InteractBlock { x: x as i32, y: y as i32, z: z as i32 })
+        _exec_action(
+            &a,
+            MinecraftAction::InteractBlock {
+                x: x as i32,
+                y: y as i32,
+                z: z as i32,
+            },
+        )
     });
 
     // ===== 战斗 =====
     let a = adapter.clone();
     engine.register_fn("attack", move |target: String| -> String {
-        let t = if target.is_empty() { "nearest".to_string() } else { target };
+        let t = if target.is_empty() {
+            "nearest".to_string()
+        } else {
+            target
+        };
         _exec_action(&a, MinecraftAction::Attack { target: t })
     });
     let a = adapter.clone();
     engine.register_fn("attack", move || -> String {
-        _exec_action(&a, MinecraftAction::Attack { target: "nearest".to_string() })
+        _exec_action(
+            &a,
+            MinecraftAction::Attack {
+                target: "nearest".to_string(),
+            },
+        )
     });
     let a = adapter.clone();
     engine.register_fn("defend", move || -> String {
@@ -1677,52 +1818,143 @@ fn build_rhai_engine(ctx: &Arc<AzaleaToolCtx>) -> rhai::Engine {
     // ===== 合成/熔炼/附魔 =====
     let a = adapter.clone();
     engine.register_fn("craft", move |item: String, count: i64| -> String {
-        _exec_action(&a, MinecraftAction::Craft { item, count: count as u32 })
+        _exec_action(
+            &a,
+            MinecraftAction::Craft {
+                item,
+                count: count as u32,
+            },
+        )
     });
     let a = adapter.clone();
     engine.register_fn("craft_3x3", move |item: String, count: i64| -> String {
-        _exec_action(&a, MinecraftAction::Craft3x3 { item, count: count as u32, table_pos: None })
+        _exec_action(
+            &a,
+            MinecraftAction::Craft3x3 {
+                item,
+                count: count as u32,
+                table_pos: None,
+            },
+        )
     });
     let a = adapter.clone();
-    engine.register_fn("smelt", move |output: String, fuel: String, count: i64| -> String {
-        _exec_action(&a, MinecraftAction::Smelt { output, fuel, count: count as u32, table_pos: None })
-    });
+    engine.register_fn(
+        "smelt",
+        move |output: String, fuel: String, count: i64| -> String {
+            _exec_action(
+                &a,
+                MinecraftAction::Smelt {
+                    output,
+                    fuel,
+                    count: count as u32,
+                    table_pos: None,
+                },
+            )
+        },
+    );
     let a = adapter.clone();
     engine.register_fn("auto_craft", move |item: String, count: i64| -> String {
-        _exec_action(&a, MinecraftAction::AutoCraft { item, count: count as u32 })
+        _exec_action(
+            &a,
+            MinecraftAction::AutoCraft {
+                item,
+                count: count as u32,
+            },
+        )
     });
     let a = adapter.clone();
     engine.register_fn("enchant", move |item: String, level: i64| -> String {
-        _exec_action(&a, MinecraftAction::Enchant { item, level: level as u32 })
+        _exec_action(
+            &a,
+            MinecraftAction::Enchant {
+                item,
+                level: level as u32,
+            },
+        )
     });
 
     // ===== 采集/放置 =====
     let a = adapter.clone();
     engine.register_fn("gather", move |item: String, count: i64| -> String {
-        _exec_action(&a, MinecraftAction::Gather { item, count: count as u32 })
+        _exec_action(
+            &a,
+            MinecraftAction::Gather {
+                item,
+                count: count as u32,
+            },
+        )
     });
     let a = adapter.clone();
-    engine.register_fn("place", move |item: String, x: i64, y: i64, z: i64| -> String {
-        _exec_action(&a, MinecraftAction::Place { item, x: x as i32, y: y as i32, z: z as i32 })
-    });
+    engine.register_fn(
+        "place",
+        move |item: String, x: i64, y: i64, z: i64| -> String {
+            _exec_action(
+                &a,
+                MinecraftAction::Place {
+                    item,
+                    x: x as i32,
+                    y: y as i32,
+                    z: z as i32,
+                },
+            )
+        },
+    );
     let a = adapter.clone();
     engine.register_fn("open", move |x: i64, y: i64, z: i64| -> String {
-        _exec_action(&a, MinecraftAction::OpenContainer { x: x as i32, y: y as i32, z: z as i32 })
+        _exec_action(
+            &a,
+            MinecraftAction::OpenContainer {
+                x: x as i32,
+                y: y as i32,
+                z: z as i32,
+            },
+        )
     });
 
     // ===== 容器 =====
     let a = adapter.clone();
     engine.register_fn("chest_view", move |x: i64, y: i64, z: i64| -> String {
-        _exec_action(&a, MinecraftAction::ChestView { x: x as i32, y: y as i32, z: z as i32 })
+        _exec_action(
+            &a,
+            MinecraftAction::ChestView {
+                x: x as i32,
+                y: y as i32,
+                z: z as i32,
+            },
+        )
     });
     let a = adapter.clone();
-    engine.register_fn("chest_withdraw", move |x: i64, y: i64, z: i64, item: String, count: i64| -> String {
-        _exec_action(&a, MinecraftAction::ChestWithdraw { x: x as i32, y: y as i32, z: z as i32, item, count: count as u32 })
-    });
+    engine.register_fn(
+        "chest_withdraw",
+        move |x: i64, y: i64, z: i64, item: String, count: i64| -> String {
+            _exec_action(
+                &a,
+                MinecraftAction::ChestWithdraw {
+                    x: x as i32,
+                    y: y as i32,
+                    z: z as i32,
+                    item,
+                    count: count as u32,
+                },
+            )
+        },
+    );
     let a = adapter.clone();
-    engine.register_fn("chest_deposit", move |x: i64, y: i64, z: i64, item: String, count: i64| -> String {
-        _exec_action(&a, MinecraftAction::ChestDeposit { x: x as i32, y: y as i32, z: z as i32, item, count: count as u32 })
-    });
+    engine.register_fn(
+        "chest_deposit",
+        move |x: i64, y: i64, z: i64, item: String, count: i64| -> String {
+            _exec_action(
+                &a,
+                MinecraftAction::ChestDeposit {
+                    x: x as i32,
+                    y: y as i32,
+                    z: z as i32,
+                    item,
+                    count: count as u32,
+                },
+            )
+        },
+    );
 
     // ===== 装备/消耗 =====
     let a = adapter.clone();
@@ -1731,7 +1963,13 @@ fn build_rhai_engine(ctx: &Arc<AzaleaToolCtx>) -> rhai::Engine {
     });
     let a = adapter.clone();
     engine.register_fn("discard", move |item: String, count: i64| -> String {
-        _exec_action(&a, MinecraftAction::Discard { item, count: count as u32 })
+        _exec_action(
+            &a,
+            MinecraftAction::Discard {
+                item,
+                count: count as u32,
+            },
+        )
     });
     let a = adapter.clone();
     engine.register_fn("consume", move |item: String| -> String {
@@ -1745,7 +1983,12 @@ fn build_rhai_engine(ctx: &Arc<AzaleaToolCtx>) -> rhai::Engine {
     });
     let a = adapter.clone();
     engine.register_fn("trade", move |offer: i64| -> String {
-        _exec_action(&a, MinecraftAction::Trade { offer: offer as u32 })
+        _exec_action(
+            &a,
+            MinecraftAction::Trade {
+                offer: offer as u32,
+            },
+        )
     });
     let a = adapter.clone();
     engine.register_fn("chat", move |msg: String| -> String {
@@ -1769,43 +2012,63 @@ fn build_rhai_engine(ctx: &Arc<AzaleaToolCtx>) -> rhai::Engine {
     });
     let bp_for_build = blueprints.clone();
     let adapter_for_build = adapter.clone();
-    engine.register_fn("build_blueprint", move |name: String, x: i64, y: i64, z: i64| -> String {
-        let bp = match bp_for_build.get(&name) {
-            Some(b) => b.clone(),
-            None => return format!("未知蓝图 '{name}'。可用：\n{}", bp_for_build.list_summary()),
-        };
-        let abs_json = bp.instantiate(x as i32, y as i32, z as i32);
-        let blocks = match serde_json::from_str::<serde_json::Value>(&abs_json) {
-            Ok(v) => v,
-            Err(e) => return format!("蓝图 JSON 解析失败: {e}"),
-        };
-        let blocks_arr = match blocks.get("blocks").and_then(|v| v.as_array()) {
-            Some(a) => a,
-            None => return "蓝图缺少 blocks 数组".to_string(),
-        };
-        let mut results: Vec<String> = Vec::new();
-        for (i, block) in blocks_arr.iter().enumerate() {
-            let bx = block.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-            let by = block.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-            let bz = block.get("z").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-            let block_id = block.get("block").and_then(|v| v.as_str()).unwrap_or("");
-            let goto_r = _exec_action(&adapter_for_build, MinecraftAction::Goto { x: bx, y: by, z: bz });
-            if goto_r.starts_with("错误") {
-                results.push(format!("第{}块 goto 失败: {goto_r}", i + 1));
-                break;
+    engine.register_fn(
+        "build_blueprint",
+        move |name: String, x: i64, y: i64, z: i64| -> String {
+            let bp = match bp_for_build.get(&name) {
+                Some(b) => b.clone(),
+                None => {
+                    return format!("未知蓝图 '{name}'。可用：\n{}", bp_for_build.list_summary());
+                }
+            };
+            let abs_json = bp.instantiate(x as i32, y as i32, z as i32);
+            let blocks = match serde_json::from_str::<serde_json::Value>(&abs_json) {
+                Ok(v) => v,
+                Err(e) => return format!("蓝图 JSON 解析失败: {e}"),
+            };
+            let blocks_arr = match blocks.get("blocks").and_then(|v| v.as_array()) {
+                Some(a) => a,
+                None => return "蓝图缺少 blocks 数组".to_string(),
+            };
+            let mut results: Vec<String> = Vec::new();
+            for (i, block) in blocks_arr.iter().enumerate() {
+                let bx = block.get("x").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                let by = block.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                let bz = block.get("z").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+                let block_id = block.get("block").and_then(|v| v.as_str()).unwrap_or("");
+                let goto_r = _exec_action(
+                    &adapter_for_build,
+                    MinecraftAction::Goto {
+                        x: bx,
+                        y: by,
+                        z: bz,
+                    },
+                );
+                if goto_r.starts_with("错误") {
+                    results.push(format!("第{}块 goto 失败: {goto_r}", i + 1));
+                    break;
+                }
+                let place_r = _exec_action(
+                    &adapter_for_build,
+                    MinecraftAction::Place {
+                        item: block_id.to_string(),
+                        x: bx,
+                        y: by,
+                        z: bz,
+                    },
+                );
+                if place_r.starts_with("错误") {
+                    results.push(format!("第{}块 place {block_id} 失败: {place_r}", i + 1));
+                    break;
+                }
+                results.push(format!(
+                    "第{}块: placed {block_id} @({bx},{by},{bz})",
+                    i + 1
+                ));
             }
-            let place_r = _exec_action(&adapter_for_build, MinecraftAction::Place {
-                item: block_id.to_string(),
-                x: bx, y: by, z: bz,
-            });
-            if place_r.starts_with("错误") {
-                results.push(format!("第{}块 place {block_id} 失败: {place_r}", i + 1));
-                break;
-            }
-            results.push(format!("第{}块: placed {block_id} @({bx},{by},{bz})", i + 1));
-        }
-        results.join("\n")
-    });
+            results.join("\n")
+        },
+    );
 
     // ===== P2-4: call_action —— 调用 LLM 自定义动作 =====
     // 递归：call_action(name) 查找已保存动作 → lint → 构建新引擎 → eval。
@@ -1860,11 +2123,11 @@ fn build_rhai_engine(ctx: &Arc<AzaleaToolCtx>) -> rhai::Engine {
     });
 
     // ===== 沙箱：资源限制 =====
-    engine.set_max_operations(100_000);     // 100k AST 操作（足够复杂脚本）
-    engine.set_max_call_levels(20);          // 递归深度上限
-    engine.set_max_string_size(64 * 1024);   // 64KB 字符串上限
-    engine.set_max_array_size(1024);         // 数组上限
-    engine.set_max_map_size(256);            // map 上限
+    engine.set_max_operations(100_000); // 100k AST 操作（足够复杂脚本）
+    engine.set_max_call_levels(20); // 递归深度上限
+    engine.set_max_string_size(64 * 1024); // 64KB 字符串上限
+    engine.set_max_array_size(1024); // 数组上限
+    engine.set_max_map_size(256); // map 上限
     // 禁用所有内置模块（file/io/http/process），rhai 默认就不带这些，但显式禁用更安全
     engine.disable_symbol("eval");
     engine.disable_symbol("Fn");
@@ -1888,11 +2151,22 @@ fn lint_action_script(script: &str) -> Result<(), String> {
     }
     // 不含 `call(` 检查（call_action 是合法的）
     const FORBIDDEN: &[&str] = &[
-        "import", "export", "eval", "::",
-        "Fn(", "fn(",
-        "read_file", "write_file", "append_file", "print_file",
-        "http::", "http_get", "http_post",
-        "import_node", "process::", "std::",
+        "import",
+        "export",
+        "eval",
+        "::",
+        "Fn(",
+        "fn(",
+        "read_file",
+        "write_file",
+        "append_file",
+        "print_file",
+        "http::",
+        "http_get",
+        "http_post",
+        "import_node",
+        "process::",
+        "std::",
     ];
     for kw in FORBIDDEN {
         if script.contains(kw) {
@@ -1927,15 +2201,30 @@ fn lint_script(script: &str) -> Result<(), String> {
     // 禁用关键字（任何位置出现即拒）。rhai 区分大小写：`Fn` 是反射入口，必须大写 F；
     // `import` / `eval` 等也是小写关键字。这里同时检查大小写两种变体以兜底 LLM 写错。
     const FORBIDDEN: &[&str] = &[
-        "import", "export", "eval", "::",
-        "Fn(", "fn(", "call(", "call ",
-        "read_file", "write_file", "append_file", "print_file",
-        "http::", "http_get", "http_post",
-        "import_node", "process::", "std::",
+        "import",
+        "export",
+        "eval",
+        "::",
+        "Fn(",
+        "fn(",
+        "call(",
+        "call ",
+        "read_file",
+        "write_file",
+        "append_file",
+        "print_file",
+        "http::",
+        "http_get",
+        "http_post",
+        "import_node",
+        "process::",
+        "std::",
     ];
     for kw in FORBIDDEN {
         if script.contains(kw) {
-            return Err(format!("脚本包含禁用关键字 '{kw}'（rhai 沙箱禁止 IO/模块/反射）"));
+            return Err(format!(
+                "脚本包含禁用关键字 '{kw}'（rhai 沙箱禁止 IO/模块/反射）"
+            ));
         }
     }
     // 危险模式：`while true` / `loop` 必须有 break（大小写不敏感检查）
@@ -1943,7 +2232,10 @@ fn lint_script(script: &str) -> Result<(), String> {
     if (lower.contains("while true") || lower.contains("while (true)") || lower.contains("loop {"))
         && !lower.contains("break")
     {
-        return Err("检测到 while true / loop 但无 break：可能死循环。请加 break 或用 for 循环。".to_string());
+        return Err(
+            "检测到 while true / loop 但无 break：可能死循环。请加 break 或用 for 循环。"
+                .to_string(),
+        );
     }
     Ok(())
 }
@@ -2026,16 +2318,22 @@ mod run_script_tests {
         let mut engine = rhai::Engine::new();
         // 注册一个简单的 walk_to 函数，确认脚本能解析+执行（不报 reserved keyword）
         engine.register_fn("walk_to", |x: i64, _y: i64, _z: i64| -> i64 { x });
-        let r: rhai::Dynamic = engine.eval("walk_to(10, 64, 20)").expect("walk_to 不应被当作保留字");
+        let r: rhai::Dynamic = engine
+            .eval("walk_to(10, 64, 20)")
+            .expect("walk_to 不应被当作保留字");
         assert_eq!(r.as_int().unwrap(), 10);
 
         // move_to / step_to 同样不应是保留字
         engine.register_fn("move_to", |x: i64, _y: i64, _z: i64| -> i64 { x + 1 });
-        let r: rhai::Dynamic = engine.eval("move_to(5, 64, 5)").expect("move_to 不应被当作保留字");
+        let r: rhai::Dynamic = engine
+            .eval("move_to(5, 64, 5)")
+            .expect("move_to 不应被当作保留字");
         assert_eq!(r.as_int().unwrap(), 6);
 
         engine.register_fn("step_to", |x: i64, _y: i64, _z: i64| -> i64 { x + 2 });
-        let r: rhai::Dynamic = engine.eval("step_to(0, 64, 0)").expect("step_to 不应被当作保留字");
+        let r: rhai::Dynamic = engine
+            .eval("step_to(0, 64, 0)")
+            .expect("step_to 不应被当作保留字");
         assert_eq!(r.as_int().unwrap(), 2);
     }
 
@@ -2104,32 +2402,62 @@ impl GameTool for BuildTool {
         args: Value,
         _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
     ) -> anyhow::Result<ToolResult> {
-        let bp_str = args.get("blueprint").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("缺少 blueprint"))?;
-        let bp: serde_json::Value = serde_json::from_str(bp_str).map_err(|e| anyhow::anyhow!("JSON 解析失败: {e}"))?;
-        let blocks = bp.get("blocks").and_then(|v| v.as_array()).ok_or_else(|| anyhow::anyhow!("缺少 blocks 数组"))?;
+        let bp_str = args
+            .get("blueprint")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("缺少 blueprint"))?;
+        let bp: serde_json::Value =
+            serde_json::from_str(bp_str).map_err(|e| anyhow::anyhow!("JSON 解析失败: {e}"))?;
+        let blocks = bp
+            .get("blocks")
+            .and_then(|v| v.as_array())
+            .ok_or_else(|| anyhow::anyhow!("缺少 blocks 数组"))?;
         let adapter = self.ctx.adapter.0.clone();
         let mut results: Vec<String> = Vec::new();
         for (i, block) in blocks.iter().enumerate() {
-            let x = block.get("x").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("第{}个方块缺少 x", i+1))? as i32;
-            let y = block.get("y").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("第{}个方块缺少 y", i+1))? as i32;
-            let z = block.get("z").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("第{}个方块缺少 z", i+1))? as i32;
-            let block_id = block.get("block").and_then(|v| v.as_str()).ok_or_else(|| anyhow::anyhow!("第{}个方块缺少 block", i+1))?;
+            let x = block
+                .get("x")
+                .and_then(|v| v.as_i64())
+                .ok_or_else(|| anyhow::anyhow!("第{}个方块缺少 x", i + 1))?
+                as i32;
+            let y = block
+                .get("y")
+                .and_then(|v| v.as_i64())
+                .ok_or_else(|| anyhow::anyhow!("第{}个方块缺少 y", i + 1))?
+                as i32;
+            let z = block
+                .get("z")
+                .and_then(|v| v.as_i64())
+                .ok_or_else(|| anyhow::anyhow!("第{}个方块缺少 z", i + 1))?
+                as i32;
+            let block_id = block
+                .get("block")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| anyhow::anyhow!("第{}个方块缺少 block", i + 1))?;
             // 先 goto 到目标位置
             let goto_result = _exec_action(&adapter, MinecraftAction::Goto { x, y, z });
             if goto_result.starts_with("错误") {
-                results.push(format!("第{}个 (goto) 失败: {goto_result}", i+1));
+                results.push(format!("第{}个 (goto) 失败: {goto_result}", i + 1));
                 break;
             }
             // 放置方块
-            let place_result = _exec_action(&adapter, MinecraftAction::Place {
-                item: block_id.to_string(),
-                x, y, z,
-            });
+            let place_result = _exec_action(
+                &adapter,
+                MinecraftAction::Place {
+                    item: block_id.to_string(),
+                    x,
+                    y,
+                    z,
+                },
+            );
             if place_result.starts_with("错误") {
-                results.push(format!("第{}个 (place {block_id}) 失败: {place_result}", i+1));
+                results.push(format!(
+                    "第{}个 (place {block_id}) 失败: {place_result}",
+                    i + 1
+                ));
                 break;
             }
-            results.push(format!("第{}个: placed {block_id} @({x},{y},{z})", i+1));
+            results.push(format!("第{}个: placed {block_id} @({x},{y},{z})", i + 1));
         }
         Ok(ToolResult {
             message: results.join("\n"),
@@ -2187,9 +2515,18 @@ impl GameTool for BuildBlueprintTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("缺少 name"))?
             .to_string();
-        let x = args.get("x").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 x"))? as i32;
-        let y = args.get("y").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 y"))? as i32;
-        let z = args.get("z").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 z"))? as i32;
+        let x = args
+            .get("x")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 x"))? as i32;
+        let y = args
+            .get("y")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 y"))? as i32;
+        let z = args
+            .get("z")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 z"))? as i32;
 
         let bp = self
             .ctx
@@ -2226,20 +2563,38 @@ impl GameTool for BuildBlueprintTool {
             let by = block.get("y").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
             let bz = block.get("z").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
             let block_id = block.get("block").and_then(|v| v.as_str()).unwrap_or("");
-            let goto_result = _exec_action(&adapter, MinecraftAction::Goto { x: bx, y: by, z: bz });
+            let goto_result = _exec_action(
+                &adapter,
+                MinecraftAction::Goto {
+                    x: bx,
+                    y: by,
+                    z: bz,
+                },
+            );
             if goto_result.starts_with("错误") {
                 results.push(format!("第{}个 (goto) 失败: {goto_result}", i + 1));
                 break;
             }
-            let place_result = _exec_action(&adapter, MinecraftAction::Place {
-                item: block_id.to_string(),
-                x: bx, y: by, z: bz,
-            });
+            let place_result = _exec_action(
+                &adapter,
+                MinecraftAction::Place {
+                    item: block_id.to_string(),
+                    x: bx,
+                    y: by,
+                    z: bz,
+                },
+            );
             if place_result.starts_with("错误") {
-                results.push(format!("第{}个 (place {block_id}) 失败: {place_result}", i + 1));
+                results.push(format!(
+                    "第{}个 (place {block_id}) 失败: {place_result}",
+                    i + 1
+                ));
                 break;
             }
-            results.push(format!("第{}个: placed {block_id} @({bx},{by},{bz})", i + 1));
+            results.push(format!(
+                "第{}个: placed {block_id} @({bx},{by},{bz})",
+                i + 1
+            ));
         }
 
         Ok(ToolResult {
@@ -2528,9 +2883,10 @@ impl GameTool for EquipTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("缺少 slot"))?
             .to_string();
-        let r = self.ctx.adapter.execute_shared(Action::Minecraft(
-            MinecraftAction::Equip { item, slot },
-        ))?;
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::Equip { item, slot }))?;
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,
@@ -2583,13 +2939,11 @@ impl GameTool for DiscardTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("缺少 item"))?
             .to_string();
-        let count = args
-            .get("count")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32;
-        let r = self.ctx.adapter.execute_shared(Action::Minecraft(
-            MinecraftAction::Discard { item, count },
-        ))?;
+        let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::Discard { item, count }))?;
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,
@@ -2641,9 +2995,10 @@ impl GameTool for ConsumeTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("缺少 item"))?
             .to_string();
-        let r = self.ctx.adapter.execute_shared(Action::Minecraft(
-            MinecraftAction::Consume { item },
-        ))?;
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::Consume { item }))?;
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,
@@ -2693,12 +3048,22 @@ impl GameTool for ChestViewTool {
         args: Value,
         _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
     ) -> anyhow::Result<ToolResult> {
-        let x = args.get("x").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 x"))? as i32;
-        let y = args.get("y").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 y"))? as i32;
-        let z = args.get("z").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 z"))? as i32;
-        let r = self.ctx.adapter.execute_shared(Action::Minecraft(
-            MinecraftAction::ChestView { x, y, z },
-        ))?;
+        let x = args
+            .get("x")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 x"))? as i32;
+        let y = args
+            .get("y")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 y"))? as i32;
+        let z = args
+            .get("z")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 z"))? as i32;
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::ChestView { x, y, z }))?;
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,
@@ -2749,21 +3114,34 @@ impl GameTool for ChestWithdrawTool {
         args: Value,
         _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
     ) -> anyhow::Result<ToolResult> {
-        let x = args.get("x").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 x"))? as i32;
-        let y = args.get("y").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 y"))? as i32;
-        let z = args.get("z").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 z"))? as i32;
+        let x = args
+            .get("x")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 x"))? as i32;
+        let y = args
+            .get("y")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 y"))? as i32;
+        let z = args
+            .get("z")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 z"))? as i32;
         let item = args
             .get("item")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("缺少 item"))?
             .to_string();
-        let count = args
-            .get("count")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32;
-        let r = self.ctx.adapter.execute_shared(Action::Minecraft(
-            MinecraftAction::ChestWithdraw { x, y, z, item, count },
-        ))?;
+        let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let r =
+            self.ctx
+                .adapter
+                .execute_shared(Action::Minecraft(MinecraftAction::ChestWithdraw {
+                    x,
+                    y,
+                    z,
+                    item,
+                    count,
+                }))?;
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,
@@ -2814,21 +3192,34 @@ impl GameTool for ChestDepositTool {
         args: Value,
         _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
     ) -> anyhow::Result<ToolResult> {
-        let x = args.get("x").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 x"))? as i32;
-        let y = args.get("y").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 y"))? as i32;
-        let z = args.get("z").and_then(|v| v.as_i64()).ok_or_else(|| anyhow::anyhow!("缺少 z"))? as i32;
+        let x = args
+            .get("x")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 x"))? as i32;
+        let y = args
+            .get("y")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 y"))? as i32;
+        let z = args
+            .get("z")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 z"))? as i32;
         let item = args
             .get("item")
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("缺少 item"))?
             .to_string();
-        let count = args
-            .get("count")
-            .and_then(|v| v.as_u64())
-            .unwrap_or(0) as u32;
-        let r = self.ctx.adapter.execute_shared(Action::Minecraft(
-            MinecraftAction::ChestDeposit { x, y, z, item, count },
-        ))?;
+        let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let r =
+            self.ctx
+                .adapter
+                .execute_shared(Action::Minecraft(MinecraftAction::ChestDeposit {
+                    x,
+                    y,
+                    z,
+                    item,
+                    count,
+                }))?;
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,
@@ -2841,6 +3232,7 @@ impl GameTool for ChestDepositTool {
 /// 学习自 Mindcraft self_prompter 的 pause 语义。
 /// LLM 主动暂停后，目标不会每轮注入，但保留 goal 文本；需手动 resume_goal 恢复。
 /// 场景：LLM 临时想做别的事（如先处理突发情况），不想丢失长期目标。
+#[allow(dead_code)]
 pub struct PauseGoalTool {
     ctx: Arc<AzaleaToolCtx>,
 }
@@ -2882,6 +3274,7 @@ impl GameTool for PauseGoalTool {
 }
 
 /// 恢复已暂停的目标（Paused → Active）。
+#[allow(dead_code)]
 pub struct ResumeGoalTool {
     ctx: Arc<AzaleaToolCtx>,
 }
@@ -2998,9 +3391,7 @@ impl GameTool for NewActionTool {
         // 1. 校验 name 合法性
         if !LlmAction::is_valid_name(&name) {
             return Ok(ToolResult {
-                message: format!(
-                    "动作名 '{name}' 非法（须 [a-z_][a-z0-9_]*，长度 1..=32）"
-                ),
+                message: format!("动作名 '{name}' 非法（须 [a-z_][a-z0-9_]*，长度 1..=32）"),
                 is_error: true,
                 images: vec![],
             });
@@ -3023,7 +3414,10 @@ impl GameTool for NewActionTool {
             .map_err(|e| e.to_string())
             .or_else(|_| {
                 // 表达式编译失败时尝试按语句块编译
-                probe.compile(&script).map(|_| ()).map_err(|e| e.to_string())
+                probe
+                    .compile(&script)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string())
             });
         if let Err(e) = parse_result {
             return Ok(ToolResult {
@@ -3100,7 +3494,9 @@ impl GameTool for ListActionsTool {
         let items = lib.list();
         if items.is_empty() {
             return Ok(ToolResult {
-                message: "无自定义动作。用 new_action(name=..., description=..., script=...) 创建。".to_string(),
+                message:
+                    "无自定义动作。用 new_action(name=..., description=..., script=...) 创建。"
+                        .to_string(),
                 is_error: false,
                 images: vec![],
             });

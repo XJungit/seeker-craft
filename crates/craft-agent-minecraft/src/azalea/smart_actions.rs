@@ -30,15 +30,29 @@ use tokio::time::sleep;
 pub fn expand_block_aliases(item: &str) -> Vec<BlockKind> {
     let candidates: Vec<&str> = match item {
         // 原木类：所有原木变体
-        "oak_log" | "birch_log" | "spruce_log" | "jungle_log" | "acacia_log"
-        | "dark_oak_log" | "mangrove_log" | "cherry_log" | "pale_oak_log" | "log" => vec![
-            "oak_log", "birch_log", "spruce_log", "jungle_log", "acacia_log", "dark_oak_log",
-            "mangrove_log", "cherry_log", "pale_oak_log",
+        "oak_log" | "birch_log" | "spruce_log" | "jungle_log" | "acacia_log" | "dark_oak_log"
+        | "mangrove_log" | "cherry_log" | "pale_oak_log" | "log" => vec![
+            "oak_log",
+            "birch_log",
+            "spruce_log",
+            "jungle_log",
+            "acacia_log",
+            "dark_oak_log",
+            "mangrove_log",
+            "cherry_log",
+            "pale_oak_log",
         ],
         // 木板类
         "oak_planks" | "planks" => vec![
-            "oak_planks", "birch_planks", "spruce_planks", "jungle_planks", "acacia_planks",
-            "dark_oak_planks", "mangrove_planks", "cherry_planks", "pale_oak_planks",
+            "oak_planks",
+            "birch_planks",
+            "spruce_planks",
+            "jungle_planks",
+            "acacia_planks",
+            "dark_oak_planks",
+            "mangrove_planks",
+            "cherry_planks",
+            "pale_oak_planks",
         ],
         // 石材类：圆石/石头都算
         "stone" | "cobblestone" => vec!["stone", "cobblestone", "granite", "diorite", "andesite"],
@@ -84,14 +98,28 @@ pub fn expand_block_aliases(item: &str) -> Vec<BlockKind> {
 /// 物品别名（item 形态）：原木变体对应的原木物品。
 pub fn expand_item_aliases(item: &str) -> Vec<ItemKind> {
     let candidates: Vec<&str> = match item {
-        "oak_log" | "birch_log" | "spruce_log" | "jungle_log" | "acacia_log"
-        | "dark_oak_log" | "mangrove_log" | "cherry_log" | "pale_oak_log" | "log" => vec![
-            "oak_log", "birch_log", "spruce_log", "jungle_log", "acacia_log", "dark_oak_log",
-            "mangrove_log", "cherry_log", "pale_oak_log",
+        "oak_log" | "birch_log" | "spruce_log" | "jungle_log" | "acacia_log" | "dark_oak_log"
+        | "mangrove_log" | "cherry_log" | "pale_oak_log" | "log" => vec![
+            "oak_log",
+            "birch_log",
+            "spruce_log",
+            "jungle_log",
+            "acacia_log",
+            "dark_oak_log",
+            "mangrove_log",
+            "cherry_log",
+            "pale_oak_log",
         ],
         "oak_planks" | "planks" => vec![
-            "oak_planks", "birch_planks", "spruce_planks", "jungle_planks", "acacia_planks",
-            "dark_oak_planks", "mangrove_planks", "cherry_planks", "pale_oak_planks",
+            "oak_planks",
+            "birch_planks",
+            "spruce_planks",
+            "jungle_planks",
+            "acacia_planks",
+            "dark_oak_planks",
+            "mangrove_planks",
+            "cherry_planks",
+            "pale_oak_planks",
         ],
         "stone" | "cobblestone" => vec!["stone", "cobblestone", "granite", "diorite", "andesite"],
         // 矿石类：P18 修复（2026-07-27）—— 挖矿后掉落 raw_xxx（不是 ore 本身）。
@@ -164,8 +192,8 @@ fn typical_y_range(item: &str) -> Option<(i32, i32)> {
     let bare = item.strip_prefix("minecraft:").unwrap_or(item);
     match bare {
         // 原木类：地表生成（Y 60~100，森林/平原）
-        "oak_log" | "birch_log" | "spruce_log" | "jungle_log" | "acacia_log"
-        | "dark_oak_log" | "mangrove_log" | "cherry_log" | "pale_oak_log" => Some((60, 100)),
+        "oak_log" | "birch_log" | "spruce_log" | "jungle_log" | "acacia_log" | "dark_oak_log"
+        | "mangrove_log" | "cherry_log" | "pale_oak_log" => Some((60, 100)),
         // 木板/工作台等：人造，无 Y 限制
         // 矿石类（vanilla 1.18+ ore distribution）：
         "coal_ore" | "deepslate_coal_ore" => Some((-64, 128)),
@@ -177,8 +205,8 @@ fn typical_y_range(item: &str) -> Option<(i32, i32)> {
         "lapis_ore" | "deepslate_lapis_ore" => Some((-64, 64)),
         "redstone_ore" | "deepslate_redstone_ore" => Some((-64, 16)),
         // 石材类：地下（Y < 60）
-        "stone" | "cobblestone" | "granite" | "diorite" | "andesite" | "tuff"
-        | "deepslate" | "netherrack" | "basalt" | "blackstone" | "end_stone" => Some((-64, 60)),
+        "stone" | "cobblestone" | "granite" | "diorite" | "andesite" | "tuff" | "deepslate"
+        | "netherrack" | "basalt" | "blackstone" | "end_stone" => Some((-64, 60)),
         // 沙子/沙砾：地表（Y > 60，沙漠/河边）
         "sand" | "red_sand" | "sandstone" | "red_sandstone" | "gravel" => Some((60, 128)),
         // 草/泥土/原木：地表
@@ -219,7 +247,10 @@ fn y_range_hint(item: &str, bot_y: i32) -> String {
         "（原木类需要先找到森林/树木群系）"
     } else if bare.ends_with("_ore") {
         "（矿石类需要挖到对应深度）"
-    } else if matches!(bare, "stone" | "cobblestone" | "granite" | "diorite" | "andesite" | "tuff" | "deepslate") {
+    } else if matches!(
+        bare,
+        "stone" | "cobblestone" | "granite" | "diorite" | "andesite" | "tuff" | "deepslate"
+    ) {
         "（石材类在地下生成）"
     } else if matches!(bare, "sand" | "red_sand" | "sandstone" | "red_sandstone") {
         "（沙子类在沙漠/河边地表生成）"
@@ -231,9 +262,7 @@ fn y_range_hint(item: &str, bot_y: i32) -> String {
     } else {
         format!("bot 当前 Y={bot_y}（过高），需要先 mine_below 到 Y≤{y_max} 的地下")
     };
-    format!(
-        "\n【Y 范围不匹配】{item} 通常在 Y={y_min}~{y_max} 生成，{action}{target_desc}。"
-    )
+    format!("\n【Y 范围不匹配】{item} 通常在 Y={y_min}~{y_max} 生成，{action}{target_desc}。")
 }
 
 /// P28 新增（2026-07-27）：扫描附近所有矿石类型，返回去重的矿石名列表。
@@ -295,7 +324,8 @@ async fn scan_nearby_wood(bot: &Client, radius: i32) -> Vec<String> {
                 if let Some(state) = w.get_block_state(pos) {
                     let bk: BlockKind = state.into();
                     let name = format!("{bk:?}");
-                    if name.ends_with("_log") || name.ends_with("_wood") || name.ends_with("_stem") {
+                    if name.ends_with("_log") || name.ends_with("_wood") || name.ends_with("_stem")
+                    {
                         found.insert(name);
                     }
                 }
@@ -335,11 +365,7 @@ impl ToolNeed {
     }
 }
 
-pub async fn collect_block_smart(
-    bot: &Client,
-    item: &str,
-    count: u32,
-) -> Result<String, String> {
+pub async fn collect_block_smart(bot: &Client, item: &str, count: u32) -> Result<String, String> {
     let block_kinds = expand_block_aliases(item);
     let item_kinds = expand_item_aliases(item);
     if block_kinds.is_empty() || item_kinds.is_empty() {
@@ -366,9 +392,19 @@ pub async fn collect_block_smart(
     let needs_pickaxe = item_kind_str.ends_with("_ore")
         || matches!(
             item_kind_str.as_str(),
-            "stone" | "deepslate" | "cobblestone" | "granite" | "diorite" | "andesite"
-                | "tuff" | "netherrack" | "basalt" | "blackstone" | "end_stone"
-                | "sandstone" | "red_sandstone"
+            "stone"
+                | "deepslate"
+                | "cobblestone"
+                | "granite"
+                | "diorite"
+                | "andesite"
+                | "tuff"
+                | "netherrack"
+                | "basalt"
+                | "blackstone"
+                | "end_stone"
+                | "sandstone"
+                | "red_sandstone"
         );
     let needs_axe = item_kind_str.ends_with("_log") || item_kind_str.ends_with("_wood");
     if needs_pickaxe && !has_any_pickaxe_in_inventory(bot).await {
@@ -502,11 +538,8 @@ pub async fn collect_block_smart(
                         );
                         // 找到了！继续主循环采集这个目标
                         // 用 goto 走到目标旁然后挖（简化路径，不走垂直下挖分支）
-                        let target = azalea::Vec3::new(
-                            p.x as f64 + 0.5,
-                            p.y as f64 + 1.0,
-                            p.z as f64 + 0.5,
-                        );
+                        let target =
+                            azalea::Vec3::new(p.x as f64 + 0.5, p.y as f64 + 1.0, p.z as f64 + 0.5);
                         let goto_fut = bot.goto(azalea::pathfinder::goals::RadiusGoal {
                             pos: target,
                             radius: 2.0,
@@ -533,9 +566,7 @@ pub async fn collect_block_smart(
                         let new_count = count_items_in_inventory(bot, &item_kinds).await;
                         if new_count > gathered {
                             gathered = new_count;
-                            eprintln!(
-                                "[gather] 下挖探索后采集到 {item}，累计 {gathered}/{need}"
-                            );
+                            eprintln!("[gather] 下挖探索后采集到 {item}，累计 {gathered}/{need}");
                         }
                         if gathered >= need {
                             return Ok(format!(
@@ -564,10 +595,7 @@ pub async fn collect_block_smart(
                     )
                 };
                 // P30 新增：Y 范围检测，给 LLM 明确的位置建议。
-                let bot_y = bot
-                    .position()
-                    .map(|p| p.y.floor() as i32)
-                    .unwrap_or(0);
+                let bot_y = bot.position().map(|p| p.y.floor() as i32).unwrap_or(0);
                 let y_hint = y_range_hint(item, bot_y);
                 return Err(format!(
                     "半径 16 内找不到 {item}（已采集 {gathered}/{need}），即使自动下挖 10 格也未暴露矿石。\
@@ -578,21 +606,22 @@ pub async fn collect_block_smart(
             }
             if round == max_rounds - 1 {
                 // P28：非矿石类也加替代建议（如 oak_log 找不到时列附近原木种类）
-                let alt_hint = if item_kind_str.ends_with("_log") || item_kind_str.ends_with("_wood") {
-                    let alt_woods = scan_nearby_wood(bot, 16).await;
-                    if alt_woods.is_empty() {
-                        String::new()
+                let alt_hint =
+                    if item_kind_str.ends_with("_log") || item_kind_str.ends_with("_wood") {
+                        let alt_woods = scan_nearby_wood(bot, 16).await;
+                        if alt_woods.is_empty() {
+                            String::new()
+                        } else {
+                            format!(
+                                "\n附近已探测到其他原木：{}。可改 gather 这些原木替代。",
+                                alt_woods.join(", ")
+                            )
+                        }
                     } else {
-                        format!("\n附近已探测到其他原木：{}。可改 gather 这些原木替代。", alt_woods.join(", "))
-                    }
-                } else {
-                    String::new()
-                };
+                        String::new()
+                    };
                 // P30 新增：Y 范围检测
-                let bot_y = bot
-                    .position()
-                    .map(|p| p.y.floor() as i32)
-                    .unwrap_or(0);
+                let bot_y = bot.position().map(|p| p.y.floor() as i32).unwrap_or(0);
                 let y_hint = y_range_hint(item, bot_y);
                 return Err(format!(
                     "半径 {radius} 内找不到 {item}（已采集 {gathered}/{need}）。\
@@ -624,11 +653,7 @@ pub async fn collect_block_smart(
                 let solid = bot
                     .world()
                     .ok()
-                    .and_then(|w| {
-                        w.read()
-                            .get_block_state(b)
-                            .map(|s| !s.is_air())
-                    })
+                    .and_then(|w| w.read().get_block_state(b).map(|s| !s.is_air()))
                     .unwrap_or(false);
                 if !solid {
                     continue;
@@ -641,11 +666,7 @@ pub async fn collect_block_smart(
                     let gone = bot
                         .world()
                         .ok()
-                        .and_then(|w| {
-                            w.read()
-                                .get_block_state(b)
-                                .map(|s| s.is_air())
-                        })
+                        .and_then(|w| w.read().get_block_state(b).map(|s| s.is_air()))
                         .unwrap_or(true);
                     if gone {
                         broke = true;
@@ -811,13 +832,10 @@ pub async fn collect_block_smart(
             // P11 修复（2026-07-26）：原检查只报告"缺工具"，但没区分
             // 「完全没镐」「镐等级不足」「主手未持镐」三种情况，导致错误提示不精准。
             // 修复：分别判断并给针对性的合成建议。
-            let held_kind = bot.get_held_item().ok().and_then(|s| {
-                if s.is_empty() {
-                    None
-                } else {
-                    Some(s.kind())
-                }
-            });
+            let held_kind = bot
+                .get_held_item()
+                .ok()
+                .and_then(|s| if s.is_empty() { None } else { Some(s.kind()) });
             let held_str = held_kind
                 .map(|k| {
                     let s = k.to_str();
@@ -1047,6 +1065,7 @@ pub async fn defend_self(bot: &Client) -> Result<String, String> {
     ))
 }
 
+#[allow(dead_code)]
 fn hostile_entity_kinds() -> Vec<EntityKind> {
     use EntityKind::*;
     vec![
@@ -1078,12 +1097,9 @@ fn hostile_entity_kinds() -> Vec<EntityKind> {
 ///
 /// 6 个方向优先级：东/西/南/北/上/下
 /// 返回 (站立坐标, yaw 朝向角度)
-pub fn compute_place_offset(
-    bot_pos: azalea::Vec3,
-    target: BlockPos,
-) -> (BlockPos, f32) {
+pub fn compute_place_offset(bot_pos: azalea::Vec3, target: BlockPos) -> (BlockPos, f32) {
     let dx = target.x as f64 - bot_pos.x;
-    let dy = target.y as f64 - bot_pos.y;
+    let _dy = target.y as f64 - bot_pos.y;
     let dz = target.z as f64 - bot_pos.z;
     // 选择最匹配的水平方向
     if dx.abs() >= dz.abs() {
@@ -1106,11 +1122,7 @@ pub fn compute_place_offset(
 /// 学习自 Mindcraft goToNearestBlock。
 ///
 /// 返回找到的方块坐标 + 走到的位置；找不到返回 Err。
-pub async fn goto_nearest_block(
-    bot: &Client,
-    item: &str,
-    radius: i32,
-) -> Result<BlockPos, String> {
+pub async fn goto_nearest_block(bot: &Client, item: &str, radius: i32) -> Result<BlockPos, String> {
     let block_kinds = expand_block_aliases(item);
     if block_kinds.is_empty() {
         return Err(format!("未知方块 {item}"));
@@ -1219,10 +1231,16 @@ async fn auto_dig_down_explore(bot: &Client, blocks: u32) -> bool {
 
 /// P21 新增：统计背包里指定物品种类列表的总数。
 async fn count_items_in_inventory(bot: &Client, kinds: &[ItemKind]) -> u32 {
-    use azalea::container::ContainerHandleRef;
-    let Ok(inv) = bot.get_inventory() else { return 0; };
-    let Some(menu) = inv.menu().ok().flatten() else { return 0; };
-    let Some(slots) = inv.slots() else { return 0; };
+    // use azalea::container::ContainerHandleRef;
+    let Ok(inv) = bot.get_inventory() else {
+        return 0;
+    };
+    let Some(menu) = inv.menu().ok().flatten() else {
+        return 0;
+    };
+    let Some(slots) = inv.slots() else {
+        return 0;
+    };
     let range = menu.player_slots_range();
     let mut total = 0u32;
     for s in range {

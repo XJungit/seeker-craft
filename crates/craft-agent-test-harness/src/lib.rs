@@ -106,9 +106,7 @@ impl TestRunner {
         let build_ok;
         let build_error;
         let mut cargo = Command::new("cargo");
-        cargo
-            .arg("build")
-            .current_dir(&config.workspace_root);
+        cargo.arg("build").current_dir(&config.workspace_root);
 
         // 加 --no-fail-fast 保证所有 crate 都编译，不因第一个错误停
         cargo.arg("--no-fail-fast");
@@ -135,9 +133,7 @@ impl TestRunner {
         // Step 2: cargo test
         let mut tests = Vec::new();
         let mut cargo_test = Command::new("cargo");
-        cargo_test
-            .arg("test")
-            .current_dir(&config.workspace_root);
+        cargo_test.arg("test").current_dir(&config.workspace_root);
 
         if config.workspace {
             cargo_test.arg("--workspace");
@@ -223,7 +219,14 @@ impl TestRunner {
                     failed: 0,
                     total_duration_ms: start.elapsed().as_millis() as u64,
                     build_ok: false,
-                    build_error: Some(err_lines.iter().take(30).cloned().collect::<Vec<_>>().join("\n")),
+                    build_error: Some(
+                        err_lines
+                            .iter()
+                            .take(30)
+                            .cloned()
+                            .collect::<Vec<_>>()
+                            .join("\n"),
+                    ),
                 });
             }
         }
@@ -244,9 +247,7 @@ impl TestRunner {
     /// 快速检查编译是否通过
     pub fn check_build(config: &TestRunConfig) -> Result<bool> {
         let mut cargo = Command::new("cargo");
-        cargo
-            .arg("build")
-            .current_dir(&config.workspace_root);
+        cargo.arg("build").current_dir(&config.workspace_root);
 
         if let Some(ref cr) = config.crate_filter {
             cargo.args(&["-p", cr]);
@@ -411,17 +412,19 @@ impl IssueAnalyzer {
                     // 记录 tool_calls 签名
                     if let Some(calls) = msg.get("tool_calls").and_then(|v| v.as_array()) {
                         for tc in calls {
-                            let name = tc
-                                .get("name")
-                                .and_then(|v| v.as_str())
-                                .unwrap_or("unknown");
-                            let args = tc.get("arguments").map(|a| a.to_string()).unwrap_or_default();
+                            let name = tc.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                            let args = tc
+                                .get("arguments")
+                                .map(|a| a.to_string())
+                                .unwrap_or_default();
                             call_signatures.push((step_count, format!("{}|{}", name, args)));
                             total_calls += 1;
                         }
                     }
                     // 纯文字回复检测
-                    let has_calls = msg.get("tool_calls").and_then(|v| v.as_array())
+                    let has_calls = msg
+                        .get("tool_calls")
+                        .and_then(|v| v.as_array())
                         .map(|a| !a.is_empty())
                         .unwrap_or(false);
                     if !has_calls {
@@ -455,14 +458,8 @@ impl IssueAnalyzer {
                     if is_err {
                         total_errors += 1;
                     }
-                    let tool_name = msg
-                        .get("tool_name")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
-                    let content = msg
-                        .get("content")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("");
+                    let tool_name = msg.get("tool_name").and_then(|v| v.as_str()).unwrap_or("");
+                    let content = msg.get("content").and_then(|v| v.as_str()).unwrap_or("");
 
                     // 从 perceive 结果提取坐标
                     if tool_name == "perceive" {
@@ -479,13 +476,45 @@ impl IssueAnalyzer {
 
         // 检测：伪工具名（不在已知 37 个工具集里）
         let known_tools: &[&str] = &[
-            "perceive", "memory", "go", "goto", "mine", "mine_below", "mine_above",
-            "interact_block", "attack", "defend", "craft", "craft_3x3", "smelt",
-            "auto_craft", "enchant", "gather", "place", "open", "pickup",
-            "chest_view", "chest_withdraw", "chest_deposit", "equip", "discard",
-            "consume", "interact_entity", "trade", "chat", "set_goal", "pause_goal",
-            "resume_goal", "build", "build_blueprint", "list_blueprints",
-            "run_plan", "run_script", "new_action", "list_actions", "search_wiki",
+            "perceive",
+            "memory",
+            "go",
+            "goto",
+            "mine",
+            "mine_below",
+            "mine_above",
+            "interact_block",
+            "attack",
+            "defend",
+            "craft",
+            "craft_3x3",
+            "smelt",
+            "auto_craft",
+            "enchant",
+            "gather",
+            "place",
+            "open",
+            "pickup",
+            "chest_view",
+            "chest_withdraw",
+            "chest_deposit",
+            "equip",
+            "discard",
+            "consume",
+            "interact_entity",
+            "trade",
+            "chat",
+            "set_goal",
+            "pause_goal",
+            "resume_goal",
+            "build",
+            "build_blueprint",
+            "list_blueprints",
+            "run_plan",
+            "run_script",
+            "new_action",
+            "list_actions",
+            "search_wiki",
         ];
         for (step, sig) in &call_signatures {
             if let Some(name) = sig.split('|').next() {
@@ -573,7 +602,9 @@ impl IssueAnalyzer {
                     error_rate * 100.0
                 ),
                 suggested_fix_file: Some("crates/craft-agent-minecraft/src/azalea/".into()),
-                suggested_fix: Some("检查各工具的具体实现，看是超时问题、寻路问题还是服务端同步问题".into()),
+                suggested_fix: Some(
+                    "检查各工具的具体实现，看是超时问题、寻路问题还是服务端同步问题".into(),
+                ),
             });
         }
 
@@ -734,6 +765,7 @@ pub struct KnownIssue {
 }
 
 /// 自动修复引擎
+#[allow(dead_code)]
 pub struct FixEngine {
     known_issues: Vec<KnownIssue>,
     workspace_root: PathBuf,
@@ -749,7 +781,10 @@ impl FixEngine {
     }
 
     /// 根据 IssueAnalyzer 的分析结果匹配已知问题
-    pub fn match_issues<'a>(&'a self, report: &'a AnalysisReport) -> Vec<(&'a KnownIssue, &'a AnalyzedIssue)> {
+    pub fn match_issues<'a>(
+        &'a self,
+        report: &'a AnalysisReport,
+    ) -> Vec<(&'a KnownIssue, &'a AnalyzedIssue)> {
         let mut matches = Vec::new();
         for issue in &report.issues {
             for known in &self.known_issues {
@@ -789,14 +824,15 @@ impl FixEngine {
         }
 
         for (known, issue) in &matched {
-            plan.push_str(&format!(
-                "📌 [{}] {}\n", issue.severity, issue.category
-            ));
+            plan.push_str(&format!("📌 [{}] {}\n", issue.severity, issue.category));
             plan.push_str(&format!("   现象: {}\n", issue.detail));
             plan.push_str(&format!("   根因: {}\n", known.root_cause));
             plan.push_str(&format!("   修复: {}\n", known.fix_description));
             plan.push_str(&format!("   文件: {}\n", known.fix_files.join(", ")));
-            plan.push_str(&format!("   回归测试: {}\n\n", known.regression_tests.join(", ")));
+            plan.push_str(&format!(
+                "   回归测试: {}\n\n",
+                known.regression_tests.join(", ")
+            ));
         }
 
         plan
@@ -807,37 +843,61 @@ impl FixEngine {
 fn build_known_issues() -> Vec<KnownIssue> {
     vec![
         KnownIssue {
-            symptom: vec!["伪调用".to_string(), "伪工具".to_string(), "文本伪调用".to_string(), "【工具执行】".to_string(), "【工具调用】".to_string()],
-            root_cause: "fold_tool_history 将工具调用历史折叠为文本格式，导致 LLM 模仿输出伪调用".into(),
+            symptom: vec![
+                "伪调用".to_string(),
+                "伪工具".to_string(),
+                "文本伪调用".to_string(),
+                "【工具执行】".to_string(),
+                "【工具调用】".to_string(),
+            ],
+            root_cause: "fold_tool_history 将工具调用历史折叠为文本格式，导致 LLM 模仿输出伪调用"
+                .into(),
             fix_files: vec!["crates/craft-agent-model/src/decision.rs".into()],
-            fix_description: "删除 fold_tool_history 及其调用，直接透传原始 tool_calls 和 role:tool 消息给 LLM".into(),
+            fix_description:
+                "删除 fold_tool_history 及其调用，直接透传原始 tool_calls 和 role:tool 消息给 LLM"
+                    .into(),
             regression_tests: vec!["regression_system_prompt_byte_stable".into()],
         },
         KnownIssue {
-            symptom: vec!["坐标卡死".to_string(), "position 不变".to_string(), "卡住".to_string()],
-            root_cause: "goto 超时太长或距离太远，导致 bot 卡住不动".into(),
-            fix_files: vec![
-                "crates/craft-agent-minecraft/src/azalea/mod.rs".into(),
+            symptom: vec![
+                "坐标卡死".to_string(),
+                "position 不变".to_string(),
+                "卡住".to_string(),
             ],
+            root_cause: "goto 超时太长或距离太远，导致 bot 卡住不动".into(),
+            fix_files: vec!["crates/craft-agent-minecraft/src/azalea/mod.rs".into()],
             fix_description: "最大 32m 距离限制，超时 3s（60 ticks），stuck 检测改为时间制".into(),
             regression_tests: vec![],
         },
         KnownIssue {
-            symptom: vec!["mine_below".to_string(), "挖到基岩".to_string(), "Y≤".to_string()],
+            symptom: vec![
+                "mine_below".to_string(),
+                "挖到基岩".to_string(),
+                "Y≤".to_string(),
+            ],
             root_cause: "mine_below 无 Y 检测，bot 会挖穿基岩继续下挖".into(),
             fix_files: vec!["crates/craft-agent-minecraft/src/adapter_azalea.rs".into()],
             fix_description: "Y≤-61 自动停止并显示警告".into(),
             regression_tests: vec![],
         },
         KnownIssue {
-            symptom: vec!["合成失败".to_string(), "craft".to_string(), "合成".to_string()],
+            symptom: vec![
+                "合成失败".to_string(),
+                "craft".to_string(),
+                "合成".to_string(),
+            ],
             root_cause: "move_stack 放整堆导致配方形状错误，或 clear_grid 不彻底".into(),
             fix_files: vec!["crates/craft-agent-minecraft/src/azalea/craft.rs".into()],
-            fix_description: "用 place_one 每次 1 个，clear_grid 用 left_click 代替 shift_click".into(),
+            fix_description: "用 place_one 每次 1 个，clear_grid 用 left_click 代替 shift_click"
+                .into(),
             regression_tests: vec![],
         },
         KnownIssue {
-            symptom: vec!["熔炼超时".to_string(), "smelt".to_string(), "smelt 超时".to_string()],
+            symptom: vec![
+                "熔炼超时".to_string(),
+                "smelt".to_string(),
+                "smelt 超时".to_string(),
+            ],
             root_cause: "do_smelt 只等 1.2s 但熔炼需要 10-20s".into(),
             fix_files: vec!["crates/craft-agent-minecraft/src/azalea/craft.rs".into()],
             fix_description: "等待 20s，并增加超时时间设置".into(),
@@ -851,14 +911,21 @@ fn build_known_issues() -> Vec<KnownIssue> {
             regression_tests: vec![],
         },
         KnownIssue {
-            symptom: vec!["选中的槽位不对".to_string(), "selected_slot 硬编码".to_string()],
+            symptom: vec![
+                "选中的槽位不对".to_string(),
+                "selected_slot 硬编码".to_string(),
+            ],
             root_cause: "selected_slot 硬编码 0，不读取 bot 实际手持槽".into(),
             fix_files: vec!["crates/craft-agent-minecraft/src/azalea/mod.rs".into()],
             fix_description: "读 bot.selected_hotbar_slot() 获取实际槽位".into(),
             regression_tests: vec![],
         },
         KnownIssue {
-            symptom: vec!["吃东西不生效".to_string(), "consume".to_string(), "吃东西".to_string()],
+            symptom: vec![
+                "吃东西不生效".to_string(),
+                "consume".to_string(),
+                "吃东西".to_string(),
+            ],
             root_cause: "consume 只调一次 start_use_item，MC 需要长按".into(),
             fix_files: vec!["crates/craft-agent-minecraft/src/azalea/mod.rs".into()],
             fix_description: "每 50ms 循环 start_use_item() 持续 2.5s".into(),
@@ -872,17 +939,23 @@ fn build_known_issues() -> Vec<KnownIssue> {
             regression_tests: vec![],
         },
         KnownIssue {
-            symptom: vec!["开放失败".to_string(), "is_error 标志误报".to_string(), "is_error".to_string()],
+            symptom: vec![
+                "开放失败".to_string(),
+                "is_error 标志误报".to_string(),
+                "is_error".to_string(),
+            ],
             root_cause: "is_error 标志始终为 false，即使操作失败".into(),
             fix_files: vec!["crates/craft-agent-minecraft/src/adapter_azalea.rs".into()],
-            fix_description: "实现 is_failure_detail 函数，通过分析返回消息内容判断操作是否成功".into(),
+            fix_description: "实现 is_failure_detail 函数，通过分析返回消息内容判断操作是否成功"
+                .into(),
             regression_tests: vec![],
         },
         KnownIssue {
             symptom: vec!["perceive 编号".to_string(), "perceive 格式".to_string()],
             root_cause: "perceive 输出格式不匹配，导致 LLM 无法理解".into(),
             fix_files: vec!["crates/craft-agent-minecraft/src/adapter_azalea.rs".into()],
-            fix_description: "确保 perceive 输出包含位置、生命、饱食、群系、背包、资源摘要等关键信息".into(),
+            fix_description:
+                "确保 perceive 输出包含位置、生命、饱食、群系、背包、资源摘要等关键信息".into(),
             regression_tests: vec![],
         },
     ]
@@ -915,6 +988,7 @@ pub struct AutoFixResult {
 /// 5. 输出修复计划
 /// 6. (用户/自动) 应用修复
 /// 7. 回到 1
+#[allow(dead_code)]
 pub struct AutoFixLoop {
     workspace_root: PathBuf,
     max_iterations: u32,
@@ -969,7 +1043,11 @@ impl AutoFixLoop {
         // 编译状态
         plan.push_str(&format!(
             "编译: {}\n",
-            if test_summary.build_ok { "✅ 通过" } else { "❌ 失败" }
+            if test_summary.build_ok {
+                "✅ 通过"
+            } else {
+                "❌ 失败"
+            }
         ));
         if let Some(ref err) = test_summary.build_error {
             plan.push_str(&format!("编译错误 (前50行):\n{}\n", err));
@@ -1101,7 +1179,10 @@ mod tests {
     fn test_known_issues_not_empty() {
         let issues = build_known_issues();
         assert!(!issues.is_empty(), "已知问题表不应为空");
-        assert!(issues.iter().all(|i| !i.symptom.is_empty()), "每个问题至少有一个症状");
+        assert!(
+            issues.iter().all(|i| !i.symptom.is_empty()),
+            "每个问题至少有一个症状"
+        );
     }
 
     #[test]

@@ -153,6 +153,7 @@ fn count_in_inventory(bot: &Client, item: &str) -> u32 {
 
 /// 走到 pos 旁（不严格到 pos 上方）。简化：调用 bot.goto；调用方应保证 pos 可达。
 /// 这里只做小段等待，让 pathfinder 推进；真正的 goto 由 ActionManager 外层调度。
+#[allow(dead_code)]
 async fn walk_near(bot: &Client, pos: BlockPos) -> Result<(), String> {
     // 这里不再触发 goto（避免与 ActionManager 串行命令冲突）。
     // 调用方应在调用 ensure_table_open 前已使 bot 处于合理位置，
@@ -179,8 +180,8 @@ async fn walk_near(bot: &Client, pos: BlockPos) -> Result<(), String> {
 /// 浪费 4s+ 时间，最终报"打开容器超时"——但真正原因是 bot 离目标太远。
 /// 现在返回距离，调用方能明确区分"距离不够"vs"LOS 被挡"vs"服务端拒绝"。
 async fn walk_to_reach(bot: &Client, pos: BlockPos) -> f64 {
-    use azalea::pathfinder::goals::RadiusGoal;
     use azalea::Vec3;
+    use azalea::pathfinder::goals::RadiusGoal;
     let p = match bot.position() {
         Ok(p) => p,
         Err(_) => return f64::MAX,
@@ -195,7 +196,10 @@ async fn walk_to_reach(bot: &Client, pos: BlockPos) -> f64 {
     }
     // 用 RadiusGoal 走到 pos 旁 1.5m 范围
     let target = Vec3::new(pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5);
-    let goto_fut = bot.goto(RadiusGoal { pos: target, radius: 1.5 });
+    let goto_fut = bot.goto(RadiusGoal {
+        pos: target,
+        radius: 1.5,
+    });
     let _ = tokio::time::timeout(Duration::from_secs(5), goto_fut).await;
     // P36: 返回最终距离，让调用方判断
     match bot.position() {
@@ -358,7 +362,10 @@ pub async fn ensure_table_open(
                         if !is_container_open(bot) {
                             last_err = format!(
                                 "打开 ({},{},{}) 处容器后 300ms 又关闭（可能 reach 失败或方块被破坏）（尝试 {}）",
-                                pos.x, pos.y, pos.z, attempt + 1
+                                pos.x,
+                                pos.y,
+                                pos.z,
+                                attempt + 1
                             );
                             sleep(Duration::from_millis(200)).await;
                             continue;
@@ -367,7 +374,10 @@ pub async fn ensure_table_open(
                         if !is_container_open(bot) {
                             last_err = format!(
                                 "打开 ({},{},{}) 处容器后 400ms 又关闭（尝试 {}）",
-                                pos.x, pos.y, pos.z, attempt + 1
+                                pos.x,
+                                pos.y,
+                                pos.z,
+                                attempt + 1
                             );
                             sleep(Duration::from_millis(200)).await;
                             continue;
@@ -376,7 +386,13 @@ pub async fn ensure_table_open(
                         sleep(Duration::from_millis(100)).await;
                         return Ok(pos);
                     }
-                    last_err = format!("打开 ({},{},{}) 处容器超时（尝试 {}）", pos.x, pos.y, pos.z, attempt + 1);
+                    last_err = format!(
+                        "打开 ({},{},{}) 处容器超时（尝试 {}）",
+                        pos.x,
+                        pos.y,
+                        pos.z,
+                        attempt + 1
+                    );
                 }
                 Err(e) => {
                     last_err = format!("打开容器失败: {e:?}");
@@ -427,7 +443,7 @@ pub async fn ensure_table_open(
                                     // 验证放置成功
                                     if verify_table_block_at(bot, new_pos, expected_block) {
                                         // 重试 open
-                                        for retry in 0..2u8 {
+                                        for _retry in 0..2u8 {
                                             walk_to_reach(bot, new_pos).await;
                                             sleep(Duration::from_millis(150)).await;
                                             match bot.open_container_at(new_pos).await {
@@ -448,8 +464,13 @@ pub async fn ensure_table_open(
                                         return Err(format!(
                                             "hint_pos=({},{},{}) 处 {} 已被破坏，重新放置于 ({},{},{}) 后仍打开失败。\
                                              建议：go 到开阔地带再 craft_3x3。",
-                                            pos.x, pos.y, pos.z, table_kind,
-                                            new_pos.x, new_pos.y, new_pos.z
+                                            pos.x,
+                                            pos.y,
+                                            pos.z,
+                                            table_kind,
+                                            new_pos.x,
+                                            new_pos.y,
+                                            new_pos.z
                                         ));
                                     }
                                 }
@@ -470,11 +491,13 @@ pub async fn ensure_table_open(
                                         dug_pos.x, dug_pos.y, dug_pos.z, item_id
                                     );
                                     walk_to_reach(bot, dug_pos).await;
-                                    match crate::azalea::place::do_place(bot, item_id, dug_pos).await {
+                                    match crate::azalea::place::do_place(bot, item_id, dug_pos)
+                                        .await
+                                    {
                                         Ok(_) => {
                                             sleep(Duration::from_millis(400)).await;
                                             if verify_table_block_at(bot, dug_pos, expected_block) {
-                                                for retry in 0..2u8 {
+                                                for _retry in 0..2u8 {
                                                     walk_to_reach(bot, dug_pos).await;
                                                     sleep(Duration::from_millis(150)).await;
                                                     match bot.open_container_at(dug_pos).await {
@@ -482,10 +505,14 @@ pub async fn ensure_table_open(
                                                             std::mem::forget(h);
                                                             for _ in 0..20 {
                                                                 if is_container_open(bot) {
-                                                                    sleep(Duration::from_millis(80)).await;
+                                                                    sleep(Duration::from_millis(
+                                                                        80,
+                                                                    ))
+                                                                    .await;
                                                                     return Ok(dug_pos);
                                                                 }
-                                                                sleep(Duration::from_millis(50)).await;
+                                                                sleep(Duration::from_millis(50))
+                                                                    .await;
                                                             }
                                                         }
                                                         _ => {}
@@ -568,91 +595,120 @@ pub async fn ensure_table_open(
                 }
             ));
         } else {
-        // crafting_table 是 2×2 配方，不需要桌，可以安全自动合成（不会死循环）
-        // 先检查是否有木板（任意 *_planks）
-        if let Ok(inv) = bot.get_inventory() {
-            let has_planks = inv.menu().ok().flatten().map(|m| {
-                let range = m.player_slots_range();
-                inv.slots().map(|slots| {
-                    for s in range {
-                        if let Some(st) = slots.get(s) {
-                            if !st.is_empty() && st.kind().to_str().ends_with("_planks") {
-                                return true;
-                            }
-                        }
-                    }
-                    false
-                }).unwrap_or(false)
-            }).unwrap_or(false);
-
-            if has_planks {
-                // 有木板，直接合成 crafting_table
-                let _ = crate::azalea::table_flow::close_container_if_open(bot);
-                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                crate::azalea::craft::do_craft_2x2(bot, "crafting_table", 1).await
-                    .map_err(|e| format!("自动合成 {item_id} 失败: {e}"))?;
-            } else {
-                // 没有木板，尝试从原木合成
-                let has_logs = inv.menu().ok().flatten().map(|m| {
-                    let range = m.player_slots_range();
-                    inv.slots().map(|slots| {
-                        for s in range {
-                            if let Some(st) = slots.get(s) {
-                                if !st.is_empty() {
-                                    let kind = st.kind().to_str();
-                                    if kind.ends_with("_log") || kind.ends_with("_stem") {
-                                        return true;
+            // crafting_table 是 2×2 配方，不需要桌，可以安全自动合成（不会死循环）
+            // 先检查是否有木板（任意 *_planks）
+            if let Ok(inv) = bot.get_inventory() {
+                let has_planks = inv
+                    .menu()
+                    .ok()
+                    .flatten()
+                    .map(|m| {
+                        let range = m.player_slots_range();
+                        inv.slots()
+                            .map(|slots| {
+                                for s in range {
+                                    if let Some(st) = slots.get(s) {
+                                        if !st.is_empty() && st.kind().to_str().ends_with("_planks")
+                                        {
+                                            return true;
+                                        }
                                     }
                                 }
-                            }
-                        }
-                        false
-                    }).unwrap_or(false)
-                }).unwrap_or(false);
+                                false
+                            })
+                            .unwrap_or(false)
+                    })
+                    .unwrap_or(false);
 
-                if has_logs {
-                    // 有原木，先合成对应木板，再合成 crafting_table
+                if has_planks {
+                    // 有木板，直接合成 crafting_table
                     let _ = crate::azalea::table_flow::close_container_if_open(bot);
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                    // 找第一个原木类型，合成对应木板
-                    let inv = bot.get_inventory().map_err(|e| format!("{e:?}"))?;
-                    let planks_name = inv.menu().ok().flatten().and_then(|m| {
-                        let range = m.player_slots_range();
-                        inv.slots().and_then(|slots| {
-                            for s in range {
-                                if let Some(st) = slots.get(s) {
-                                    if !st.is_empty() {
-                                        let kind = st.kind().to_str();
-                                        let bare_kind = kind.strip_prefix("minecraft:").unwrap_or(kind);
-                                        if bare_kind.ends_with("_log") {
-                                            let wood = bare_kind.strip_suffix("_log").unwrap_or(bare_kind);
-                                            return Some(format!("{}_planks", wood));
-                                        }
-                                        if bare_kind.ends_with("_stem") {
-                                            let wood = bare_kind.strip_suffix("_stem").unwrap_or(bare_kind);
-                                            return Some(format!("{}_planks", wood));
-                                        }
-                                    }
-                                }
-                            }
-                            None
-                        })
-                    }).ok_or_else(|| "无法确定原木类型".to_string())?;
-                    crate::azalea::craft::do_craft_2x2(bot, &planks_name, 4).await
-                        .map_err(|e| format!("自动合成木板 {planks_name} 失败: {e}"))?;
-                    crate::azalea::craft::do_craft_2x2(bot, "crafting_table", 1).await
+                    crate::azalea::craft::do_craft_2x2(bot, "crafting_table", 1)
+                        .await
                         .map_err(|e| format!("自动合成 {item_id} 失败: {e}"))?;
                 } else {
-                    return Err(format!(
-                        "背包无 {item_id}，且无木板/原木可自动合成。请先 gather 采集一些原木。"
-                    ));
+                    // 没有木板，尝试从原木合成
+                    let has_logs = inv
+                        .menu()
+                        .ok()
+                        .flatten()
+                        .map(|m| {
+                            let range = m.player_slots_range();
+                            inv.slots()
+                                .map(|slots| {
+                                    for s in range {
+                                        if let Some(st) = slots.get(s) {
+                                            if !st.is_empty() {
+                                                let kind = st.kind().to_str();
+                                                if kind.ends_with("_log") || kind.ends_with("_stem")
+                                                {
+                                                    return true;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    false
+                                })
+                                .unwrap_or(false)
+                        })
+                        .unwrap_or(false);
+
+                    if has_logs {
+                        // 有原木，先合成对应木板，再合成 crafting_table
+                        let _ = crate::azalea::table_flow::close_container_if_open(bot);
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        // 找第一个原木类型，合成对应木板
+                        let inv = bot.get_inventory().map_err(|e| format!("{e:?}"))?;
+                        let planks_name = inv
+                            .menu()
+                            .ok()
+                            .flatten()
+                            .and_then(|m| {
+                                let range = m.player_slots_range();
+                                inv.slots().and_then(|slots| {
+                                    for s in range {
+                                        if let Some(st) = slots.get(s) {
+                                            if !st.is_empty() {
+                                                let kind = st.kind().to_str();
+                                                let bare_kind =
+                                                    kind.strip_prefix("minecraft:").unwrap_or(kind);
+                                                if bare_kind.ends_with("_log") {
+                                                    let wood = bare_kind
+                                                        .strip_suffix("_log")
+                                                        .unwrap_or(bare_kind);
+                                                    return Some(format!("{}_planks", wood));
+                                                }
+                                                if bare_kind.ends_with("_stem") {
+                                                    let wood = bare_kind
+                                                        .strip_suffix("_stem")
+                                                        .unwrap_or(bare_kind);
+                                                    return Some(format!("{}_planks", wood));
+                                                }
+                                            }
+                                        }
+                                    }
+                                    None
+                                })
+                            })
+                            .ok_or_else(|| "无法确定原木类型".to_string())?;
+                        crate::azalea::craft::do_craft_2x2(bot, &planks_name, 4)
+                            .await
+                            .map_err(|e| format!("自动合成木板 {planks_name} 失败: {e}"))?;
+                        crate::azalea::craft::do_craft_2x2(bot, "crafting_table", 1)
+                            .await
+                            .map_err(|e| format!("自动合成 {item_id} 失败: {e}"))?;
+                    } else {
+                        return Err(format!(
+                            "背包无 {item_id}，且无木板/原木可自动合成。请先 gather 采集一些原木。"
+                        ));
+                    }
                 }
+            } else {
+                return Err(format!(
+                    "背包无 {item_id}（请先 craft 或 gather 一个，或在工具调用时指定 table_x/y/z 用附近已有的桌）"
+                ));
             }
-        } else {
-            return Err(format!(
-                "背包无 {item_id}（请先 craft 或 gather 一个，或在工具调用时指定 table_x/y/z 用附近已有的桌）"
-            ));
-        }
         } // 关闭 P45 else { crafting_table 分支 }
     }
 
@@ -731,8 +787,7 @@ pub async fn ensure_table_open(
             Some(actual) => {
                 eprintln!(
                     "[table_flow] placement_pos=({},{},{}) 处无 {table_kind}，附近找到 ({},{},{})",
-                    placement_pos.x, placement_pos.y, placement_pos.z,
-                    actual.x, actual.y, actual.z
+                    placement_pos.x, placement_pos.y, placement_pos.z, actual.x, actual.y, actual.z
                 );
                 actual
             }
@@ -765,7 +820,10 @@ pub async fn ensure_table_open(
                     }
                     sleep(Duration::from_millis(50)).await;
                 }
-                last_err = format!("open_container_at 返回 Ok(Some) 但菜单未稳定打开（尝试 {}）", attempt + 1);
+                last_err = format!(
+                    "open_container_at 返回 Ok(Some) 但菜单未稳定打开（尝试 {}）",
+                    attempt + 1
+                );
             }
             Ok(None) => {
                 last_err = format!(
@@ -773,7 +831,11 @@ pub async fn ensure_table_open(
                      或 bot 距离/LOS 不满足",
                     attempt + 1
                 );
-                eprintln!("[table_flow] open None (attempt {}): {}", attempt + 1, last_err);
+                eprintln!(
+                    "[table_flow] open None (attempt {}): {}",
+                    attempt + 1,
+                    last_err
+                );
             }
             Err(e) => {
                 last_err = format!("open_container_at 错误（尝试 {}）: {e:?}", attempt + 1);
@@ -810,7 +872,9 @@ fn verify_table_block_at(
     pos: BlockPos,
     expected: Option<azalea_registry::builtin::BlockKind>,
 ) -> bool {
-    let Some(expected_kind) = expected else { return false; };
+    let Some(expected_kind) = expected else {
+        return false;
+    };
     let world = match bot.world() {
         Ok(w) => w,
         Err(_) => return false,
@@ -830,7 +894,9 @@ fn find_table_block_nearby(
     expected: Option<azalea_registry::builtin::BlockKind>,
     radius: i32,
 ) -> Option<BlockPos> {
-    let Some(expected_kind) = expected else { return None; };
+    let Some(expected_kind) = expected else {
+        return None;
+    };
     let world = bot.world().ok()?;
     let world = world.read();
     let mut best: Option<(BlockPos, i32)> = None;
@@ -854,6 +920,7 @@ fn find_table_block_nearby(
 }
 
 /// 找到背包里持有 item 的 hotbar 槽位（0..=8），无则 None。
+#[allow(dead_code)]
 fn find_hotbar_slot(inv: &ContainerHandleRef, kind: ItemKind) -> Option<u8> {
     let menu = inv.menu().ok()??;
     // P5 修复：原代码 idx 算反了（详见 place.rs 同名函数注释）。
@@ -887,10 +954,7 @@ fn check_placement_space(bot: &Client, pos: BlockPos) -> bool {
         Err(_) => return false,
     };
     let w = world.read();
-    let pos_is_air = w
-        .get_block_state(pos)
-        .map(|s| s.is_air())
-        .unwrap_or(true);
+    let pos_is_air = w.get_block_state(pos).map(|s| s.is_air()).unwrap_or(true);
     if !pos_is_air {
         return false;
     }
@@ -999,7 +1063,10 @@ async fn excavate_placement_spot(bot: &Client) -> Option<BlockPos> {
                 eprintln!("[P34] 挖通了但下方不实心，继续下一个候选");
             }
         } else {
-            eprintln!("[P34] 挖 ({},{},{}) 超时，尝试下一个候选", pos.x, pos.y, pos.z);
+            eprintln!(
+                "[P34] 挖 ({},{},{}) 超时，尝试下一个候选",
+                pos.x, pos.y, pos.z
+            );
         }
     }
     None

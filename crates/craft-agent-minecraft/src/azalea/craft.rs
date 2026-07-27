@@ -11,10 +11,10 @@
 //! （服务端按当前配方自动只放进所需数量，多余留在背包）。等待服务端算出
 //! 结果后 shift_click(slot 0) 把产物收进背包。循环至满足数量。
 
+use azalea::BlockPos;
 use azalea::container::ContainerHandleRef;
 use azalea::inventory::operations::{PickupClick, ThrowClick};
 use azalea::prelude::*;
-use azalea::BlockPos;
 use azalea_registry::builtin::ItemKind;
 use std::str::FromStr;
 use std::time::Duration;
@@ -145,8 +145,12 @@ fn find_source_slot(inv: &ContainerHandleRef, kind: ItemKind) -> Option<usize> {
 ///
 /// 正确做法：**验证背包里产物数量是否增加**（ground truth），而非 slot 0 是否为空。
 fn count_item_in_player_slots(inv: &ContainerHandleRef, kind: ItemKind) -> u32 {
-    let Some(menu) = inv.menu().ok().flatten() else { return 0; };
-    let Some(slots) = inv.slots() else { return 0; };
+    let Some(menu) = inv.menu().ok().flatten() else {
+        return 0;
+    };
+    let Some(slots) = inv.slots() else {
+        return 0;
+    };
     let range = menu.player_slots_range();
     slots
         .iter()
@@ -166,8 +170,12 @@ fn count_item_in_player_slots(inv: &ContainerHandleRef, kind: ItemKind) -> u32 {
 ///
 /// 本函数用于 craft 前检查空位，以及 craft 失败时给出明确诊断（背包满→让 LLM discard）。
 fn count_empty_player_slots(inv: &ContainerHandleRef) -> u32 {
-    let Some(menu) = inv.menu().ok().flatten() else { return 0; };
-    let Some(slots) = inv.slots() else { return 0; };
+    let Some(menu) = inv.menu().ok().flatten() else {
+        return 0;
+    };
+    let Some(slots) = inv.slots() else {
+        return 0;
+    };
     let range = menu.player_slots_range();
     slots
         .iter()
@@ -194,8 +202,12 @@ fn find_empty_player_slot(inv: &ContainerHandleRef) -> Option<usize> {
 
 /// 列出背包内容（用于错误诊断），格式 "slot_idx=itemxN, ..."，最多 20 个非空槽。
 fn dump_player_inventory(inv: &ContainerHandleRef) -> String {
-    let Some(menu) = inv.menu().ok().flatten() else { return "(无法读取菜单)".into(); };
-    let Some(slots) = inv.slots() else { return "(无法读取槽位)".into(); };
+    let Some(menu) = inv.menu().ok().flatten() else {
+        return "(无法读取菜单)".into();
+    };
+    let Some(slots) = inv.slots() else {
+        return "(无法读取槽位)".into();
+    };
     let range = menu.player_slots_range();
     let mut items: Vec<String> = Vec::new();
     let mut count = 0;
@@ -206,7 +218,9 @@ fn dump_player_inventory(inv: &ContainerHandleRef) -> String {
                 let bare = k.strip_prefix("minecraft:").unwrap_or(k);
                 items.push(format!("slot{s}={bare}x{}", st.count()));
                 count += 1;
-                if count >= 20 { break; }
+                if count >= 20 {
+                    break;
+                }
             }
         }
     }
@@ -280,7 +294,7 @@ async fn auto_discard_junk(bot: &Client) -> (String, u32) {
         ("pointed_dripstone", 0),
         ("smooth_basalt", 0),
         ("deepslate", 0),
-        ("stone", 0), // 石头挖掉得到 cobblestone，原石本身无用
+        ("stone", 0),        // 石头挖掉得到 cobblestone，原石本身无用
         ("cobblestone", 32), // P22: 保留数从 16 提到 32（合成熔炉/石镐需要 8+）
         ("cobbled_deepslate", 32),
         // 保留少量的有用方块
@@ -313,8 +327,12 @@ async fn auto_discard_junk(bot: &Client) -> (String, u32) {
             Ok(i) => i,
             Err(_) => break,
         };
-        let Some(menu) = inv.menu().ok().flatten() else { break; };
-        let Some(slots) = inv.slots() else { break; };
+        let Some(menu) = inv.menu().ok().flatten() else {
+            break;
+        };
+        let Some(slots) = inv.slots() else {
+            break;
+        };
         let range = menu.player_slots_range();
 
         // 收集所有该类物品的 (slot, count)
@@ -448,18 +466,39 @@ fn expand_ingredient_aliases(kind: ItemKind) -> Vec<ItemKind> {
     let bare = name.strip_prefix("minecraft:").unwrap_or(name);
     let aliases: Vec<&str> = if bare.ends_with("_planks") {
         vec![
-            "oak_planks", "birch_planks", "spruce_planks", "jungle_planks",
-            "acacia_planks", "dark_oak_planks", "mangrove_planks", "cherry_planks", "pale_oak_planks",
+            "oak_planks",
+            "birch_planks",
+            "spruce_planks",
+            "jungle_planks",
+            "acacia_planks",
+            "dark_oak_planks",
+            "mangrove_planks",
+            "cherry_planks",
+            "pale_oak_planks",
         ]
     } else if bare.ends_with("_log") {
         vec![
-            "oak_log", "birch_log", "spruce_log", "jungle_log",
-            "acacia_log", "dark_oak_log", "mangrove_log", "cherry_log", "pale_oak_log",
+            "oak_log",
+            "birch_log",
+            "spruce_log",
+            "jungle_log",
+            "acacia_log",
+            "dark_oak_log",
+            "mangrove_log",
+            "cherry_log",
+            "pale_oak_log",
         ]
     } else if bare.ends_with("_wood") {
         vec![
-            "oak_wood", "birch_wood", "spruce_wood", "jungle_wood",
-            "acacia_wood", "dark_oak_wood", "mangrove_wood", "cherry_wood", "pale_oak_wood",
+            "oak_wood",
+            "birch_wood",
+            "spruce_wood",
+            "jungle_wood",
+            "acacia_wood",
+            "dark_oak_wood",
+            "mangrove_wood",
+            "cherry_wood",
+            "pale_oak_wood",
         ]
     } else if matches!(bare, "coal" | "charcoal") {
         // 火把配方同时支持 coal 和 charcoal
@@ -469,9 +508,7 @@ fn expand_ingredient_aliases(kind: ItemKind) -> Vec<ItemKind> {
     };
     aliases
         .iter()
-        .filter_map(|s| {
-            ItemKind::from_str(&format!("minecraft:{s}")).ok()
-        })
+        .filter_map(|s| ItemKind::from_str(&format!("minecraft:{s}")).ok())
         .collect()
 }
 
@@ -716,8 +753,7 @@ pub async fn do_craft_2x2(bot: &Client, item: &str, count: u32) -> Result<String
             .map(|(slot, ing_id)| {
                 (
                     *slot,
-                    ItemKind::from_str(&normalize_item(ing_id))
-                        .unwrap_or_else(|_| ItemKind::Air),
+                    ItemKind::from_str(&normalize_item(ing_id)).unwrap_or_else(|_| ItemKind::Air),
                 )
             })
             .collect();
@@ -868,7 +904,9 @@ pub async fn do_craft_2x2(bot: &Client, item: &str, count: u32) -> Result<String
         sleep(Duration::from_millis(150)).await;
 
         // 2. 重新读 inv 找空槽（每次都读最新的，避免 stale state）
-        let inv2 = bot.get_inventory().map_err(|e| format!("读取背包失败: {e:?}"))?;
+        let inv2 = bot
+            .get_inventory()
+            .map_err(|e| format!("读取背包失败: {e:?}"))?;
         match find_empty_player_slot(&inv2) {
             Some(empty_slot) => {
                 inv2.left_click(empty_slot);
@@ -890,7 +928,9 @@ pub async fn do_craft_2x2(bot: &Client, item: &str, count: u32) -> Result<String
         }
 
         // 3. 验证 count 增加
-        let inv3 = bot.get_inventory().map_err(|e| format!("验证时读取背包失败: {e:?}"))?;
+        let inv3 = bot
+            .get_inventory()
+            .map_err(|e| format!("验证时读取背包失败: {e:?}"))?;
         let after_count2 = count_item_in_player_slots(&inv3, count_kind);
         if after_count2 > before_count {
             crafted += output;
@@ -906,7 +946,9 @@ pub async fn do_craft_2x2(bot: &Client, item: &str, count: u32) -> Result<String
         );
         let _ = clear_grid(&inv3, GRID).await;
         sleep(Duration::from_millis(400)).await;
-        let inv4 = bot.get_inventory().map_err(|e| format!("兜底后读取背包失败: {e:?}"))?;
+        let inv4 = bot
+            .get_inventory()
+            .map_err(|e| format!("兜底后读取背包失败: {e:?}"))?;
         let after_close = count_item_in_player_slots(&inv4, count_kind);
         if after_close > before_count {
             eprintln!(
@@ -985,20 +1027,140 @@ const SHAPED_RECIPES: &[(&'static str, ShapedRecipe)] = &[
     // "不支持的 3×3 合成目标"。LLM 常误用 craft_3x3 合成 crafting_table，
     // 导致 100% 失败。加入这些配方让 craft_3x3 也能处理。
     // 槽位编号：1 2 3 / 4 5 6 / 7 8 9，2×2 形状放在 1,2,4,5。
-    ("oak_planks", ShapedRecipe { cells: &[(1,"oak_log")], output_per_craft: 4 }),
-    ("stick", ShapedRecipe { cells: &[(1,"oak_planks"),(4,"oak_planks")], output_per_craft: 4 }),
-    ("crafting_table", ShapedRecipe { cells: &[(1,"oak_planks"),(2,"oak_planks"),(4,"oak_planks"),(5,"oak_planks")], output_per_craft: 1 }),
-    ("torch", ShapedRecipe { cells: &[(1,"coal"),(4,"stick")], output_per_craft: 4 }),
-    ("torch_charcoal", ShapedRecipe { cells: &[(1,"charcoal"),(4,"stick")], output_per_craft: 4 }),
+    (
+        "oak_planks",
+        ShapedRecipe {
+            cells: &[(1, "oak_log")],
+            output_per_craft: 4,
+        },
+    ),
+    (
+        "stick",
+        ShapedRecipe {
+            cells: &[(1, "oak_planks"), (4, "oak_planks")],
+            output_per_craft: 4,
+        },
+    ),
+    (
+        "crafting_table",
+        ShapedRecipe {
+            cells: &[
+                (1, "oak_planks"),
+                (2, "oak_planks"),
+                (4, "oak_planks"),
+                (5, "oak_planks"),
+            ],
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "torch",
+        ShapedRecipe {
+            cells: &[(1, "coal"), (4, "stick")],
+            output_per_craft: 4,
+        },
+    ),
+    (
+        "torch_charcoal",
+        ShapedRecipe {
+            cells: &[(1, "charcoal"), (4, "stick")],
+            output_per_craft: 4,
+        },
+    ),
     // 环形：8 格同种原料
-    ("furnace", ShapedRecipe { cells: &[(1,"cobblestone"),(2,"cobblestone"),(3,"cobblestone"),(4,"cobblestone"),(6,"cobblestone"),(7,"cobblestone"),(8,"cobblestone"),(9,"cobblestone")], output_per_craft: 1 }),
-    ("chest", ShapedRecipe { cells: &[(1,"oak_planks"),(2,"oak_planks"),(3,"oak_planks"),(4,"oak_planks"),(6,"oak_planks"),(7,"oak_planks"),(8,"oak_planks"),(9,"oak_planks")], output_per_craft: 1 }),
-    ("ladder", ShapedRecipe { cells: &[(1,"stick"),(2,"stick"),(3,"stick"),(4,"stick"),(5,"stick"),(6,"stick"),(7,"stick"),(8,"stick"),(9,"stick")], output_per_craft: 3 }),
-    ("oak_trapdoor", ShapedRecipe { cells: &[(1,"oak_planks"),(2,"oak_planks"),(3,"oak_planks"),(4,"oak_planks"),(5,"oak_planks"),(6,"oak_planks")], output_per_craft: 2 }),
+    (
+        "furnace",
+        ShapedRecipe {
+            cells: &[
+                (1, "cobblestone"),
+                (2, "cobblestone"),
+                (3, "cobblestone"),
+                (4, "cobblestone"),
+                (6, "cobblestone"),
+                (7, "cobblestone"),
+                (8, "cobblestone"),
+                (9, "cobblestone"),
+            ],
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "chest",
+        ShapedRecipe {
+            cells: &[
+                (1, "oak_planks"),
+                (2, "oak_planks"),
+                (3, "oak_planks"),
+                (4, "oak_planks"),
+                (6, "oak_planks"),
+                (7, "oak_planks"),
+                (8, "oak_planks"),
+                (9, "oak_planks"),
+            ],
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "ladder",
+        ShapedRecipe {
+            cells: &[
+                (1, "stick"),
+                (2, "stick"),
+                (3, "stick"),
+                (4, "stick"),
+                (5, "stick"),
+                (6, "stick"),
+                (7, "stick"),
+                (8, "stick"),
+                (9, "stick"),
+            ],
+            output_per_craft: 3,
+        },
+    ),
+    (
+        "oak_trapdoor",
+        ShapedRecipe {
+            cells: &[
+                (1, "oak_planks"),
+                (2, "oak_planks"),
+                (3, "oak_planks"),
+                (4, "oak_planks"),
+                (5, "oak_planks"),
+                (6, "oak_planks"),
+            ],
+            output_per_craft: 2,
+        },
+    ),
     // 门：两列木板
-    ("oak_door", ShapedRecipe { cells: &[(1,"oak_planks"),(2,"oak_planks"),(4,"oak_planks"),(5,"oak_planks"),(7,"oak_planks"),(8,"oak_planks")], output_per_craft: 3 }),
+    (
+        "oak_door",
+        ShapedRecipe {
+            cells: &[
+                (1, "oak_planks"),
+                (2, "oak_planks"),
+                (4, "oak_planks"),
+                (5, "oak_planks"),
+                (7, "oak_planks"),
+                (8, "oak_planks"),
+            ],
+            output_per_craft: 3,
+        },
+    ),
     // 栅栏：上下木板 + 中间棍
-    ("oak_fence", ShapedRecipe { cells: &[(1,"oak_planks"),(2,"oak_planks"),(4,"stick"),(5,"stick"),(7,"oak_planks"),(8,"oak_planks")], output_per_craft: 3 }),
+    (
+        "oak_fence",
+        ShapedRecipe {
+            cells: &[
+                (1, "oak_planks"),
+                (2, "oak_planks"),
+                (4, "stick"),
+                (5, "stick"),
+                (7, "oak_planks"),
+                (8, "oak_planks"),
+            ],
+            output_per_craft: 3,
+        },
+    ),
     // 工具类的 vanilla 形状（3×3 网格编号：1 2 3 / 4 5 6 / 7 8 9）
     //   镐  XXX / .S. / .S.  → 头部占 1,2,3；柄占 5,8
     //   斧  XX. / XS. / .S.  → 头部占 1,2,4；柄占 5,8
@@ -1007,28 +1169,222 @@ const SHAPED_RECIPES: &[(&'static str, ShapedRecipe)] = &[
     //   锄  XX. / .S. / .S.  → 头占 1,2；柄占 5,8
     // 旧版把柄写成 5,7（锄写成 4,7）——柄不在同一竖列，服务端配方匹配失败，
     // 是「网格未产生结果」的一个独立成因。
-    ("wooden_pickaxe", ShapedRecipe { cells: &[(1,"oak_planks"),(2,"oak_planks"),(3,"oak_planks"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
-    ("wooden_axe", ShapedRecipe { cells: &[(1,"oak_planks"),(2,"oak_planks"),(4,"oak_planks"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
-    ("wooden_sword", ShapedRecipe { cells: &[(2,"oak_planks"),(5,"oak_planks"),(8,"stick")], output_per_craft: 1 }),
-    ("wooden_shovel", ShapedRecipe { cells: &[(2,"oak_planks"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
-    ("wooden_hoe", ShapedRecipe { cells: &[(1,"oak_planks"),(2,"oak_planks"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
+    (
+        "wooden_pickaxe",
+        ShapedRecipe {
+            cells: &[
+                (1, "oak_planks"),
+                (2, "oak_planks"),
+                (3, "oak_planks"),
+                (5, "stick"),
+                (8, "stick"),
+            ],
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "wooden_axe",
+        ShapedRecipe {
+            cells: &[
+                (1, "oak_planks"),
+                (2, "oak_planks"),
+                (4, "oak_planks"),
+                (5, "stick"),
+                (8, "stick"),
+            ],
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "wooden_sword",
+        ShapedRecipe {
+            cells: &[(2, "oak_planks"), (5, "oak_planks"), (8, "stick")],
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "wooden_shovel",
+        ShapedRecipe {
+            cells: &[(2, "oak_planks"), (5, "stick"), (8, "stick")],
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "wooden_hoe",
+        ShapedRecipe {
+            cells: &[
+                (1, "oak_planks"),
+                (2, "oak_planks"),
+                (5, "stick"),
+                (8, "stick"),
+            ],
+            output_per_craft: 1,
+        },
+    ),
     // 石制工具（用 cobblestone 代替木板）
-    ("stone_pickaxe", ShapedRecipe { cells: &[(1,"cobblestone"),(2,"cobblestone"),(3,"cobblestone"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
-    ("stone_axe", ShapedRecipe { cells: &[(1,"cobblestone"),(2,"cobblestone"),(4,"cobblestone"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
-    ("stone_sword", ShapedRecipe { cells: &[(2,"cobblestone"),(5,"cobblestone"),(8,"stick")], output_per_craft: 1 }),
-    ("stone_shovel", ShapedRecipe { cells: &[(2,"cobblestone"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
-    ("stone_hoe", ShapedRecipe { cells: &[(1,"cobblestone"),(2,"cobblestone"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
+    (
+        "stone_pickaxe",
+        ShapedRecipe {
+            cells: &[
+                (1, "cobblestone"),
+                (2, "cobblestone"),
+                (3, "cobblestone"),
+                (5, "stick"),
+                (8, "stick"),
+            ],
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "stone_axe",
+        ShapedRecipe {
+            cells: &[
+                (1, "cobblestone"),
+                (2, "cobblestone"),
+                (4, "cobblestone"),
+                (5, "stick"),
+                (8, "stick"),
+            ],
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "stone_sword",
+        ShapedRecipe {
+            cells: &[(2, "cobblestone"), (5, "cobblestone"), (8, "stick")],
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "stone_shovel",
+        ShapedRecipe {
+            cells: &[(2, "cobblestone"), (5, "stick"), (8, "stick")],
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "stone_hoe",
+        ShapedRecipe {
+            cells: &[
+                (1, "cobblestone"),
+                (2, "cobblestone"),
+                (5, "stick"),
+                (8, "stick"),
+            ],
+            output_per_craft: 1,
+        },
+    ),
     // 铁制工具（需先熔炼 iron_ingot）
-    ("iron_pickaxe", ShapedRecipe { cells: &[(1,"iron_ingot"),(2,"iron_ingot"),(3,"iron_ingot"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
-    ("iron_axe", ShapedRecipe { cells: &[(1,"iron_ingot"),(2,"iron_ingot"),(4,"iron_ingot"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
-    ("iron_sword", ShapedRecipe { cells: &[(2,"iron_ingot"),(5,"iron_ingot"),(8,"stick")], output_per_craft: 1 }),
-    ("iron_shovel", ShapedRecipe { cells: &[(2,"iron_ingot"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
-    ("iron_hoe", ShapedRecipe { cells: &[(1,"iron_ingot"),(2,"iron_ingot"),(5,"stick"),(8,"stick")], output_per_craft: 1 }),
+    (
+        "iron_pickaxe",
+        ShapedRecipe {
+            cells: &[
+                (1, "iron_ingot"),
+                (2, "iron_ingot"),
+                (3, "iron_ingot"),
+                (5, "stick"),
+                (8, "stick"),
+            ],
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "iron_axe",
+        ShapedRecipe {
+            cells: &[
+                (1, "iron_ingot"),
+                (2, "iron_ingot"),
+                (4, "iron_ingot"),
+                (5, "stick"),
+                (8, "stick"),
+            ],
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "iron_sword",
+        ShapedRecipe {
+            cells: &[(2, "iron_ingot"), (5, "iron_ingot"), (8, "stick")],
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "iron_shovel",
+        ShapedRecipe {
+            cells: &[(2, "iron_ingot"), (5, "stick"), (8, "stick")],
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "iron_hoe",
+        ShapedRecipe {
+            cells: &[
+                (1, "iron_ingot"),
+                (2, "iron_ingot"),
+                (5, "stick"),
+                (8, "stick"),
+            ],
+            output_per_craft: 1,
+        },
+    ),
     // 铁盔甲
-    ("iron_helmet", ShapedRecipe { cells: &[(1,"iron_ingot"),(2,"iron_ingot"),(3,"iron_ingot"),(4,"iron_ingot"),(6,"iron_ingot")], output_per_craft: 1 }),
-    ("iron_chestplate", ShapedRecipe { cells: &[(1,"iron_ingot"),(3,"iron_ingot"),(4,"iron_ingot"),(5,"iron_ingot"),(6,"iron_ingot"),(7,"iron_ingot"),(8,"iron_ingot"),(9,"iron_ingot")], output_per_craft: 1 }),
-    ("iron_leggings", ShapedRecipe { cells: &[(1,"iron_ingot"),(2,"iron_ingot"),(3,"iron_ingot"),(4,"iron_ingot"),(6,"iron_ingot"),(7,"iron_ingot"),(8,"iron_ingot"),(9,"iron_ingot")], output_per_craft: 1 }),
-    ("iron_boots", ShapedRecipe { cells: &[(1,"iron_ingot"),(3,"iron_ingot"),(7,"iron_ingot"),(9,"iron_ingot")], output_per_craft: 1 }),
+    (
+        "iron_helmet",
+        ShapedRecipe {
+            cells: &[
+                (1, "iron_ingot"),
+                (2, "iron_ingot"),
+                (3, "iron_ingot"),
+                (4, "iron_ingot"),
+                (6, "iron_ingot"),
+            ],
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "iron_chestplate",
+        ShapedRecipe {
+            cells: &[
+                (1, "iron_ingot"),
+                (3, "iron_ingot"),
+                (4, "iron_ingot"),
+                (5, "iron_ingot"),
+                (6, "iron_ingot"),
+                (7, "iron_ingot"),
+                (8, "iron_ingot"),
+                (9, "iron_ingot"),
+            ],
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "iron_leggings",
+        ShapedRecipe {
+            cells: &[
+                (1, "iron_ingot"),
+                (2, "iron_ingot"),
+                (3, "iron_ingot"),
+                (4, "iron_ingot"),
+                (6, "iron_ingot"),
+                (7, "iron_ingot"),
+                (8, "iron_ingot"),
+                (9, "iron_ingot"),
+            ],
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "iron_boots",
+        ShapedRecipe {
+            cells: &[
+                (1, "iron_ingot"),
+                (3, "iron_ingot"),
+                (7, "iron_ingot"),
+                (9, "iron_ingot"),
+            ],
+            output_per_craft: 1,
+        },
+    ),
 ];
 
 fn lookup_shaped(item: &str) -> Option<ShapedRecipe> {
@@ -1093,9 +1449,7 @@ pub async fn do_craft_3x3(
         // RecipeBook 未命中，查手写表
         match lookup_shaped(item) {
             Some(r) => {
-                eprintln!(
-                    "[craft 3x3] P48: '{item}' 不在 RecipeBook，回退到手写 SHAPED_RECIPES"
-                );
+                eprintln!("[craft 3x3] P48: '{item}' 不在 RecipeBook，回退到手写 SHAPED_RECIPES");
                 r
             }
             None => {
@@ -1228,7 +1582,9 @@ pub async fn do_craft_3x3(
         inv.left_click(0usize);
         sleep(Duration::from_millis(150)).await;
 
-        let inv2 = bot.get_inventory().map_err(|e| format!("读取背包失败: {e:?}"))?;
+        let inv2 = bot
+            .get_inventory()
+            .map_err(|e| format!("读取背包失败: {e:?}"))?;
         match find_empty_player_slot(&inv2) {
             Some(empty_slot) => {
                 inv2.left_click(empty_slot);
@@ -1248,7 +1604,9 @@ pub async fn do_craft_3x3(
             }
         }
 
-        let inv3 = bot.get_inventory().map_err(|e| format!("验证时读取背包失败: {e:?}"))?;
+        let inv3 = bot
+            .get_inventory()
+            .map_err(|e| format!("验证时读取背包失败: {e:?}"))?;
         let after_count2 = count_item_in_player_slots(&inv3, target_kind);
         if after_count2 > before_count {
             crafted += output;
@@ -1268,7 +1626,9 @@ pub async fn do_craft_3x3(
         crate::azalea::table_flow::close_container_if_open(bot);
         sleep(Duration::from_millis(400)).await;
         // 检查关容器后产物是否进入背包
-        let inv4 = bot.get_inventory().map_err(|e| format!("关容器后读取背包失败: {e:?}"))?;
+        let inv4 = bot
+            .get_inventory()
+            .map_err(|e| format!("关容器后读取背包失败: {e:?}"))?;
         let after_close = count_item_in_player_slots(&inv4, target_kind);
         if after_close > before_count {
             eprintln!(
@@ -1280,13 +1640,18 @@ pub async fn do_craft_3x3(
             if crafted < crafts_needed * output {
                 if let Some(tp) = table_pos {
                     // 走到桌旁并重新打开
-                    use azalea::pathfinder::goals::RadiusGoal;
                     use azalea::Vec3;
+                    use azalea::pathfinder::goals::RadiusGoal;
                     let target = Vec3::new(tp.x as f64 + 0.5, tp.y as f64 + 0.5, tp.z as f64 + 0.5);
-                    let goto_fut = bot.goto(RadiusGoal { pos: target, radius: 1.5 });
+                    let goto_fut = bot.goto(RadiusGoal {
+                        pos: target,
+                        radius: 1.5,
+                    });
                     let _ = tokio::time::timeout(Duration::from_secs(5), goto_fut).await;
                     match bot.open_container_at(tp).await {
-                        Ok(Some(h)) => { std::mem::forget(h); }
+                        Ok(Some(h)) => {
+                            std::mem::forget(h);
+                        }
                         _ => {
                             return Err(format!(
                                 "合成 {item} 部分完成（{crafted}）但重新打开工作台失败，无法继续"
@@ -1330,7 +1695,12 @@ pub async fn do_craft_3x3_recipe(
 ) -> Result<String, String> {
     use crate::azalea::recipe_book::StoredRecipe;
     let (grid_items, label) = match recipe {
-        StoredRecipe::Shaped { width, height, grid, .. } => {
+        StoredRecipe::Shaped {
+            width,
+            height,
+            grid,
+            ..
+        } => {
             // 把 width*height 的网格映射到 3×3 工作台槽位（1..=9，行优先）
             let mut placed: Vec<(usize, ItemKind)> = Vec::new();
             let w = *width as usize;
@@ -1386,8 +1756,8 @@ pub async fn do_craft_3x3_recipe(
 
         // P8：逐格放 1 个（shift_click 不按形状、整堆塞一格会让其他格缺料）
         for &(g, k) in &grid_items {
-            let src = find_ingredient_slot(&inv, k, GRID)
-                .ok_or_else(|| format!("背包缺少原料 {k:?}"))?;
+            let src =
+                find_ingredient_slot(&inv, k, GRID).ok_or_else(|| format!("背包缺少原料 {k:?}"))?;
             place_one(&inv, src, g).await;
         }
 
@@ -1495,7 +1865,11 @@ pub async fn do_craft_smithing(
             base,
             addition,
             ..
-        } => (template.items.first().copied(), base.items.first().copied(), addition.items.first().copied()),
+        } => (
+            template.items.first().copied(),
+            base.items.first().copied(),
+            addition.items.first().copied(),
+        ),
         _ => return Err("do_craft_smithing 仅支持 Smithing 配方".to_string()),
     };
     let inv = bot
@@ -1550,7 +1924,9 @@ pub async fn do_craft_smithing(
                 inv2.left_click(empty);
                 sleep(Duration::from_millis(150)).await;
             } else {
-                return Err("锻造失败：背包完全满，产物无法收集。建议：先 discard 腾出空位".to_string());
+                return Err(
+                    "锻造失败：背包完全满，产物无法收集。建议：先 discard 腾出空位".to_string(),
+                );
             }
             let inv3 = match bot.get_inventory() {
                 Ok(i) => i,
@@ -1560,7 +1936,10 @@ pub async fn do_craft_smithing(
             if after2 > before {
                 made += 1;
             } else {
-                return Err("锻造失败：产物无法从结果槽移入背包（shift_click + left_click 均失败）".to_string());
+                return Err(
+                    "锻造失败：产物无法从结果槽移入背包（shift_click + left_click 均失败）"
+                        .to_string(),
+                );
             }
         }
     }
@@ -1589,9 +1968,7 @@ pub async fn do_craft_stonecutter(
 ) -> Result<String, String> {
     use crate::azalea::recipe_book::StoredRecipe;
     let (input_kind, result_kind) = match recipe {
-        StoredRecipe::Stonecutter { input, result, .. } => {
-            (input.items.first().copied(), *result)
-        }
+        StoredRecipe::Stonecutter { input, result, .. } => (input.items.first().copied(), *result),
         _ => return Err("do_craft_stonecutter 仅支持 Stonecutter 配方".to_string()),
     };
 
@@ -1601,9 +1978,12 @@ pub async fn do_craft_stonecutter(
     let mut made = 0u32;
     for round in 0..count.max(1) {
         // 每轮重新 fetch inventory，避免 stale state
-        let inv = bot
-            .get_inventory()
-            .map_err(|e| format!("获取容器失败（第 {} 轮，确认已打开切石机）: {e:?}", round + 1))?;
+        let inv = bot.get_inventory().map_err(|e| {
+            format!(
+                "获取容器失败（第 {} 轮，确认已打开切石机）: {e:?}",
+                round + 1
+            )
+        })?;
 
         // 放原料到 input 槽（slot 0）
         if let Some(k) = input_kind {
@@ -1693,17 +2073,83 @@ struct SmeltRecipe {
 }
 
 const SMELT_RECIPES: &[(&'static str, SmeltRecipe)] = &[
-    ("iron_ingot", SmeltRecipe { input: "iron_ore", output_per_craft: 1 }),
-    ("iron_ingot", SmeltRecipe { input: "raw_iron", output_per_craft: 1 }),
-    ("copper_ingot", SmeltRecipe { input: "copper_ore", output_per_craft: 1 }),
-    ("copper_ingot", SmeltRecipe { input: "raw_copper", output_per_craft: 1 }),
-    ("gold_ingot", SmeltRecipe { input: "gold_ore", output_per_craft: 1 }),
-    ("gold_ingot", SmeltRecipe { input: "raw_gold", output_per_craft: 1 }),
-    ("glass", SmeltRecipe { input: "sand", output_per_craft: 1 }),
-    ("stone", SmeltRecipe { input: "cobblestone", output_per_craft: 1 }),
-    ("smooth_stone", SmeltRecipe { input: "stone", output_per_craft: 1 }),
-    ("charcoal", SmeltRecipe { input: "oak_log", output_per_craft: 1 }),
-    ("baked_potato", SmeltRecipe { input: "potato", output_per_craft: 1 }),
+    (
+        "iron_ingot",
+        SmeltRecipe {
+            input: "iron_ore",
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "iron_ingot",
+        SmeltRecipe {
+            input: "raw_iron",
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "copper_ingot",
+        SmeltRecipe {
+            input: "copper_ore",
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "copper_ingot",
+        SmeltRecipe {
+            input: "raw_copper",
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "gold_ingot",
+        SmeltRecipe {
+            input: "gold_ore",
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "gold_ingot",
+        SmeltRecipe {
+            input: "raw_gold",
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "glass",
+        SmeltRecipe {
+            input: "sand",
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "stone",
+        SmeltRecipe {
+            input: "cobblestone",
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "smooth_stone",
+        SmeltRecipe {
+            input: "stone",
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "charcoal",
+        SmeltRecipe {
+            input: "oak_log",
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "baked_potato",
+        SmeltRecipe {
+            input: "potato",
+            output_per_craft: 1,
+        },
+    ),
 ];
 
 fn lookup_smelt_all(output: &str) -> Vec<SmeltRecipe> {
@@ -1823,19 +2269,35 @@ pub async fn do_smelt(
 
     let input_kind = ItemKind::from_str(&normalize_item(recipe.input))
         .map_err(|_| format!("未知输入 {}", recipe.input))?;
-    let fuel_kind = ItemKind::from_str(&normalize_item(fuel))
-        .map_err(|_| format!("未知燃料 {fuel}"))?;
+    let fuel_kind =
+        ItemKind::from_str(&normalize_item(fuel)).map_err(|_| format!("未知燃料 {fuel}"))?;
 
     // P22: 燃料 fallback 列表（保留，与 mindcraft getSmeltingFuel 等价）
     let fuel_candidates: Vec<ItemKind> = {
         let mut v = vec![fuel_kind];
         let fallbacks = [
-            "coal", "charcoal",
-            "oak_log", "birch_log", "spruce_log", "jungle_log", "acacia_log",
-            "dark_oak_log", "mangrove_log", "cherry_log", "pale_oak_log",
-            "oak_planks", "birch_planks", "spruce_planks", "jungle_planks",
-            "acacia_planks", "dark_oak_planks", "mangrove_planks", "cherry_planks", "pale_oak_planks",
-            "stick", "coal_block",
+            "coal",
+            "charcoal",
+            "oak_log",
+            "birch_log",
+            "spruce_log",
+            "jungle_log",
+            "acacia_log",
+            "dark_oak_log",
+            "mangrove_log",
+            "cherry_log",
+            "pale_oak_log",
+            "oak_planks",
+            "birch_planks",
+            "spruce_planks",
+            "jungle_planks",
+            "acacia_planks",
+            "dark_oak_planks",
+            "mangrove_planks",
+            "cherry_planks",
+            "pale_oak_planks",
+            "stick",
+            "coal_block",
         ];
         for f in fallbacks {
             if let Ok(k) = ItemKind::from_str(&normalize_item(f)) {
@@ -1879,7 +2341,9 @@ pub async fn do_smelt(
     if actual_smelt_count < original_count {
         eprintln!(
             "[smelt] P57: 请求熔炼 {} 个，但单批上限 {} 个（避免 120s 超时），本次熔炼 {} 个，剩余 {} 个下次继续",
-            original_count, MAX_SMELT_PER_BATCH, actual_smelt_count,
+            original_count,
+            MAX_SMELT_PER_BATCH,
+            actual_smelt_count,
             original_count - actual_smelt_count
         );
     }
@@ -2053,9 +2517,7 @@ pub async fn do_smelt(
             if still_has_result {
                 // shift_click 失败（背包满），用 left_click 兜底
                 // left_click(2) 把产物拿到光标，再 left_click(empty_slot) 放到背包
-                eprintln!(
-                    "[smelt] P49: shift_click(2) 失败（背包可能满），尝试 left_click 兜底"
-                );
+                eprintln!("[smelt] P49: shift_click(2) 失败（背包可能满），尝试 left_click 兜底");
                 inv_after.left_click(2usize);
                 sleep(Duration::from_millis(150)).await;
                 let inv_after2 = match bot.get_inventory() {
@@ -2104,9 +2566,7 @@ pub async fn do_smelt(
                     target_total
                 );
             } else {
-                eprintln!(
-                    "[smelt] P49: takeOutput 失败，产物仍在结果槽（不计数）"
-                );
+                eprintln!("[smelt] P49: takeOutput 失败，产物仍在结果槽（不计数）");
             }
         }
 
@@ -2217,12 +2677,16 @@ pub async fn do_brew(
     let (ingredient, base) = match recipe {
         StoredRecipe::Brewing {
             ingredient, base, ..
-        } => (ingredient.items.first().copied(), base.items.first().copied()),
+        } => (
+            ingredient.items.first().copied(),
+            base.items.first().copied(),
+        ),
         _ => return Err("do_brew 仅支持 Brewing 配方".to_string()),
     };
     let ing_kind = ingredient.ok_or("酿造配方缺少原料".to_string())?;
     let base_kind = base.ok_or("酿造配方缺少基底（如 water_bottle）".to_string())?;
-    let fuel_kind = ItemKind::from_str("blaze_powder").map_err(|_| "blaze_powder 解析失败".to_string())?;
+    let fuel_kind =
+        ItemKind::from_str("blaze_powder").map_err(|_| "blaze_powder 解析失败".to_string())?;
 
     let inv = bot
         .get_inventory()
@@ -2261,28 +2725,24 @@ pub async fn do_brew(
 /// 附魔：在已打开的附魔台菜单中，给背包中的 `item` 附魔。
 /// 需要背包内已有待附魔物品与青金石（lapis_lazuli）。
 /// `level` 取 1/2/3，对应附魔台三个选项槽（slot 2/3/4）。
-pub async fn do_enchant(
-    bot: &Client,
-    item: &str,
-    level: u32,
-) -> Result<String, String> {
+pub async fn do_enchant(bot: &Client, item: &str, level: u32) -> Result<String, String> {
     let opt_slot = match level.clamp(1, 3) {
         1 => 2usize,
         2 => 3usize,
         _ => 4usize,
     };
-    let item_kind = ItemKind::from_str(&normalize_item(item))
-        .map_err(|_| format!("未知物品 {item}"))?;
-    let lapis_kind = ItemKind::from_str("lapis_lazuli")
-        .map_err(|_| "青金石 id 解析失败".to_string())?;
+    let item_kind =
+        ItemKind::from_str(&normalize_item(item)).map_err(|_| format!("未知物品 {item}"))?;
+    let lapis_kind =
+        ItemKind::from_str("lapis_lazuli").map_err(|_| "青金石 id 解析失败".to_string())?;
 
     let inv = bot
         .get_inventory()
         .map_err(|e| format!("获取容器失败（确认已打开附魔台）: {e:?}"))?;
 
     // 把待附魔物品放进 item 槽(0)
-    let src_item = find_source_slot(&inv, item_kind)
-        .ok_or_else(|| format!("背包缺少待附魔物品 {item}"))?;
+    let src_item =
+        find_source_slot(&inv, item_kind).ok_or_else(|| format!("背包缺少待附魔物品 {item}"))?;
     move_stack(&inv, src_item, 0).await;
     // 把青金石放进 lapis 槽(1)
     let src_lapis = find_source_slot(&inv, lapis_kind)
@@ -2293,7 +2753,9 @@ pub async fn do_enchant(
     sleep(Duration::from_millis(300)).await;
 
     // 点击所选附魔选项槽（普通左键），触发附魔（物品仍在 item 槽并带附魔）
-    inv.click(PickupClick::Left { slot: Some(opt_slot as u16) });
+    inv.click(PickupClick::Left {
+        slot: Some(opt_slot as u16),
+    });
     sleep(Duration::from_millis(200)).await;
 
     let enchanted = {
@@ -2305,7 +2767,9 @@ pub async fn do_enchant(
             .unwrap_or(false)
     };
     if !enchanted {
-        return Err(format!("附魔 {item} 失败：物品槽为空（可能等级不足或青金不够）"));
+        return Err(format!(
+            "附魔 {item} 失败：物品槽为空（可能等级不足或青金不够）"
+        ));
     }
     // 收回到背包
     inv.shift_click(0usize);
@@ -2324,12 +2788,27 @@ mod tests {
     #[test]
     fn regression_lookup_shaped_finds_pickaxe_recipes() {
         // 裸 id 必须能查到
-        assert!(lookup_shaped("wooden_pickaxe").is_some(), "wooden_pickaxe 必须可查");
-        assert!(lookup_shaped("stone_pickaxe").is_some(), "stone_pickaxe 必须可查");
-        assert!(lookup_shaped("iron_pickaxe").is_some(), "iron_pickaxe 必须可查");
+        assert!(
+            lookup_shaped("wooden_pickaxe").is_some(),
+            "wooden_pickaxe 必须可查"
+        );
+        assert!(
+            lookup_shaped("stone_pickaxe").is_some(),
+            "stone_pickaxe 必须可查"
+        );
+        assert!(
+            lookup_shaped("iron_pickaxe").is_some(),
+            "iron_pickaxe 必须可查"
+        );
         // 带 minecraft: 前缀也必须能查到（LLM 经常输出带前缀的形式）
-        assert!(lookup_shaped("minecraft:stone_pickaxe").is_some(), "minecraft:stone_pickaxe 必须可查");
-        assert!(lookup_shaped("minecraft:wooden_axe").is_some(), "minecraft:wooden_axe 必须可查");
+        assert!(
+            lookup_shaped("minecraft:stone_pickaxe").is_some(),
+            "minecraft:stone_pickaxe 必须可查"
+        );
+        assert!(
+            lookup_shaped("minecraft:wooden_axe").is_some(),
+            "minecraft:wooden_axe 必须可查"
+        );
         // 熔炉/箱子等环形配方
         assert!(lookup_shaped("furnace").is_some(), "furnace 必须可查");
         assert!(lookup_shaped("chest").is_some(), "chest 必须可查");
@@ -2337,10 +2816,22 @@ mod tests {
         assert!(lookup_shaped("nonexistent_item").is_none());
         // P16 修复（2026-07-26）：2×2 配方（crafting_table/torch/oak_planks/stick）
         // 也加入 3×3 表，让 craft_3x3 能处理 LLM 误用 craft_3x3 合成这些物品的情况。
-        assert!(lookup_shaped("crafting_table").is_some(), "crafting_table 应在 3×3 表中（P16）");
-        assert!(lookup_shaped("torch").is_some(), "torch 应在 3×3 表中（P16）");
-        assert!(lookup_shaped("oak_planks").is_some(), "oak_planks 应在 3×3 表中（P16）");
-        assert!(lookup_shaped("stick").is_some(), "stick 应在 3×3 表中（P16）");
+        assert!(
+            lookup_shaped("crafting_table").is_some(),
+            "crafting_table 应在 3×3 表中（P16）"
+        );
+        assert!(
+            lookup_shaped("torch").is_some(),
+            "torch 应在 3×3 表中（P16）"
+        );
+        assert!(
+            lookup_shaped("oak_planks").is_some(),
+            "oak_planks 应在 3×3 表中（P16）"
+        );
+        assert!(
+            lookup_shaped("stick").is_some(),
+            "stick 应在 3×3 表中（P16）"
+        );
     }
 
     /// P12 回归测试：lookup_shaped 返回的 cells 必须是 vanilla 正确形状。
@@ -2349,14 +2840,26 @@ mod tests {
     fn regression_lookup_shaped_pickaxe_shape_is_vanilla_correct() {
         let r = lookup_shaped("stone_pickaxe").expect("stone_pickaxe 必须可查");
         // 顶部 3 格 cobblestone
-        assert!(r.cells.contains(&(1, "cobblestone")), "slot1 应为 cobblestone");
-        assert!(r.cells.contains(&(2, "cobblestone")), "slot2 应为 cobblestone");
-        assert!(r.cells.contains(&(3, "cobblestone")), "slot3 应为 cobblestone");
+        assert!(
+            r.cells.contains(&(1, "cobblestone")),
+            "slot1 应为 cobblestone"
+        );
+        assert!(
+            r.cells.contains(&(2, "cobblestone")),
+            "slot2 应为 cobblestone"
+        );
+        assert!(
+            r.cells.contains(&(3, "cobblestone")),
+            "slot3 应为 cobblestone"
+        );
         // 柄竖直：slot5（中中）+ slot8（中下）
         assert!(r.cells.contains(&(5, "stick")), "slot5 应为 stick");
         assert!(r.cells.contains(&(8, "stick")), "slot8 应为 stick");
         // 不应包含 slot7（左下）——柄不在左列
-        assert!(!r.cells.contains(&(7, "stick")), "slot7 不应有 stick（柄应在正中竖列）");
+        assert!(
+            !r.cells.contains(&(7, "stick")),
+            "slot7 不应有 stick（柄应在正中竖列）"
+        );
     }
 
     /// P12 回归测试：lookup_shaped_2x2 必须返回 stick/torch 的形状候选。
@@ -2372,27 +2875,52 @@ mod tests {
         // 必须是 slot1 + slot3（左列竖直），不是 slot1 + slot2（横放）
         assert!(cells.contains(&(1, "oak_planks")), "slot1 应有 oak_planks");
         assert!(cells.contains(&(3, "oak_planks")), "slot3 应有 oak_planks");
-        assert!(!cells.contains(&(2, "oak_planks")), "slot2 不应有 planks（会导致横放）");
+        assert!(
+            !cells.contains(&(2, "oak_planks")),
+            "slot2 不应有 planks（会导致横放）"
+        );
 
         // torch 应有 2 个候选（coal + charcoal 变体）
         let torch_candidates = lookup_shaped_2x2("torch");
-        assert_eq!(torch_candidates.len(), 2, "torch 应有 2 个候选（coal/charcoal）");
+        assert_eq!(
+            torch_candidates.len(),
+            2,
+            "torch 应有 2 个候选（coal/charcoal）"
+        );
         // coal 变体（第一个）
         let (coal_cells, _) = &torch_candidates[0];
-        assert!(coal_cells.contains(&(1, "coal")), "coal 变体 slot1 应为 coal");
-        assert!(coal_cells.contains(&(3, "stick")), "coal 变体 slot3 应为 stick");
+        assert!(
+            coal_cells.contains(&(1, "coal")),
+            "coal 变体 slot1 应为 coal"
+        );
+        assert!(
+            coal_cells.contains(&(3, "stick")),
+            "coal 变体 slot3 应为 stick"
+        );
         // charcoal 变体（第二个）
         let (charcoal_cells, _) = &torch_candidates[1];
-        assert!(charcoal_cells.contains(&(1, "charcoal")), "charcoal 变体 slot1 应为 charcoal");
-        assert!(charcoal_cells.contains(&(3, "stick")), "charcoal 变体 slot3 应为 stick");
+        assert!(
+            charcoal_cells.contains(&(1, "charcoal")),
+            "charcoal 变体 slot1 应为 charcoal"
+        );
+        assert!(
+            charcoal_cells.contains(&(3, "stick")),
+            "charcoal 变体 slot3 应为 stick"
+        );
 
         // 带 minecraft: 前缀
         assert_eq!(lookup_shaped_2x2("minecraft:stick").len(), 1);
         assert_eq!(lookup_shaped_2x2("minecraft:torch").len(), 2);
 
         // 不在表中的物品应返回空（回退到顺序填充）
-        assert!(lookup_shaped_2x2("oak_planks").is_empty(), "oak_planks 无形状配方，应回退顺序填充");
-        assert!(lookup_shaped_2x2("crafting_table").is_empty(), "crafting_table 无形状配方");
+        assert!(
+            lookup_shaped_2x2("oak_planks").is_empty(),
+            "oak_planks 无形状配方，应回退顺序填充"
+        );
+        assert!(
+            lookup_shaped_2x2("crafting_table").is_empty(),
+            "crafting_table 无形状配方"
+        );
     }
 
     /// P17 回归测试：lookup_smelt_all 必须能查到 SMELT_RECIPES 表中的所有熔炼配方。
@@ -2404,24 +2932,43 @@ mod tests {
         let iron = lookup_smelt_all("iron_ingot");
         assert!(!iron.is_empty(), "iron_ingot 必须有熔炼配方");
         // P18: iron_ingot 有两条候选（iron_ore + raw_iron）
-        assert_eq!(iron.len(), 2, "iron_ingot 应有 2 条候选（iron_ore + raw_iron）");
+        assert_eq!(
+            iron.len(),
+            2,
+            "iron_ingot 应有 2 条候选（iron_ore + raw_iron）"
+        );
         let inputs: Vec<&str> = iron.iter().map(|r| r.input).collect();
         assert!(inputs.contains(&"iron_ore"), "候选应含 iron_ore");
-        assert!(inputs.contains(&"raw_iron"), "候选应含 raw_iron（P18 修复）");
+        assert!(
+            inputs.contains(&"raw_iron"),
+            "候选应含 raw_iron（P18 修复）"
+        );
 
         // 带 minecraft: 前缀也必须能查到
         let iron_prefixed = lookup_smelt_all("minecraft:iron_ingot");
         assert_eq!(iron_prefixed.len(), 2, "minecraft:iron_ingot 也应能查到");
 
         // 其他产物
-        assert!(!lookup_smelt_all("copper_ingot").is_empty(), "copper_ingot 必须可查");
-        assert!(!lookup_smelt_all("gold_ingot").is_empty(), "gold_ingot 必须可查");
+        assert!(
+            !lookup_smelt_all("copper_ingot").is_empty(),
+            "copper_ingot 必须可查"
+        );
+        assert!(
+            !lookup_smelt_all("gold_ingot").is_empty(),
+            "gold_ingot 必须可查"
+        );
         assert!(!lookup_smelt_all("glass").is_empty(), "glass 必须可查");
         assert!(!lookup_smelt_all("stone").is_empty(), "stone 必须可查");
-        assert!(!lookup_smelt_all("charcoal").is_empty(), "charcoal 必须可查");
+        assert!(
+            !lookup_smelt_all("charcoal").is_empty(),
+            "charcoal 必须可查"
+        );
 
         // 不存在的产物返回空
-        assert!(lookup_smelt_all("nonexistent").is_empty(), "不存在的产物应返回空");
+        assert!(
+            lookup_smelt_all("nonexistent").is_empty(),
+            "不存在的产物应返回空"
+        );
         assert!(lookup_smelt_all("diamond").is_empty(), "diamond 不可熔炼");
     }
 
@@ -2445,7 +2992,10 @@ mod tests {
         assert_eq!(table.ingredients[0].1, 4, "需要 4 个 oak_planks");
 
         // 带 minecraft: 前缀
-        assert!(lookup_recipe("minecraft:stick").is_some(), "带前缀也应能查到");
+        assert!(
+            lookup_recipe("minecraft:stick").is_some(),
+            "带前缀也应能查到"
+        );
         assert!(lookup_recipe("minecraft:crafting_table").is_some());
     }
 
@@ -2454,8 +3004,14 @@ mod tests {
     #[test]
     fn regression_planks_plan_for_all_wood_types() {
         for wood in &[
-            "oak_planks", "spruce_planks", "birch_planks", "jungle_planks",
-            "acacia_planks", "dark_oak_planks", "mangrove_planks", "cherry_planks",
+            "oak_planks",
+            "spruce_planks",
+            "birch_planks",
+            "jungle_planks",
+            "acacia_planks",
+            "dark_oak_planks",
+            "mangrove_planks",
+            "cherry_planks",
             "pale_oak_planks",
         ] {
             let plan = planks_plan_for(wood).unwrap_or_else(|| panic!("{wood} 必须能派生配方"));
@@ -2465,9 +3021,15 @@ mod tests {
         }
 
         // 非木板不应派生（避免自引用死循环）
-        assert!(planks_plan_for("oak_log").is_none(), "oak_log 不是木板，不应派生");
+        assert!(
+            planks_plan_for("oak_log").is_none(),
+            "oak_log 不是木板，不应派生"
+        );
         assert!(planks_plan_for("stick").is_none(), "stick 不是木板");
-        assert!(planks_plan_for("oak_planksxyz").is_none(), "拼写错误不应派生");
+        assert!(
+            planks_plan_for("oak_planksxyz").is_none(),
+            "拼写错误不应派生"
+        );
     }
 
     /// P43 回归测试：crafts_needed 计算必须按 ceil(count / output_per) 向上取整。
@@ -2481,10 +3043,26 @@ mod tests {
 
         // output_per=4（如 oak_planks）：count=1 → 1 次（产出 4 个），count=4 → 1 次，count=5 → 2 次
         let output_per = 4u32;
-        assert_eq!((1u32 + output_per - 1) / output_per, 1, "1 个 planks 请求 → 1 次合成（产出 4）");
-        assert_eq!((4u32 + output_per - 1) / output_per, 1, "4 个 planks 请求 → 1 次合成");
-        assert_eq!((5u32 + output_per - 1) / output_per, 2, "5 个 planks 请求 → 2 次合成");
-        assert_eq!((8u32 + output_per - 1) / output_per, 2, "8 个 planks 请求 → 2 次合成");
+        assert_eq!(
+            (1u32 + output_per - 1) / output_per,
+            1,
+            "1 个 planks 请求 → 1 次合成（产出 4）"
+        );
+        assert_eq!(
+            (4u32 + output_per - 1) / output_per,
+            1,
+            "4 个 planks 请求 → 1 次合成"
+        );
+        assert_eq!(
+            (5u32 + output_per - 1) / output_per,
+            2,
+            "5 个 planks 请求 → 2 次合成"
+        );
+        assert_eq!(
+            (8u32 + output_per - 1) / output_per,
+            2,
+            "8 个 planks 请求 → 2 次合成"
+        );
     }
 
     /// P45 回归测试：furnace 配方必须是 8 个 cobblestone 围一圈（slot 5 为空）。
@@ -2492,17 +3070,27 @@ mod tests {
     #[test]
     fn regression_furnace_recipe_is_8_cobblestone_ring() {
         let furnace = lookup_shaped("furnace").expect("furnace 配方必须存在");
-        assert_eq!(furnace.cells.len(), 8, "furnace 需要 8 个 cobblestone（围一圈，中间空）");
+        assert_eq!(
+            furnace.cells.len(),
+            8,
+            "furnace 需要 8 个 cobblestone（围一圈，中间空）"
+        );
         assert_eq!(furnace.output_per_craft, 1, "每次合成 1 个 furnace");
         // 8 格全为 cobblestone
         for &(_, ing) in furnace.cells {
             assert_eq!(ing, "cobblestone", "furnace 所有原料必须是 cobblestone");
         }
         // slot 5（正中）必须为空
-        assert!(!furnace.cells.contains(&(5, "cobblestone")), "slot5（正中）必须为空");
+        assert!(
+            !furnace.cells.contains(&(5, "cobblestone")),
+            "slot5（正中）必须为空"
+        );
         // 其余 8 格都有
         for slot in [1, 2, 3, 4, 6, 7, 8, 9] {
-            assert!(furnace.cells.contains(&(slot, "cobblestone")), "slot{slot} 必须有 cobblestone");
+            assert!(
+                furnace.cells.contains(&(slot, "cobblestone")),
+                "slot{slot} 必须有 cobblestone"
+            );
         }
     }
 
@@ -2514,15 +3102,27 @@ mod tests {
         assert_eq!(pickaxe.output_per_craft, 1, "每次合成 1 个 iron_pickaxe");
         // 头部：slot 1,2,3 = iron_ingot
         for slot in [1, 2, 3] {
-            assert!(pickaxe.cells.contains(&(slot, "iron_ingot")), "slot{slot} 必须有 iron_ingot");
+            assert!(
+                pickaxe.cells.contains(&(slot, "iron_ingot")),
+                "slot{slot} 必须有 iron_ingot"
+            );
         }
         // 柄：slot 5,8 = stick（正中竖列）
         for slot in [5, 8] {
-            assert!(pickaxe.cells.contains(&(slot, "stick")), "slot{slot} 必须有 stick");
+            assert!(
+                pickaxe.cells.contains(&(slot, "stick")),
+                "slot{slot} 必须有 stick"
+            );
         }
         // 不应有 cobblestone/oak_planks（这是铁镐，不是石/木镐）
-        assert!(!pickaxe.cells.iter().any(|&(_, ing)| ing == "cobblestone"), "iron_pickaxe 不应用 cobblestone");
-        assert!(!pickaxe.cells.iter().any(|&(_, ing)| ing == "oak_planks"), "iron_pickaxe 不应用 oak_planks");
+        assert!(
+            !pickaxe.cells.iter().any(|&(_, ing)| ing == "cobblestone"),
+            "iron_pickaxe 不应用 cobblestone"
+        );
+        assert!(
+            !pickaxe.cells.iter().any(|&(_, ing)| ing == "oak_planks"),
+            "iron_pickaxe 不应用 oak_planks"
+        );
     }
 
     /// P18 回归测试：lookup_smelt_all 必须返回 raw_xxx 和 ore 两种候选。
@@ -2580,11 +3180,31 @@ mod tests {
         }
 
         assert_eq!(calc_fuel_per_item("minecraft:coal"), 8, "coal 每个炼 8 个");
-        assert_eq!(calc_fuel_per_item("minecraft:charcoal"), 8, "charcoal 每个炼 8 个");
-        assert_eq!(calc_fuel_per_item("minecraft:oak_log"), 1, "log 每个炼 1 个");
-        assert_eq!(calc_fuel_per_item("minecraft:oak_planks"), 1, "planks 每个炼 1 个");
-        assert_eq!(calc_fuel_per_item("minecraft:stick"), 1, "stick 每个炼 1 个（实际 0.5，向上取整）");
-        assert_eq!(calc_fuel_per_item("minecraft:coal_block"), 80, "coal_block 每个炼 80 个");
+        assert_eq!(
+            calc_fuel_per_item("minecraft:charcoal"),
+            8,
+            "charcoal 每个炼 8 个"
+        );
+        assert_eq!(
+            calc_fuel_per_item("minecraft:oak_log"),
+            1,
+            "log 每个炼 1 个"
+        );
+        assert_eq!(
+            calc_fuel_per_item("minecraft:oak_planks"),
+            1,
+            "planks 每个炼 1 个"
+        );
+        assert_eq!(
+            calc_fuel_per_item("minecraft:stick"),
+            1,
+            "stick 每个炼 1 个（实际 0.5，向上取整）"
+        );
+        assert_eq!(
+            calc_fuel_per_item("minecraft:coal_block"),
+            80,
+            "coal_block 每个炼 80 个"
+        );
     }
 
     /// P47 测试：燃料需求数计算（ceil(num / fuel_per_item)）。
@@ -2652,7 +3272,11 @@ mod tests {
         assert_eq!(smelt_result(0, 8), "failed", "0 个产物 = 完全失败");
         assert_eq!(smelt_result(3, 8), "partial", "3/8 = 部分成功");
         assert_eq!(smelt_result(8, 8), "success", "8/8 = 完全成功");
-        assert_eq!(smelt_result(10, 8), "success", "10/8 = 完全成功（超过目标）");
+        assert_eq!(
+            smelt_result(10, 8),
+            "success",
+            "10/8 = 完全成功（超过目标）"
+        );
     }
 
     /// P48 测试：RecipeBook 优先 + 手写表 fallback 逻辑。
@@ -2666,11 +3290,20 @@ mod tests {
         // 验证手写表有 stick（RecipeBook 也应该有，所以会走 book 路径）
         assert!(lookup_shaped("stick").is_some(), "手写表有 stick");
         // 验证手写表有 iron_pickaxe（RecipeBook 也应该有）
-        assert!(lookup_shaped("iron_pickaxe").is_some(), "手写表有 iron_pickaxe");
+        assert!(
+            lookup_shaped("iron_pickaxe").is_some(),
+            "手写表有 iron_pickaxe"
+        );
         // 验证手写表无 oak_stairs（RecipeBook 应该有）
-        assert!(lookup_shaped("oak_stairs").is_none(), "手写表无 oak_stairs（应走 RecipeBook）");
+        assert!(
+            lookup_shaped("oak_stairs").is_none(),
+            "手写表无 oak_stairs（应走 RecipeBook）"
+        );
         // 验证手写表无 bread（RecipeBook 应该有）
-        assert!(lookup_shaped("bread").is_none(), "手写表无 bread（应走 RecipeBook）");
+        assert!(
+            lookup_shaped("bread").is_none(),
+            "手写表无 bread（应走 RecipeBook）"
+        );
     }
 
     /// P47 测试：smelt 炉子占用检查（不抢占正在使用的炉子）。
@@ -2730,7 +3363,10 @@ mod tests {
     #[test]
     fn regression_p49_left_click_fallback_when_inventory_full() {
         // 模拟 P49 的兜底决策
-        fn needs_left_click_fallback(shift_click_succeeded: bool, has_empty_slot: bool) -> &'static str {
+        fn needs_left_click_fallback(
+            shift_click_succeeded: bool,
+            has_empty_slot: bool,
+        ) -> &'static str {
             if shift_click_succeeded {
                 "skip" // shift_click 成功，不需要兜底
             } else if has_empty_slot {
@@ -2822,14 +3458,9 @@ mod tests {
         /// 不支持的产物（lookup_smelt_all 返回空）
         UnsupportedOutput(String),
         /// 炉子被别种物品占用（mindcraft line 186-194）
-        FurnaceOccupied {
-            existing: String,
-            expected: String,
-        },
+        FurnaceOccupied { existing: String, expected: String },
         /// 背包无原料（actual_input == 0）
-        NoInput {
-            requested: String,
-        },
+        NoInput { requested: String },
         /// 背包无燃料
         NoFuel {
             requested: String,
@@ -2930,10 +3561,7 @@ mod tests {
             "stick",
             "coal_block",
         ];
-        let chosen_fuel: Option<&'static str> = FUEL_FALLBACKS
-            .iter()
-            .find(|f| inv.has(f))
-            .copied();
+        let chosen_fuel: Option<&'static str> = FUEL_FALLBACKS.iter().find(|f| inv.has(f)).copied();
         let fuel_kind = match chosen_fuel {
             Some(k) => k,
             None => {
@@ -2963,7 +3591,7 @@ mod tests {
         } else {
             1
         };
-        let fuel_needed = if fuel_per_item == 0 {
+        let _fuel_needed = if fuel_per_item == 0 {
             actual_smelt_count
         } else {
             (actual_smelt_count + fuel_per_item - 1) / fuel_per_item
@@ -2975,7 +3603,7 @@ mod tests {
         let original_count = actual_smelt_count;
         let actual_smelt_count = actual_smelt_count.min(MAX_SMELT_PER_BATCH);
         // 分批后燃料需求也要重新计算
-        let fuel_needed = if fuel_per_item == 0 {
+        let _fuel_needed = if fuel_per_item == 0 {
             actual_smelt_count
         } else {
             (actual_smelt_count + fuel_per_item - 1) / fuel_per_item
@@ -3062,7 +3690,10 @@ mod tests {
         let inv = MockInventory::new();
         let furnace = MockFurnace::empty();
         let decision = smelt_decide("diamond", "coal", 1, &inv, &furnace);
-        assert_eq!(decision, SmeltDecision::UnsupportedOutput("diamond".to_string()));
+        assert_eq!(
+            decision,
+            SmeltDecision::UnsupportedOutput("diamond".to_string())
+        );
     }
 
     /// 闸门 1: 支持的产物（iron_ingot）→ 不应被拒绝
@@ -3072,7 +3703,10 @@ mod tests {
         inv.add("raw_iron", 8).add("coal", 1);
         let furnace = MockFurnace::empty();
         let decision = smelt_decide("iron_ingot", "coal", 8, &inv, &furnace);
-        assert!(matches!(decision, SmeltDecision::Proceed { .. }), "应通过闸门1");
+        assert!(
+            matches!(decision, SmeltDecision::Proceed { .. }),
+            "应通过闸门1"
+        );
     }
 
     /// 闸门 2: 炉子正在炼别的东西（raw_iron vs raw_copper）→ FurnaceOccupied
@@ -3101,7 +3735,10 @@ mod tests {
         // 这是 do_smelt 的实际行为（用 candidates[0] 而非 chosen_input 做对比）
         let furnace = MockFurnace::with_input("iron_ore", 4); // 与 candidates[0] 一致
         let decision = smelt_decide("iron_ingot", "coal", 8, &inv, &furnace);
-        assert!(matches!(decision, SmeltDecision::Proceed { .. }), "炉子=iron_ore, 期望=iron_ore → 应通过");
+        assert!(
+            matches!(decision, SmeltDecision::Proceed { .. }),
+            "炉子=iron_ore, 期望=iron_ore → 应通过"
+        );
     }
 
     /// 闸门 3: 背包无任何候选原料 → NoInput
@@ -3114,7 +3751,10 @@ mod tests {
             SmeltDecision::NoInput { requested } => {
                 // 候选应包含 iron_ore 和 raw_iron
                 assert!(requested.contains("iron_ore"), "应列出 iron_ore 候选");
-                assert!(requested.contains("raw_iron"), "应列出 raw_iron 候选（P18 修复）");
+                assert!(
+                    requested.contains("raw_iron"),
+                    "应列出 raw_iron 候选（P18 修复）"
+                );
             }
             _ => panic!("应拒绝：无原料，got {decision:?}"),
         }
@@ -3128,7 +3768,11 @@ mod tests {
         let furnace = MockFurnace::empty();
         let decision = smelt_decide("iron_ingot", "coal", 8, &inv, &furnace);
         match decision {
-            SmeltDecision::Proceed { input_kind, actual_smelt_count, .. } => {
+            SmeltDecision::Proceed {
+                input_kind,
+                actual_smelt_count,
+                ..
+            } => {
                 assert_eq!(input_kind, "iron_ore");
                 assert_eq!(actual_smelt_count, 5, "按实际数量熔炼（P43）");
             }
@@ -3144,8 +3788,15 @@ mod tests {
         let furnace = MockFurnace::empty();
         let decision = smelt_decide("iron_ingot", "coal", 8, &inv, &furnace);
         match decision {
-            SmeltDecision::Proceed { input_kind, actual_smelt_count, .. } => {
-                assert_eq!(input_kind, "raw_iron", "P18: 必须选 raw_iron（bot 实际有的）");
+            SmeltDecision::Proceed {
+                input_kind,
+                actual_smelt_count,
+                ..
+            } => {
+                assert_eq!(
+                    input_kind, "raw_iron",
+                    "P18: 必须选 raw_iron（bot 实际有的）"
+                );
                 assert_eq!(actual_smelt_count, 7);
             }
             _ => panic!("应通过：有 raw_iron，got {decision:?}"),
@@ -3160,12 +3811,21 @@ mod tests {
         let furnace = MockFurnace::empty();
         let decision = smelt_decide("iron_ingot", "coal", 8, &inv, &furnace);
         match decision {
-            SmeltDecision::NoFuel { requested, tried_fallbacks } => {
+            SmeltDecision::NoFuel {
+                requested,
+                tried_fallbacks,
+            } => {
                 assert_eq!(requested, "coal");
                 assert!(tried_fallbacks.contains(&"coal"), "应尝试 coal");
-                assert!(tried_fallbacks.contains(&"oak_log"), "应尝试 oak_log fallback");
+                assert!(
+                    tried_fallbacks.contains(&"oak_log"),
+                    "应尝试 oak_log fallback"
+                );
                 assert!(tried_fallbacks.contains(&"stick"), "应尝试 stick fallback");
-                assert!(tried_fallbacks.contains(&"coal_block"), "应尝试 coal_block fallback");
+                assert!(
+                    tried_fallbacks.contains(&"coal_block"),
+                    "应尝试 coal_block fallback"
+                );
             }
             _ => panic!("应拒绝：无燃料，got {decision:?}"),
         }
@@ -3179,7 +3839,12 @@ mod tests {
         let furnace = MockFurnace::empty();
         let decision = smelt_decide("iron_ingot", "coal", 8, &inv, &furnace);
         match decision {
-            SmeltDecision::Proceed { fuel_kind, fuel_per_item, fuel_needed, .. } => {
+            SmeltDecision::Proceed {
+                fuel_kind,
+                fuel_per_item,
+                fuel_needed,
+                ..
+            } => {
                 assert_eq!(fuel_kind, "oak_log", "应 fallback 到 oak_log");
                 assert_eq!(fuel_per_item, 1, "log 每个炼 1 个");
                 assert_eq!(fuel_needed, 8, "炼 8 个需 8 log");
@@ -3196,7 +3861,11 @@ mod tests {
         let furnace = MockFurnace::empty();
         let decision = smelt_decide("iron_ingot", "coal", 8, &inv, &furnace);
         match decision {
-            SmeltDecision::Proceed { fuel_per_item, fuel_needed, .. } => {
+            SmeltDecision::Proceed {
+                fuel_per_item,
+                fuel_needed,
+                ..
+            } => {
                 assert_eq!(fuel_per_item, 8, "coal 每个炼 8 个");
                 assert_eq!(fuel_needed, 1, "炼 8 个只需 1 coal");
             }
@@ -3212,7 +3881,11 @@ mod tests {
         let furnace = MockFurnace::empty();
         let decision = smelt_decide("iron_ingot", "coal_block", 80, &inv, &furnace);
         match decision {
-            SmeltDecision::Proceed { fuel_per_item, fuel_needed, .. } => {
+            SmeltDecision::Proceed {
+                fuel_per_item,
+                fuel_needed,
+                ..
+            } => {
                 assert_eq!(fuel_per_item, 80, "coal_block 每个炼 80 个");
                 assert_eq!(fuel_needed, 1, "炼 80 个只需 1 coal_block");
             }
@@ -3228,7 +3901,11 @@ mod tests {
         let furnace = MockFurnace::empty();
         let decision = smelt_decide("iron_ingot", "coal", 8, &inv, &furnace);
         match decision {
-            SmeltDecision::Proceed { actual_smelt_count, fuel_needed, .. } => {
+            SmeltDecision::Proceed {
+                actual_smelt_count,
+                fuel_needed,
+                ..
+            } => {
                 assert_eq!(actual_smelt_count, 3, "P43: 按实际数量熔炼");
                 // 3 个 / 8 per coal = 1 coal（ceil）
                 assert_eq!(fuel_needed, 1);
@@ -3247,7 +3924,12 @@ mod tests {
         let furnace = MockFurnace::empty();
         let decision = smelt_decide("iron_ingot", "oak_log", 9, &inv, &furnace);
         match decision {
-            SmeltDecision::Proceed { actual_smelt_count, fuel_needed, original_count, .. } => {
+            SmeltDecision::Proceed {
+                actual_smelt_count,
+                fuel_needed,
+                original_count,
+                ..
+            } => {
                 // P57: 9 个请求被分批为 8 个
                 assert_eq!(original_count, 9, "P57: 原始请求 9 个");
                 assert_eq!(actual_smelt_count, 8, "P57: 分批后 8 个");
@@ -3278,15 +3960,13 @@ mod tests {
         // 前 3 轮各产出 1 个，后 11 轮全空 → 11s 超时 break
         let mut arrivals = vec![1u32; 3];
         arrivals.resize(14, 0); // 3 + 11 = 14 轮
-        let outcome = simulate_takeoutput_loop(
-            8,
-            &arrivals,
-            |_r| true,
-            |_r| true,
-        );
+        let outcome = simulate_takeoutput_loop(8, &arrivals, |_r| true, |_r| true);
         assert_eq!(
             outcome,
-            SmeltOutcome::Partial { smelted: 3, target: 8 }
+            SmeltOutcome::Partial {
+                smelted: 3,
+                target: 8
+            }
         );
     }
 
@@ -3294,12 +3974,7 @@ mod tests {
     #[test]
     fn p54_takeoutput_total_failure_no_arrivals() {
         let arrivals = [0u32; 12]; // 11 轮无产物就 break
-        let outcome = simulate_takeoutput_loop(
-            8,
-            &arrivals,
-            |_r| true,
-            |_r| true,
-        );
+        let outcome = simulate_takeoutput_loop(8, &arrivals, |_r| true, |_r| true);
         assert!(matches!(outcome, SmeltOutcome::Failed(_)));
     }
 
@@ -3313,7 +3988,10 @@ mod tests {
             |_r| false, // shift_click 全失败
             |_r| false, // left_click 也全失败
         );
-        assert!(matches!(outcome, SmeltOutcome::Failed(_)), "背包满应 Failed，got {outcome:?}");
+        assert!(
+            matches!(outcome, SmeltOutcome::Failed(_)),
+            "背包满应 Failed，got {outcome:?}"
+        );
     }
 
     /// 背包满但 left_click 兜底成功：shift_click 失败，left_click 成功 → 仍计数
@@ -3346,7 +4024,10 @@ mod tests {
         // 循环结束（arrivals 用尽），total_smelted=2 < target=4 → Partial
         assert_eq!(
             outcome,
-            SmeltOutcome::Partial { smelted: 2, target: 4 }
+            SmeltOutcome::Partial {
+                smelted: 2,
+                target: 4
+            }
         );
     }
 
@@ -3355,12 +4036,7 @@ mod tests {
     fn p54_takeoutput_target_reached_early() {
         // 第 1 轮就产出 8 个（实际只取 5 个就达成目标）
         let arrivals = [8u32];
-        let outcome = simulate_takeoutput_loop(
-            5,
-            &arrivals,
-            |_r| true,
-            |_r| true,
-        );
+        let outcome = simulate_takeoutput_loop(5, &arrivals, |_r| true, |_r| true);
         // total_smelted = min(8, ...) — 实际上代码会取 arrival 全部
         // 但 target 是 5，所以 total_smelted=8 >= 5 → Success
         assert_eq!(outcome, SmeltOutcome::Success { smelted: 8 });
@@ -3376,11 +4052,7 @@ mod tests {
         /// 配方书/手写表都找不到该配方
         RecipeNotFound(String),
         /// 背包缺少某种原料
-        MissingIngredient {
-            kind: String,
-            have: u32,
-            need: u32,
-        },
+        MissingIngredient { kind: String, have: u32, need: u32 },
         /// 背包完全满（无空位收集产物）
         InventoryFull,
         /// 通过闸门，进入合成循环
@@ -3405,11 +4077,7 @@ mod tests {
     ///
     /// 输入：目标物品 + 数量 + 背包快照
     /// 输出：决策
-    fn craft_3x3_decide(
-        item: &str,
-        count: u32,
-        inv: &MockInventory,
-    ) -> Craft3x3Decision {
+    fn craft_3x3_decide(item: &str, count: u32, inv: &MockInventory) -> Craft3x3Decision {
         // 闸门 1: 配方查找（手写表）
         let recipe = match lookup_shaped(item) {
             Some(r) => r,
@@ -3485,7 +4153,10 @@ mod tests {
     fn p54_craft_3x3_recipe_not_found() {
         let inv = MockInventory::new();
         let decision = craft_3x3_decide("nonexistent_item", 1, &inv);
-        assert_eq!(decision, Craft3x3Decision::RecipeNotFound("nonexistent_item".to_string()));
+        assert_eq!(
+            decision,
+            Craft3x3Decision::RecipeNotFound("nonexistent_item".to_string())
+        );
     }
 
     /// 闸门 2: iron_pickaxe 需要 3 iron_ingot + 2 stick，缺 stick → MissingIngredient
@@ -3559,15 +4230,20 @@ mod tests {
         inv.set_empty_slots(10);
         let decision = craft_3x3_decide("iron_pickaxe", 1, &inv);
         match decision {
-            Craft3x3Decision::Proceed { crafts_needed, grid_placement } => {
+            Craft3x3Decision::Proceed {
+                crafts_needed,
+                grid_placement,
+            } => {
                 assert_eq!(crafts_needed, 1);
                 // iron_pickaxe 形状：slot 1,2,3=iron_ingot, slot 5,8=stick
-                let iron_slots: Vec<usize> = grid_placement.iter()
+                let iron_slots: Vec<usize> = grid_placement
+                    .iter()
                     .filter(|(_, k)| *k == "iron_ingot")
                     .map(|(s, _)| *s)
                     .collect();
                 assert_eq!(iron_slots, vec![1, 2, 3], "iron_ingot 必须在 slot 1,2,3");
-                let stick_slots: Vec<usize> = grid_placement.iter()
+                let stick_slots: Vec<usize> = grid_placement
+                    .iter()
                     .filter(|(_, k)| *k == "stick")
                     .map(|(s, _)| *s)
                     .collect();
@@ -3588,13 +4264,17 @@ mod tests {
             Craft3x3Decision::Proceed { grid_placement, .. } => {
                 // furnace: 8 cobblestone 围成环形（slot 1,2,3,4,6,7,8,9），slot 5（中心）空
                 // 网格布局：1,2,3 / 4,5,6 / 7,8,9
-                let cobble_slots: Vec<usize> = grid_placement.iter()
+                let cobble_slots: Vec<usize> = grid_placement
+                    .iter()
                     .filter(|(_, k)| *k == "cobblestone")
                     .map(|(s, _)| *s)
                     .collect();
                 assert_eq!(cobble_slots.len(), 8, "furnace 需 8 cobblestone");
                 assert!(!cobble_slots.contains(&0), "slot 0 是结果槽，不应有原料");
-                assert!(!cobble_slots.contains(&5), "slot 5（中心）应空（furnace 环形配方中间空）");
+                assert!(
+                    !cobble_slots.contains(&5),
+                    "slot 5（中心）应空（furnace 环形配方中间空）"
+                );
                 // 验证 8 个槽位都是边缘槽
                 for &s in &cobble_slots {
                     assert!((1..=9).contains(&s), "slot {s} 应在 1..=9 范围内");
@@ -3644,7 +4324,14 @@ mod tests {
     #[test]
     fn p54_minecraft_align_is_smeltable_gate() {
         // vanilla 支持的产物
-        for output in ["iron_ingot", "copper_ingot", "gold_ingot", "glass", "stone", "charcoal"] {
+        for output in [
+            "iron_ingot",
+            "copper_ingot",
+            "gold_ingot",
+            "glass",
+            "stone",
+            "charcoal",
+        ] {
             let candidates = lookup_smelt_all(output);
             assert!(!candidates.is_empty(), "{output} 应该可熔炼");
         }
@@ -3681,7 +4368,9 @@ mod tests {
         let furnace = MockFurnace::empty();
         let decision = smelt_decide("iron_ingot", "coal", 10, &inv, &furnace);
         match decision {
-            SmeltDecision::Proceed { actual_smelt_count, .. } => {
+            SmeltDecision::Proceed {
+                actual_smelt_count, ..
+            } => {
                 assert_eq!(actual_smelt_count, 3, "应按实际数量 3 熔炼，而非请求的 10");
             }
             _ => panic!("应通过，got {decision:?}"),
@@ -3693,11 +4382,11 @@ mod tests {
     #[test]
     fn p54_minecraft_align_fuel_efficiency() {
         let cases = [
-            ("coal", 8),       // 80s / 10s
-            ("charcoal", 8),   // 80s / 10s
-            ("oak_log", 1),    // 15s / 10s = 1.5 → 1
-            ("oak_planks", 1), // 15s / 10s = 1.5 → 1
-            ("stick", 1),      // 5s / 10s = 0.5 → 1（2 stick 炼 1）
+            ("coal", 8),        // 80s / 10s
+            ("charcoal", 8),    // 80s / 10s
+            ("oak_log", 1),     // 15s / 10s = 1.5 → 1
+            ("oak_planks", 1),  // 15s / 10s = 1.5 → 1
+            ("stick", 1),       // 5s / 10s = 0.5 → 1（2 stick 炼 1）
             ("coal_block", 80), // 800s / 10s
         ];
         for (fuel, expected_per_item) in cases {
@@ -3706,9 +4395,16 @@ mod tests {
             let furnace = MockFurnace::empty();
             let decision = smelt_decide("iron_ingot", fuel, 80, &inv, &furnace);
             match decision {
-                SmeltDecision::Proceed { fuel_per_item, fuel_kind, .. } => {
+                SmeltDecision::Proceed {
+                    fuel_per_item,
+                    fuel_kind,
+                    ..
+                } => {
                     assert_eq!(fuel_kind, fuel, "应选 {fuel} 作燃料");
-                    assert_eq!(fuel_per_item, expected_per_item, "{fuel}: 每个应炼 {expected_per_item}");
+                    assert_eq!(
+                        fuel_per_item, expected_per_item,
+                        "{fuel}: 每个应炼 {expected_per_item}"
+                    );
                 }
                 _ => panic!("{fuel} 应通过，got {decision:?}"),
             }
@@ -3721,22 +4417,12 @@ mod tests {
     fn p54_minecraft_align_takeoutput_loop_timeout() {
         // 模拟 11s 无产物 → break
         let arrivals = [0u32; 12];
-        let outcome = simulate_takeoutput_loop(
-            8,
-            &arrivals,
-            |_r| true,
-            |_r| true,
-        );
+        let outcome = simulate_takeoutput_loop(8, &arrivals, |_r| true, |_r| true);
         assert!(matches!(outcome, SmeltOutcome::Failed(_)));
 
         // 模拟每秒都有产物 → 不超时，正常完成
         let arrivals = [1u32; 8];
-        let outcome = simulate_takeoutput_loop(
-            8,
-            &arrivals,
-            |_r| true,
-            |_r| true,
-        );
+        let outcome = simulate_takeoutput_loop(8, &arrivals, |_r| true, |_r| true);
         assert_eq!(outcome, SmeltOutcome::Success { smelted: 8 });
     }
 
@@ -3775,7 +4461,8 @@ mod tests {
         match decision {
             Craft3x3Decision::Proceed { grid_placement, .. } => {
                 // crafting_table: 4 planks 在 slot 1,2,4,5（2×2 形状放左上）
-                let plank_slots: Vec<usize> = grid_placement.iter()
+                let plank_slots: Vec<usize> = grid_placement
+                    .iter()
                     .filter(|(_, k)| *k == "oak_planks")
                     .map(|(s, _)| *s)
                     .collect();
@@ -3873,12 +4560,8 @@ mod tests {
 
                 // 模拟 takeOutput 循环：7 个产物全部成功到达
                 let arrivals = [1u32; 7];
-                let outcome = simulate_takeoutput_loop(
-                    actual_smelt_count,
-                    &arrivals,
-                    |_r| true,
-                    |_r| true,
-                );
+                let outcome =
+                    simulate_takeoutput_loop(actual_smelt_count, &arrivals, |_r| true, |_r| true);
                 assert_eq!(outcome, SmeltOutcome::Success { smelted: 7 });
             }
             _ => panic!("综合场景应通过，got {decision:?}"),
@@ -3902,7 +4585,10 @@ mod tests {
         // 但 rounds_without_progress 在第 3、4 轮累积到 2，未达 11，循环正常结束
         assert_eq!(
             outcome,
-            SmeltOutcome::Partial { smelted: 2, target: 4 }
+            SmeltOutcome::Partial {
+                smelted: 2,
+                target: 4
+            }
         );
     }
 
@@ -3967,12 +4653,8 @@ mod tests {
 
                 // 模拟 takeOutput 循环：8 个产物全部成功到达
                 let arrivals = [1u32; 8];
-                let outcome = simulate_takeoutput_loop(
-                    actual_smelt_count,
-                    &arrivals,
-                    |_| true,
-                    |_| true,
-                );
+                let outcome =
+                    simulate_takeoutput_loop(actual_smelt_count, &arrivals, |_| true, |_| true);
                 assert_eq!(
                     outcome,
                     SmeltOutcome::Success { smelted: 8 },

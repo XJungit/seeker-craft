@@ -9,10 +9,9 @@
 //! - 检测"开始挖后方块长时间不消失" → 视为缺工具，避免空等。
 
 use super::{
-    auto_equip_best_axe, auto_equip_best_pickaxe, best_pickaxe_tier_in_inventory,
-    block_drops_item, block_required_pickaxe_tier, has_any_axe_in_inventory,
-    has_any_pickaxe_in_inventory, is_hard_block, is_log_block, pickaxe_tier_name,
-    pickaxe_to_craft_for_tier,
+    auto_equip_best_axe, auto_equip_best_pickaxe, best_pickaxe_tier_in_inventory, block_drops_item,
+    block_required_pickaxe_tier, has_any_axe_in_inventory, has_any_pickaxe_in_inventory,
+    is_hard_block, is_log_block, pickaxe_tier_name, pickaxe_to_craft_for_tier,
 };
 // P46: do_auto_craft 已删除——回归 Mindcraft 哲学，bot 不主动合成工具。
 use azalea::BlockPos;
@@ -264,9 +263,7 @@ pub async fn do_gather(bot: &Client, item: &str, count: u32) -> Result<String, S
 
         // 1) 找最近的方块
         let (target_pos, tool_need) = {
-            let world = bot
-                .world()
-                .map_err(|e| format!("读取世界失败: {e:?}"))?;
+            let world = bot.world().map_err(|e| format!("读取世界失败: {e:?}"))?;
             let w = world.read();
             let center = bot.position().map_err(|e| format!("读取坐标失败: {e:?}"))?;
             let pos = scan_blocks(&w, center, block_kind, 32).into_iter().next();
@@ -366,13 +363,10 @@ pub async fn do_gather(bot: &Client, item: &str, count: u32) -> Result<String, S
             // 例如：wooden_pickaxe 挖 iron_ore → 方块消失但无 iron_ore 掉落，
             // 原检查 has_any_pickaxe_in_inventory=true → 误判为「有镐，继续下一轮」→ 死循环。
             // 修复：判断手持物（或背包最好的镐）的 tier 是否 >= 目标方块所需 tier。
-            let held_kind = bot.get_held_item().ok().and_then(|s| {
-                if s.is_empty() {
-                    None
-                } else {
-                    Some(s.kind())
-                }
-            });
+            let held_kind = bot
+                .get_held_item()
+                .ok()
+                .and_then(|s| if s.is_empty() { None } else { Some(s.kind()) });
             let required_tier = block_required_pickaxe_tier(block_kind);
             let held_tier = held_kind
                 .map(|k| crate::azalea::pickaxe_tier(k))
@@ -444,14 +438,12 @@ pub async fn do_gather(bot: &Client, item: &str, count: u32) -> Result<String, S
                 // 仍没拾取到：如果背包无斧，给警告但继续下一轮（徒手能砍树，只是慢）
                 if !has_any_axe_in_inventory(bot).await {
                     last_skip_reason = Some(
-                        "徒手砍树效率极低（无斧），建议合成 wooden_axe 后再 gather".to_string()
+                        "徒手砍树效率极低（无斧），建议合成 wooden_axe 后再 gather".to_string(),
                     );
                     continue;
                 }
                 // 有斧但仍未拾取：可能是同步延迟，继续下一轮
-                last_skip_reason = Some(
-                    "方块消失但掉落物未拾取（可能服务端同步延迟）".to_string()
-                );
+                last_skip_reason = Some("方块消失但掉落物未拾取（可能服务端同步延迟）".to_string());
                 continue;
             }
         }
@@ -499,7 +491,9 @@ pub async fn do_gather(bot: &Client, item: &str, count: u32) -> Result<String, S
         let shortage = need.saturating_sub(gathered);
         // P39: 在错误消息中也用 drop_item_name，让 LLM 知道实际会得到什么物品
         let drop_hint = if drop_item != target {
-            format!("\n                 注意：vanilla 中挖 {item} 方块掉落的是 {drop_item_name}，不是 {item}。")
+            format!(
+                "\n                 注意：vanilla 中挖 {item} 方块掉落的是 {drop_item_name}，不是 {item}。"
+            )
         } else {
             String::new()
         };
@@ -535,7 +529,10 @@ pub async fn do_gather(bot: &Client, item: &str, count: u32) -> Result<String, S
                 if best_tier == 0 {
                     "\n- 背包无镐：先 craft_3x3 合成 wooden_pickaxe（需 planks+stick），equip 装备主手后再 gather".to_string()
                 } else {
-                    format!("\n- 背包有镐（tier {}），可能需要更高等级的镐或换区域寻找 {item}", best_tier)
+                    format!(
+                        "\n- 背包有镐（tier {}），可能需要更高等级的镐或换区域寻找 {item}",
+                        best_tier
+                    )
                 }
             } else if needs_axe {
                 if !has_any_axe_in_inventory(bot).await {

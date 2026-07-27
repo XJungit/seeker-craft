@@ -10,7 +10,7 @@
 //! 无需维护 Java 补丁或 OS 级键鼠模拟。
 
 use crate::azalea::{AzaleaBot, BotCommand, BotEvent};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use craft_agent::core::adapter::GameAdapter;
 use craft_agent::core::memory::WorldMemory;
 use craft_agent::core::types::{Action, ExecResult, MinecraftAction, Screenshot, WorldState};
@@ -18,6 +18,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 /// Minecraft azalea 适配器。
+#[allow(dead_code)]
 pub struct MinecraftAzaleaAdapter {
     bot: Arc<AzaleaBot>,
     /// 缓存最近一次结构化状态（perceive 后供 execute / harness 使用）。
@@ -98,7 +99,8 @@ impl MinecraftAzaleaAdapter {
         username: &str,
         memory: Option<WorldMemory>,
     ) -> Result<ArcAzaleaAdapter> {
-        let bot = AzaleaBot::connect(address, username, memory.clone()).await
+        let bot = AzaleaBot::connect(address, username, memory.clone())
+            .await
             .context("azalea bot 连接失败（确认服为纯 vanilla 26.2 且未开客户端 mod 校验）")?;
         let bot = Arc::new(bot);
 
@@ -205,11 +207,22 @@ impl MinecraftAzaleaAdapter {
                                  实体: [{}]\n\
                                  背包: [{}]\n\
                                  玩家: {}{}",
-                                position.x, position.y, position.z,
-                                health, food, held_item,
-                                biome, block_under, block_ahead,
-                                nearby, resource_summary, blocks_line, nearby_entities, inventory,
-                                player_count, stuck_hint
+                                position.x,
+                                position.y,
+                                position.z,
+                                health,
+                                food,
+                                held_item,
+                                biome,
+                                block_under,
+                                block_ahead,
+                                nearby,
+                                resource_summary,
+                                blocks_line,
+                                nearby_entities,
+                                inventory,
+                                player_count,
+                                stuck_hint
                             );
                             *g.last.lock().unwrap() = Some(WorldState {
                                 scene_desc: scene.clone(),
@@ -219,8 +232,12 @@ impl MinecraftAzaleaAdapter {
                                 screenshot: Arc::new(Vec::new()),
                                 health: Some(health),
                                 hunger: Some(food),
-                                experience_level: game_state["experience_level"].as_u64().map(|v| v as u32),
-                                experience_progress: game_state["experience_progress"].as_f64().map(|v| v as f32),
+                                experience_level: game_state["experience_level"]
+                                    .as_u64()
+                                    .map(|v| v as u32),
+                                experience_progress: game_state["experience_progress"]
+                                    .as_f64()
+                                    .map(|v| v as f32),
                                 position: Some(vec![position.x, position.y, position.z]),
                                 yaw: Some(yaw),
                                 pitch: Some(pitch),
@@ -228,7 +245,9 @@ impl MinecraftAzaleaAdapter {
                                 gamemode: Some("survival".to_string()),
                                 inventory: game_state["inventory"].as_array().cloned(),
                                 held_item: Some(held_item),
-                                selected_slot: game_state["selected_slot"].as_u64().map(|v| v as usize),
+                                selected_slot: game_state["selected_slot"]
+                                    .as_u64()
+                                    .map(|v| v as usize),
                             });
                         }
                     } else {
@@ -299,10 +318,16 @@ impl MinecraftAzaleaAdapter {
             // 覆盖结构化 position 字段
             st.position = Some(vec![real_pos.x, real_pos.y, real_pos.z]);
             // 覆盖 scene_desc 中的"位置: (x, y, z)"行
-            let new_pos_line = format!("位置: ({:.0}, {:.0}, {:.0})", real_pos.x, real_pos.y, real_pos.z);
+            let new_pos_line = format!(
+                "位置: ({:.0}, {:.0}, {:.0})",
+                real_pos.x, real_pos.y, real_pos.z
+            );
             if let Some(idx) = st.scene_desc.find("位置: (") {
                 // 找到"位置: ("后到第一个换行符的范围,替换为新位置行
-                let line_end = st.scene_desc[idx..].find('\n').map(|e| idx + e).unwrap_or(st.scene_desc.len());
+                let line_end = st.scene_desc[idx..]
+                    .find('\n')
+                    .map(|e| idx + e)
+                    .unwrap_or(st.scene_desc.len());
                 st.scene_desc.replace_range(idx..line_end, &new_pos_line);
             }
         }
@@ -321,7 +346,10 @@ impl MinecraftAzaleaAdapter {
                 let ok = !is_failure_detail(&msg);
                 Ok(ExecResult { ok, detail: msg })
             }
-            Err(e) => Ok(ExecResult { ok: false, detail: format!("{e}") }),
+            Err(e) => Ok(ExecResult {
+                ok: false,
+                detail: format!("{e}"),
+            }),
         }
     }
 
@@ -341,15 +369,15 @@ impl MinecraftAzaleaAdapter {
 /// 成功消息（"Successfully" / "Placed" / "Opened" / "已装备" / "已开始" 等）不含这些词。
 fn is_failure_detail(msg: &str) -> bool {
     msg.contains("Failed to ")
-    || msg.contains(" failed: ")
-    || msg.contains("Pickup failed")
-    || msg.contains("失败")
-    || msg.contains("未持有")
-    || msg.contains("未知物品")
-    || msg.contains("无空间")
-    || msg.contains("不支持的槽位")
-    || msg.contains("获取背包失败")
-    || msg.contains("命令执行超时")
+        || msg.contains(" failed: ")
+        || msg.contains("Pickup failed")
+        || msg.contains("失败")
+        || msg.contains("未持有")
+        || msg.contains("未知物品")
+        || msg.contains("无空间")
+        || msg.contains("不支持的槽位")
+        || msg.contains("获取背包失败")
+        || msg.contains("命令执行超时")
 }
 
 /// 将 MinecraftAction 转换为 BotCommand（供 push_cmd_and_wait 使用）。
@@ -363,8 +391,26 @@ fn mc_to_cmd(mc: MinecraftAction) -> BotCommand {
         MinecraftAction::Chat { content } => BotCommand::Chat { content },
         MinecraftAction::Attack { target } => BotCommand::Attack { target },
         MinecraftAction::Craft { item, count } => BotCommand::Craft2x2 { item, count },
-        MinecraftAction::Craft3x3 { item, count, table_pos } => BotCommand::Craft3x3 { item, count, table_pos },
-        MinecraftAction::Smelt { output, fuel, count, table_pos } => BotCommand::Smelt { output, fuel, count, table_pos },
+        MinecraftAction::Craft3x3 {
+            item,
+            count,
+            table_pos,
+        } => BotCommand::Craft3x3 {
+            item,
+            count,
+            table_pos,
+        },
+        MinecraftAction::Smelt {
+            output,
+            fuel,
+            count,
+            table_pos,
+        } => BotCommand::Smelt {
+            output,
+            fuel,
+            count,
+            table_pos,
+        },
         MinecraftAction::Gather { item, count } => BotCommand::Gather { item, count },
         MinecraftAction::Place { item, x, y, z } => BotCommand::Place { item, x, y, z },
         MinecraftAction::OpenContainer { x, y, z } => BotCommand::OpenContainer { x, y, z },
@@ -378,12 +424,32 @@ fn mc_to_cmd(mc: MinecraftAction) -> BotCommand {
         MinecraftAction::Discard { item, count } => BotCommand::Discard { item, count },
         MinecraftAction::Consume { item } => BotCommand::Consume { item },
         MinecraftAction::ChestView { x, y, z } => BotCommand::ChestView { x, y, z },
-        MinecraftAction::ChestWithdraw { x, y, z, item, count } => {
-            BotCommand::ChestWithdraw { x, y, z, item, count }
-        }
-        MinecraftAction::ChestDeposit { x, y, z, item, count } => {
-            BotCommand::ChestDeposit { x, y, z, item, count }
-        }
+        MinecraftAction::ChestWithdraw {
+            x,
+            y,
+            z,
+            item,
+            count,
+        } => BotCommand::ChestWithdraw {
+            x,
+            y,
+            z,
+            item,
+            count,
+        },
+        MinecraftAction::ChestDeposit {
+            x,
+            y,
+            z,
+            item,
+            count,
+        } => BotCommand::ChestDeposit {
+            x,
+            y,
+            z,
+            item,
+            count,
+        },
     }
 }
 
@@ -419,10 +485,7 @@ fn summarize_resources(nearby_blocks: &str) -> String {
             || name.ends_with("leaf")
         {
             wood = wood.saturating_add(cnt);
-        } else if name.ends_with("ore")
-            || name == "ancientdebris"
-            || name == "ancient_debris"
-        {
+        } else if name.ends_with("ore") || name == "ancientdebris" || name == "ancient_debris" {
             ore = ore.saturating_add(cnt);
         } else {
             // 其余归石头/泥土类基础地形
@@ -437,10 +500,27 @@ fn summarize_resources(nearby_blocks: &str) -> String {
 fn compress_block_list(nearby_blocks: &str) -> String {
     /// 无信息量的基础地形方块（大量出现，不值得在 perceive 里列出）
     const COMMON_BLOCKS: &[&str] = &[
-        "air", "stone", "dirt", "grass_block", "grass", "sand", "gravel",
-        "bedrock", "water", "lava", "clay", "snow", "ice", "packed_ice",
-        "cobblestone", "mossy_cobblestone", "deepslate", "tuff",
-        "netherrack", "end_stone", "terracotta",
+        "air",
+        "stone",
+        "dirt",
+        "grass_block",
+        "grass",
+        "sand",
+        "gravel",
+        "bedrock",
+        "water",
+        "lava",
+        "clay",
+        "snow",
+        "ice",
+        "packed_ice",
+        "cobblestone",
+        "mossy_cobblestone",
+        "deepslate",
+        "tuff",
+        "netherrack",
+        "end_stone",
+        "terracotta",
     ];
     let mut interesting: Vec<&str> = Vec::new();
     for tok in nearby_blocks.split(',') {
@@ -462,4 +542,3 @@ fn compress_block_list(nearby_blocks: &str) -> String {
         interesting.join(", ")
     }
 }
-

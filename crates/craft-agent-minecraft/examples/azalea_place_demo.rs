@@ -13,7 +13,9 @@ use craft_agent_minecraft::adapter_azalea::ArcAzaleaAdapter;
 
 #[tokio::main]
 async fn main() {
-    let port = std::env::args().nth(1).unwrap_or_else(|| "4444".to_string());
+    let port = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "4444".to_string());
     let addr = format!("localhost:{port}");
     println!("[place_demo] connect {addr}");
 

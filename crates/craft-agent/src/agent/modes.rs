@@ -194,8 +194,8 @@ impl Agent {
 
 #[cfg(test)]
 mod tests {
-    use crate::agent::LlmProvider;
     use super::Agent;
+    use crate::agent::LlmProvider;
     use crate::core::message::Message;
 
     fn make_agent(perception: &str) -> Agent {
@@ -204,7 +204,9 @@ mod tests {
             crate::core::tool::ToolRegistry::new(),
             crate::agent::AgentConfig::new("test".into(), 5),
         );
-        agent.messages.push(Message::user(format!("【当前游戏状态（自动注入）】\n{perception}")));
+        agent.messages.push(Message::user(format!(
+            "【当前游戏状态（自动注入）】\n{perception}"
+        )));
         agent
     }
 
@@ -231,8 +233,13 @@ mod tests {
     #[test]
     fn mode_self_preservation_health_low() {
         let mut agent = make_agent("生命: 4/20  饱食: 18/20  位置: 0,64,0");
-        let r = agent.check_modes().expect("should trigger self_preservation");
-        assert!(r.prompt.unwrap().contains("self_preservation"), "should mention mode");
+        let r = agent
+            .check_modes()
+            .expect("should trigger self_preservation");
+        assert!(
+            r.prompt.unwrap().contains("self_preservation"),
+            "should mention mode"
+        );
         assert!(r.force_reprompt, "health low should force reprompt");
         assert_eq!(r.mode_id, 1);
     }
@@ -240,7 +247,9 @@ mod tests {
     #[test]
     fn mode_self_preservation_hunger_low() {
         let mut agent = make_agent("生命: 18/20  饱食: 3/20  位置: 0,64,0");
-        let r = agent.check_modes().expect("should trigger self_preservation");
+        let r = agent
+            .check_modes()
+            .expect("should trigger self_preservation");
         assert!(r.prompt.unwrap().contains("self_preservation"));
         assert!(!r.force_reprompt, "hunger low should not force reprompt");
         assert_eq!(r.mode_id, 1);
@@ -270,7 +279,10 @@ mod tests {
         let r = agent.check_modes().expect("should trigger self_defense");
         let prompt = r.prompt.unwrap();
         assert!(prompt.contains("self_defense"));
-        assert!(prompt.contains("拉开距离"), "creeper should suggest distance");
+        assert!(
+            prompt.contains("拉开距离"),
+            "creeper should suggest distance"
+        );
         assert_eq!(r.mode_id, 2);
     }
 
@@ -285,7 +297,8 @@ mod tests {
 
     #[test]
     fn mode_hunting_animal_and_no_food() {
-        let mut agent = make_agent("生命: 20/20  饱食: 20/20  animal: cow[距离: 5] 背包: [oak_log:4, dirt:2]");
+        let mut agent =
+            make_agent("生命: 20/20  饱食: 20/20  animal: cow[距离: 5] 背包: [oak_log:4, dirt:2]");
         let r = agent.check_modes().expect("should trigger hunting");
         assert!(r.prompt.unwrap().contains("hunting"));
         assert_eq!(r.mode_id, 4);
@@ -330,7 +343,10 @@ mod tests {
     fn mode_torch_placing_surface_skips() {
         let mut agent = make_agent("位置: 0,64,0  群系: biome: plains");
         let r = agent.check_modes();
-        assert!(r.is_none(), "surface biome should not trigger torch_placing");
+        assert!(
+            r.is_none(),
+            "surface biome should not trigger torch_placing"
+        );
     }
 
     // ── unstuck ──
@@ -372,20 +388,26 @@ mod tests {
         assert!(r1.is_some(), "first trigger should fire");
         // 第二轮相同状态：不应再触发
         let r2 = agent.check_modes();
-        assert!(r2.is_none(), "same mode should not trigger twice consecutively");
+        assert!(
+            r2.is_none(),
+            "same mode should not trigger twice consecutively"
+        );
     }
 
     #[test]
     fn mode_dedup_different_mode_id_resets() {
         // 先触发 hunting（mode_id=4），然后清空背包/动物，换为 hostile 触发 self_defense（mode_id=2）
-        let mut agent = make_agent("生命: 20/20  饱食: 20/20  animal: cow[距离: 5] 背包: [oak_log:4]");
+        let mut agent =
+            make_agent("生命: 20/20  饱食: 20/20  animal: cow[距离: 5] 背包: [oak_log:4]");
         // 第一轮：hunting 触发（mode_id=4）
         let r1 = agent.check_modes();
         assert!(r1.is_some());
         assert_eq!(r1.unwrap().mode_id, 4, "first trigger should be hunting");
         // 换成 hostile 场景（clear 之前的 perceive，加敌对生物）
         agent.messages.clear();
-        agent.messages.push(Message::user("【当前游戏状态（自动注入）】\n生命: 20/20  饱食: 20/20  敌对: zombie[距离: 3]"));
+        agent.messages.push(Message::user(
+            "【当前游戏状态（自动注入）】\n生命: 20/20  饱食: 20/20  敌对: zombie[距离: 3]",
+        ));
         // 第二轮：self_defense 应触发，因为 mode_id 从 4 变 2
         let r2 = agent.check_modes();
         assert!(r2.is_some(), "mode_id change should retrigger");

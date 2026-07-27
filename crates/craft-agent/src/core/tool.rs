@@ -379,7 +379,9 @@ mod tests {
 
     #[test]
     fn effects_barrier_union() {
-        let bar = ToolEffects { bits: ToolEffects::BARRIER };
+        let bar = ToolEffects {
+            bits: ToolEffects::BARRIER,
+        };
         assert!(!bar.parallel_safe());
         // BARRIER = WRITE | APPEND | PROCESS, 不含 READ 和 NETWORK
         assert!(!bar.reads(), "BARRIER 不含 READ");
@@ -521,7 +523,11 @@ mod tests {
                 })
             }
             fn execute(&self, _: &str, _: Value, _: Option<ToolUpdateFn>) -> Result<ToolResult> {
-                Ok(ToolResult { message: "ok".into(), is_error: false, images: vec![] })
+                Ok(ToolResult {
+                    message: "ok".into(),
+                    is_error: false,
+                    images: vec![],
+                })
             }
         }
         let mut reg = ToolRegistry::new();
@@ -530,6 +536,11 @@ mod tests {
         assert_eq!(defs.len(), 1);
         let def = &defs[0];
         assert_eq!(def["function"]["name"], "dummy");
-        assert!(def["function"]["description"].as_str().unwrap().contains("test tool"));
+        assert!(
+            def["function"]["description"]
+                .as_str()
+                .unwrap()
+                .contains("test tool")
+        );
     }
 }

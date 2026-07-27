@@ -120,9 +120,7 @@ pub fn load_tasks(dir: &Path) -> Result<Vec<Task>> {
         }
     }
     // 按 tier 升序、id 字母序排序
-    tasks.sort_by(|a, b| {
-        a.tier.cmp(&b.tier).then_with(|| a.id.cmp(&b.id))
-    });
+    tasks.sort_by(|a, b| a.tier.cmp(&b.tier).then_with(|| a.id.cmp(&b.id)));
     Ok(tasks)
 }
 
@@ -176,7 +174,9 @@ impl TaskChecker {
                     false
                 }
             }
-            SuccessCondition::Killed { .. } | SuccessCondition::Crafted { .. } | SuccessCondition::Placed { .. } => {
+            SuccessCondition::Killed { .. }
+            | SuccessCondition::Crafted { .. }
+            | SuccessCondition::Placed { .. } => {
                 // 这些需要外部统计回填，perceive 文本无法直接判断
                 // 调用方应在外部记录并转换为 InventoryHas 检查
                 false
@@ -341,7 +341,9 @@ impl TaskManager {
         }
         // 检查成功条件
         if TaskChecker::check(&inst.task.success, perceive_text) {
-            inst.status = TaskStatus::Completed { finished_at: now_ms };
+            inst.status = TaskStatus::Completed {
+                finished_at: now_ms,
+            };
             return Some(true);
         }
         None
@@ -472,7 +474,8 @@ mod tests {
                 "tier": 1,
                 "success": {"type": "InventoryHas", "item": "crafting_table", "count": 1}
             }"#,
-        ).unwrap();
+        )
+        .unwrap();
 
         let tasks = load_tasks(&tmp).unwrap();
         assert_eq!(tasks.len(), 1);
@@ -500,7 +503,10 @@ mod tests {
             reward: None,
         };
         tm.start_task_direct(task, 0);
-        assert!(matches!(tm.current_status(), Some(TaskStatus::Running { .. })));
+        assert!(matches!(
+            tm.current_status(),
+            Some(TaskStatus::Running { .. })
+        ));
 
         // 未完成
         let r = tm.check_current("背包: [oak_log:2]", 100);
@@ -509,7 +515,10 @@ mod tests {
         // 完成
         let r = tm.check_current("背包: [oak_log:8]", 200);
         assert_eq!(r, Some(true));
-        assert!(matches!(tm.current_status(), Some(TaskStatus::Completed { .. })));
+        assert!(matches!(
+            tm.current_status(),
+            Some(TaskStatus::Completed { .. })
+        ));
     }
 
     #[test]
@@ -536,7 +545,10 @@ mod tests {
         // 11 秒超时
         let r = tm.check_current("背包: [oak_log:2]", 11_000);
         assert_eq!(r, Some(false));
-        assert!(matches!(tm.current_status(), Some(TaskStatus::Failed { .. })));
+        assert!(matches!(
+            tm.current_status(),
+            Some(TaskStatus::Failed { .. })
+        ));
     }
 
     /// 回归测试：所有 tasks/ 目录下的 JSON 必须能正确加载并符合 Task schema。
@@ -562,11 +574,7 @@ mod tests {
         let mut seen_ids = std::collections::HashSet::new();
         for t in &tasks {
             assert!(!t.id.is_empty(), "任务 id 不能为空");
-            assert!(
-                seen_ids.insert(&t.id),
-                "任务 id 重复: {}",
-                t.id
-            );
+            assert!(seen_ids.insert(&t.id), "任务 id 重复: {}", t.id);
             assert!(!t.name.is_empty(), "任务 {} 的 name 为空", t.id);
             assert!(!t.goal.is_empty(), "任务 {} 的 goal 为空", t.id);
             assert!(
@@ -577,13 +585,23 @@ mod tests {
             );
             // timeout_secs 应当合理（10s ~ 1h）
             if let Some(to) = t.timeout_secs {
-                assert!(to >= 10 && to <= 3600, "任务 {} 的 timeout {} 异常", t.id, to);
+                assert!(
+                    to >= 10 && to <= 3600,
+                    "任务 {} 的 timeout {} 异常",
+                    t.id,
+                    to
+                );
             }
         }
         // 校验 6 个 tier 各至少有 1 个任务
         for tier in 1..=6u32 {
             let count = tasks.iter().filter(|t| t.tier == tier).count();
-            assert!(count >= 1, "tier {} 至少应有 1 个任务，实际 {}", tier, count);
+            assert!(
+                count >= 1,
+                "tier {} 至少应有 1 个任务，实际 {}",
+                tier,
+                count
+            );
         }
         println!("[test] 成功加载 {} 个任务（tier1-6）", tasks.len());
     }

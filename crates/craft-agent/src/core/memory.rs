@@ -203,7 +203,14 @@ impl WorldMemory {
     }
 
     /// 记录危险/传送门/标注。
-    pub fn record(&self, pos: MemoryPos, kind: MemoryKind, item: Option<&str>, label: &str, note: Option<&str>) {
+    pub fn record(
+        &self,
+        pos: MemoryPos,
+        kind: MemoryKind,
+        item: Option<&str>,
+        label: &str,
+        note: Option<&str>,
+    ) {
         let now = now_ms();
         self.upsert(MemoryCell {
             pos,
@@ -315,7 +322,12 @@ impl WorldMemory {
 
     /// 邻近查询：返回以 `around` 为中心、曼哈顿半径 `radius` 内的记忆，按距离升序。
     /// `include_depleted` 控制是否包含已耗尽资源。
-    pub fn nearby(&self, around: MemoryPos, radius: i32, include_depleted: bool) -> Vec<MemoryCell> {
+    pub fn nearby(
+        &self,
+        around: MemoryPos,
+        radius: i32,
+        include_depleted: bool,
+    ) -> Vec<MemoryCell> {
         let g = self.inner.lock().unwrap();
         let mut out: Vec<MemoryCell> = g
             .cells
@@ -341,7 +353,13 @@ impl WorldMemory {
 
     /// 取全部锚点。
     pub fn anchors(&self) -> Vec<MemoryAnchor> {
-        self.inner.lock().unwrap().anchors.values().cloned().collect()
+        self.inner
+            .lock()
+            .unwrap()
+            .anchors
+            .values()
+            .cloned()
+            .collect()
     }
 
     /// 锚点查询（按名称前缀或标签包含）。
@@ -368,15 +386,23 @@ impl WorldMemory {
             let d = around.manhattan(&c.pos);
             let dep = if c.depleted { "（已耗尽）" } else { "" };
             let cnt = c.count.map(|n| format!(" x{n}")).unwrap_or_default();
-            let note = c.note.as_ref().map(|n| format!(" | {n}")).unwrap_or_default();
+            let note = c
+                .note
+                .as_ref()
+                .map(|n| format!(" | {n}"))
+                .unwrap_or_default();
             s.push_str(&format!(
                 "\n- {}: {} [{}{}] @({},{},{}) 距离{}格{}{}",
                 c.kind.label(),
                 c.label,
                 c.item.as_deref().unwrap_or("-"),
                 cnt,
-                c.pos.x, c.pos.y, c.pos.z,
-                d, dep, note
+                c.pos.x,
+                c.pos.y,
+                c.pos.z,
+                d,
+                dep,
+                note
             ));
         }
         // 锚点也一并给出（若不在邻近半径也可能有用）
@@ -384,7 +410,10 @@ impl WorldMemory {
         if !anchors.is_empty() {
             s.push_str("\n[锚点]");
             for a in &anchors {
-                let p = a.pos.map(|p| format!("({},{},{})", p.x, p.y, p.z)).unwrap_or_default();
+                let p = a
+                    .pos
+                    .map(|p| format!("({},{},{})", p.x, p.y, p.z))
+                    .unwrap_or_default();
                 s.push_str(&format!("\n- {}: {} {}", a.name, a.label, p));
             }
         }
@@ -406,7 +435,10 @@ impl WorldMemory {
         if let Ok(snap) = serde_json::from_str::<WorldMemorySnapshot>(json) {
             let mut lock = self.inner.lock().unwrap();
             for v in snap.cells {
-                lock.by_chunk.entry(v.pos.chunk_key()).or_default().push(v.pos);
+                lock.by_chunk
+                    .entry(v.pos.chunk_key())
+                    .or_default()
+                    .push(v.pos);
                 lock.cells.insert(v.pos, v);
             }
             for v in snap.anchors {
@@ -499,7 +531,13 @@ mod tests {
 
         // 模拟 PlaceTool：放置工作台后记录为结构
         let q = MemoryPos::new(1, 64, 1);
-        m.record(q, MemoryKind::Structure, Some("crafting_table"), "crafting_table", None);
+        m.record(
+            q,
+            MemoryKind::Structure,
+            Some("crafting_table"),
+            "crafting_table",
+            None,
+        );
         assert_eq!(m.len(), 1);
         let near = m.nearby(MemoryPos::new(0, 64, 0), 16, false);
         assert_eq!(near.len(), 1);

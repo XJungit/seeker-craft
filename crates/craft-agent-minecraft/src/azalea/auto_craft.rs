@@ -12,7 +12,7 @@ use tokio::time::sleep;
 use crate::azalea::ext_state::BotExtResource;
 use crate::azalea::place::{do_open_container, do_place};
 use crate::azalea::recipe_book::{RecipeBook, StoredRecipe};
-use crate::azalea::recipes::{lookup, Method};
+use crate::azalea::recipes::{Method, lookup};
 
 fn kind(id: &str) -> ItemKind {
     ItemKind::from_str(&normalize(id)).unwrap()
@@ -29,7 +29,14 @@ fn normalize(item: &str) -> String {
 /// 从 ecs 资源读取服务端下发的配方书（若有）。
 /// P17 改为 pub：craft.rs::do_craft_3x3 在手写表未命中时回退到 RecipeBook。
 pub fn recipe_book_of(bot: &Client) -> RecipeBook {
-    bot.ecs.read().resource::<BotExtResource>().0.lock().unwrap().recipes.clone()
+    bot.ecs
+        .read()
+        .resource::<BotExtResource>()
+        .0
+        .lock()
+        .unwrap()
+        .recipes
+        .clone()
 }
 
 /// 统计某配方书配方所需的各原料物品数量（按网格出现次数计）。
@@ -72,7 +79,9 @@ async fn ensure_recipe_inputs(bot: &Client, r: &StoredRecipe, amount: u32) -> Re
 /// 造工作台需要木板」的死循环。
 fn recipe_needs_table(r: &StoredRecipe) -> bool {
     match r {
-        StoredRecipe::Shaped { grid, .. } => grid.iter().enumerate().any(|(i, c)| c.is_some() && i >= 4),
+        StoredRecipe::Shaped { grid, .. } => {
+            grid.iter().enumerate().any(|(i, c)| c.is_some() && i >= 4)
+        }
         StoredRecipe::Shapeless { .. } => false,
         _ => false,
     }
@@ -102,7 +111,11 @@ async fn ensure_via_book(bot: &Client, item: &str, amount: u32) -> Option<Result
                     return Some(Err(e));
                 }
                 sleep(Duration::from_millis(200)).await;
-                Some(crate::azalea::craft::do_craft_3x3_recipe(bot, &r, amount).await.map(|_| ()))
+                Some(
+                    crate::azalea::craft::do_craft_3x3_recipe(bot, &r, amount)
+                        .await
+                        .map(|_| ()),
+                )
             } else {
                 // 2×2：直接在玩家背包合成格里完成（手写表已覆盖木板/木棍/工作台/火把）
                 Some(
@@ -181,7 +194,11 @@ async fn ensure_via_book(bot: &Client, item: &str, amount: u32) -> Option<Result
                 return Some(Err(e));
             }
             sleep(Duration::from_millis(200)).await;
-            Some(crate::azalea::craft::do_brew(bot, &r, amount).await.map(|_| ()))
+            Some(
+                crate::azalea::craft::do_brew(bot, &r, amount)
+                    .await
+                    .map(|_| ()),
+            )
         }
         StoredRecipe::Furnace { .. } => {
             if let Err(e) = ensure_recipe_inputs(bot, &r, amount).await {
@@ -306,18 +323,39 @@ fn expand_ingredient_aliases_pub(kind: ItemKind) -> Vec<ItemKind> {
     let bare = name.strip_prefix("minecraft:").unwrap_or(name);
     let aliases: Vec<&str> = if bare.ends_with("_planks") {
         vec![
-            "oak_planks", "birch_planks", "spruce_planks", "jungle_planks",
-            "acacia_planks", "dark_oak_planks", "mangrove_planks", "cherry_planks", "pale_oak_planks",
+            "oak_planks",
+            "birch_planks",
+            "spruce_planks",
+            "jungle_planks",
+            "acacia_planks",
+            "dark_oak_planks",
+            "mangrove_planks",
+            "cherry_planks",
+            "pale_oak_planks",
         ]
     } else if bare.ends_with("_log") {
         vec![
-            "oak_log", "birch_log", "spruce_log", "jungle_log",
-            "acacia_log", "dark_oak_log", "mangrove_log", "cherry_log", "pale_oak_log",
+            "oak_log",
+            "birch_log",
+            "spruce_log",
+            "jungle_log",
+            "acacia_log",
+            "dark_oak_log",
+            "mangrove_log",
+            "cherry_log",
+            "pale_oak_log",
         ]
     } else if bare.ends_with("_wood") {
         vec![
-            "oak_wood", "birch_wood", "spruce_wood", "jungle_wood",
-            "acacia_wood", "dark_oak_wood", "mangrove_wood", "cherry_wood", "pale_oak_wood",
+            "oak_wood",
+            "birch_wood",
+            "spruce_wood",
+            "jungle_wood",
+            "acacia_wood",
+            "dark_oak_wood",
+            "mangrove_wood",
+            "cherry_wood",
+            "pale_oak_wood",
         ]
     } else if matches!(bare, "coal" | "charcoal") {
         vec!["coal", "charcoal"]
@@ -501,9 +539,17 @@ fn is_tool_block(item: &str) -> bool {
     let b = item.strip_prefix("minecraft:").unwrap_or(item);
     matches!(
         b,
-        "crafting_table" | "furnace" | "blast_furnace" | "smoker"
-            | "smithing_table" | "stonecutter" | "brewing_stand" | "anvil"
-            | "cartography_table" | "loom" | "grindstone"
+        "crafting_table"
+            | "furnace"
+            | "blast_furnace"
+            | "smoker"
+            | "smithing_table"
+            | "stonecutter"
+            | "brewing_stand"
+            | "anvil"
+            | "cartography_table"
+            | "loom"
+            | "grindstone"
     )
 }
 
@@ -559,24 +605,50 @@ fn is_surface_resource(item: &str) -> bool {
     let b = item.strip_prefix("minecraft:").unwrap_or(item);
     matches!(
         b,
-        "oak_log" | "spruce_log" | "birch_log" | "jungle_log"
-            | "acacia_log" | "dark_oak_log" | "mangrove_log" | "cherry_log"
-            | "pale_oak_log" | "bamboo" | "sugar_cane" | "cactus"
-            | "sand" | "red_sand" | "lily_pad" | "vine" | "moss_block"
-            | "grass_block" | "tall_grass" | "fern" | "large_fern"
-            | "oak_leaves" | "spruce_leaves" | "birch_leaves" | "jungle_leaves"
-            | "acacia_leaves" | "dark_oak_leaves" | "mangrove_leaves" | "cherry_leaves"
+        "oak_log"
+            | "spruce_log"
+            | "birch_log"
+            | "jungle_log"
+            | "acacia_log"
+            | "dark_oak_log"
+            | "mangrove_log"
+            | "cherry_log"
+            | "pale_oak_log"
+            | "bamboo"
+            | "sugar_cane"
+            | "cactus"
+            | "sand"
+            | "red_sand"
+            | "lily_pad"
+            | "vine"
+            | "moss_block"
+            | "grass_block"
+            | "tall_grass"
+            | "fern"
+            | "large_fern"
+            | "oak_leaves"
+            | "spruce_leaves"
+            | "birch_leaves"
+            | "jungle_leaves"
+            | "acacia_leaves"
+            | "dark_oak_leaves"
+            | "mangrove_leaves"
+            | "cherry_leaves"
     )
 }
 
 /// P11 新增：判断 bot 是否在地下（Y < 60 且头顶非空气）。
 fn is_bot_underground(bot: &Client) -> bool {
-    let Ok(p) = bot.position() else { return false; };
+    let Ok(p) = bot.position() else {
+        return false;
+    };
     if p.y >= 60.0 {
         return false;
     }
     // 进一步检查：bot 头顶上方 1-3 格是否有实心方块（地道/洞穴也可能 Y<60 但头顶是空气）
-    let Ok(world_lock) = bot.world() else { return false; };
+    let Ok(world_lock) = bot.world() else {
+        return false;
+    };
     let world = world_lock.read();
     let bx = p.x.floor() as i32;
     let by = p.y.floor() as i32;
@@ -584,7 +656,11 @@ fn is_bot_underground(bot: &Client) -> bool {
     // 检查头顶 2-5 格是否有非空气方块（地表覆盖判定）
     for dy in 2..=5 {
         let pos = BlockPos::new(bx, by + dy, bz);
-        if world.get_block_state(pos).map(|s| !s.is_air()).unwrap_or(false) {
+        if world
+            .get_block_state(pos)
+            .map(|s| !s.is_air())
+            .unwrap_or(false)
+        {
             return true; // 头顶有方块遮挡 → 在地下
         }
     }

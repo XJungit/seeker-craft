@@ -14,7 +14,7 @@ use agent_loop::{AgentController, AgentEvent, spawn_agent_loop};
 use axum::{
     Router,
     extract::State,
-    http::{StatusCode},
+    http::StatusCode,
     response::{
         Html, IntoResponse,
         sse::{Event, Sse},
@@ -128,11 +128,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     let (event_tx, _) = broadcast::channel::<AgentEvent>(128);
-    let mut controller = AgentController::new(
-        goal,
-        max_steps,
-        session_path.display().to_string(),
-    );
+    let mut controller = AgentController::new(goal, max_steps, session_path.display().to_string());
     controller.mode_profile = mode_profile;
     controller.individual_profile = individual_profile;
     let controller = Arc::new(controller);
@@ -239,8 +235,7 @@ async fn api_events(
 
 async fn api_game_state(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let adapter = state.controller.game_adapter.read().unwrap().clone();
-    if let Some(arc) = adapter
-    {
+    if let Some(arc) = adapter {
         // 实时拉取 azalea 世界状态（perceive_shared 返回最新 WorldState）
         if let Ok(st) = arc.perceive_shared() {
             if let Ok(mut cache) = state.last_state_cache.lock() {

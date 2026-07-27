@@ -203,10 +203,30 @@ mod tests {
             name: "test".to_string(),
             description: "测试蓝图".to_string(),
             blocks: vec![
-                BlueprintBlock { dx: 0, dy: 0, dz: 0, block: "oak_planks".into() },
-                BlueprintBlock { dx: 1, dy: 0, dz: 0, block: "oak_planks".into() },
-                BlueprintBlock { dx: 0, dy: 0, dz: 1, block: "crafting_table".into() },
-                BlueprintBlock { dx: 1, dy: 1, dz: 0, block: "torch".into() },
+                BlueprintBlock {
+                    dx: 0,
+                    dy: 0,
+                    dz: 0,
+                    block: "oak_planks".into(),
+                },
+                BlueprintBlock {
+                    dx: 1,
+                    dy: 0,
+                    dz: 0,
+                    block: "oak_planks".into(),
+                },
+                BlueprintBlock {
+                    dx: 0,
+                    dy: 0,
+                    dz: 1,
+                    block: "crafting_table".into(),
+                },
+                BlueprintBlock {
+                    dx: 1,
+                    dy: 1,
+                    dz: 0,
+                    block: "torch".into(),
+                },
             ],
         }
     }

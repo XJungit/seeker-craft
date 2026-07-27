@@ -1631,7 +1631,7 @@ mod tests {
     /// 用 FakeProvider 跑一轮，检查存在包含已知记忆标签的 user 消息。
     #[test]
     fn memory_injected_into_prompt_each_turn() {
-        use crate::core::memory::{MemoryKind, MemoryPos, WorldMemory};
+        use crate::core::memory::{MemoryPos, WorldMemory};
         let mem = WorldMemory::new();
         mem.record_resource(MemoryPos::new(2, 64, 3), "oak_log", "测试橡树林", Some(4));
         mem.set_anchor("__self__", Some(MemoryPos::new(0, 64, 0)), "当前位置");

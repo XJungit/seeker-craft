@@ -221,40 +221,40 @@ pub enum SubmitOutcome {
 pub fn timeout_ticks(cmd: &BotCommand) -> u64 {
     match cmd {
         // 即时命令
-        BotCommand::Chat { .. } => 20,            // 1s
-        BotCommand::Attack { .. } => 60,          // 3s
-        BotCommand::BlockInteract { .. } => 60,   // 3s
+        BotCommand::Chat { .. } => 20,          // 1s
+        BotCommand::Attack { .. } => 60,        // 3s
+        BotCommand::BlockInteract { .. } => 60, // 3s
         // 寻路/挖掘
-        BotCommand::Goto { .. } => 60,            // 3s（长距离由 32m 限制拦截）
-        BotCommand::Mine { .. } => 200,           // 10s（深板岩/黑曜石等硬方块可能慢；wooden_pickaxe 挖 deepslate ~4.5s）
-        BotCommand::MineBelow => 200,             // 10s（持续下挖，由 Y≤-61 停止）
-        BotCommand::MineAbove => 200,             // 10s（持续上挖，由头顶空气/Y≥320 停止）
+        BotCommand::Goto { .. } => 60,  // 3s（长距离由 32m 限制拦截）
+        BotCommand::Mine { .. } => 200, // 10s（深板岩/黑曜石等硬方块可能慢；wooden_pickaxe 挖 deepslate ~4.5s）
+        BotCommand::MineBelow => 200,   // 10s（持续下挖，由 Y≤-61 停止）
+        BotCommand::MineAbove => 200,   // 10s（持续上挖，由头顶空气/Y≥320 停止）
         // 合成
-        BotCommand::Craft2x2 { .. } => 200,       // 10s
-        BotCommand::Craft3x3 { .. } => 500,       // 25s（含放桌+开桌+合成+收桌，P1-4）
-        BotCommand::Smelt { .. } => 2400,         // 120s（含放炉+开炉+熔炼+收炉；熔炼 10 个铁锭需 ~100s）
+        BotCommand::Craft2x2 { .. } => 200, // 10s
+        BotCommand::Craft3x3 { .. } => 500, // 25s（含放桌+开桌+合成+收桌，P1-4）
+        BotCommand::Smelt { .. } => 2400,   // 120s（含放炉+开炉+熔炼+收炉；熔炼 10 个铁锭需 ~100s）
         // 采集（多轮渐扩半径，最慢；24 轮 × 10s/轮 = 240s 理论上限，给 120s 余量）
-        BotCommand::Gather { .. } => 2400,        // 120s
+        BotCommand::Gather { .. } => 2400, // 120s
         // 放置/开容器
-        BotCommand::Place { .. } => 100,          // 5s
-        BotCommand::OpenContainer { .. } => 100,  // 5s
+        BotCommand::Place { .. } => 100,         // 5s
+        BotCommand::OpenContainer { .. } => 100, // 5s
         // 高层自动合成（采集→合成→放置链）
-        BotCommand::AutoCraft { .. } => 1000,     // 50s
+        BotCommand::AutoCraft { .. } => 1000, // 50s
         // 附魔/交易
         BotCommand::Enchant { .. } => 400,        // 20s
         BotCommand::Trade { .. } => 200,          // 10s
         BotCommand::InteractEntity { .. } => 100, // 5s
         // 智能技能
-        BotCommand::Pickup => 200,                // 10s
-        BotCommand::Defend => 300,                // 15s
+        BotCommand::Pickup => 200, // 10s
+        BotCommand::Defend => 300, // 15s
         // 背包管理
-        BotCommand::Equip { .. } => 100,          // 5s（shift_click + 选槽）
-        BotCommand::Discard { .. } => 200,        // 10s（可能多次 ThrowClick）
-        BotCommand::Consume { .. } => 600,        // 30s（吃饭 1.6s + 余量）
+        BotCommand::Equip { .. } => 100, // 5s（shift_click + 选槽）
+        BotCommand::Discard { .. } => 200, // 10s（可能多次 ThrowClick）
+        BotCommand::Consume { .. } => 600, // 30s（吃饭 1.6s + 余量）
         // 容器交互（开→操作→关，含 shift_click 多次）
-        BotCommand::ChestView { .. } => 200,      // 10s
-        BotCommand::ChestWithdraw { .. } => 400,  // 20s
-        BotCommand::ChestDeposit { .. } => 400,   // 20s
+        BotCommand::ChestView { .. } => 200,     // 10s
+        BotCommand::ChestWithdraw { .. } => 400, // 20s
+        BotCommand::ChestDeposit { .. } => 400,  // 20s
     }
 }
 
@@ -272,11 +272,18 @@ pub fn cmd_signature(cmd: &BotCommand) -> String {
         BotCommand::MineBelow => "mine_below".to_string(),
         BotCommand::MineAbove => "mine_above".to_string(),
         BotCommand::BlockInteract { .. } => "block_interact(#,#,#)".to_string(),
-        BotCommand::Chat { content } => format!("chat({})", content.chars().take(20).collect::<String>()),
+        BotCommand::Chat { content } => {
+            format!("chat({})", content.chars().take(20).collect::<String>())
+        }
         BotCommand::Attack { .. } => "attack".to_string(),
         BotCommand::Craft2x2 { item, count } => format!("craft_2x2({item},{count})"),
         BotCommand::Craft3x3 { item, count, .. } => format!("craft_3x3({item},{count})"),
-        BotCommand::Smelt { output, fuel, count, .. } => format!("smelt({output},{fuel},{count})"),
+        BotCommand::Smelt {
+            output,
+            fuel,
+            count,
+            ..
+        } => format!("smelt({output},{fuel},{count})"),
         BotCommand::Gather { item, count } => format!("gather({item},{count})"),
         BotCommand::Place { item, .. } => format!("place({item},#,#,#)"),
         BotCommand::OpenContainer { .. } => "open_container(#,#,#)".to_string(),
@@ -301,13 +308,21 @@ mod tests {
 
     #[test]
     fn test_timeout_short_for_chat() {
-        assert_eq!(timeout_ticks(&BotCommand::Chat { content: "hi".into() }), 20);
+        assert_eq!(
+            timeout_ticks(&BotCommand::Chat {
+                content: "hi".into()
+            }),
+            20
+        );
     }
 
     #[test]
     fn test_timeout_long_for_gather() {
         assert_eq!(
-            timeout_ticks(&BotCommand::Gather { item: "oak_log".into(), count: 8 }),
+            timeout_ticks(&BotCommand::Gather {
+                item: "oak_log".into(),
+                count: 8
+            }),
             2400
         );
     }
@@ -315,7 +330,10 @@ mod tests {
     #[test]
     fn test_timeout_long_for_autocraft() {
         assert_eq!(
-            timeout_ticks(&BotCommand::AutoCraft { item: "chest".into(), count: 1 }),
+            timeout_ticks(&BotCommand::AutoCraft {
+                item: "chest".into(),
+                count: 1
+            }),
             1000
         );
     }
@@ -323,14 +341,24 @@ mod tests {
     #[test]
     fn test_signature_normalizes_coords() {
         let a = cmd_signature(&BotCommand::Goto { x: 1, y: 2, z: 3 });
-        let b = cmd_signature(&BotCommand::Goto { x: 100, y: 64, z: -50 });
+        let b = cmd_signature(&BotCommand::Goto {
+            x: 100,
+            y: 64,
+            z: -50,
+        });
         assert_eq!(a, b, "不同坐标应归一化为同一签名");
     }
 
     #[test]
     fn test_signature_preserves_item() {
-        let a = cmd_signature(&BotCommand::Gather { item: "oak_log".into(), count: 4 });
-        let b = cmd_signature(&BotCommand::Gather { item: "stone".into(), count: 4 });
+        let a = cmd_signature(&BotCommand::Gather {
+            item: "oak_log".into(),
+            count: 4,
+        });
+        let b = cmd_signature(&BotCommand::Gather {
+            item: "stone".into(),
+            count: 4,
+        });
         assert_ne!(a, b, "不同 item 应有不同签名");
     }
 
@@ -339,7 +367,9 @@ mod tests {
         let am = ActionManager::new();
         let q = Arc::new(Mutex::new(Vec::new()));
         let outcome = am.submit(
-            BotCommand::Chat { content: "hi".into() },
+            BotCommand::Chat {
+                content: "hi".into(),
+            },
             Priority::Normal,
             &q,
             0,
@@ -353,13 +383,17 @@ mod tests {
         let am = ActionManager::new();
         let q = Arc::new(Mutex::new(Vec::new()));
         am.submit(
-            BotCommand::Chat { content: "first".into() },
+            BotCommand::Chat {
+                content: "first".into(),
+            },
             Priority::Normal,
             &q,
             0,
         );
         let outcome = am.submit(
-            BotCommand::Chat { content: "second".into() },
+            BotCommand::Chat {
+                content: "second".into(),
+            },
             Priority::Normal,
             &q,
             0,
@@ -373,7 +407,9 @@ mod tests {
         let am = ActionManager::new();
         let q = Arc::new(Mutex::new(Vec::new()));
         am.submit(
-            BotCommand::Chat { content: "normal".into() },
+            BotCommand::Chat {
+                content: "normal".into(),
+            },
             Priority::Normal,
             &q,
             0,
@@ -427,7 +463,9 @@ mod tests {
         let am = ActionManager::new();
         let q = Arc::new(Mutex::new(Vec::new()));
         am.submit(
-            BotCommand::Chat { content: "hi".into() },
+            BotCommand::Chat {
+                content: "hi".into(),
+            },
             Priority::Normal,
             &q,
             0,

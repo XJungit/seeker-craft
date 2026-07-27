@@ -10,7 +10,9 @@ use craft_agent_minecraft::adapter_azalea::ArcAzaleaAdapter;
 
 #[tokio::main]
 async fn main() {
-    let port = std::env::args().nth(1).unwrap_or_else(|| "4444".to_string());
+    let port = std::env::args()
+        .nth(1)
+        .unwrap_or_else(|| "4444".to_string());
     let addr = format!("localhost:{port}");
     println!("[adapter_demo] connect {addr}");
 
@@ -33,14 +35,20 @@ async fn main() {
     let r1 = adapter
         .execute(Action::Minecraft(MinecraftAction::MineBelow))
         .expect("execute mine_below 失败");
-    println!("[adapter_demo] execute mine_below: ok={} detail={}", r1.ok, r1.detail);
+    println!(
+        "[adapter_demo] execute mine_below: ok={} detail={}",
+        r1.ok, r1.detail
+    );
 
     let r2 = adapter
         .execute(Action::Minecraft(MinecraftAction::Chat {
             content: "harness-driven action".to_string(),
         }))
         .expect("execute chat 失败");
-    println!("[adapter_demo] execute chat: ok={} detail={}", r2.ok, r2.detail);
+    println!(
+        "[adapter_demo] execute chat: ok={} detail={}",
+        r2.ok, r2.detail
+    );
 
     println!("[adapter_demo] 完成（bot 仍在后台运行，ctrl-c 退出）");
     // 保持进程，观察 bot 行为。

@@ -80,7 +80,13 @@ fn summarize_container(inv: &ContainerHandleRef) -> Option<String> {
     }
     let mut items: Vec<(String, u32)> = agg.into_iter().collect();
     items.sort_by(|a, b| b.1.cmp(&a.1));
-    Some(items.iter().map(|(k, c)| format!("{k}:{c}")).collect::<Vec<_>>().join(", "))
+    Some(
+        items
+            .iter()
+            .map(|(k, c)| format!("{k}:{c}"))
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
 }
 
 /// 查看世界坐标 pos 处容器的物品列表。
@@ -91,7 +97,10 @@ pub async fn do_chest_view(bot: &Client, pos: BlockPos) -> Result<String, String
         .await
         .map_err(|e| format!("打开容器失败: {e:?}"))?;
     if handle.is_none() {
-        return Err(format!("({},{},{}) 处无容器或无法打开", pos.x, pos.y, pos.z));
+        return Err(format!(
+            "({},{},{}) 处无容器或无法打开",
+            pos.x, pos.y, pos.z
+        ));
     }
     sleep(Duration::from_millis(150)).await;
     let summary = match wait_for_menu(bot).await {
@@ -103,7 +112,10 @@ pub async fn do_chest_view(bot: &Client, pos: BlockPos) -> Result<String, String
         inv.close();
     }
     sleep(Duration::from_millis(100)).await;
-    Ok(format!("容器 ({},{},{}) 内容: {}", pos.x, pos.y, pos.z, summary))
+    Ok(format!(
+        "容器 ({},{},{}) 内容: {}",
+        pos.x, pos.y, pos.z, summary
+    ))
 }
 
 /// 从世界坐标 pos 处容器取出 item（count 个）到 bot 背包。
@@ -120,14 +132,15 @@ pub async fn do_chest_withdraw(
         .await
         .map_err(|e| format!("打开容器失败: {e:?}"))?;
     if handle.is_none() {
-        return Err(format!("({},{},{}) 处无容器或无法打开", pos.x, pos.y, pos.z));
+        return Err(format!(
+            "({},{},{}) 处无容器或无法打开",
+            pos.x, pos.y, pos.z
+        ));
     }
     let inv = wait_for_menu(bot)
         .await
         .ok_or_else(|| "容器菜单未就绪".to_string())?;
-    let slots = inv
-        .slots()
-        .ok_or_else(|| "读取容器槽位失败".to_string())?;
+    let slots = inv.slots().ok_or_else(|| "读取容器槽位失败".to_string())?;
     let range = container_slots_range(&inv).ok_or_else(|| "无法确定容器槽位范围".to_string())?;
 
     // 收集所有匹配 item 的容器槽位
@@ -154,10 +167,7 @@ pub async fn do_chest_withdraw(
         if count != 0 && remaining == 0 {
             break;
         }
-        let stack_count = slots
-            .get(s)
-            .map(|st| st.count() as u32)
-            .unwrap_or(0);
+        let stack_count = slots.get(s).map(|st| st.count() as u32).unwrap_or(0);
         if stack_count == 0 {
             continue;
         }
@@ -199,14 +209,15 @@ pub async fn do_chest_deposit(
         .await
         .map_err(|e| format!("打开容器失败: {e:?}"))?;
     if handle.is_none() {
-        return Err(format!("({},{},{}) 处无容器或无法打开", pos.x, pos.y, pos.z));
+        return Err(format!(
+            "({},{},{}) 处无容器或无法打开",
+            pos.x, pos.y, pos.z
+        ));
     }
     let inv = wait_for_menu(bot)
         .await
         .ok_or_else(|| "容器菜单未就绪".to_string())?;
-    let slots = inv
-        .slots()
-        .ok_or_else(|| "读取槽位失败".to_string())?;
+    let slots = inv.slots().ok_or_else(|| "读取槽位失败".to_string())?;
     let menu = inv
         .menu()
         .ok()
@@ -237,10 +248,7 @@ pub async fn do_chest_deposit(
         if count != 0 && remaining == 0 {
             break;
         }
-        let stack_count = slots
-            .get(s)
-            .map(|st| st.count() as u32)
-            .unwrap_or(0);
+        let stack_count = slots.get(s).map(|st| st.count() as u32).unwrap_or(0);
         if stack_count == 0 {
             continue;
         }
@@ -268,8 +276,12 @@ pub async fn do_chest_deposit(
 
 /// 统计玩家槽位（含 hotbar）里指定物品的总数。
 fn count_in_player_slots(inv: &ContainerHandleRef, kind: ItemKind) -> u32 {
-    let Some(slots) = inv.slots() else { return 0; };
-    let Some(menu) = inv.menu().ok().flatten() else { return 0; };
+    let Some(slots) = inv.slots() else {
+        return 0;
+    };
+    let Some(menu) = inv.menu().ok().flatten() else {
+        return 0;
+    };
     let range = menu.player_slots_range();
     slots
         .iter()

@@ -382,7 +382,10 @@ mod tests {
     #[test]
     fn json_byte_len_matches_serde_for_empty() {
         let v = json!({});
-        assert_eq!(Agent::json_byte_len(&v), serde_json::to_string(&v).unwrap().len());
+        assert_eq!(
+            Agent::json_byte_len(&v),
+            serde_json::to_string(&v).unwrap().len()
+        );
     }
 
     #[test]
@@ -392,7 +395,10 @@ mod tests {
             "args": {"item": "oak_log", "count": 5},
             "nested": {"a": [1, 2, 3], "b": "text"}
         });
-        assert_eq!(Agent::json_byte_len(&v), serde_json::to_string(&v).unwrap().len());
+        assert_eq!(
+            Agent::json_byte_len(&v),
+            serde_json::to_string(&v).unwrap().len()
+        );
     }
 
     // ── msg_tokens ──
@@ -402,7 +408,10 @@ mod tests {
         let m = Message::user("hello world");
         let tokens = Agent::msg_tokens(&m);
         // "hello world" = 11 chars / 2 = 5 tokens
-        assert!(tokens >= 5 && tokens <= 10, "expected ~5 tokens, got {tokens}");
+        assert!(
+            tokens >= 5 && tokens <= 10,
+            "expected ~5 tokens, got {tokens}"
+        );
     }
 
     #[test]
@@ -506,13 +515,19 @@ mod tests {
     fn serialize_msg_tool_result() {
         let m = Message::tool_result("c1", "gather", "got 4 oak_log");
         let s = Agent::serialize_msg(&m);
-        assert!(s.starts_with("result(gather)"), "should start with result(tool_name): {s}");
+        assert!(
+            s.starts_with("result(gather)"),
+            "should start with result(tool_name): {s}"
+        );
     }
 
     #[test]
     fn serialize_msg_tool_error() {
         let m = Message::tool_error("c1", "gather", "block not found");
         let s = Agent::serialize_msg(&m);
-        assert!(s.starts_with("result(gather)"), "error should still format as result: {s}");
+        assert!(
+            s.starts_with("result(gather)"),
+            "error should still format as result: {s}"
+        );
     }
 }

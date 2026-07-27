@@ -27,14 +27,13 @@ pub mod smart_actions;
 pub mod table_flow;
 pub mod trade;
 
-pub use action_manager::{ActionManager, Priority, SubmitOutcome, timeout_ticks, cmd_signature};
+pub use action_manager::{ActionManager, Priority, SubmitOutcome, cmd_signature, timeout_ticks};
 
-use azalea::prelude::*;
-use azalea::pathfinder::goals::BlockPosGoal;
 use azalea::BlockPos;
-use azalea_registry::builtin::{BlockKind, EntityKind};
+use azalea::pathfinder::goals::BlockPosGoal;
+use azalea::prelude::*;
 use azalea_registry::DataRegistryKey;
-use azalea_client::client_chat::ChatPacket;
+use azalea_registry::builtin::{BlockKind, EntityKind};
 use bevy_ecs::component::Component;
 use craft_agent::core::memory::{MemoryKind, MemoryPos, WorldMemory};
 use std::collections::HashMap;
@@ -68,11 +67,17 @@ fn block_memory_meta(bk: BlockKind) -> Option<(String, &'static str, MemoryKind)
         return Some((name.to_string(), "矿石", MemoryKind::Resource));
     }
     match bk {
-        BlockKind::CraftingTable => Some(("crafting_table".into(), "工作台", MemoryKind::Structure)),
+        BlockKind::CraftingTable => {
+            Some(("crafting_table".into(), "工作台", MemoryKind::Structure))
+        }
         BlockKind::Furnace => Some(("furnace".into(), "熔炉", MemoryKind::Structure)),
         BlockKind::Chest => Some(("chest".into(), "箱子", MemoryKind::Container)),
-        BlockKind::SmithingTable => Some(("smithing_table".into(), "锻造台", MemoryKind::Structure)),
-        BlockKind::EnchantingTable => Some(("enchanting_table".into(), "附魔台", MemoryKind::Structure)),
+        BlockKind::SmithingTable => {
+            Some(("smithing_table".into(), "锻造台", MemoryKind::Structure))
+        }
+        BlockKind::EnchantingTable => {
+            Some(("enchanting_table".into(), "附魔台", MemoryKind::Structure))
+        }
         BlockKind::NetherPortal => Some(("nether_portal".into(), "下界传送门", MemoryKind::Portal)),
         BlockKind::Lava => Some(("lava".into(), "岩浆", MemoryKind::Hazard)),
         BlockKind::Water => Some(("water".into(), "水", MemoryKind::Hazard)),
@@ -190,32 +195,51 @@ pub enum BotEvent {
         held_item: String,
         /// 生物群系，如 "plains" / "forest"
         biome: String,
-/// 附近方块概览（3x3 地面）：`grass_block:5, stone:3, air:1`
-    nearby: String,
-    /// 10x10 范围方块扫描：所有非空气方块类型及计数
-    nearby_blocks: String,
-    /// 附近实体列表：玩家、动物、怪物等
-    nearby_entities: String,
-    /// 结构化游戏状态 JSON（前端面板可视化用），构建于 tick handler 中。
-    game_state: serde_json::Value,
+        /// 附近方块概览（3x3 地面）：`grass_block:5, stone:3, air:1`
+        nearby: String,
+        /// 10x10 范围方块扫描：所有非空气方块类型及计数
+        nearby_blocks: String,
+        /// 附近实体列表：玩家、动物、怪物等
+        nearby_entities: String,
+        /// 结构化游戏状态 JSON（前端面板可视化用），构建于 tick handler 中。
+        game_state: serde_json::Value,
     },
 }
 
 /// 动作指令：由 `AzaleaBot` 发出，handler 内部用 `bot` 执行。
 #[derive(Debug, Clone)]
 pub enum BotCommand {
-    Goto { x: i32, y: i32, z: i32 },
-    Mine { x: i32, y: i32, z: i32 },
+    Goto {
+        x: i32,
+        y: i32,
+        z: i32,
+    },
+    Mine {
+        x: i32,
+        y: i32,
+        z: i32,
+    },
     MineBelow,
     /// 持续向上挖：从 bot 头顶逐格挖到空气，让 bot 跳出竖井/地下脱困。
     /// 用于「被埋在地下/卡在 1x1 竖井」场景——mine_below 是向下挖，
     /// mine_above 反向，向上挖通到地表。
     MineAbove,
-    BlockInteract { x: i32, y: i32, z: i32 },
-    Chat { content: String },
-    Attack { target: String },
+    BlockInteract {
+        x: i32,
+        y: i32,
+        z: i32,
+    },
+    Chat {
+        content: String,
+    },
+    Attack {
+        target: String,
+    },
     /// 2×2 背包合成（无需工作台）：item 为目标物品 id（如 "oak_planks"），count 为期望数量。
-    Craft2x2 { item: String, count: u32 },
+    Craft2x2 {
+        item: String,
+        count: u32,
+    },
     /// 3×3 工作台合成。item 为目标物品 id，count 为期望数量。
     /// table_pos=Some 时使用该坐标的现有工作台；None 时 bot 自动放置+打开+关闭工作台（P1-4）。
     Craft3x3 {
@@ -232,21 +256,43 @@ pub enum BotCommand {
         table_pos: Option<(i32, i32, i32)>,
     },
     /// 采集：走到最近的指定方块（如 "oak_log" / "stone" / "coal_ore"）并挖掘，直到背包有 count 个。
-    Gather { item: String, count: u32 },
+    Gather {
+        item: String,
+        count: u32,
+    },
     /// 放置：把手持物品 item 放到世界坐标 (x,y,z) 旁（右键放置）。
-    Place { item: String, x: i32, y: i32, z: i32 },
+    Place {
+        item: String,
+        x: i32,
+        y: i32,
+        z: i32,
+    },
     /// 打开容器：打开世界坐标 (x,y,z) 处的容器（工作台/熔炉/箱子等）。
-    OpenContainer { x: i32, y: i32, z: i32 },
+    OpenContainer {
+        x: i32,
+        y: i32,
+        z: i32,
+    },
     /// 高层自动合成（木链）：采集→2×2→放置工作台→开→3×3，一键造木制品。
-    AutoCraft { item: String, count: u32 },
+    AutoCraft {
+        item: String,
+        count: u32,
+    },
     /// 附魔：在已打开的附魔台中，给 item 附魔（需背包有 item 与青金石 lapis_lazuli）。
     /// level 为 1/2/3，对应附魔台三个选项槽。
-    Enchant { item: String, level: u32 },
+    Enchant {
+        item: String,
+        level: u32,
+    },
     /// 村民交易：与最近的村民交易，选第 offer 个报价（0 起）。bot 自动打开村民。
-    Trade { offer: u32 },
+    Trade {
+        offer: u32,
+    },
     /// 实体右键交互（打开村民/动物/展示框等）：与最近的指定种类实体交互。
     /// kind 为实体种类关键词，如 "villager"。
-    InteractEntity { kind: String },
+    InteractEntity {
+        kind: String,
+    },
     /// 捡起附近掉落物：bot 走 4 个方向扫一圈，让物理引擎自然吸取掉落物。
     /// 无参数。挖矿/战斗后调用一次，避免"挖了 8 个石头但只捡到 3 个"。
     Pickup,
@@ -255,17 +301,41 @@ pub enum BotCommand {
     Defend,
     /// 装备背包中的指定物品到指定槽位。
     /// slot: "hand"/"helmet"/"chestplate"/"leggings"/"boots"
-    Equip { item: String, slot: String },
+    Equip {
+        item: String,
+        slot: String,
+    },
     /// 丢弃背包中的指定物品。count 为丢弃数量（0 表示全部）。
-    Discard { item: String, count: u32 },
+    Discard {
+        item: String,
+        count: u32,
+    },
     /// 消耗（吃/喝）背包中的指定物品。
-    Consume { item: String },
+    Consume {
+        item: String,
+    },
     /// 查看容器物品列表（打开→读→关闭）。
-    ChestView { x: i32, y: i32, z: i32 },
+    ChestView {
+        x: i32,
+        y: i32,
+        z: i32,
+    },
     /// 从容器取出 item（count 个）到 bot 背包。
-    ChestWithdraw { x: i32, y: i32, z: i32, item: String, count: u32 },
+    ChestWithdraw {
+        x: i32,
+        y: i32,
+        z: i32,
+        item: String,
+        count: u32,
+    },
     /// 把背包中的 item（count 个）存入容器。
-    ChestDeposit { x: i32, y: i32, z: i32, item: String, count: u32 },
+    ChestDeposit {
+        x: i32,
+        y: i32,
+        z: i32,
+        item: String,
+        count: u32,
+    },
 }
 
 /// 队列中的命令包装：携带结果回传通道（None 表示 fire-and-forget，如聊天指令）。
@@ -393,331 +463,433 @@ impl AzaleaBot {
         })
     }
 
-/// azalea handler：所有 bot 逻辑在此执行（fn 指针，不捕获外部变量）。
-/// 命令从 `state.cmd_queue` 取出执行，事件经 `state.evt_tx` 转发外部。
-async fn handle(bot: Client, event: Event, state: BotState) -> Client {
-    let cmd_queue = state.cmd_queue.clone();
-    let evt_tx = state.evt_tx.clone();
-    let lp = state.last_position.clone();
-    match event {
-        Event::Spawn => {
-            if let Ok(p) = bot.position() {
-                *lp.lock().unwrap() = Some(p);
-                let _ = evt_tx.send(BotEvent::Spawn { position: p });
+    /// azalea handler：所有 bot 逻辑在此执行（fn 指针，不捕获外部变量）。
+    /// 命令从 `state.cmd_queue` 取出执行，事件经 `state.evt_tx` 转发外部。
+    async fn handle(bot: Client, event: Event, state: BotState) -> Client {
+        let cmd_queue = state.cmd_queue.clone();
+        let evt_tx = state.evt_tx.clone();
+        let lp = state.last_position.clone();
+        match event {
+            Event::Spawn => {
+                if let Ok(p) = bot.position() {
+                    *lp.lock().unwrap() = Some(p);
+                    let _ = evt_tx.send(BotEvent::Spawn { position: p });
+                }
             }
-        }
-        Event::Chat(packet) => {
-            // M5 修复：用 content() 方法获取纯文本字符串，而非 Debug 格式化。
-            // 旧实现 format!("{:?}", p.content) 产出 "TextComponent { text: \"goto 10 64 10\", ... }"
-            // 导致 strip_prefix("goto ") 等聊天命令解析全部失效。
-            let content = packet.content();
-            // 聊天驱动的即时指令（便于实机调试 / 玩家直接指挥 bot）：
-            //   craft <物品> [数量]        2×2 背包合成
-            //   craft3 <物品> [数量]       3×3 工作台合成（需已开工作台）
-            //   smelt <产物> <燃料> [数量] 熔炼（需已开熔炉）
-            //   gather <方块> [数量]       走到最近该方块并挖掘（如 gather oak_log 4）
-            //   place <物品> <x> <y> <z>  把手持物品放到坐标旁（如 place crafting_table 10 64 10）
-            //   open <x> <y> <z>          打开该坐标的容器（工作台/熔炉）
-            //   autocraft <物品> [数量]   高层自动合成（木链，如 autocraft chest 1）
-            //   enchant <物品> [等级]     附魔（需已开附魔台且背包有 item 与青金石，如 enchant iron_sword 2）
-            //   goto <x> <y> <z> / mine <x> <y> <z> / minebelow / attack
-            {
-                let mut q = cmd_queue.lock().unwrap();
-                let mut push = |cmd: BotCommand| {
-                    q.push(QueuedCommand { cmd, result_tx: None });
-                };
-                if let Some(rest) = content.strip_prefix("autocraft ") {
-                    let mut parts = rest.split_whitespace();
-                    if let Some(item) = parts.next() {
-                        let count = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
-                        push(BotCommand::AutoCraft { item: item.to_string(), count });
-                    }
-                } else if let Some(rest) = content.strip_prefix("open ") {
-                    let c: Vec<i32> = rest.split_whitespace().filter_map(|s| s.parse().ok()).collect();
-                    if c.len() == 3 {
-                        push(BotCommand::OpenContainer { x: c[0], y: c[1], z: c[2] });
-                    }
-                } else if let Some(rest) = content.strip_prefix("place ") {
-                    let mut parts = rest.split_whitespace();
-                    if let Some(item) = parts.next() {
-                        let c: Vec<i32> = parts.filter_map(|s| s.parse().ok()).collect();
+            Event::Chat(packet) => {
+                // M5 修复：用 content() 方法获取纯文本字符串，而非 Debug 格式化。
+                // 旧实现 format!("{:?}", p.content) 产出 "TextComponent { text: \"goto 10 64 10\", ... }"
+                // 导致 strip_prefix("goto ") 等聊天命令解析全部失效。
+                let content = packet.content();
+                // 聊天驱动的即时指令（便于实机调试 / 玩家直接指挥 bot）：
+                //   craft <物品> [数量]        2×2 背包合成
+                //   craft3 <物品> [数量]       3×3 工作台合成（需已开工作台）
+                //   smelt <产物> <燃料> [数量] 熔炼（需已开熔炉）
+                //   gather <方块> [数量]       走到最近该方块并挖掘（如 gather oak_log 4）
+                //   place <物品> <x> <y> <z>  把手持物品放到坐标旁（如 place crafting_table 10 64 10）
+                //   open <x> <y> <z>          打开该坐标的容器（工作台/熔炉）
+                //   autocraft <物品> [数量]   高层自动合成（木链，如 autocraft chest 1）
+                //   enchant <物品> [等级]     附魔（需已开附魔台且背包有 item 与青金石，如 enchant iron_sword 2）
+                //   goto <x> <y> <z> / mine <x> <y> <z> / minebelow / attack
+                {
+                    let mut q = cmd_queue.lock().unwrap();
+                    let mut push = |cmd: BotCommand| {
+                        q.push(QueuedCommand {
+                            cmd,
+                            result_tx: None,
+                        });
+                    };
+                    if let Some(rest) = content.strip_prefix("autocraft ") {
+                        let mut parts = rest.split_whitespace();
+                        if let Some(item) = parts.next() {
+                            let count = parts
+                                .next()
+                                .and_then(|s| s.parse::<u32>().ok())
+                                .unwrap_or(1);
+                            push(BotCommand::AutoCraft {
+                                item: item.to_string(),
+                                count,
+                            });
+                        }
+                    } else if let Some(rest) = content.strip_prefix("open ") {
+                        let c: Vec<i32> = rest
+                            .split_whitespace()
+                            .filter_map(|s| s.parse().ok())
+                            .collect();
                         if c.len() == 3 {
-                            push(BotCommand::Place { item: item.to_string(), x: c[0], y: c[1], z: c[2] });
+                            push(BotCommand::OpenContainer {
+                                x: c[0],
+                                y: c[1],
+                                z: c[2],
+                            });
+                        }
+                    } else if let Some(rest) = content.strip_prefix("place ") {
+                        let mut parts = rest.split_whitespace();
+                        if let Some(item) = parts.next() {
+                            let c: Vec<i32> = parts.filter_map(|s| s.parse().ok()).collect();
+                            if c.len() == 3 {
+                                push(BotCommand::Place {
+                                    item: item.to_string(),
+                                    x: c[0],
+                                    y: c[1],
+                                    z: c[2],
+                                });
+                            }
+                        }
+                    } else if let Some(rest) = content.strip_prefix("gather ") {
+                        let mut parts = rest.split_whitespace();
+                        if let Some(item) = parts.next() {
+                            let count = parts
+                                .next()
+                                .and_then(|s| s.parse::<u32>().ok())
+                                .unwrap_or(1);
+                            push(BotCommand::Gather {
+                                item: item.to_string(),
+                                count,
+                            });
+                        }
+                    } else if let Some(rest) = content.strip_prefix("craft3 ") {
+                        let mut parts = rest.split_whitespace();
+                        if let Some(item) = parts.next() {
+                            let count = parts
+                                .next()
+                                .and_then(|s| s.parse::<u32>().ok())
+                                .unwrap_or(1);
+                            push(BotCommand::Craft3x3 {
+                                item: item.to_string(),
+                                count,
+                                table_pos: None,
+                            });
+                        }
+                    } else if let Some(rest) = content.strip_prefix("smelt ") {
+                        let mut parts = rest.split_whitespace();
+                        if let Some(output) = parts.next() {
+                            let fuel = parts.next().unwrap_or("coal").to_string();
+                            let count = parts
+                                .next()
+                                .and_then(|s| s.parse::<u32>().ok())
+                                .unwrap_or(1);
+                            push(BotCommand::Smelt {
+                                output: output.to_string(),
+                                fuel,
+                                count,
+                                table_pos: None,
+                            });
+                        }
+                    } else if let Some(rest) = content.strip_prefix("craft ") {
+                        let mut parts = rest.split_whitespace();
+                        if let Some(item) = parts.next() {
+                            let count = parts
+                                .next()
+                                .and_then(|s| s.parse::<u32>().ok())
+                                .unwrap_or(1);
+                            push(BotCommand::Craft2x2 {
+                                item: item.to_string(),
+                                count,
+                            });
+                        }
+                    } else if let Some(rest) = content.strip_prefix("goto ") {
+                        let c: Vec<i32> = rest
+                            .split_whitespace()
+                            .filter_map(|s| s.parse().ok())
+                            .collect();
+                        if c.len() == 3 {
+                            push(BotCommand::Goto {
+                                x: c[0],
+                                y: c[1],
+                                z: c[2],
+                            });
+                        }
+                    } else if let Some(rest) = content.strip_prefix("mine ") {
+                        let c: Vec<i32> = rest
+                            .split_whitespace()
+                            .filter_map(|s| s.parse().ok())
+                            .collect();
+                        if c.len() == 3 {
+                            push(BotCommand::Mine {
+                                x: c[0],
+                                y: c[1],
+                                z: c[2],
+                            });
+                        }
+                    } else if content == "minebelow" {
+                        push(BotCommand::MineBelow);
+                    } else if content == "attack" {
+                        push(BotCommand::Attack {
+                            target: "chat".into(),
+                        });
+                    } else if let Some(rest) = content.strip_prefix("enchant ") {
+                        let mut parts = rest.split_whitespace();
+                        if let Some(item) = parts.next() {
+                            let level = parts
+                                .next()
+                                .and_then(|s| s.parse::<u32>().ok())
+                                .unwrap_or(1);
+                            push(BotCommand::Enchant {
+                                item: item.to_string(),
+                                level,
+                            });
+                        }
+                    } else if let Some(rest) = content.strip_prefix("trade ") {
+                        if let Ok(offer) = rest.trim().parse::<u32>() {
+                            push(BotCommand::Trade { offer });
+                        }
+                    } else if let Some(rest) = content.strip_prefix("interact ") {
+                        let kind = rest.trim().to_string();
+                        if !kind.is_empty() {
+                            push(BotCommand::InteractEntity { kind });
                         }
                     }
-                } else if let Some(rest) = content.strip_prefix("gather ") {
-                    let mut parts = rest.split_whitespace();
-                    if let Some(item) = parts.next() {
-                        let count = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
-                        push(BotCommand::Gather { item: item.to_string(), count });
-                    }
-                } else if let Some(rest) = content.strip_prefix("craft3 ") {
-                    let mut parts = rest.split_whitespace();
-                    if let Some(item) = parts.next() {
-                        let count = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
-                        push(BotCommand::Craft3x3 { item: item.to_string(), count, table_pos: None });
-                    }
-                } else if let Some(rest) = content.strip_prefix("smelt ") {
-                    let mut parts = rest.split_whitespace();
-                    if let Some(output) = parts.next() {
-                        let fuel = parts.next().unwrap_or("coal").to_string();
-                        let count = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
-                        push(BotCommand::Smelt { output: output.to_string(), fuel, count, table_pos: None });
-                    }
-                } else if let Some(rest) = content.strip_prefix("craft ") {
-                    let mut parts = rest.split_whitespace();
-                    if let Some(item) = parts.next() {
-                        let count = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
-                        push(BotCommand::Craft2x2 { item: item.to_string(), count });
-                    }
-                } else if let Some(rest) = content.strip_prefix("goto ") {
-                    let c: Vec<i32> = rest.split_whitespace().filter_map(|s| s.parse().ok()).collect();
-                    if c.len() == 3 {
-                        push(BotCommand::Goto { x: c[0], y: c[1], z: c[2] });
-                    }
-                } else if let Some(rest) = content.strip_prefix("mine ") {
-                    let c: Vec<i32> = rest.split_whitespace().filter_map(|s| s.parse().ok()).collect();
-                    if c.len() == 3 {
-                        push(BotCommand::Mine { x: c[0], y: c[1], z: c[2] });
-                    }
-                } else if content == "minebelow" {
-                    push(BotCommand::MineBelow);
-                } else if content == "attack" {
-                    push(BotCommand::Attack { target: "chat".into() });
-                } else if let Some(rest) = content.strip_prefix("enchant ") {
-                    let mut parts = rest.split_whitespace();
-                    if let Some(item) = parts.next() {
-                        let level = parts.next().and_then(|s| s.parse::<u32>().ok()).unwrap_or(1);
-                        push(BotCommand::Enchant { item: item.to_string(), level });
-                    }
-                } else if let Some(rest) = content.strip_prefix("trade ") {
-                    if let Ok(offer) = rest.trim().parse::<u32>() {
-                        push(BotCommand::Trade { offer });
-                    }
-                } else if let Some(rest) = content.strip_prefix("interact ") {
-                    let kind = rest.trim().to_string();
-                    if !kind.is_empty() {
-                        push(BotCommand::InteractEntity { kind });
-                    }
                 }
+                let _ = evt_tx.send(BotEvent::Chat { content });
             }
-            let _ = evt_tx.send(BotEvent::Chat { content });
-        }
-        Event::Disconnect(reason) => {
-            let _ = evt_tx.send(BotEvent::Disconnect {
-                reason: format!("{reason:?}"),
-            });
-        }
-        Event::Tick => {
-            if let Ok(p) = bot.position() {
-                *lp.lock().unwrap() = Some(p);
+            Event::Disconnect(reason) => {
+                let _ = evt_tx.send(BotEvent::Disconnect {
+                    reason: format!("{reason:?}"),
+                });
             }
-            // 串行消费命令队列：每 tick 最多推进「一条」命令，等它完成才取下一条。
-            // ActionManager 管理单槽 pending + 按命令类型超时 + 抢占 + 快循环检测。
-            {
-                let tick_now = bot.ticks_connected() as u64;
-                // 推进队列：pending 空时从队列 pop 一条
-                if state.action_mgr.is_idle() {
-                    let next = {
-                        let mut q = cmd_queue.lock().unwrap();
-                        // FIFO：取最早入队的命令。Vec::pop 取最后元素是 LIFO，
-                        // 这里用 remove(0) 实现真 FIFO（队列长度通常 <5，O(n) 可忽略）。
-                        if q.is_empty() { None } else { Some(q.remove(0)) }
-                    };
-                    if let Some(qc) = next {
-                        state.action_mgr.occupy(qc, tick_now);
-                    }
+            Event::Tick => {
+                if let Ok(p) = bot.position() {
+                    *lp.lock().unwrap() = Some(p);
                 }
-                // 轮询非阻塞命令（Goto/Mine）完成状态 + 按命令类型超时
-            if let Some(qc) = state.action_mgr.peek_pending() {
-                    let done = match &qc.cmd {
-                        BotCommand::Mine { x, y, z } => {
-                            if let Ok(world) = bot.world() {
-                                let s = world.read().get_block_state(BlockPos::new(*x, *y, *z));
-                                let is_air = s.is_none() || s.map(|b| b.is_air()).unwrap_or(false);
-                                // P4 修复：start_mining 只在命令派发时调一次，但挖掘可能被
-                                // 重力/移动/伤害中断后不再恢复。这里每 20 tick 重新发起挖掘，
-                                // 确保方块还在就持续挖（对齐 MineBelow 的持续触发逻辑）。
-                                if !is_air && !bot.is_mining() && tick_now % 20 == 0 {
-                                    bot.start_mining(BlockPos::new(*x, *y, *z));
+                // 串行消费命令队列：每 tick 最多推进「一条」命令，等它完成才取下一条。
+                // ActionManager 管理单槽 pending + 按命令类型超时 + 抢占 + 快循环检测。
+                {
+                    let tick_now = bot.ticks_connected() as u64;
+                    // 推进队列：pending 空时从队列 pop 一条
+                    if state.action_mgr.is_idle() {
+                        let next = {
+                            let mut q = cmd_queue.lock().unwrap();
+                            // FIFO：取最早入队的命令。Vec::pop 取最后元素是 LIFO，
+                            // 这里用 remove(0) 实现真 FIFO（队列长度通常 <5，O(n) 可忽略）。
+                            if q.is_empty() {
+                                None
+                            } else {
+                                Some(q.remove(0))
+                            }
+                        };
+                        if let Some(qc) = next {
+                            state.action_mgr.occupy(qc, tick_now);
+                        }
+                    }
+                    // 轮询非阻塞命令（Goto/Mine）完成状态 + 按命令类型超时
+                    if let Some(qc) = state.action_mgr.peek_pending() {
+                        let done = match &qc.cmd {
+                            BotCommand::Mine { x, y, z } => {
+                                if let Ok(world) = bot.world() {
+                                    let s = world.read().get_block_state(BlockPos::new(*x, *y, *z));
+                                    let is_air =
+                                        s.is_none() || s.map(|b| b.is_air()).unwrap_or(false);
+                                    // P4 修复：start_mining 只在命令派发时调一次，但挖掘可能被
+                                    // 重力/移动/伤害中断后不再恢复。这里每 20 tick 重新发起挖掘，
+                                    // 确保方块还在就持续挖（对齐 MineBelow 的持续触发逻辑）。
+                                    if !is_air && !bot.is_mining() && tick_now % 20 == 0 {
+                                        bot.start_mining(BlockPos::new(*x, *y, *z));
+                                    }
+                                    is_air
+                                } else {
+                                    false
                                 }
-                                is_air
-                            } else {
-                                false
-                            }
-                        }
-                        BotCommand::Goto { x, y, z } => {
-                            if let Ok(p) = bot.position() {
-                                let d = ((p.x - *x as f64).powi(2)
-                                    + (p.y - *y as f64).powi(2)
-                                    + (p.z - *z as f64).powi(2))
-                                .sqrt();
-                                d < 1.5
-                            } else {
-                                false
-                            }
-                        }
-                        BotCommand::MineBelow => false,
-                        BotCommand::MineAbove => false,
-                        // 非轮询命令（Equip/Craft/Gather/Place/...）由下方执行块处理，
-                        // 这里不能标记 done=true——否则会在执行前就清空 pending，
-                        // 导致 do_equip/do_craft 等从未运行（bug 表现：equip 返回"命令完成"但主手没变）。
-                        _ => false,
-                    };
-                    // 按命令类型超时（取代原硬编码 60 tick）
-                    let timed_out_cmd = state.action_mgr.check_timeout(tick_now);
-                    let timed_out = timed_out_cmd.is_some();
-                    if done || timed_out {
-                        // 统一用 Mindcraft 风格 "Action output:\n..." 让 LLM 看到一致的反馈。
-                        let result_msg = match &qc.cmd {
-                            BotCommand::Goto { x, y, z } if done => {
-                                let (cx, cy, cz) = bot.position().ok()
-                                    .map(|p| (p.x, p.y, p.z))
-                                    .unwrap_or((0.0, 0.0, 0.0));
-                                let dist = ((cx - *x as f64).powi(2)
-                                    + (cy - *y as f64).powi(2)
-                                    + (cz - *z as f64).powi(2)).sqrt();
-                                format!("Action output:\nArrived at ({},{},{}). Distance traveled: {:.1}m. Current pos: ({:.0},{:.0},{:.0}).",
-                                    x, y, z, dist, cx, cy, cz)
                             }
                             BotCommand::Goto { x, y, z } => {
-                                format!("Action output:\ngoto ({},{},{}) 超时——可能路径被阻或目标不可达。建议改 goto 附近 3 格外空地脱困。", x, y, z)
+                                if let Ok(p) = bot.position() {
+                                    let d = ((p.x - *x as f64).powi(2)
+                                        + (p.y - *y as f64).powi(2)
+                                        + (p.z - *z as f64).powi(2))
+                                    .sqrt();
+                                    d < 1.5
+                                } else {
+                                    false
+                                }
                             }
-                            BotCommand::Mine { x, y, z } if done => {
-                                let (cx, cy, cz) = bot.position().ok()
-                                    .map(|p| (p.x, p.y, p.z))
-                                    .unwrap_or((0.0, 0.0, 0.0));
-                                format!("Action output:\nMined block at ({},{},{}). Block removed. Bot still at ({:.0},{:.0},{:.0}) — 挖完不会自动掉进洞，无需 goto 刚挖的位置。",
-                                    x, y, z, cx, cy, cz)
-                            }
-                            BotCommand::Mine { x, y, z } => {
-                                format!("Action output:\nmine ({},{},{}) 超时——可能方块太硬（需更高品质镐）或距离太远。建议 gather(item=..., count=...) 自动寻路挖掘。", x, y, z)
-                            }
-                            BotCommand::Gather { item, .. } => {
-                                // P3：gather 超时时，采集 future 仍在后台运行（无法取消），
-                                // 实际可能已经/即将完成。让 LLM 用 perceive 确认背包，
-                                // 而不是直接重调 gather（会重复采集）。
-                                format!("Action output:\ngather {item} 超时（ActionManager 120s 阈值）。\
-                                    采集可能仍在后台进行——下一步请先 perceive 检查背包 {item} 数量，\
-                                    若已满足需求就不要重调 gather；若确实不够，再 gather 补足差额。")
-                            }
-                            BotCommand::Craft3x3 { item, .. } => {
-                                format!("Action output:\ncraft_3x3 {item} 超时——可能工作台路径卡住或合成 UI 响应慢。\
-                                    建议 perceive 确认背包是否有 {item}，若无再重试。")
-                            }
-                            BotCommand::Smelt { output, .. } => {
-                                format!("Action output:\nsmelt {output} 超时——熔炼本质慢。\
-                                    建议 perceive 确认背包是否有 {output}，若无再重试。")
-                            }
-                            _ if done => "Action output:\n命令完成".to_string(),
-                            _ => "Action output:\n命令超时".to_string(),
+                            BotCommand::MineBelow => false,
+                            BotCommand::MineAbove => false,
+                            // 非轮询命令（Equip/Craft/Gather/Place/...）由下方执行块处理，
+                            // 这里不能标记 done=true——否则会在执行前就清空 pending，
+                            // 导致 do_equip/do_craft 等从未运行（bug 表现：equip 返回"命令完成"但主手没变）。
+                            _ => false,
                         };
-                        if let Some(tx) = &qc.result_tx {
-                            let _ = tx.send(result_msg);
+                        // 按命令类型超时（取代原硬编码 60 tick）
+                        let timed_out_cmd = state.action_mgr.check_timeout(tick_now);
+                        let timed_out = timed_out_cmd.is_some();
+                        if done || timed_out {
+                            // 统一用 Mindcraft 风格 "Action output:\n..." 让 LLM 看到一致的反馈。
+                            let result_msg = match &qc.cmd {
+                                BotCommand::Goto { x, y, z } if done => {
+                                    let (cx, cy, cz) = bot
+                                        .position()
+                                        .ok()
+                                        .map(|p| (p.x, p.y, p.z))
+                                        .unwrap_or((0.0, 0.0, 0.0));
+                                    let dist = ((cx - *x as f64).powi(2)
+                                        + (cy - *y as f64).powi(2)
+                                        + (cz - *z as f64).powi(2))
+                                    .sqrt();
+                                    format!(
+                                        "Action output:\nArrived at ({},{},{}). Distance traveled: {:.1}m. Current pos: ({:.0},{:.0},{:.0}).",
+                                        x, y, z, dist, cx, cy, cz
+                                    )
+                                }
+                                BotCommand::Goto { x, y, z } => {
+                                    format!(
+                                        "Action output:\ngoto ({},{},{}) 超时——可能路径被阻或目标不可达。建议改 goto 附近 3 格外空地脱困。",
+                                        x, y, z
+                                    )
+                                }
+                                BotCommand::Mine { x, y, z } if done => {
+                                    let (cx, cy, cz) = bot
+                                        .position()
+                                        .ok()
+                                        .map(|p| (p.x, p.y, p.z))
+                                        .unwrap_or((0.0, 0.0, 0.0));
+                                    format!(
+                                        "Action output:\nMined block at ({},{},{}). Block removed. Bot still at ({:.0},{:.0},{:.0}) — 挖完不会自动掉进洞，无需 goto 刚挖的位置。",
+                                        x, y, z, cx, cy, cz
+                                    )
+                                }
+                                BotCommand::Mine { x, y, z } => {
+                                    format!(
+                                        "Action output:\nmine ({},{},{}) 超时——可能方块太硬（需更高品质镐）或距离太远。建议 gather(item=..., count=...) 自动寻路挖掘。",
+                                        x, y, z
+                                    )
+                                }
+                                BotCommand::Gather { item, .. } => {
+                                    // P3：gather 超时时，采集 future 仍在后台运行（无法取消），
+                                    // 实际可能已经/即将完成。让 LLM 用 perceive 确认背包，
+                                    // 而不是直接重调 gather（会重复采集）。
+                                    format!(
+                                        "Action output:\ngather {item} 超时（ActionManager 120s 阈值）。\
+                                    采集可能仍在后台进行——下一步请先 perceive 检查背包 {item} 数量，\
+                                    若已满足需求就不要重调 gather；若确实不够，再 gather 补足差额。"
+                                    )
+                                }
+                                BotCommand::Craft3x3 { item, .. } => {
+                                    format!(
+                                        "Action output:\ncraft_3x3 {item} 超时——可能工作台路径卡住或合成 UI 响应慢。\
+                                    建议 perceive 确认背包是否有 {item}，若无再重试。"
+                                    )
+                                }
+                                BotCommand::Smelt { output, .. } => {
+                                    format!(
+                                        "Action output:\nsmelt {output} 超时——熔炼本质慢。\
+                                    建议 perceive 确认背包是否有 {output}，若无再重试。"
+                                    )
+                                }
+                                _ if done => "Action output:\n命令完成".to_string(),
+                                _ => "Action output:\n命令超时".to_string(),
+                            };
+                            if let Some(tx) = &qc.result_tx {
+                                let _ = tx.send(result_msg);
+                            }
+                            state.action_mgr.clear_pending();
                         }
-                        state.action_mgr.clear_pending();
+                    }
+                    // 取走 ActionManager 的快循环警告（若有则推到事件流供 Agent 注入）
+                    if let Some(nudge) = state.action_mgr.take_loop_nudge() {
+                        let _ = evt_tx.send(BotEvent::Chat { content: nudge });
                     }
                 }
-                // 取走 ActionManager 的快循环警告（若有则推到事件流供 Agent 注入）
-                if let Some(nudge) = state.action_mgr.take_loop_nudge() {
-                    let _ = evt_tx.send(BotEvent::Chat { content: nudge });
-                }
-            }
-            // 取当前要执行的命令：pending 里的命令每 tick 都（重）执行其 start，
-            // 非阻塞命令（Goto/Mine）重复 start 是幂等的（重设同一目标），由
-            // cmd_finished 轮询完成；MineBelow 在 arm 内清空中途槽。
-            // 异步命令（Craft/Gather 等）执行期间 busy=true，下一 tick 跳过避免重入。
-            let to_run: Option<(BotCommand, Option<std::sync::mpsc::Sender<String>>)> = {
-                if state.action_mgr.is_busy() {
-                    None
-                } else if let Some(qc) = state.action_mgr.peek_pending() {
-                    let is_polling = matches!(
-                        &qc.cmd,
-                        BotCommand::Goto { .. } | BotCommand::Mine { .. } | BotCommand::MineBelow | BotCommand::MineAbove
-                    );
-                    if !is_polling {
-                        state.action_mgr.set_busy(true);
+                // 取当前要执行的命令：pending 里的命令每 tick 都（重）执行其 start，
+                // 非阻塞命令（Goto/Mine）重复 start 是幂等的（重设同一目标），由
+                // cmd_finished 轮询完成；MineBelow 在 arm 内清空中途槽。
+                // 异步命令（Craft/Gather 等）执行期间 busy=true，下一 tick 跳过避免重入。
+                let to_run: Option<(BotCommand, Option<std::sync::mpsc::Sender<String>>)> = {
+                    if state.action_mgr.is_busy() {
+                        None
+                    } else if let Some(qc) = state.action_mgr.peek_pending() {
+                        let is_polling = matches!(
+                            &qc.cmd,
+                            BotCommand::Goto { .. }
+                                | BotCommand::Mine { .. }
+                                | BotCommand::MineBelow
+                                | BotCommand::MineAbove
+                        );
+                        if !is_polling {
+                            state.action_mgr.set_busy(true);
+                        }
+                        Some((qc.cmd.clone(), qc.result_tx.clone()))
+                    } else {
+                        None
                     }
-                    Some((qc.cmd.clone(), qc.result_tx.clone()))
-                } else {
-                    None
-                }
-            };
-            if let Some((cmd, result_tx)) = to_run {
-                match cmd {
-                    BotCommand::Goto { x, y, z } => {
-                        *state.mining_below.lock().unwrap() = false;
-                        // 距离限制：>32 格的 goto 拒绝执行，让 LLM 拆成多段。
-                        // 原因：azalea pathfinder 的 A* 在长距离/复杂地形上计算量大，
-                        // 每 tick 发 MovePlayerPos+PlayerInput 包会拖死 vanilla 服 TPS，
-                        // 导致同服真实玩家 WASD 输入丢失（服务器来不及处理）。
-                        if let Ok(p) = bot.position() {
-                            let dist = ((p.x - x as f64).powi(2)
-                                + (p.y - y as f64).powi(2)
-                                + (p.z - z as f64).powi(2)).sqrt();
-                            if dist > 32.0 {
-                                if let Some(tx) = &result_tx {
-                                    let _ = tx.send(format!(
+                };
+                if let Some((cmd, result_tx)) = to_run {
+                    match cmd {
+                        BotCommand::Goto { x, y, z } => {
+                            *state.mining_below.lock().unwrap() = false;
+                            // 距离限制：>32 格的 goto 拒绝执行，让 LLM 拆成多段。
+                            // 原因：azalea pathfinder 的 A* 在长距离/复杂地形上计算量大，
+                            // 每 tick 发 MovePlayerPos+PlayerInput 包会拖死 vanilla 服 TPS，
+                            // 导致同服真实玩家 WASD 输入丢失（服务器来不及处理）。
+                            if let Ok(p) = bot.position() {
+                                let dist = ((p.x - x as f64).powi(2)
+                                    + (p.y - y as f64).powi(2)
+                                    + (p.z - z as f64).powi(2))
+                                .sqrt();
+                                if dist > 32.0 {
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!(
                                         "Action output:\ngoto ({},{},{}) 距离 {:.0}m 过远（>32m），\
                                          请拆成多段：先 goto 中间点（距当前 16-24m），到达后再 goto 目标。",
                                         x, y, z, dist
                                     ));
+                                    }
+                                    state.action_mgr.clear_pending();
+                                    return bot;
                                 }
-                                state.action_mgr.clear_pending();
-                                return bot;
                             }
+                            bot.start_goto(BlockPosGoal(BlockPos::new(x, y, z)));
                         }
-                        bot.start_goto(BlockPosGoal(BlockPos::new(x, y, z)));
-                    }
-                    BotCommand::Mine { x, y, z } => {
-                        *state.mining_below.lock().unwrap() = false;
-                        // P5 修复：挖矿前自动装备最好的镐。否则 bot 拿面包挖石头
-                        // 既慢又不掉落物，且 LLM 不会主动 equip（挖矿工具隐含前提）。
-                        let _ = auto_equip_best_pickaxe(&bot).await;
-                        bot.start_mining(BlockPos::new(x, y, z));
-                    }
-                    BotCommand::MineBelow => {
-                        *state.mining_below.lock().unwrap() = true;
-                        // 同 Mine：下挖也要装备镐
-                        let _ = auto_equip_best_pickaxe(&bot).await;
-                        if let Ok(p) = bot.position() {
-                            let foot = BlockPos::new(
-                                p.x.floor() as i32,
-                                (p.y - 1.0).floor() as i32,
-                                p.z.floor() as i32,
-                            );
-                            bot.start_mining(foot);
+                        BotCommand::Mine { x, y, z } => {
+                            *state.mining_below.lock().unwrap() = false;
+                            // P5 修复：挖矿前自动装备最好的镐。否则 bot 拿面包挖石头
+                            // 既慢又不掉落物，且 LLM 不会主动 equip（挖矿工具隐含前提）。
+                            let _ = auto_equip_best_pickaxe(&bot).await;
+                            bot.start_mining(BlockPos::new(x, y, z));
                         }
-                        if let Some(tx) = &result_tx {
-                            let _ = tx.send("已开始向下挖掘".to_string());
+                        BotCommand::MineBelow => {
+                            *state.mining_below.lock().unwrap() = true;
+                            // 同 Mine：下挖也要装备镐
+                            let _ = auto_equip_best_pickaxe(&bot).await;
+                            if let Ok(p) = bot.position() {
+                                let foot = BlockPos::new(
+                                    p.x.floor() as i32,
+                                    (p.y - 1.0).floor() as i32,
+                                    p.z.floor() as i32,
+                                );
+                                bot.start_mining(foot);
+                            }
+                            if let Some(tx) = &result_tx {
+                                let _ = tx.send("已开始向下挖掘".to_string());
+                            }
+                            state.action_mgr.clear_pending();
                         }
-                        state.action_mgr.clear_pending();
-                    }
-                    BotCommand::MineAbove => {
-                        // P5 新增：向上挖脱困。从 bot 头顶逐格挖到空气或达到 64 格上限。
-                        // 持续触发模式（同 MineBelow）：mining_above 标志位驱动后续 tick 重复发起。
-                        *state.mining_below.lock().unwrap() = false;
-                        // P5 修复：原代码无脑要求"必须有镐"，但 dirt/grass/sand/gravel/sandstone
-                        // 等软方块徒手就能挖。只有挖 stone/deepslate/ores 等硬方块才必须用镐。
-                        // 现在改为：先看头顶方块类型，软方块直接挖；硬方块才检查镐。
-                        let head_pos = bot.position().ok().map(|p| BlockPos::new(
-                            p.x.floor() as i32,
-                            (p.y + 1.0).floor() as i32,
-                            p.z.floor() as i32,
-                        ));
-                        let head_is_hard = head_pos
-                            .and_then(|pos| {
-                                let world = bot.world().ok()?;
-                                let world = world.read();
-                                let state = world.get_block_state(pos)?;
-                                Some(is_hard_block(state))
-                            })
-                            .unwrap_or(true); // 不确定时按硬方块处理
-                        if head_is_hard {
-                            let has_pick = has_any_pickaxe_in_inventory(&bot).await;
-                            if !has_pick {
-                                if let Some(tx) = &result_tx {
-                                    let _ = tx.send(
+                        BotCommand::MineAbove => {
+                            // P5 新增：向上挖脱困。从 bot 头顶逐格挖到空气或达到 64 格上限。
+                            // 持续触发模式（同 MineBelow）：mining_above 标志位驱动后续 tick 重复发起。
+                            *state.mining_below.lock().unwrap() = false;
+                            // P5 修复：原代码无脑要求"必须有镐"，但 dirt/grass/sand/gravel/sandstone
+                            // 等软方块徒手就能挖。只有挖 stone/deepslate/ores 等硬方块才必须用镐。
+                            // 现在改为：先看头顶方块类型，软方块直接挖；硬方块才检查镐。
+                            let head_pos = bot.position().ok().map(|p| {
+                                BlockPos::new(
+                                    p.x.floor() as i32,
+                                    (p.y + 1.0).floor() as i32,
+                                    p.z.floor() as i32,
+                                )
+                            });
+                            let head_is_hard = head_pos
+                                .and_then(|pos| {
+                                    let world = bot.world().ok()?;
+                                    let world = world.read();
+                                    let state = world.get_block_state(pos)?;
+                                    Some(is_hard_block(state))
+                                })
+                                .unwrap_or(true); // 不确定时按硬方块处理
+                            if head_is_hard {
+                                let has_pick = has_any_pickaxe_in_inventory(&bot).await;
+                                if !has_pick {
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(
                                         "Action output:\n❌ mine_above 失败：头顶是硬方块（石头/深板岩/矿石等）且背包里没有镐！\
                                          徒手挖硬方块极慢（~8秒/格）且不掉落。\
                                          建议：(1) chat(\"/tp @s ~ 70 ~\") 用命令传送到地表（需 cheats）；\
@@ -725,38 +897,42 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                                          (3) 先 craft 一个 wooden_pickaxe 再 mine_above。"
                                             .to_string(),
                                     );
+                                    }
+                                    *state.mining_above.lock().unwrap() = false;
+                                    state.action_mgr.clear_pending();
+                                    return bot;
                                 }
-                                *state.mining_above.lock().unwrap() = false;
-                                state.action_mgr.clear_pending();
-                                return bot;
+                            }
+                            *state.mining_above.lock().unwrap() = true;
+                            let _ = auto_equip_best_pickaxe(&bot).await;
+                            if let Some(pos) = head_pos {
+                                bot.start_mining(pos);
+                            }
+                            if let Some(tx) = &result_tx {
+                                let note = if head_is_hard {
+                                    ""
+                                } else {
+                                    "（软方块，徒手可挖）"
+                                };
+                                let _ = tx.send(format!("已开始向上挖掘{note}"));
+                            }
+                            state.action_mgr.clear_pending();
+                        }
+                        BotCommand::BlockInteract { x, y, z } => {
+                            *state.mining_below.lock().unwrap() = false;
+                            bot.block_interact(BlockPos::new(x, y, z));
+                            if let Some(tx) = &result_tx {
+                                let _ = tx.send(format!("已交互 ({},{},{})", x, y, z));
                             }
                         }
-                        *state.mining_above.lock().unwrap() = true;
-                        let _ = auto_equip_best_pickaxe(&bot).await;
-                        if let Some(pos) = head_pos {
-                            bot.start_mining(pos);
+                        BotCommand::Chat { content } => {
+                            bot.chat(&content);
+                            if let Some(tx) = &result_tx {
+                                let _ = tx.send(format!("Action output:\nSent chat: {content}"));
+                            }
                         }
-                        if let Some(tx) = &result_tx {
-                            let note = if head_is_hard { "" } else { "（软方块，徒手可挖）" };
-                            let _ = tx.send(format!("已开始向上挖掘{note}"));
-                        }
-                        state.action_mgr.clear_pending();
-                    }
-                    BotCommand::BlockInteract { x, y, z } => {
-                        *state.mining_below.lock().unwrap() = false;
-                        bot.block_interact(BlockPos::new(x, y, z));
-                        if let Some(tx) = &result_tx {
-                            let _ = tx.send(format!("已交互 ({},{},{})", x, y, z));
-                        }
-                    }
-                    BotCommand::Chat { content } => {
-                        bot.chat(&content);
-                        if let Some(tx) = &result_tx {
-                            let _ = tx.send(format!("Action output:\nSent chat: {content}"));
-                        }
-                    }
-                    BotCommand::Attack { target: _target } => {
-                        if let Ok(entities) =
+                        BotCommand::Attack { target: _target } => {
+                            if let Ok(entities) =
                             bot.nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>()
                         {
                             let self_id = bot.entity().id();
@@ -794,664 +970,906 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                             if let Some(tx) = &result_tx { let _ = tx.send(msg.clone()); }
                             let _ = evt_tx.send(BotEvent::Chat { content: msg });
                         }
-                    }
-                    BotCommand::Craft2x2 { item, count } => {
-                        match crate::azalea::craft::do_craft_2x2(&bot, &item, count).await {
-                            Ok(msg) => {
-                                let chat = format!("[合成] {msg}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nSuccessfully crafted {item}, you now have it. ({msg})")); }
+                        }
+                        BotCommand::Craft2x2 { item, count } => {
+                            match crate::azalea::craft::do_craft_2x2(&bot, &item, count).await {
+                                Ok(msg) => {
+                                    let chat = format!("[合成] {msg}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!("Action output:\nSuccessfully crafted {item}, you now have it. ({msg})"));
+                                    }
+                                }
+                                Err(e) => {
+                                    let chat = format!("[合成失败] {e}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!(
+                                            "Action output:\nFailed to craft {item}: {e}"
+                                        ));
+                                    }
+                                }
                             }
-                            Err(e) => {
-                                let chat = format!("[合成失败] {e}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nFailed to craft {item}: {e}")); }
+                        }
+                        BotCommand::Craft3x3 {
+                            item,
+                            count,
+                            table_pos,
+                        } => {
+                            let hint = table_pos.map(|(x, y, z)| BlockPos::new(x, y, z));
+                            // P1-4：自动放收桌流程（确保桌开 → 合成 → 关桌）
+                            let table_open = crate::azalea::table_flow::ensure_table_open(
+                                &bot,
+                                "crafting_table",
+                                hint,
+                            )
+                            .await;
+                            let result = match table_open {
+                                Ok(tp) => {
+                                    let r = crate::azalea::craft::do_craft_3x3(
+                                        &bot,
+                                        &item,
+                                        count,
+                                        Some(tp),
+                                    )
+                                    .await;
+                                    let _ =
+                                        crate::azalea::table_flow::close_container_if_open(&bot);
+                                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                                    r.map(|msg| {
+                                        format!(
+                                            "{msg}\n(桌位: ({},{},{}), 已自动关闭)",
+                                            tp.x, tp.y, tp.z
+                                        )
+                                    })
+                                }
+                                Err(e) => Err(e),
+                            };
+                            match result {
+                                Ok(msg) => {
+                                    let chat = format!("[合成] {msg}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!("Action output:\nSuccessfully crafted {item}, you now have it. ({msg})"));
+                                    }
+                                }
+                                Err(e) => {
+                                    let chat = format!("[合成失败] {e}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!(
+                                            "Action output:\nFailed to craft {item}: {e}"
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                        BotCommand::Smelt {
+                            output,
+                            fuel,
+                            count,
+                            table_pos,
+                        } => {
+                            let hint = table_pos.map(|(x, y, z)| BlockPos::new(x, y, z));
+                            // P1-4：自动放收炉流程（确保炉开 → 熔炼 → 关炉）
+                            let table_open =
+                                crate::azalea::table_flow::ensure_table_open(&bot, "furnace", hint)
+                                    .await;
+                            let result = match table_open {
+                                Ok(tp) => {
+                                    let r =
+                                        crate::azalea::craft::do_smelt(&bot, &output, &fuel, count)
+                                            .await;
+                                    let _ =
+                                        crate::azalea::table_flow::close_container_if_open(&bot);
+                                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                                    r.map(|msg| {
+                                        format!(
+                                            "{msg}\n(炉位: ({},{},{}), 已自动关闭)",
+                                            tp.x, tp.y, tp.z
+                                        )
+                                    })
+                                }
+                                Err(e) => Err(e),
+                            };
+                            match result {
+                                Ok(msg) => {
+                                    let chat = format!("[熔炼] {msg}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!("Action output:\nSuccessfully smelted {output}, you now have it. ({msg})"));
+                                    }
+                                }
+                                Err(e) => {
+                                    let chat = format!("[熔炼失败] {e}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!(
+                                            "Action output:\nFailed to smelt {output}: {e}"
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                        BotCommand::Gather { item, count } => {
+                            // 用 smart_actions::collect_block_smart 替代 gather::do_gather：
+                            // 支持别名展开（"oak_log" 匹配 9 种原木变体），多轮渐扩半径扫描。
+                            match crate::azalea::smart_actions::collect_block_smart(
+                                &bot, &item, count,
+                            )
+                            .await
+                            {
+                                Ok(msg) => {
+                                    let chat = format!("[采集] {msg}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!(
+                                            "Action output:\nSuccessfully gathered {item}, {msg}"
+                                        ));
+                                    }
+                                }
+                                Err(e) => {
+                                    let chat = format!("[采集失败] {e}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!(
+                                            "Action output:\nFailed to gather {item}: {e}"
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                        BotCommand::Place { item, x, y, z } => {
+                            match crate::azalea::place::do_place(
+                                &bot,
+                                &item,
+                                BlockPos::new(x, y, z),
+                            )
+                            .await
+                            {
+                                Ok(msg) => {
+                                    let chat = format!("[放置] {msg}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    // P9 修复（2026-07-26）：do_place 返回的 msg 已包含实际放置坐标
+                                    // （可能因自动重定位与 LLM 给的 x,y,z 不同）。原代码在外面包一层
+                                    // "Placed {item} at ({x},{y},{z})" 用的是 LLM 原始坐标，导致 LLM
+                                    // 记住错误坐标 → 后续 open(原始坐标) 必然失败。
+                                    // 现在直接透传 msg，让 LLM 看到真实放置坐标。
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(msg);
+                                    }
+                                }
+                                Err(e) => {
+                                    let chat = format!("[放置失败] {e}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!("Action output:\nFailed to place {item} at ({},{},{}): {e}", x, y, z));
+                                    }
+                                }
+                            }
+                        }
+                        BotCommand::OpenContainer { x, y, z } => {
+                            match crate::azalea::place::do_open_container(
+                                &bot,
+                                BlockPos::new(x, y, z),
+                            )
+                            .await
+                            {
+                                Ok(msg) => {
+                                    let chat = format!("[开容器] {msg}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!("Action output:\nOpened container at ({},{},{}). ({msg})", x, y, z));
+                                    }
+                                }
+                                Err(e) => {
+                                    let chat = format!("[开容器失败] {e}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!("Action output:\nFailed to open container at ({},{},{}): {e}", x, y, z));
+                                    }
+                                }
+                            }
+                        }
+                        BotCommand::AutoCraft { item, count } => {
+                            match crate::azalea::auto_craft::do_auto_craft(&bot, &item, count).await
+                            {
+                                Ok(msg) => {
+                                    let chat = format!("[自动合成] {msg}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!(
+                                            "Action output:\nAuto-crafted {item}. ({msg})"
+                                        ));
+                                    }
+                                }
+                                Err(e) => {
+                                    let chat = format!("[自动合成失败] {e}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!(
+                                            "Action output:\nFailed to auto-craft {item}: {e}"
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                        BotCommand::Enchant { item, level } => {
+                            match crate::azalea::craft::do_enchant(&bot, &item, level).await {
+                                Ok(msg) => {
+                                    let chat = format!("[附魔] {msg}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!("Action output:\nEnchanted {item} at level {level}. ({msg})"));
+                                    }
+                                }
+                                Err(e) => {
+                                    let chat = format!("[附魔失败] {e}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!(
+                                            "Action output:\nFailed to enchant {item}: {e}"
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                        BotCommand::Trade { offer } => {
+                            let ext = bot
+                                .ecs
+                                .read()
+                                .resource::<crate::azalea::ext_state::BotExtResource>()
+                                .0
+                                .clone();
+                            match crate::azalea::trade::do_trade(&bot, &ext, offer).await {
+                                Ok(msg) => {
+                                    let chat = format!("[交易] {msg}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!(
+                                            "Action output:\nTrade offer {offer} completed. ({msg})"
+                                        ));
+                                    }
+                                }
+                                Err(e) => {
+                                    let chat = format!("[交易失败] {e}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!(
+                                            "Action output:\nFailed to trade offer {offer}: {e}"
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                        BotCommand::InteractEntity { kind } => {
+                            let target = match kind.to_ascii_lowercase().as_str() {
+                                "villager" => crate::azalea::trade::find_nearest_villager(&bot)
+                                    .ok_or_else(|| "附近没有村民".to_string()),
+                                other => {
+                                    Err(format!("暂不支持的实体种类 {other}（目前仅 villager）"))
+                                }
+                            };
+                            match target {
+                                Ok(e) => {
+                                    bot.entity_interact(e);
+                                    let chat = format!("[交互] 已右键 {kind}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!(
+                                            "Action output:\nInteracted with {kind}."
+                                        ));
+                                    }
+                                }
+                                Err(e) => {
+                                    let chat = format!("[交互失败] {e}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!(
+                                            "Action output:\nFailed to interact with {kind}: {e}"
+                                        ));
+                                    }
+                                }
+                            }
+                        }
+                        BotCommand::Pickup => {
+                            match crate::azalea::smart_actions::pickup_nearby_items(&bot).await {
+                                Ok(msg) => {
+                                    let chat = format!("[捡物] {msg}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!("Action output:\n{msg}"));
+                                    }
+                                }
+                                Err(e) => {
+                                    if let Some(tx) = &result_tx {
+                                        let _ =
+                                            tx.send(format!("Action output:\nPickup failed: {e}"));
+                                    }
+                                }
+                            }
+                        }
+                        BotCommand::Defend => {
+                            match crate::azalea::smart_actions::defend_self(&bot).await {
+                                Ok(msg) => {
+                                    let chat = format!("[防御] {msg}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!("Action output:\n{msg}"));
+                                    }
+                                }
+                                Err(e) => {
+                                    if let Some(tx) = &result_tx {
+                                        let _ =
+                                            tx.send(format!("Action output:\nDefend failed: {e}"));
+                                    }
+                                }
+                            }
+                        }
+                        BotCommand::Equip { item, slot } => {
+                            let msg = do_equip(&bot, &item, &slot).await;
+                            if let Some(tx) = &result_tx {
+                                let _ = tx.send(format!("Action output:\n{msg}"));
+                            }
+                            let _ = evt_tx.send(BotEvent::Chat {
+                                content: format!("[装备] {msg}"),
+                            });
+                        }
+                        BotCommand::Discard { item, count } => {
+                            let msg = do_discard(&bot, &item, count).await;
+                            if let Some(tx) = &result_tx {
+                                let _ = tx.send(format!("Action output:\n{msg}"));
+                            }
+                            let _ = evt_tx.send(BotEvent::Chat {
+                                content: format!("[丢弃] {msg}"),
+                            });
+                        }
+                        BotCommand::Consume { item } => {
+                            let msg = do_consume(&bot, &item).await;
+                            if let Some(tx) = &result_tx {
+                                let _ = tx.send(format!("Action output:\n{msg}"));
+                            }
+                            let _ = evt_tx.send(BotEvent::Chat {
+                                content: format!("[消耗] {msg}"),
+                            });
+                        }
+                        BotCommand::ChestView { x, y, z } => {
+                            match crate::azalea::chest::do_chest_view(&bot, BlockPos::new(x, y, z))
+                                .await
+                            {
+                                Ok(msg) => {
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!("Action output:\n{msg}"));
+                                    }
+                                    let _ = evt_tx.send(BotEvent::Chat {
+                                        content: format!("[查看容器] {msg}"),
+                                    });
+                                }
+                                Err(e) => {
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!(
+                                            "Action output:\nFailed to view chest: {e}"
+                                        ));
+                                    }
+                                    let _ = evt_tx.send(BotEvent::Chat {
+                                        content: format!("[查看容器失败] {e}"),
+                                    });
+                                }
+                            }
+                        }
+                        BotCommand::ChestWithdraw {
+                            x,
+                            y,
+                            z,
+                            item,
+                            count,
+                        } => {
+                            match crate::azalea::chest::do_chest_withdraw(
+                                &bot,
+                                BlockPos::new(x, y, z),
+                                &item,
+                                count,
+                            )
+                            .await
+                            {
+                                Ok(msg) => {
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!("Action output:\n{msg}"));
+                                    }
+                                    let _ = evt_tx.send(BotEvent::Chat {
+                                        content: format!("[取出] {msg}"),
+                                    });
+                                }
+                                Err(e) => {
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!(
+                                            "Action output:\nFailed to withdraw: {e}"
+                                        ));
+                                    }
+                                    let _ = evt_tx.send(BotEvent::Chat {
+                                        content: format!("[取出失败] {e}"),
+                                    });
+                                }
+                            }
+                        }
+                        BotCommand::ChestDeposit {
+                            x,
+                            y,
+                            z,
+                            item,
+                            count,
+                        } => {
+                            match crate::azalea::chest::do_chest_deposit(
+                                &bot,
+                                BlockPos::new(x, y, z),
+                                &item,
+                                count,
+                            )
+                            .await
+                            {
+                                Ok(msg) => {
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!("Action output:\n{msg}"));
+                                    }
+                                    let _ = evt_tx.send(BotEvent::Chat {
+                                        content: format!("[存入] {msg}"),
+                                    });
+                                }
+                                Err(e) => {
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!(
+                                            "Action output:\nFailed to deposit: {e}"
+                                        ));
+                                    }
+                                    let _ = evt_tx.send(BotEvent::Chat {
+                                        content: format!("[存入失败] {e}"),
+                                    });
+                                }
                             }
                         }
                     }
-                    BotCommand::Craft3x3 { item, count, table_pos } => {
-                        let hint = table_pos.map(|(x, y, z)| BlockPos::new(x, y, z));
-                        // P1-4：自动放收桌流程（确保桌开 → 合成 → 关桌）
-                        let table_open = crate::azalea::table_flow::ensure_table_open(
-                            &bot,
-                            "crafting_table",
-                            hint,
-                        )
-                        .await;
-                        let result = match table_open {
-                            Ok(tp) => {
-                                let r = crate::azalea::craft::do_craft_3x3(&bot, &item, count, Some(tp)).await;
-                                let _ = crate::azalea::table_flow::close_container_if_open(&bot);
-                                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                                r.map(|msg| format!(
-                                    "{msg}\n(桌位: ({},{},{}), 已自动关闭)",
-                                    tp.x, tp.y, tp.z
-                                ))
-                            }
-                            Err(e) => Err(e),
-                        };
-                        match result {
-                            Ok(msg) => {
-                                let chat = format!("[合成] {msg}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nSuccessfully crafted {item}, you now have it. ({msg})")); }
-                            }
-                            Err(e) => {
-                                let chat = format!("[合成失败] {e}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nFailed to craft {item}: {e}")); }
-                            }
-                        }
-                    }
-                    BotCommand::Smelt { output, fuel, count, table_pos } => {
-                        let hint = table_pos.map(|(x, y, z)| BlockPos::new(x, y, z));
-                        // P1-4：自动放收炉流程（确保炉开 → 熔炼 → 关炉）
-                        let table_open = crate::azalea::table_flow::ensure_table_open(
-                            &bot,
-                            "furnace",
-                            hint,
-                        )
-                        .await;
-                        let result = match table_open {
-                            Ok(tp) => {
-                                let r = crate::azalea::craft::do_smelt(&bot, &output, &fuel, count).await;
-                                let _ = crate::azalea::table_flow::close_container_if_open(&bot);
-                                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
-                                r.map(|msg| format!(
-                                    "{msg}\n(炉位: ({},{},{}), 已自动关闭)",
-                                    tp.x, tp.y, tp.z
-                                ))
-                            }
-                            Err(e) => Err(e),
-                        };
-                        match result {
-                            Ok(msg) => {
-                                let chat = format!("[熔炼] {msg}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nSuccessfully smelted {output}, you now have it. ({msg})")); }
-                            }
-                            Err(e) => {
-                                let chat = format!("[熔炼失败] {e}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nFailed to smelt {output}: {e}")); }
-                            }
-                        }
-                    }
-                    BotCommand::Gather { item, count } => {
-                        // 用 smart_actions::collect_block_smart 替代 gather::do_gather：
-                        // 支持别名展开（"oak_log" 匹配 9 种原木变体），多轮渐扩半径扫描。
-                        match crate::azalea::smart_actions::collect_block_smart(&bot, &item, count).await {
-                            Ok(msg) => {
-                                let chat = format!("[采集] {msg}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nSuccessfully gathered {item}, {msg}")); }
-                            }
-                            Err(e) => {
-                                let chat = format!("[采集失败] {e}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nFailed to gather {item}: {e}")); }
-                            }
-                        }
-                    }
-                    BotCommand::Place { item, x, y, z } => {
-                        match crate::azalea::place::do_place(&bot, &item, BlockPos::new(x, y, z)).await {
-                            Ok(msg) => {
-                                let chat = format!("[放置] {msg}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
-                                // P9 修复（2026-07-26）：do_place 返回的 msg 已包含实际放置坐标
-                                // （可能因自动重定位与 LLM 给的 x,y,z 不同）。原代码在外面包一层
-                                // "Placed {item} at ({x},{y},{z})" 用的是 LLM 原始坐标，导致 LLM
-                                // 记住错误坐标 → 后续 open(原始坐标) 必然失败。
-                                // 现在直接透传 msg，让 LLM 看到真实放置坐标。
-                                if let Some(tx) = &result_tx { let _ = tx.send(msg); }
-                            }
-                            Err(e) => {
-                                let chat = format!("[放置失败] {e}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nFailed to place {item} at ({},{},{}): {e}", x, y, z)); }
-                            }
-                        }
-                    }
-                    BotCommand::OpenContainer { x, y, z } => {
-                        match crate::azalea::place::do_open_container(&bot, BlockPos::new(x, y, z)).await {
-                            Ok(msg) => {
-                                let chat = format!("[开容器] {msg}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nOpened container at ({},{},{}). ({msg})", x, y, z)); }
-                            }
-                            Err(e) => {
-                                let chat = format!("[开容器失败] {e}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nFailed to open container at ({},{},{}): {e}", x, y, z)); }
-                            }
-                        }
-                    }
-                    BotCommand::AutoCraft { item, count } => {
-                        match crate::azalea::auto_craft::do_auto_craft(&bot, &item, count).await {
-                            Ok(msg) => {
-                                let chat = format!("[自动合成] {msg}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nAuto-crafted {item}. ({msg})")); }
-                            }
-                            Err(e) => {
-                                let chat = format!("[自动合成失败] {e}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nFailed to auto-craft {item}: {e}")); }
-                            }
-                        }
-                    }
-                    BotCommand::Enchant { item, level } => {
-                        match crate::azalea::craft::do_enchant(&bot, &item, level).await {
-                            Ok(msg) => {
-                                let chat = format!("[附魔] {msg}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nEnchanted {item} at level {level}. ({msg})")); }
-                            }
-                            Err(e) => {
-                                let chat = format!("[附魔失败] {e}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nFailed to enchant {item}: {e}")); }
-                            }
-                        }
-                    }
-                    BotCommand::Trade { offer } => {
-                        let ext = bot.ecs.read().resource::<crate::azalea::ext_state::BotExtResource>().0.clone();
-                        match crate::azalea::trade::do_trade(&bot, &ext, offer).await {
-                            Ok(msg) => {
-                                let chat = format!("[交易] {msg}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nTrade offer {offer} completed. ({msg})")); }
-                            }
-                            Err(e) => {
-                                let chat = format!("[交易失败] {e}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nFailed to trade offer {offer}: {e}")); }
-                            }
-                        }
-                    }
-                    BotCommand::InteractEntity { kind } => {
-                        let target = match kind.to_ascii_lowercase().as_str() {
-                            "villager" => {
-                                crate::azalea::trade::find_nearest_villager(&bot)
-                                    .ok_or_else(|| "附近没有村民".to_string())
-                            }
-                            other => Err(format!("暂不支持的实体种类 {other}（目前仅 villager）")),
-                        };
-                        match target {
-                            Ok(e) => {
-                                bot.entity_interact(e);
-                                let chat = format!("[交互] 已右键 {kind}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nInteracted with {kind}.")); }
-                            }
-                            Err(e) => {
-                                let chat = format!("[交互失败] {e}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nFailed to interact with {kind}: {e}")); }
-                            }
-                        }
-                    }
-                    BotCommand::Pickup => {
-                        match crate::azalea::smart_actions::pickup_nearby_items(&bot).await {
-                            Ok(msg) => {
-                                let chat = format!("[捡物] {msg}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\n{msg}")); }
-                            }
-                            Err(e) => {
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nPickup failed: {e}")); }
-                            }
-                        }
-                    }
-                    BotCommand::Defend => {
-                        match crate::azalea::smart_actions::defend_self(&bot).await {
-                            Ok(msg) => {
-                                let chat = format!("[防御] {msg}");
-                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\n{msg}")); }
-                            }
-                            Err(e) => {
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nDefend failed: {e}")); }
-                            }
-                        }
-                    }
-                    BotCommand::Equip { item, slot } => {
-                        let msg = do_equip(&bot, &item, &slot).await;
-                        if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\n{msg}")); }
-                        let _ = evt_tx.send(BotEvent::Chat { content: format!("[装备] {msg}") });
-                    }
-                    BotCommand::Discard { item, count } => {
-                        let msg = do_discard(&bot, &item, count).await;
-                        if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\n{msg}")); }
-                        let _ = evt_tx.send(BotEvent::Chat { content: format!("[丢弃] {msg}") });
-                    }
-                    BotCommand::Consume { item } => {
-                        let msg = do_consume(&bot, &item).await;
-                        if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\n{msg}")); }
-                        let _ = evt_tx.send(BotEvent::Chat { content: format!("[消耗] {msg}") });
-                    }
-                    BotCommand::ChestView { x, y, z } => {
-                        match crate::azalea::chest::do_chest_view(&bot, BlockPos::new(x, y, z)).await {
-                            Ok(msg) => {
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\n{msg}")); }
-                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[查看容器] {msg}") });
-                            }
-                            Err(e) => {
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nFailed to view chest: {e}")); }
-                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[查看容器失败] {e}") });
-                            }
-                        }
-                    }
-                    BotCommand::ChestWithdraw { x, y, z, item, count } => {
-                        match crate::azalea::chest::do_chest_withdraw(&bot, BlockPos::new(x, y, z), &item, count).await {
-                            Ok(msg) => {
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\n{msg}")); }
-                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[取出] {msg}") });
-                            }
-                            Err(e) => {
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nFailed to withdraw: {e}")); }
-                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[取出失败] {e}") });
-                            }
-                        }
-                    }
-                    BotCommand::ChestDeposit { x, y, z, item, count } => {
-                        match crate::azalea::chest::do_chest_deposit(&bot, BlockPos::new(x, y, z), &item, count).await {
-                            Ok(msg) => {
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\n{msg}")); }
-                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[存入] {msg}") });
-                            }
-                            Err(e) => {
-                                if let Some(tx) = &result_tx { let _ = tx.send(format!("Action output:\nFailed to deposit: {e}")); }
-                                let _ = evt_tx.send(BotEvent::Chat { content: format!("[存入失败] {e}") });
+                    // 非轮询命令（异步/即时）执行完即清空中途槽与 busy，让队列推进下一条。
+                    {
+                        if let Some(qc) = state.action_mgr.peek_pending() {
+                            if !matches!(
+                                &qc.cmd,
+                                BotCommand::Goto { .. }
+                                    | BotCommand::Mine { .. }
+                                    | BotCommand::MineBelow
+                                    | BotCommand::MineAbove
+                            ) {
+                                state.action_mgr.clear_pending();
                             }
                         }
                     }
                 }
-                // 非轮询命令（异步/即时）执行完即清空中途槽与 busy，让队列推进下一条。
-                {
-                    if let Some(qc) = state.action_mgr.peek_pending() {
-                        if !matches!(
-                            &qc.cmd,
-                            BotCommand::Goto { .. } | BotCommand::Mine { .. } | BotCommand::MineBelow | BotCommand::MineAbove
-                        ) {
-                            state.action_mgr.clear_pending();
-                        }
-                    }
-                }
-            }
-            // 持续下挖：只要标志为真且当前未在挖，就续挖（对齐 POC 逻辑，
-            // 避免单次 start_mining 因中断失效导致 bot 停在原地不下降）。
-            // **Y 下限保护**：Y<=-61 是深板岩+基岩层（1.18+ 基岩层 Y=-64~-59），
-            // 继续下挖毫无意义且徒手挖深板岩极慢。到达后自动停止 mining_below 并提示。
-            if *state.mining_below.lock().unwrap() && !bot.is_mining() {
-                if let Ok(p) = bot.position() {
-                    let y = p.y.floor() as i32;
-                    if y <= -61 {
-                        // 到达深岩层，停止下挖
-                        *state.mining_below.lock().unwrap() = false;
-                        let _ = state.evt_tx.send(BotEvent::Chat {
+                // 持续下挖：只要标志为真且当前未在挖，就续挖（对齐 POC 逻辑，
+                // 避免单次 start_mining 因中断失效导致 bot 停在原地不下降）。
+                // **Y 下限保护**：Y<=-61 是深板岩+基岩层（1.18+ 基岩层 Y=-64~-59），
+                // 继续下挖毫无意义且徒手挖深板岩极慢。到达后自动停止 mining_below 并提示。
+                if *state.mining_below.lock().unwrap() && !bot.is_mining() {
+                    if let Ok(p) = bot.position() {
+                        let y = p.y.floor() as i32;
+                        if y <= -61 {
+                            // 到达深岩层，停止下挖
+                            *state.mining_below.lock().unwrap() = false;
+                            let _ = state.evt_tx.send(BotEvent::Chat {
                             content: format!(
                                 "Action output:\nMineBelow stopped at Y={y} (深板岩/基岩层，继续下挖无意义)。\
                                  当前坐标 ({:.0},{y},{:.0})。建议改用 mine(x,y,z) 精确挖附近矿石，或 goto 上返回地面。",
                                 p.x, p.z
                             ),
                         });
-                    } else {
-                        let foot = BlockPos::new(
-                            p.x.floor() as i32,
-                            (p.y - 1.0).floor() as i32,
-                            p.z.floor() as i32,
-                        );
-                        bot.start_mining(foot);
+                        } else {
+                            let foot = BlockPos::new(
+                                p.x.floor() as i32,
+                                (p.y - 1.0).floor() as i32,
+                                p.z.floor() as i32,
+                            );
+                            bot.start_mining(foot);
+                        }
                     }
                 }
-            }
-            // 持续上挖：mining_above 标志为真时，让 pathfinder 自动挖通头顶并 ascend。
-            // **关键修复**：1x1 竖井里 bot 跳跃无法上升（物理限制），必须用 pathfinder
-            //              的 ascend_move 让 bot 走到旁边一格的上方。pathfinder allow_mining=true
-            //              会自动挖通 head + head+1 + 旁边方块让 bot ascend。
-            // **YGoal**：用 YGoal(y+5) 而不是 BlockPosGoal，让 pathfinder 在水平方向自由选择
-            //            最容易挖通的柱子，避免 1x1 竖井里 BlockPosGoal 算不出路径。
-            // **Y 上限保护**：Y>=62（地表海平面）认为脱困，停止。
-            // **大 timeout**：挖通深板岩需要计算长路径，默认 5s 不够，改为 30s。
-            if *state.mining_above.lock().unwrap() {
-                if let Ok(p) = bot.position() {
-                    let y = p.y.floor() as i32;
-                    let cx = p.x.floor() as i32;
-                    let cz = p.z.floor() as i32;
-                    // P8 修复：用「头顶是空气 + 足够高」判断是否到地表，而非固定 Y≥62。
-                    // 原代码 Y≥62 就停止，但在洞穴中 bot 可能 Y=62 仍在地下（地表 Y=70+）。
-                    // 在洞穴中必须继续向上挖到 Y≥70 才能保证到地表。
-                    let head_pos = BlockPos::new(cx, y + 1, cz);
-                    let head_is_air = bot
-                        .world()
-                        .ok()
-                        .and_then(|w| w.read().get_block_state(head_pos))
-                        .map(|s| s.is_air())
-                        .unwrap_or(false);
-                    // 检查上方 5 格是否都是空气（确认是开放空间而非洞穴小气室）
-                    let mut five_air = true;
-                    for dy in 1..=5 {
-                        let check = BlockPos::new(cx, y + dy, cz);
-                        let is_air = bot
+                // 持续上挖：mining_above 标志为真时，让 pathfinder 自动挖通头顶并 ascend。
+                // **关键修复**：1x1 竖井里 bot 跳跃无法上升（物理限制），必须用 pathfinder
+                //              的 ascend_move 让 bot 走到旁边一格的上方。pathfinder allow_mining=true
+                //              会自动挖通 head + head+1 + 旁边方块让 bot ascend。
+                // **YGoal**：用 YGoal(y+5) 而不是 BlockPosGoal，让 pathfinder 在水平方向自由选择
+                //            最容易挖通的柱子，避免 1x1 竖井里 BlockPosGoal 算不出路径。
+                // **Y 上限保护**：Y>=62（地表海平面）认为脱困，停止。
+                // **大 timeout**：挖通深板岩需要计算长路径，默认 5s 不够，改为 30s。
+                if *state.mining_above.lock().unwrap() {
+                    if let Ok(p) = bot.position() {
+                        let y = p.y.floor() as i32;
+                        let cx = p.x.floor() as i32;
+                        let cz = p.z.floor() as i32;
+                        // P8 修复：用「头顶是空气 + 足够高」判断是否到地表，而非固定 Y≥62。
+                        // 原代码 Y≥62 就停止，但在洞穴中 bot 可能 Y=62 仍在地下（地表 Y=70+）。
+                        // 在洞穴中必须继续向上挖到 Y≥70 才能保证到地表。
+                        let head_pos = BlockPos::new(cx, y + 1, cz);
+                        let head_is_air = bot
                             .world()
                             .ok()
-                            .and_then(|w| w.read().get_block_state(check))
+                            .and_then(|w| w.read().get_block_state(head_pos))
                             .map(|s| s.is_air())
                             .unwrap_or(false);
-                        if !is_air { five_air = false; break; }
-                    }
-                    // 到达地表条件：头顶是空气 AND (Y≥70 OR 上方5格都是空气)
-                    if head_is_air && (y >= 70 || five_air) {
-                        *state.mining_above.lock().unwrap() = false;
-                        let _ = state.evt_tx.send(BotEvent::Chat {
+                        // 检查上方 5 格是否都是空气（确认是开放空间而非洞穴小气室）
+                        let mut five_air = true;
+                        for dy in 1..=5 {
+                            let check = BlockPos::new(cx, y + dy, cz);
+                            let is_air = bot
+                                .world()
+                                .ok()
+                                .and_then(|w| w.read().get_block_state(check))
+                                .map(|s| s.is_air())
+                                .unwrap_or(false);
+                            if !is_air {
+                                five_air = false;
+                                break;
+                            }
+                        }
+                        // 到达地表条件：头顶是空气 AND (Y≥70 OR 上方5格都是空气)
+                        if head_is_air && (y >= 70 || five_air) {
+                            *state.mining_above.lock().unwrap() = false;
+                            let _ = state.evt_tx.send(BotEvent::Chat {
                             content: format!(
                                 "Action output:\nMineAbove done at Y={y} (已到地表，头顶是空气)。\
                                  当前坐标 ({:.0},{y},{:.0})，可继续探索。",
                                 p.x, p.z
                             ),
                         });
-                    } else if y >= 320 {
-                        *state.mining_above.lock().unwrap() = false;
-                        let _ = state.evt_tx.send(BotEvent::Chat {
-                            content: format!(
-                                "Action output:\nMineAbove stopped at Y={y} (建筑高度上限)。\
+                        } else if y >= 320 {
+                            *state.mining_above.lock().unwrap() = false;
+                            let _ = state.evt_tx.send(BotEvent::Chat {
+                                content: format!(
+                                    "Action output:\nMineAbove stopped at Y={y} (建筑高度上限)。\
                                  当前坐标 ({:.0},{y},{:.0})。",
-                                p.x, p.z
-                            ),
-                        });
-                    } else {
-                        // 让 pathfinder 自动挖通并 ascend
-                        // YGoal(y+5)：目标到达 y+5 高度（任意 x/z），给 pathfinder 水平自由度
-                        // pathfinder allow_mining=true 会挖通 head + head+1 + 旁边方块让 bot ascend
-                        let target_y = y + 5;
-                        // 装备镐（如果有的话）加速挖掘
-                        let _ = auto_equip_best_pickaxe(&bot).await;
-                        // 只在 pathfinder 空闲时启动新 goto，用大 timeout 让 pathfinder 有时间计算
-                        if bot.is_goto_target_reached() && !bot.is_calculating_path() {
-                            use azalea::pathfinder::goals::YGoal;
-                            use azalea::pathfinder::PathfinderOpts;
-                            use std::time::Duration;
-                            let opts = PathfinderOpts::new()
-                                .allow_mining(true)
-                                .min_timeout(Duration::from_secs(2))
-                                .max_timeout(Duration::from_secs(30));
-                            bot.start_goto_with_opts(YGoal { y: target_y }, opts);
-                            let _ = (cx, cz); // 调试用坐标
+                                    p.x, p.z
+                                ),
+                            });
+                        } else {
+                            // 让 pathfinder 自动挖通并 ascend
+                            // YGoal(y+5)：目标到达 y+5 高度（任意 x/z），给 pathfinder 水平自由度
+                            // pathfinder allow_mining=true 会挖通 head + head+1 + 旁边方块让 bot ascend
+                            let target_y = y + 5;
+                            // 装备镐（如果有的话）加速挖掘
+                            let _ = auto_equip_best_pickaxe(&bot).await;
+                            // 只在 pathfinder 空闲时启动新 goto，用大 timeout 让 pathfinder 有时间计算
+                            if bot.is_goto_target_reached() && !bot.is_calculating_path() {
+                                use azalea::pathfinder::PathfinderOpts;
+                                use azalea::pathfinder::goals::YGoal;
+                                use std::time::Duration;
+                                let opts = PathfinderOpts::new()
+                                    .allow_mining(true)
+                                    .min_timeout(Duration::from_secs(2))
+                                    .max_timeout(Duration::from_secs(30));
+                                bot.start_goto_with_opts(YGoal { y: target_y }, opts);
+                                let _ = (cx, cz); // 调试用坐标
+                            }
                         }
                     }
                 }
-            }
-            // 每 20 tick 推送状态快照。
-            let t = bot.ticks_connected();
-            if t % 20 == 0 {
-                if let Ok(p) = bot.position() {
-                    // 全量背包：列出所有非空格，**按物品 ID 聚合后输出**（旧版每个槽位单独
-                    // 输出，导致 `dirt:46, dirt:64, leaflitter:64, leaflitter:26` 这种重复条目，
-                    // LLM 困惑且浪费 token）。聚合后输出 `dirt:110, leaflitter:90`。
-                    let inventory = match bot.get_inventory() {
-                        Ok(inv) => match inv.slots() {
-                            Some(slots) => {
-                                let mut agg: std::collections::HashMap<String, u32> =
-                                    std::collections::HashMap::new();
-                                for s in slots.iter() {
-                                    if s.is_empty() { continue; }
-                                    // P5 关键修复：用 to_str() 返回 minecraft id（如 "minecraft:crafting_table"），
-                                    // 然后 strip "minecraft:" 前缀得到 "crafting_table"。
-                                    // 原代码用 format!("{:?}", s.kind()).to_lowercase() 得到 enum Debug 名
-                                    // （如 "CraftingTable".to_lowercase() = "craftingtable"，无下划线），
-                                    // 与工具/craft 配方表期望的 snake_case id 不匹配 → LLM 看到 "craftingtable"
-                                    // 却 craft("crafting_table") 报"无此物品" → 100% 卡死。
-                                    let kind_full = s.kind().to_str();
-                                    let kind = kind_full.strip_prefix("minecraft:").unwrap_or(kind_full);
-                                    let cnt = s.count() as u32;
-                                    *agg.entry(kind.to_string()).or_insert(0) += cnt;
+                // 每 20 tick 推送状态快照。
+                let t = bot.ticks_connected();
+                if t % 20 == 0 {
+                    if let Ok(p) = bot.position() {
+                        // 全量背包：列出所有非空格，**按物品 ID 聚合后输出**（旧版每个槽位单独
+                        // 输出，导致 `dirt:46, dirt:64, leaflitter:64, leaflitter:26` 这种重复条目，
+                        // LLM 困惑且浪费 token）。聚合后输出 `dirt:110, leaflitter:90`。
+                        let inventory = match bot.get_inventory() {
+                            Ok(inv) => match inv.slots() {
+                                Some(slots) => {
+                                    let mut agg: std::collections::HashMap<String, u32> =
+                                        std::collections::HashMap::new();
+                                    for s in slots.iter() {
+                                        if s.is_empty() {
+                                            continue;
+                                        }
+                                        // P5 关键修复：用 to_str() 返回 minecraft id（如 "minecraft:crafting_table"），
+                                        // 然后 strip "minecraft:" 前缀得到 "crafting_table"。
+                                        // 原代码用 format!("{:?}", s.kind()).to_lowercase() 得到 enum Debug 名
+                                        // （如 "CraftingTable".to_lowercase() = "craftingtable"，无下划线），
+                                        // 与工具/craft 配方表期望的 snake_case id 不匹配 → LLM 看到 "craftingtable"
+                                        // 却 craft("crafting_table") 报"无此物品" → 100% 卡死。
+                                        let kind_full = s.kind().to_str();
+                                        let kind = kind_full
+                                            .strip_prefix("minecraft:")
+                                            .unwrap_or(kind_full);
+                                        let cnt = s.count() as u32;
+                                        *agg.entry(kind.to_string()).or_insert(0) += cnt;
+                                    }
+                                    if agg.is_empty() {
+                                        "空背包".to_string()
+                                    } else {
+                                        // 按数量降序输出（多的在前，LLM 重点看前几个）
+                                        let mut items: Vec<(String, u32)> =
+                                            agg.into_iter().collect();
+                                        items.sort_by(|a, b| b.1.cmp(&a.1));
+                                        items
+                                            .iter()
+                                            .map(|(k, c)| format!("{k}:{c}"))
+                                            .collect::<Vec<_>>()
+                                            .join(", ")
+                                    }
                                 }
-                                if agg.is_empty() {
-                                    "空背包".to_string()
-                                } else {
-                                    // 按数量降序输出（多的在前，LLM 重点看前几个）
-                                    let mut items: Vec<(String, u32)> =
-                                        agg.into_iter().collect();
-                                    items.sort_by(|a, b| b.1.cmp(&a.1));
-                                    items
-                                        .iter()
-                                        .map(|(k, c)| format!("{k}:{c}"))
-                                        .collect::<Vec<_>>()
-                                        .join(", ")
+                                None => "slots=None".to_string(),
+                            },
+                            Err(_) => "获取失败".to_string(),
+                        };
+                        let player_count = bot.nearby_players().map(|pp| pp.len()).unwrap_or(0);
+                        // 朝向（yaw/pitch，度数）：从 LookDirection 的 Debug 输出解析（azalea 字段为私有，不改动库）。
+                        let (yaw, pitch) = bot
+                            .direction()
+                            .map(|d| {
+                                let s = format!("{d:?}");
+                                let y = s
+                                    .split("y_rot: ")
+                                    .nth(1)
+                                    .and_then(|x| x.split(',').next())
+                                    .and_then(|x| x.trim().parse::<f64>().ok())
+                                    .unwrap_or(0.0);
+                                let pi = s
+                                    .split("x_rot: ")
+                                    .nth(1)
+                                    .and_then(|x| x.split('}').next())
+                                    .and_then(|x| x.trim().parse::<f64>().ok())
+                                    .unwrap_or(0.0);
+                                (y, pi)
+                            })
+                            .unwrap_or((0.0, 0.0));
+                        // 脚下方块 + 前方 1 格方块（用于 bot 判断脚下是否悬空/面前是否墙）。
+                        let block_name = |bp: BlockPos| -> String {
+                            if let Ok(world) = bot.world() {
+                                match world.read().get_block_state(bp) {
+                                    Some(s) if !s.is_air() => {
+                                        let bk: BlockKind = s.into();
+                                        // P5 修复：用 to_str() 拿到 minecraft id（如 "minecraft:stone"）。
+                                        // 原代码 format!("{bk:?}").to_lowercase() 得到 "stone"（无前缀），
+                                        // 但对于多词方块如 "GrassBlock".to_lowercase() = "grassblock"（无下划线），
+                                        // 与工具/mem 期望的 snake_case id 不匹配。
+                                        let k = bk.to_str();
+                                        k.strip_prefix("minecraft:").unwrap_or(k).to_string()
+                                    }
+                                    _ => "air".to_string(),
                                 }
+                            } else {
+                                "?".to_string()
                             }
-                            None => "slots=None".to_string(),
-                        },
-                        Err(_) => "获取失败".to_string(),
-                    };
-                    let player_count = bot.nearby_players().map(|pp| pp.len()).unwrap_or(0);
-                    // 朝向（yaw/pitch，度数）：从 LookDirection 的 Debug 输出解析（azalea 字段为私有，不改动库）。
-                    let (yaw, pitch) = bot
-                        .direction()
-                        .map(|d| {
-                            let s = format!("{d:?}");
-                            let y = s
-                                .split("y_rot: ")
-                                .nth(1)
-                                .and_then(|x| x.split(',').next())
-                                .and_then(|x| x.trim().parse::<f64>().ok())
-                                .unwrap_or(0.0);
-                            let pi = s
-                                .split("x_rot: ")
-                                .nth(1)
-                                .and_then(|x| x.split('}').next())
-                                .and_then(|x| x.trim().parse::<f64>().ok())
-                                .unwrap_or(0.0);
-                            (y, pi)
-                        })
-                        .unwrap_or((0.0, 0.0));
-                    // 脚下方块 + 前方 1 格方块（用于 bot 判断脚下是否悬空/面前是否墙）。
-                    let block_name = |bp: BlockPos| -> String {
-                        if let Ok(world) = bot.world() {
-                            match world.read().get_block_state(bp) {
-                                Some(s) if !s.is_air() => {
-                                    let bk: BlockKind = s.into();
-                                    // P5 修复：用 to_str() 拿到 minecraft id（如 "minecraft:stone"）。
-                                    // 原代码 format!("{bk:?}").to_lowercase() 得到 "stone"（无前缀），
-                                    // 但对于多词方块如 "GrassBlock".to_lowercase() = "grassblock"（无下划线），
-                                    // 与工具/mem 期望的 snake_case id 不匹配。
-                                    let k = bk.to_str();
-                                    k.strip_prefix("minecraft:").unwrap_or(k).to_string()
-                                }
-                                _ => "air".to_string(),
+                        };
+                        let foot_y = (p.y - 1.0).floor() as i32;
+                        let block_under = block_name(BlockPos::new(
+                            p.x.floor() as i32,
+                            foot_y,
+                            p.z.floor() as i32,
+                        ));
+                        // 前方方块：由 yaw/pitch 推算视线落点（水平 1 格 + 俯仰修正）。
+                        let rad = yaw.to_radians();
+                        let dx = (-rad.sin()) as f64; // 与 azalea 约定一致：yaw 0 朝 +Z
+                        let dz = (rad.cos()) as f64;
+                        let horiz = 1.0_f64.max((pitch.abs() / 90.0) * 2.0);
+                        let ahead_x = (p.x + dx * horiz).floor() as i32;
+                        let ahead_z = (p.z + dz * horiz).floor() as i32;
+                        let ahead_y = (p.y + (pitch / 90.0) * -1.0).floor() as i32;
+                        let block_ahead = block_name(BlockPos::new(ahead_x, ahead_y, ahead_z));
+                        // 生命/饱食/主手/群系/附近方块
+                        let health = bot.health().unwrap_or(20.0);
+                        let hunger = bot.hunger().ok();
+                        let food = hunger.as_ref().map(|h| h.food).unwrap_or(20);
+                        let saturation = hunger.as_ref().map(|h| h.saturation).unwrap_or(5.0);
+                        let held_item = match bot.get_held_item() {
+                            Ok(item) if !item.is_empty() => {
+                                // P5 修复：用 to_str() 拿到 minecraft id（同背包聚合逻辑）。
+                                let k = item.kind().to_str();
+                                k.strip_prefix("minecraft:").unwrap_or(k).to_string()
                             }
-                        } else {
-                            "?".to_string()
-                        }
-                    };
-                    let foot_y = (p.y - 1.0).floor() as i32;
-                    let block_under = block_name(BlockPos::new(
-                        p.x.floor() as i32,
-                        foot_y,
-                        p.z.floor() as i32,
-                    ));
-                    // 前方方块：由 yaw/pitch 推算视线落点（水平 1 格 + 俯仰修正）。
-                    let rad = yaw.to_radians();
-                    let dx = (-rad.sin()) as f64; // 与 azalea 约定一致：yaw 0 朝 +Z
-                    let dz = (rad.cos()) as f64;
-                    let horiz = 1.0_f64.max((pitch.abs() / 90.0) * 2.0);
-                    let ahead_x = (p.x + dx * horiz).floor() as i32;
-                    let ahead_z = (p.z + dz * horiz).floor() as i32;
-                    let ahead_y = (p.y + (pitch / 90.0) * -1.0).floor() as i32;
-                    let block_ahead = block_name(BlockPos::new(ahead_x, ahead_y, ahead_z));
-                    // 生命/饱食/主手/群系/附近方块
-                    let health = bot.health().unwrap_or(20.0);
-                    let hunger = bot.hunger().ok();
-                    let food = hunger.as_ref().map(|h| h.food).unwrap_or(20);
-                    let saturation = hunger.as_ref().map(|h| h.saturation).unwrap_or(5.0);
-                    let held_item = match bot.get_held_item() {
-                        Ok(item) if !item.is_empty() => {
-                            // P5 修复：用 to_str() 拿到 minecraft id（同背包聚合逻辑）。
-                            let k = item.kind().to_str();
-                            k.strip_prefix("minecraft:").unwrap_or(k).to_string()
-                        }
-                        _ => "air".to_string(),
-                    };
-                    // biome 通过 registry 解析为可读 Identifier（如 "minecraft:dark_forest"）。
-                    // 旧实现 `format!("{b:?}")` 会输出 "biome { id: 30 }" 这种调试串，LLM 看不懂。
-                    let biome = bot
-                        .world()
-                        .ok()
-                        .and_then(|w| {
-                            w.read()
-                                .get_biome(BlockPos::new(
+                            _ => "air".to_string(),
+                        };
+                        // biome 通过 registry 解析为可读 Identifier（如 "minecraft:dark_forest"）。
+                        // 旧实现 `format!("{b:?}")` 会输出 "biome { id: 30 }" 这种调试串，LLM 看不懂。
+                        let biome = bot
+                            .world()
+                            .ok()
+                            .and_then(|w| {
+                                w.read().get_biome(BlockPos::new(
                                     p.x.floor() as i32,
                                     p.y.floor() as i32,
                                     p.z.floor() as i32,
                                 ))
-                        })
-                        .and_then(|b| bot.resolve_registry_key(&b).ok().flatten())
-                        .map(|key| key.into_ident().to_string())
-                        .map(|s| {
-                            // "minecraft:dark_forest" → "dark_forest"
-                            s.strip_prefix("minecraft:")
-                                .map(|x| x.to_string())
-                                .unwrap_or(s)
-                        })
-                        .unwrap_or_else(|| "unknown".to_string());
-                    // 附近方块摘要：3x3 地面区域
-                    let nearby = {
-                        let foot_x = p.x.floor() as i32;
-                        let foot_z = p.z.floor() as i32;
-                        let mut counts: HashMap<String, u32> = HashMap::new();
-                        let world = bot.world().ok();
-                        for dx in -1..=1 {
-                            for dz in -1..=1 {
-                                if let Some(ref w) = world {
-                                    let bp = BlockPos::new(foot_x + dx, foot_y, foot_z + dz);
-                                    let name = match w.read().get_block_state(bp) {
-                                        Some(s) if !s.is_air() => {
-                                            let bk: BlockKind = s.into();
-                                            // P5 修复：用 to_str() 拿到 snake_case minecraft id
-                                            let k = bk.to_str();
-                                            k.strip_prefix("minecraft:").unwrap_or(k).to_string()
-                                        }
-                                        _ => "air".to_string(),
-                                    };
-                                    *counts.entry(name).or_insert(0) += 1;
-                                }
-                            }
-                        }
-                        let parts: Vec<String> = counts
-                            .into_iter()
-                            .filter(|(k, _)| k != "air")
-                            .map(|(k, v)| format!("{k}:{v}"))
-                            .collect();
-                        if parts.is_empty() {
-                            "air".to_string()
-                        } else {
-                            parts.join(", ")
-                        }
-                    };
-                    // 结构化游戏状态 JSON（前端面板可视化）
-                    let game_state = {
-                        let inv_slots: Vec<serde_json::Value> = match bot.get_inventory() {
-                            Ok(inv) => match inv.slots() {
-                                Some(slots) => slots
-                                    .iter()
-                                    .enumerate()
-                                    .map(|(i, s)| {
-                                        let id = if s.is_empty() {
-                                            "minecraft:air".to_string()
-                                        } else {
-                                            // P5 修复：to_str() 已返回 "minecraft:xxx"，不需要拼前缀
-                                            s.kind().to_str().to_string()
-                                        };
-                                        let cnt = if s.is_empty() { 0 } else { s.count() };
-                                        serde_json::json!({"slot": i, "id": id, "count": cnt})
-                                    })
-                                    .collect(),
-                                None => vec![],
-                            },
-                            Err(_) => vec![],
-                        };
-                        let xp = bot.experience().ok();
-                        serde_json::json!({
-                            "inventory": inv_slots,
-                            "experience_level": xp.as_ref().map(|e| e.level).unwrap_or(0),
-                            "experience_progress": xp.as_ref().map(|e| e.progress).unwrap_or(0.0),
-                            "held_item": held_item,
-                            "selected_slot": bot.selected_hotbar_slot().unwrap_or(0),
-                        })
-                    };
-                    // 回填世界记忆：更新当前位置锚点 + 扫描周边关键方块
-                    if let Some(mem) = &state.memory {
-                        let mp = MemoryPos::new(
-                            p.x.floor() as i32,
-                            p.y.floor() as i32,
-                            p.z.floor() as i32,
-                        );
-                        mem.set_anchor("__self__", Some(mp), "当前位置");
-                        record_surroundings(&bot, mem, &mp, &state.scanned);
-                    }
-                    // 10x10 范围方块扫描：列出所有非空气方块类型及计数
-                    let nearby_blocks = {
-                        let mut counts: HashMap<String, u32> = HashMap::new();
-                        let world = bot.world().ok();
-                        let cx = p.x.floor() as i32;
-                        let cy = p.y.floor() as i32;
-                        let cz = p.z.floor() as i32;
-                        for dx in -5..=5 {
-                            for dy in -5..=5 {
-                                for dz in -5..=5 {
+                            })
+                            .and_then(|b| bot.resolve_registry_key(&b).ok().flatten())
+                            .map(|key| key.into_ident().to_string())
+                            .map(|s| {
+                                // "minecraft:dark_forest" → "dark_forest"
+                                s.strip_prefix("minecraft:")
+                                    .map(|x| x.to_string())
+                                    .unwrap_or(s)
+                            })
+                            .unwrap_or_else(|| "unknown".to_string());
+                        // 附近方块摘要：3x3 地面区域
+                        let nearby = {
+                            let foot_x = p.x.floor() as i32;
+                            let foot_z = p.z.floor() as i32;
+                            let mut counts: HashMap<String, u32> = HashMap::new();
+                            let world = bot.world().ok();
+                            for dx in -1..=1 {
+                                for dz in -1..=1 {
                                     if let Some(ref w) = world {
-                                        let bp = BlockPos::new(cx + dx, cy + dy, cz + dz);
+                                        let bp = BlockPos::new(foot_x + dx, foot_y, foot_z + dz);
                                         let name = match w.read().get_block_state(bp) {
                                             Some(s) if !s.is_air() => {
                                                 let bk: BlockKind = s.into();
                                                 // P5 修复：用 to_str() 拿到 snake_case minecraft id
                                                 let k = bk.to_str();
-                                                k.strip_prefix("minecraft:").unwrap_or(k).to_string()
+                                                k.strip_prefix("minecraft:")
+                                                    .unwrap_or(k)
+                                                    .to_string()
                                             }
-                                            _ => continue,
+                                            _ => "air".to_string(),
                                         };
                                         *counts.entry(name).or_insert(0) += 1;
                                     }
                                 }
                             }
-                        }
-                        let mut items: Vec<_> = counts.into_iter().collect();
-                        items.sort_by(|a, b| b.1.cmp(&a.1));
-                        items.iter().map(|(k, v)| format!("{k}:{v}")).collect::<Vec<_>>().join(", ")
-                    };
-                    // 资源分类摘要：把 10x10 里的方块按 wood/stone/ore/other 分组，
-                    // 让 WorldInfo 的 find_match_line 能为每类找到独立的 label 行，
-                    // 避免【场景提示】里 Wood/Stone/Ore 三条都粘同一份 10x10 字符串。
-                    let resource_summary = {
-                        let wood_kinds = ["oaklog", "darkoaklog", "birchlog", "sprucelog", "acalog", "junglelog", "mangrovelog", "cherrylog", "oakplanks", "darkoakplanks"];
-                        let stone_kinds = ["stone", "cobblestone", "dirt", "grassblock", "sand", "gravel", "andesite", "granite", "diorite"];
-                        let ore_kinds = ["coalore", "ironore", "copperore", "goldore", "diamondore", "emeraldore", "redstoneore", "lapisore", "netherquartzore"];
-                        let mut wood = Vec::new();
-                        let mut stone = Vec::new();
-                        let mut ore = Vec::new();
-                        for (k, v) in nearby_blocks.split(", ").map(|s| {
-                            let mut it = s.split(':');
-                            (it.next().unwrap_or("").to_string(), it.next().and_then(|x| x.parse::<u32>().ok()).unwrap_or(0))
-                        }) {
-                            if wood_kinds.iter().any(|x| *x == k) {
-                                wood.push(format!("{k}:{v}"));
-                            } else if stone_kinds.iter().any(|x| *x == k) {
-                                stone.push(format!("{k}:{v}"));
-                            } else if ore_kinds.iter().any(|x| *x == k) {
-                                ore.push(format!("{k}:{v}"));
+                            let parts: Vec<String> = counts
+                                .into_iter()
+                                .filter(|(k, _)| k != "air")
+                                .map(|(k, v)| format!("{k}:{v}"))
+                                .collect();
+                            if parts.is_empty() {
+                                "air".to_string()
+                            } else {
+                                parts.join(", ")
                             }
+                        };
+                        // 结构化游戏状态 JSON（前端面板可视化）
+                        let game_state = {
+                            let inv_slots: Vec<serde_json::Value> = match bot.get_inventory() {
+                                Ok(inv) => match inv.slots() {
+                                    Some(slots) => slots
+                                        .iter()
+                                        .enumerate()
+                                        .map(|(i, s)| {
+                                            let id = if s.is_empty() {
+                                                "minecraft:air".to_string()
+                                            } else {
+                                                // P5 修复：to_str() 已返回 "minecraft:xxx"，不需要拼前缀
+                                                s.kind().to_str().to_string()
+                                            };
+                                            let cnt = if s.is_empty() { 0 } else { s.count() };
+                                            serde_json::json!({"slot": i, "id": id, "count": cnt})
+                                        })
+                                        .collect(),
+                                    None => vec![],
+                                },
+                                Err(_) => vec![],
+                            };
+                            let xp = bot.experience().ok();
+                            serde_json::json!({
+                                "inventory": inv_slots,
+                                "experience_level": xp.as_ref().map(|e| e.level).unwrap_or(0),
+                                "experience_progress": xp.as_ref().map(|e| e.progress).unwrap_or(0.0),
+                                "held_item": held_item,
+                                "selected_slot": bot.selected_hotbar_slot().unwrap_or(0),
+                            })
+                        };
+                        // 回填世界记忆：更新当前位置锚点 + 扫描周边关键方块
+                        if let Some(mem) = &state.memory {
+                            let mp = MemoryPos::new(
+                                p.x.floor() as i32,
+                                p.y.floor() as i32,
+                                p.z.floor() as i32,
+                            );
+                            mem.set_anchor("__self__", Some(mp), "当前位置");
+                            record_surroundings(&bot, mem, &mp, &state.scanned);
                         }
-                        let mut lines = Vec::new();
-                        if !wood.is_empty() { lines.push(format!("木材: {}", wood.join(", "))); }
-                        if !stone.is_empty() { lines.push(format!("石头: {}", stone.join(", "))); }
-                        if !ore.is_empty() { lines.push(format!("矿石: {}", ore.join(", "))); }
-                        lines.join("\n")
-                    };
-                    // 附近实体列表：按类型分组计数
-                    let nearby_entities = {
-                        let mut kinds: HashMap<String, u32> = HashMap::new();
-                        if let Ok(entities) = bot.nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>() {
+                        // 10x10 范围方块扫描：列出所有非空气方块类型及计数
+                        let nearby_blocks = {
+                            let mut counts: HashMap<String, u32> = HashMap::new();
+                            let world = bot.world().ok();
+                            let cx = p.x.floor() as i32;
+                            let cy = p.y.floor() as i32;
+                            let cz = p.z.floor() as i32;
+                            for dx in -5..=5 {
+                                for dy in -5..=5 {
+                                    for dz in -5..=5 {
+                                        if let Some(ref w) = world {
+                                            let bp = BlockPos::new(cx + dx, cy + dy, cz + dz);
+                                            let name = match w.read().get_block_state(bp) {
+                                                Some(s) if !s.is_air() => {
+                                                    let bk: BlockKind = s.into();
+                                                    // P5 修复：用 to_str() 拿到 snake_case minecraft id
+                                                    let k = bk.to_str();
+                                                    k.strip_prefix("minecraft:")
+                                                        .unwrap_or(k)
+                                                        .to_string()
+                                                }
+                                                _ => continue,
+                                            };
+                                            *counts.entry(name).or_insert(0) += 1;
+                                        }
+                                    }
+                                }
+                            }
+                            let mut items: Vec<_> = counts.into_iter().collect();
+                            items.sort_by(|a, b| b.1.cmp(&a.1));
+                            items
+                                .iter()
+                                .map(|(k, v)| format!("{k}:{v}"))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        };
+                        // 资源分类摘要：把 10x10 里的方块按 wood/stone/ore/other 分组，
+                        // 让 WorldInfo 的 find_match_line 能为每类找到独立的 label 行，
+                        // 避免【场景提示】里 Wood/Stone/Ore 三条都粘同一份 10x10 字符串。
+                        let _resource_summary = {
+                            let wood_kinds = [
+                                "oaklog",
+                                "darkoaklog",
+                                "birchlog",
+                                "sprucelog",
+                                "acalog",
+                                "junglelog",
+                                "mangrovelog",
+                                "cherrylog",
+                                "oakplanks",
+                                "darkoakplanks",
+                            ];
+                            let stone_kinds = [
+                                "stone",
+                                "cobblestone",
+                                "dirt",
+                                "grassblock",
+                                "sand",
+                                "gravel",
+                                "andesite",
+                                "granite",
+                                "diorite",
+                            ];
+                            let ore_kinds = [
+                                "coalore",
+                                "ironore",
+                                "copperore",
+                                "goldore",
+                                "diamondore",
+                                "emeraldore",
+                                "redstoneore",
+                                "lapisore",
+                                "netherquartzore",
+                            ];
+                            let mut wood = Vec::new();
+                            let mut stone = Vec::new();
+                            let mut ore = Vec::new();
+                            for (k, v) in nearby_blocks.split(", ").map(|s| {
+                                let mut it = s.split(':');
+                                (
+                                    it.next().unwrap_or("").to_string(),
+                                    it.next().and_then(|x| x.parse::<u32>().ok()).unwrap_or(0),
+                                )
+                            }) {
+                                if wood_kinds.iter().any(|x| *x == k) {
+                                    wood.push(format!("{k}:{v}"));
+                                } else if stone_kinds.iter().any(|x| *x == k) {
+                                    stone.push(format!("{k}:{v}"));
+                                } else if ore_kinds.iter().any(|x| *x == k) {
+                                    ore.push(format!("{k}:{v}"));
+                                }
+                            }
+                            let mut lines = Vec::new();
+                            if !wood.is_empty() {
+                                lines.push(format!("木材: {}", wood.join(", ")));
+                            }
+                            if !stone.is_empty() {
+                                lines.push(format!("石头: {}", stone.join(", ")));
+                            }
+                            if !ore.is_empty() {
+                                lines.push(format!("矿石: {}", ore.join(", ")));
+                            }
+                            lines.join("\n")
+                        };
+                        // 附近实体列表：按类型分组计数
+                        let nearby_entities = {
+                            let mut kinds: HashMap<String, u32> = HashMap::new();
+                            if let Ok(entities) = bot.nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>() {
                             let self_id = bot.entity().id();
                             for e in entities.iter() {
                                 if e.id() == self_id { continue; }
@@ -1459,88 +1877,108 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                                 *kinds.entry(name).or_insert(0) += 1;
                             }
                         }
-                        // 玩家分开计数
-                        let player_count = bot.nearby_players().map(|pp| pp.len()).unwrap_or(0);
-                        let mut parts: Vec<String> = Vec::new();
-                        if player_count > 0 {
-                            parts.push(format!("player:{}", player_count));
-                        }
-                        let mut items: Vec<_> = kinds.into_iter().collect();
-                        items.sort_by(|a, b| b.1.cmp(&a.1));
-                        for (k, v) in items {
-                            if v > 0 { parts.push(format!("{k}:{v}")); }
-                        }
-                        if parts.is_empty() { "无".to_string() } else { parts.join(", ") }
-                    };
-                    let _ = evt_tx.send(BotEvent::State {
-                        position: p,
-                        inventory,
-                        player_count,
-                        yaw,
-                        pitch,
-                        block_under,
-                        block_ahead,
-                        health,
-                        food,
-                        saturation,
-                        held_item,
-                        biome,
-                        nearby,
-                        nearby_blocks,
-                        nearby_entities,
-                        game_state,
-                    });
-                }
-            }
-            // ===== 反应式 modes（每 tick 检查，直接执行动作，不依赖 LLM）=====
-            // self_preservation：检测火/岩浆，自动脱困
-            // 使用 ActionManager 的 High 优先级抢占当前 pending（如正在合成时着火立即打断）
-            if let Ok(p) = bot.position() {
-                let foot = BlockPos::new(p.x.floor() as i32, (p.y - 1.0).floor() as i32, p.z.floor() as i32);
-                let head = BlockPos::new(p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
-                if let Ok(world) = bot.world() {
-                    let under = world.read().get_block_state(foot);
-                    let at = world.read().get_block_state(head);
-                    let is_danger = |s: Option<azalea::block::BlockState>| -> bool {
-                        s.map(|s| {
-                            let bk: BlockKind = s.into();
-                            matches!(bk, BlockKind::Lava | BlockKind::Fire | BlockKind::MagmaBlock)
-                        }).unwrap_or(false)
-                    };
-                    if is_danger(under) || is_danger(at) {
-                        let escape_cmd = BotCommand::Goto {
-                            x: p.x.floor() as i32 + 5,
-                            y: p.y.floor() as i32 + 1,
-                            z: p.z.floor() as i32 + 5,
-                        };
-                        // 高优先级提交：若当前 pending 是 Normal（合成/采集等）则抢占
-                        let tick_now = bot.ticks_connected() as u64;
-                        let outcome = state.action_mgr.submit(
-                            escape_cmd,
-                            Priority::High,
-                            &cmd_queue,
-                            tick_now,
-                        );
-                        let preempt_msg = match outcome {
-                            SubmitOutcome::Preempted(old) => {
-                                format!("[MODE] 检测到火/岩浆，抢占当前命令 ({:?}) 自动脱困", old)
+                            // 玩家分开计数
+                            let player_count = bot.nearby_players().map(|pp| pp.len()).unwrap_or(0);
+                            let mut parts: Vec<String> = Vec::new();
+                            if player_count > 0 {
+                                parts.push(format!("player:{}", player_count));
                             }
-                            _ => "[MODE] 检测到火/岩浆，自动脱困".to_string(),
+                            let mut items: Vec<_> = kinds.into_iter().collect();
+                            items.sort_by(|a, b| b.1.cmp(&a.1));
+                            for (k, v) in items {
+                                if v > 0 {
+                                    parts.push(format!("{k}:{v}"));
+                                }
+                            }
+                            if parts.is_empty() {
+                                "无".to_string()
+                            } else {
+                                parts.join(", ")
+                            }
                         };
-                        let _ = evt_tx.send(BotEvent::Chat { content: preempt_msg });
+                        let _ = evt_tx.send(BotEvent::State {
+                            position: p,
+                            inventory,
+                            player_count,
+                            yaw,
+                            pitch,
+                            block_under,
+                            block_ahead,
+                            health,
+                            food,
+                            saturation,
+                            held_item,
+                            biome,
+                            nearby,
+                            nearby_blocks,
+                            nearby_entities,
+                            game_state,
+                        });
                     }
                 }
-            }
-            // self_defense：空闲或寻路途中自动攻击附近敌对生物（每 100 tick ≈5s 检查一次）
-            // 距离限制：只攻击 4 格内实体，避免对远距离敌人（如持弩掠夺者）对着空气挥拳。
-            // 用 is_busy() 而非 is_idle()：Goto/Mine 等轮询命令执行期间 pending 非空但 busy=false，
-            // 此时仍应自卫（否则 bot 寻路途中被僵尸攻击不还手——H3 bug）。
-            // 只在异步命令（Craft/Gather/Smelt）执行中（busy=true）跳过，避免抢占。
-            if !state.action_mgr.is_busy()
-                && !*state.mining_below.lock().unwrap()
-                && bot.ticks_connected() % 100 == 0
-            {
-                if let Ok(entities) = bot.nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>() {
+                // ===== 反应式 modes（每 tick 检查，直接执行动作，不依赖 LLM）=====
+                // self_preservation：检测火/岩浆，自动脱困
+                // 使用 ActionManager 的 High 优先级抢占当前 pending（如正在合成时着火立即打断）
+                if let Ok(p) = bot.position() {
+                    let foot = BlockPos::new(
+                        p.x.floor() as i32,
+                        (p.y - 1.0).floor() as i32,
+                        p.z.floor() as i32,
+                    );
+                    let head =
+                        BlockPos::new(p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
+                    if let Ok(world) = bot.world() {
+                        let under = world.read().get_block_state(foot);
+                        let at = world.read().get_block_state(head);
+                        let is_danger = |s: Option<azalea::block::BlockState>| -> bool {
+                            s.map(|s| {
+                                let bk: BlockKind = s.into();
+                                matches!(
+                                    bk,
+                                    BlockKind::Lava | BlockKind::Fire | BlockKind::MagmaBlock
+                                )
+                            })
+                            .unwrap_or(false)
+                        };
+                        if is_danger(under) || is_danger(at) {
+                            let escape_cmd = BotCommand::Goto {
+                                x: p.x.floor() as i32 + 5,
+                                y: p.y.floor() as i32 + 1,
+                                z: p.z.floor() as i32 + 5,
+                            };
+                            // 高优先级提交：若当前 pending 是 Normal（合成/采集等）则抢占
+                            let tick_now = bot.ticks_connected() as u64;
+                            let outcome = state.action_mgr.submit(
+                                escape_cmd,
+                                Priority::High,
+                                &cmd_queue,
+                                tick_now,
+                            );
+                            let preempt_msg = match outcome {
+                                SubmitOutcome::Preempted(old) => {
+                                    format!(
+                                        "[MODE] 检测到火/岩浆，抢占当前命令 ({:?}) 自动脱困",
+                                        old
+                                    )
+                                }
+                                _ => "[MODE] 检测到火/岩浆，自动脱困".to_string(),
+                            };
+                            let _ = evt_tx.send(BotEvent::Chat {
+                                content: preempt_msg,
+                            });
+                        }
+                    }
+                }
+                // self_defense：空闲或寻路途中自动攻击附近敌对生物（每 100 tick ≈5s 检查一次）
+                // 距离限制：只攻击 4 格内实体，避免对远距离敌人（如持弩掠夺者）对着空气挥拳。
+                // 用 is_busy() 而非 is_idle()：Goto/Mine 等轮询命令执行期间 pending 非空但 busy=false，
+                // 此时仍应自卫（否则 bot 寻路途中被僵尸攻击不还手——H3 bug）。
+                // 只在异步命令（Craft/Gather/Smelt）执行中（busy=true）跳过，避免抢占。
+                if !state.action_mgr.is_busy()
+                    && !*state.mining_below.lock().unwrap()
+                    && bot.ticks_connected() % 100 == 0
+                {
+                    if let Ok(entities) = bot.nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>() {
                     let self_id = bot.entity().id();
                     let self_pos = bot.position().ok();
                     let mut attacked = false;
@@ -1582,12 +2020,12 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
                         }
                     }
                 }
+                }
             }
+            _ => {}
         }
-        _ => {}
+        bot
     }
-    bot
-}
 
     /// 攻击最近的生物（自卫/狩猎）。
     pub fn attack(&self, target: String) {
@@ -1602,12 +2040,22 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
     /// 3×3 工作台合成（P1-4：自动放收桌）。
     /// table_pos=Some 时使用该坐标的现有工作台；None 时 bot 自动放置+打开+关闭工作台。
     pub fn craft_3x3(&self, item: String, count: u32, table_pos: Option<(i32, i32, i32)>) {
-        self.push_cmd(BotCommand::Craft3x3 { item, count, table_pos });
+        self.push_cmd(BotCommand::Craft3x3 {
+            item,
+            count,
+            table_pos,
+        });
     }
 
     /// 熔炼（P1-4：自动放收炉）。
     /// table_pos=Some 时使用该坐标的现有熔炉；None 时 bot 自动放置+打开+关闭熔炉。
-    pub fn smelt(&self, output: String, fuel: String, count: u32, table_pos: Option<(i32, i32, i32)>) {
+    pub fn smelt(
+        &self,
+        output: String,
+        fuel: String,
+        count: u32,
+        table_pos: Option<(i32, i32, i32)>,
+    ) {
         self.push_cmd(BotCommand::Smelt {
             output,
             fuel,
@@ -1674,17 +2122,32 @@ async fn handle(bot: Client, event: Event, state: BotState) -> Client {
 
     /// 从世界坐标 (x,y,z) 处容器取出 item（count 个）到 bot 背包。
     pub fn chest_withdraw(&self, x: i32, y: i32, z: i32, item: String, count: u32) {
-        self.push_cmd(BotCommand::ChestWithdraw { x, y, z, item, count });
+        self.push_cmd(BotCommand::ChestWithdraw {
+            x,
+            y,
+            z,
+            item,
+            count,
+        });
     }
 
     /// 把背包中的 item（count 个）存入世界坐标 (x,y,z) 处容器。
     pub fn chest_deposit(&self, x: i32, y: i32, z: i32, item: String, count: u32) {
-        self.push_cmd(BotCommand::ChestDeposit { x, y, z, item, count });
+        self.push_cmd(BotCommand::ChestDeposit {
+            x,
+            y,
+            z,
+            item,
+            count,
+        });
     }
 
     /// 推送动作指令（fire-and-forget，handler tick 中执行）。
     fn push_cmd(&self, cmd: BotCommand) {
-        self.cmd_queue.lock().unwrap().push(QueuedCommand { cmd, result_tx: None });
+        self.cmd_queue.lock().unwrap().push(QueuedCommand {
+            cmd,
+            result_tx: None,
+        });
     }
 
     /// 推送动作指令并等待执行结果（同步阻塞，超时默认 120s）。
@@ -1732,8 +2195,12 @@ fn normalize_item_id(item: &str) -> String {
 /// 在玩家背包范围（排除合成网格/盔甲槽）内找到所有持有指定物品种类的槽位。
 fn find_item_slots(inv: &ContainerHandleRef, kind: ItemKind) -> Vec<usize> {
     let mut out = Vec::new();
-    let Some(menu) = inv.menu().ok().flatten() else { return out; };
-    let Some(slots) = inv.slots() else { return out; };
+    let Some(menu) = inv.menu().ok().flatten() else {
+        return out;
+    };
+    let Some(slots) = inv.slots() else {
+        return out;
+    };
     let range = menu.player_slots_range();
     for s in range {
         if let Some(stack) = slots.get(s) {
@@ -1879,9 +2346,15 @@ pub(crate) async fn has_any_axe_in_inventory(bot: &Client) -> bool {
         IK::DiamondAxe,
         IK::NetheriteAxe,
     ];
-    let Ok(inv) = bot.get_inventory() else { return false; };
-    let Some(menu) = inv.menu().ok().flatten() else { return false; };
-    let Some(slots) = inv.slots() else { return false; };
+    let Ok(inv) = bot.get_inventory() else {
+        return false;
+    };
+    let Some(menu) = inv.menu().ok().flatten() else {
+        return false;
+    };
+    let Some(slots) = inv.slots() else {
+        return false;
+    };
     let range = menu.player_slots_range();
     for s in range {
         if let Some(st) = slots.get(s)
@@ -1914,9 +2387,15 @@ pub(crate) async fn has_any_pickaxe_in_inventory(bot: &Client) -> bool {
         IK::DiamondPickaxe,
         IK::NetheritePickaxe,
     ];
-    let Ok(inv) = bot.get_inventory() else { return false; };
-    let Some(menu) = inv.menu().ok().flatten() else { return false; };
-    let Some(slots) = inv.slots() else { return false; };
+    let Ok(inv) = bot.get_inventory() else {
+        return false;
+    };
+    let Some(menu) = inv.menu().ok().flatten() else {
+        return false;
+    };
+    let Some(slots) = inv.slots() else {
+        return false;
+    };
     let range = menu.player_slots_range();
     for s in range {
         if let Some(st) = slots.get(s)
@@ -1938,19 +2417,58 @@ pub(crate) fn is_hard_block(state: azalea::block::BlockState) -> bool {
     let kind: BlockKind = state.into();
     matches!(
         kind,
-        B::Stone | B::Granite | B::Diorite | B::Andesite | B::Deepslate
-            | B::CobbledDeepslate | B::Tuff | B::CoalOre | B::DeepslateCoalOre
-            | B::IronOre | B::DeepslateIronOre | B::CopperOre | B::DeepslateCopperOre
-            | B::GoldOre | B::DeepslateGoldOre | B::RedstoneOre | B::DeepslateRedstoneOre
-            | B::LapisOre | B::DeepslateLapisOre | B::DiamondOre | B::DeepslateDiamondOre
-            | B::EmeraldOre | B::DeepslateEmeraldOre | B::NetherGoldOre | B::NetherQuartzOre
-            | B::AncientDebris | B::Cobblestone | B::MossyCobblestone | B::Bedrock
-            | B::Obsidian | B::CryingObsidian | B::Netherrack | B::Basalt
-            | B::Blackstone | B::EndStone | B::Sandstone | B::RedSandstone
-            | B::Bricks | B::StoneBricks | B::DeepslateBricks | B::NetherBricks
-            | B::IronBlock | B::GoldBlock | B::DiamondBlock | B::EmeraldBlock
-            | B::LapisBlock | B::RedstoneBlock | B::CoalBlock | B::NetheriteBlock
-            | B::SmoothStone | B::SmoothStoneSlab | B::StoneSlab
+        B::Stone
+            | B::Granite
+            | B::Diorite
+            | B::Andesite
+            | B::Deepslate
+            | B::CobbledDeepslate
+            | B::Tuff
+            | B::CoalOre
+            | B::DeepslateCoalOre
+            | B::IronOre
+            | B::DeepslateIronOre
+            | B::CopperOre
+            | B::DeepslateCopperOre
+            | B::GoldOre
+            | B::DeepslateGoldOre
+            | B::RedstoneOre
+            | B::DeepslateRedstoneOre
+            | B::LapisOre
+            | B::DeepslateLapisOre
+            | B::DiamondOre
+            | B::DeepslateDiamondOre
+            | B::EmeraldOre
+            | B::DeepslateEmeraldOre
+            | B::NetherGoldOre
+            | B::NetherQuartzOre
+            | B::AncientDebris
+            | B::Cobblestone
+            | B::MossyCobblestone
+            | B::Bedrock
+            | B::Obsidian
+            | B::CryingObsidian
+            | B::Netherrack
+            | B::Basalt
+            | B::Blackstone
+            | B::EndStone
+            | B::Sandstone
+            | B::RedSandstone
+            | B::Bricks
+            | B::StoneBricks
+            | B::DeepslateBricks
+            | B::NetherBricks
+            | B::IronBlock
+            | B::GoldBlock
+            | B::DiamondBlock
+            | B::EmeraldBlock
+            | B::LapisBlock
+            | B::RedstoneBlock
+            | B::CoalBlock
+            | B::NetheriteBlock
+            | B::SmoothStone
+            | B::SmoothStoneSlab
+            | B::StoneSlab
     )
 }
 
@@ -2044,36 +2562,61 @@ pub(crate) fn block_drops_item(kind: BlockKind) -> Option<ItemKind> {
 pub(crate) fn block_required_pickaxe_tier(kind: BlockKind) -> u8 {
     use azalea_registry::builtin::BlockKind as B;
     // tier 4：仅 diamond/netherite 镐可挖出物品
-    if matches!(
-        kind,
-        B::AncientDebris | B::Obsidian | B::CryingObsidian
-    ) {
+    if matches!(kind, B::AncientDebris | B::Obsidian | B::CryingObsidian) {
         return 4;
     }
     // tier 3：iron 镐起步（diamond_ore/gold_ore/redstone_ore/emerald_ore）
     if matches!(
         kind,
-        B::DiamondOre | B::DeepslateDiamondOre | B::GoldOre | B::DeepslateGoldOre
-            | B::RedstoneOre | B::DeepslateRedstoneOre | B::EmeraldOre | B::DeepslateEmeraldOre
+        B::DiamondOre
+            | B::DeepslateDiamondOre
+            | B::GoldOre
+            | B::DeepslateGoldOre
+            | B::RedstoneOre
+            | B::DeepslateRedstoneOre
+            | B::EmeraldOre
+            | B::DeepslateEmeraldOre
     ) {
         return 3;
     }
     // tier 2：stone 镐起步（iron_ore/copper_ore/lapis_ore）
     if matches!(
         kind,
-        B::IronOre | B::DeepslateIronOre | B::CopperOre | B::DeepslateCopperOre
-            | B::LapisOre | B::DeepslateLapisOre
+        B::IronOre
+            | B::DeepslateIronOre
+            | B::CopperOre
+            | B::DeepslateCopperOre
+            | B::LapisOre
+            | B::DeepslateLapisOre
     ) {
         return 2;
     }
     // tier 1：wooden 镐起步（stone/coal_ore/granite/diorite/andesite 等基础石类）
     if matches!(
         kind,
-        B::Stone | B::Granite | B::Diorite | B::Andesite | B::Deepslate | B::CobbledDeepslate
-            | B::Tuff | B::CoalOre | B::DeepslateCoalOre | B::Cobblestone | B::MossyCobblestone
-            | B::Netherrack | B::Basalt | B::Blackstone | B::EndStone | B::Sandstone
-            | B::RedSandstone | B::Bricks | B::StoneBricks | B::DeepslateBricks | B::NetherBricks
-            | B::NetherGoldOre | B::NetherQuartzOre
+        B::Stone
+            | B::Granite
+            | B::Diorite
+            | B::Andesite
+            | B::Deepslate
+            | B::CobbledDeepslate
+            | B::Tuff
+            | B::CoalOre
+            | B::DeepslateCoalOre
+            | B::Cobblestone
+            | B::MossyCobblestone
+            | B::Netherrack
+            | B::Basalt
+            | B::Blackstone
+            | B::EndStone
+            | B::Sandstone
+            | B::RedSandstone
+            | B::Bricks
+            | B::StoneBricks
+            | B::DeepslateBricks
+            | B::NetherBricks
+            | B::NetherGoldOre
+            | B::NetherQuartzOre
     ) {
         return 1;
     }
@@ -2094,9 +2637,15 @@ pub(crate) async fn best_pickaxe_tier_in_inventory(bot: &Client) -> u8 {
         IK::DiamondPickaxe,
         IK::NetheritePickaxe,
     ];
-    let Ok(inv) = bot.get_inventory() else { return 0; };
-    let Some(menu) = inv.menu().ok().flatten() else { return 0; };
-    let Some(slots) = inv.slots() else { return 0; };
+    let Ok(inv) = bot.get_inventory() else {
+        return 0;
+    };
+    let Some(menu) = inv.menu().ok().flatten() else {
+        return 0;
+    };
+    let Some(slots) = inv.slots() else {
+        return 0;
+    };
     let range = menu.player_slots_range();
     let mut best = 0u8;
     for s in range {
@@ -2139,12 +2688,11 @@ pub(crate) fn pickaxe_to_craft_for_tier(tier: u8) -> &'static str {
 /// - slot="helmet"/"chestplate"/"leggings"/"boots"：shift_click 让服务端自动归位
 ///   （仅对相应盔甲物品有效，服务端会拒绝非盔甲物品）
 pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
-    let kind = match ItemKind::from_str(&normalize_item_id(item))
-        .or_else(|_| ItemKind::from_str(item))
-    {
-        Ok(k) => k,
-        Err(_) => return format!("未知物品 {item}"),
-    };
+    let kind =
+        match ItemKind::from_str(&normalize_item_id(item)).or_else(|_| ItemKind::from_str(item)) {
+            Ok(k) => k,
+            Err(_) => return format!("未知物品 {item}"),
+        };
 
     let slot_norm = slot.to_lowercase();
     match slot_norm.as_str() {
@@ -2183,9 +2731,9 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
                     if let Some(menu) = inv.menu().ok().flatten() {
                         let hotbar_range = menu.hotbar_slots_range();
                         if let Some(slots) = inv.slots() {
-                            let hotbar_full = hotbar_range.clone().all(|s| {
-                                slots.get(s).map(|st| !st.is_empty()).unwrap_or(false)
-                            });
+                            let hotbar_full = hotbar_range
+                                .clone()
+                                .all(|s| slots.get(s).map(|st| !st.is_empty()).unwrap_or(false));
                             if hotbar_full {
                                 // 把第一个 hotbar 物品移到主背包腾空位
                                 let player_range = menu.player_slots_range();
@@ -2196,7 +2744,8 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
                                             sleep(Duration::from_millis(80)).await;
                                             // 找一个空的主背包槽位放下
                                             for ps in player_range.clone() {
-                                                let is_empty = slots.get(ps)
+                                                let is_empty = slots
+                                                    .get(ps)
                                                     .map(|st| st.is_empty())
                                                     .unwrap_or(false);
                                                 if is_empty || ps >= slots.len() {
@@ -2225,7 +2774,9 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
                         sleep(Duration::from_millis(80)).await;
                         // P5 修复：验证主手实际持有物
                         return match verify_held_item(bot, kind).await {
-                            true => format!("已装备 {item} 到主手（从槽 {src} 移到 hotbar 槽 {h}）"),
+                            true => {
+                                format!("已装备 {item} 到主手（从槽 {src} 移到 hotbar 槽 {h}）")
+                            }
                             false => format!(
                                 "装备 {item} 失败：shift_click 后主手仍未持有 {item}\
                                  （可能 hotbar 满，或服务端拒绝移动）"
@@ -2259,12 +2810,18 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
                 Err(e) => return format!("背包未持有 {item}（获取背包失败: {e:?}）"),
             };
             let mut diag_items = Vec::new();
-            if let (Some(menu), Some(slots)) = (final_inv.menu().ok().flatten(), final_inv.slots()) {
+            if let (Some(menu), Some(slots)) = (final_inv.menu().ok().flatten(), final_inv.slots())
+            {
                 let range = menu.player_slots_range();
                 for s in range {
                     if let Some(st) = slots.get(s) {
                         if !st.is_empty() {
-                            diag_items.push(format!("slot{}={}x{}", s, st.kind().to_str(), st.count()));
+                            diag_items.push(format!(
+                                "slot{}={}x{}",
+                                s,
+                                st.kind().to_str(),
+                                st.count()
+                            ));
                         }
                     }
                 }
@@ -2273,11 +2830,31 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
             // 增加合成建议，避免 LLM 反复 equip 不存在的物品。
             let is_tool = matches!(
                 item,
-                "wooden_pickaxe" | "stone_pickaxe" | "iron_pickaxe" | "diamond_pickaxe" | "netherite_pickaxe"
-                    | "wooden_axe" | "stone_axe" | "iron_axe" | "diamond_axe" | "netherite_axe"
-                    | "wooden_sword" | "stone_sword" | "iron_sword" | "diamond_sword" | "netherite_sword"
-                    | "wooden_hoe" | "stone_hoe" | "iron_hoe" | "diamond_hoe" | "netherite_hoe"
-                    | "wooden_shovel" | "stone_shovel" | "iron_shovel" | "diamond_shovel" | "netherite_shovel"
+                "wooden_pickaxe"
+                    | "stone_pickaxe"
+                    | "iron_pickaxe"
+                    | "diamond_pickaxe"
+                    | "netherite_pickaxe"
+                    | "wooden_axe"
+                    | "stone_axe"
+                    | "iron_axe"
+                    | "diamond_axe"
+                    | "netherite_axe"
+                    | "wooden_sword"
+                    | "stone_sword"
+                    | "iron_sword"
+                    | "diamond_sword"
+                    | "netherite_sword"
+                    | "wooden_hoe"
+                    | "stone_hoe"
+                    | "iron_hoe"
+                    | "diamond_hoe"
+                    | "netherite_hoe"
+                    | "wooden_shovel"
+                    | "stone_shovel"
+                    | "iron_shovel"
+                    | "diamond_shovel"
+                    | "netherite_shovel"
             );
             let craft_hint = if is_tool {
                 let (tool_base, tier) = if item.contains("pickaxe") {
@@ -2294,9 +2871,15 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
                     ("", "")
                 };
                 let recipe_hint = match (tool_base, tier) {
-                    ("pickaxe", "wooden") => "wooden_pickaxe = oak_planks×3 + stick×2（craft 2×2 即可，无需工作台）",
-                    ("pickaxe", "stone") => "stone_pickaxe = cobblestone×3 + stick×2（需 craft_3x3 工作台）",
-                    ("pickaxe", "iron") => "iron_pickaxe = iron_ingot×3 + stick×2（需 craft_3x3 工作台 + 熔炼 iron_ore→iron_ingot）",
+                    ("pickaxe", "wooden") => {
+                        "wooden_pickaxe = oak_planks×3 + stick×2（craft 2×2 即可，无需工作台）"
+                    }
+                    ("pickaxe", "stone") => {
+                        "stone_pickaxe = cobblestone×3 + stick×2（需 craft_3x3 工作台）"
+                    }
+                    ("pickaxe", "iron") => {
+                        "iron_pickaxe = iron_ingot×3 + stick×2（需 craft_3x3 工作台 + 熔炼 iron_ore→iron_ingot）"
+                    }
                     ("axe", "wooden") => "wooden_axe = oak_planks×3 + stick×2（craft 2×2）",
                     ("axe", "stone") => "stone_axe = cobblestone×3 + stick×2（需 craft_3x3）",
                     ("sword", "wooden") => "wooden_sword = oak_planks×2 + stick×1（craft 2×2）",
@@ -2304,7 +2887,9 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
                     _ => "",
                 };
                 if !recipe_hint.is_empty() {
-                    format!("\n该物品是工具，请先合成：{recipe_hint}\nstick 由 2 个 planks 合成 4 个。合成后再 equip。")
+                    format!(
+                        "\n该物品是工具，请先合成：{recipe_hint}\nstick 由 2 个 planks 合成 4 个。合成后再 equip。"
+                    )
                 } else {
                     String::new()
                 }
@@ -2316,7 +2901,12 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
                  可能原因：1) 物品名称错误（用 perceive 查看背包实际物品名）；\
                  2) 物品已被使用/丢弃；3) 服务端长时间未同步背包。\
                  当前背包: {}{craft_hint}",
-                diag_items.iter().take(15).cloned().collect::<Vec<_>>().join(", ")
+                diag_items
+                    .iter()
+                    .take(15)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(", ")
             )
         }
         "helmet" | "chestplate" | "leggings" | "boots" => {
@@ -2418,12 +3008,11 @@ async fn verify_armor_slot(bot: &Client, armor_slot: usize, expected: ItemKind) 
 /// count=0 表示丢弃全部；count>0 表示丢弃指定数量（按堆丢，最后不足一堆用 Single 丢）。
 /// 丢弃后物品以掉落物形式存在于 bot 脚边，可重新捡起。
 pub async fn do_discard(bot: &Client, item: &str, count: u32) -> String {
-    let kind = match ItemKind::from_str(&normalize_item_id(item))
-        .or_else(|_| ItemKind::from_str(item))
-    {
-        Ok(k) => k,
-        Err(_) => return format!("未知物品 {item}"),
-    };
+    let kind =
+        match ItemKind::from_str(&normalize_item_id(item)).or_else(|_| ItemKind::from_str(item)) {
+            Ok(k) => k,
+            Err(_) => return format!("未知物品 {item}"),
+        };
     let inv = match bot.get_inventory() {
         Ok(i) => i,
         Err(e) => return format!("获取背包失败: {e:?}"),
@@ -2483,12 +3072,11 @@ pub async fn do_discard(bot: &Client, item: &str, count: u32) -> String {
 /// 把 item 移到主手并按住右键使用。食物 32 tick（1.6s）吃完一个，这里等待 2s 兜底。
 /// 药水 32 tick 喝完。返回时物品已被服务端消耗。
 pub async fn do_consume(bot: &Client, item: &str) -> String {
-    let kind = match ItemKind::from_str(&normalize_item_id(item))
-        .or_else(|_| ItemKind::from_str(item))
-    {
-        Ok(k) => k,
-        Err(_) => return format!("未知物品 {item}"),
-    };
+    let kind =
+        match ItemKind::from_str(&normalize_item_id(item)).or_else(|_| ItemKind::from_str(item)) {
+            Ok(k) => k,
+            Err(_) => return format!("未知物品 {item}"),
+        };
     let inv = match bot.get_inventory() {
         Ok(i) => i,
         Err(e) => return format!("获取背包失败: {e:?}"),
@@ -2525,7 +3113,11 @@ pub async fn do_consume(bot: &Client, item: &str) -> String {
                         .filter(|(_, s)| !s.is_empty())
                         .map(|(i, s)| format!("slot{i}:{:?}", s.kind()))
                         .collect();
-                    diag.push_str(&format!("非空槽位({}): {}", nonempty.len(), nonempty.join(", ")));
+                    diag.push_str(&format!(
+                        "非空槽位({}): {}",
+                        nonempty.len(),
+                        nonempty.join(", ")
+                    ));
                 }
             }
         }
@@ -2573,14 +3165,26 @@ pub async fn do_consume(bot: &Client, item: &str) -> String {
     }
     let after = count_item(bot, kind);
     if after < before {
-        format!("已消耗 {}（{} → {}，-{}）", item, before, after, before - after)
+        format!(
+            "已消耗 {}（{} → {}，-{}）",
+            item,
+            before,
+            after,
+            before - after
+        )
     } else {
         // P8 改进：根据饥饿值给更精准的提示
         let hint = if let Ok(h) = bot.hunger() {
             if h.food >= 20 {
-                format!("饥饿值已满 ({}/20)，无法进食——先消耗体力或受伤降低饱食度", h.food)
+                format!(
+                    "饥饿值已满 ({}/20)，无法进食——先消耗体力或受伤降低饱食度",
+                    h.food
+                )
             } else {
-                format!("饥饿值 {}/20（应该可进食但未生效），可能服务端拒绝或物品不可食用", h.food)
+                format!(
+                    "饥饿值 {}/20（应该可进食但未生效），可能服务端拒绝或物品不可食用",
+                    h.food
+                )
             }
         } else {
             "可能不是可消耗物品或饥饿值已满".to_string()
@@ -2591,11 +3195,7 @@ pub async fn do_consume(bot: &Client, item: &str) -> String {
 
 /// 统计背包中指定物品的总数。
 fn count_item(bot: &Client, kind: ItemKind) -> u32 {
-    let Some(slots) = bot
-        .get_inventory()
-        .ok()
-        .and_then(|i| i.slots())
-    else {
+    let Some(slots) = bot.get_inventory().ok().and_then(|i| i.slots()) else {
         return 0;
     };
     slots
@@ -2769,11 +3369,17 @@ mod tests {
 
         // 红石矿 → redstone
         assert_eq!(block_drops_item(B::RedstoneOre), Some(IK::Redstone));
-        assert_eq!(block_drops_item(B::DeepslateRedstoneOre), Some(IK::Redstone));
+        assert_eq!(
+            block_drops_item(B::DeepslateRedstoneOre),
+            Some(IK::Redstone)
+        );
 
         // 青金石矿 → lapis_lazuli（注意是 dye 不是 ore）
         assert_eq!(block_drops_item(B::LapisOre), Some(IK::LapisLazuli));
-        assert_eq!(block_drops_item(B::DeepslateLapisOre), Some(IK::LapisLazuli));
+        assert_eq!(
+            block_drops_item(B::DeepslateLapisOre),
+            Some(IK::LapisLazuli)
+        );
 
         // 下界石英矿 → quartz
         assert_eq!(block_drops_item(B::NetherQuartzOre), Some(IK::Quartz));

@@ -6,9 +6,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use azalea_client::packet::game::ReceiveGamePacketEvent;
-use azalea_protocol::packets::game::{
-    ClientboundGamePacket, ClientboundMerchantOffers,
-};
+use azalea_protocol::packets::game::{ClientboundGamePacket, ClientboundMerchantOffers};
 use azalea_registry::builtin::EntityKind;
 use bevy_app::{App, Plugin, Update};
 use bevy_ecs::message::MessageReader;
@@ -94,10 +92,7 @@ fn snapshot_merchant(p: &ClientboundMerchantOffers) -> MerchantSnapshot {
 }
 
 /// 读包 system：监听所有收到的游戏包，挑出村民报价与配方书。
-fn read_game_packets(
-    mut events: MessageReader<ReceiveGamePacketEvent>,
-    ext: Res<BotExtResource>,
-) {
+fn read_game_packets(mut events: MessageReader<ReceiveGamePacketEvent>, ext: Res<BotExtResource>) {
     for ev in events.read() {
         match ev.packet.as_ref() {
             ClientboundGamePacket::MerchantOffers(p) => {

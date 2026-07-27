@@ -8,8 +8,8 @@ use craft_agent::agent::{Agent, AgentConfig, CompactionConfig, LlmProvider, Retr
 use craft_agent::core::message::AssistantResponse;
 use craft_agent::core::session::Session;
 use craft_agent::core::tool::ToolRegistry;
-use craft_agent_minecraft::adapter_azalea::ArcAzaleaAdapter;
 use craft_agent_minecraft::action_lib::ActionLibrary;
+use craft_agent_minecraft::adapter_azalea::ArcAzaleaAdapter;
 use craft_agent_minecraft::blueprint::BlueprintLibrary;
 use craft_agent_minecraft::tools_azalea::create_mc_azalea_tools_full;
 use craft_agent_model::config::AgentConfig as ModelConfig;
@@ -263,7 +263,11 @@ fn run_agent(
             "craftbot",
             world_mem.clone(),
         ))
-        .map_err(|e| anyhow::anyhow!("azalea adapter 连接失败（确认服为纯 vanilla 26.2 且地址 {mc_addr} 开放）: {e}"))?
+        .map_err(|e| {
+            anyhow::anyhow!(
+                "azalea adapter 连接失败（确认服为纯 vanilla 26.2 且地址 {mc_addr} 开放）: {e}"
+            )
+        })?
     };
     *ctrl.game_adapter.write().unwrap() = Some(adapter.clone());
 
@@ -277,7 +281,8 @@ fn run_agent(
         blueprints.len(),
         actions.len()
     );
-    for tool in create_mc_azalea_tools_full(adapter.clone(), world_mem.clone(), blueprints, actions) {
+    for tool in create_mc_azalea_tools_full(adapter.clone(), world_mem.clone(), blueprints, actions)
+    {
         registry.register(tool);
     }
 
@@ -337,7 +342,7 @@ fn run_agent(
         }
     }
 
-// ============= Prompt Profile 加载（三层叠加：_default → mode → individual）=============
+    // ============= Prompt Profile 加载（三层叠加：_default → mode → individual）=============
     // 学习自 Mindcraft 的 profile 系统：system prompt 从 JSON 文件加载，无需重编译即可调优。
     // 默认从 ./profiles/_default.json 加载，叠加 defaults/{mode}.json，再叠加 {individual}.json
     //
@@ -382,7 +387,10 @@ fn run_agent(
     let system_prompt = profile.render(&replacements);
 
     let _ = event_tx.send(AgentEvent::Log {
-        text: format!("📄 System prompt 长度: {} 字符", system_prompt.chars().count()),
+        text: format!(
+            "📄 System prompt 长度: {} 字符",
+            system_prompt.chars().count()
+        ),
     });
     let agent_cfg = AgentConfig::new(system_prompt, 1) // 每步 1 轮，外循环控制步数
         .with_compaction(compaction)

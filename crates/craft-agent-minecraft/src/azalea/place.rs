@@ -99,7 +99,7 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
         let by = bp.y.floor() as i32;
         let bz = bp.z.floor() as i32;
         // bot 占据 foot (bx,by,bz) + head (bx,by+1,bz)
-        (pos.x == bx && pos.z == bz && (pos.y == by || pos.y == by + 1))
+        pos.x == bx && pos.z == bz && (pos.y == by || pos.y == by + 1)
     } else {
         false
     };
@@ -176,14 +176,21 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
                     //   destSlot = QUICK_BAR_START + nextQuickBarSlot;
                     //   nextQuickBarSlot = (nextQuickBarSlot + 1) % QUICK_BAR_COUNT;
                     // 这里简化为选第一个 hotbar 槽（slot 36），用 left_click 三步交换。
-                    let menu = inv2.menu().ok().flatten()
+                    let menu = inv2
+                        .menu()
+                        .ok()
+                        .flatten()
                         .ok_or_else(|| format!("放置 {item} 失败：读取菜单失败"))?;
                     let hotbar_range = menu.hotbar_slots_range();
                     let target_hotbar = *hotbar_range.start();
 
                     // 找目标物品在主背包的槽位（shift_click 可能已经改变了位置，重新找）
-                    let source_slot = find_item_slot_in_main_inventory(&inv2, kind)
-                        .ok_or_else(|| format!("放置 {item} 失败：shift_click 后物品既不在 hotbar 也不在主背包"))?;
+                    let source_slot =
+                        find_item_slot_in_main_inventory(&inv2, kind).ok_or_else(|| {
+                            format!(
+                                "放置 {item} 失败：shift_click 后物品既不在 hotbar 也不在主背包"
+                            )
+                        })?;
 
                     eprintln!(
                         "[place] hotbar 满，LRU 交换：source=slot{source_slot} ↔ target=slot{target_hotbar}"
@@ -195,20 +202,23 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
                     sleep(Duration::from_millis(150)).await;
                     // 2. left_click(target_hotbar) 放下目标物品，拿起原 hotbar 物品
                     drop(inv2);
-                    let inv3 = bot.get_inventory()
+                    let inv3 = bot
+                        .get_inventory()
                         .map_err(|e| format!("交换中获取背包失败: {e:?}"))?;
                     inv3.left_click(target_hotbar);
                     sleep(Duration::from_millis(150)).await;
                     // 3. left_click(source) 把原 hotbar 物品放回主背包
                     drop(inv3);
-                    let inv4 = bot.get_inventory()
+                    let inv4 = bot
+                        .get_inventory()
                         .map_err(|e| format!("交换后获取背包失败: {e:?}"))?;
                     inv4.left_click(source_slot);
                     sleep(Duration::from_millis(200)).await;
 
                     // 验证目标物品现在在 hotbar
                     drop(inv4);
-                    let inv5 = bot.get_inventory()
+                    let inv5 = bot
+                        .get_inventory()
                         .map_err(|e| format!("验证时获取背包失败: {e:?}"))?;
                     find_hotbar_slot(&inv5, kind).ok_or_else(|| {
                         format!("放置 {item} 失败：LRU 交换后物品仍不在 hotbar（交换可能失败）")
@@ -281,10 +291,17 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
                 "放置 {item} 于 ({},{},{}) 失败：bot 距下方方块 ({},{},{}) {dist_to_below:.1}m 过远（>4.5m，服务端 reach 校验拒绝）。\
                  当前 bot 位置 ({:.1},{:.1},{:.1})。\
                  建议：先 goto 到 ({},{}) 旁 1-2m 再 place（注意 Y 不需要严格对齐，reach 是 3D 距离）。",
-                placement_pos.x, placement_pos.y, placement_pos.z,
-                below.x, below.y, below.z,
-                p.x, p.y, p.z,
-                below.x, below.z
+                placement_pos.x,
+                placement_pos.y,
+                placement_pos.z,
+                below.x,
+                below.y,
+                below.z,
+                p.x,
+                p.y,
+                p.z,
+                below.x,
+                below.z
             ));
         }
     }
@@ -321,7 +338,12 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
         bot.block_interact(below);
         // 首次等 400ms 让服务端处理（原 200ms 不够，BlockUpdate 包同步需要时间），
         // 重试时等 600ms 让前一次的副作用消散
-        sleep(if attempt == 0 { Duration::from_millis(400) } else { Duration::from_millis(600) }).await;
+        sleep(if attempt == 0 {
+            Duration::from_millis(400)
+        } else {
+            Duration::from_millis(600)
+        })
+        .await;
         placed_ok = verify_block_placed(bot, placement_pos, expected_block).await;
         if placed_ok {
             break;
@@ -329,22 +351,31 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
         if attempt == 0 {
             // 首次失败，重试前重新确认主手物品（可能被其他操作覆盖）
             if !crate::azalea::wait_for_held_item(bot, kind, 800).await {
-                eprintln!(
-                    "[place] 重试放弃：主手物品已不是 {item}（可能被其他操作覆盖）"
-                );
+                eprintln!("[place] 重试放弃：主手物品已不是 {item}（可能被其他操作覆盖）");
                 break;
             }
             // P29：重新走到 below 旁 1.5m，确保 reach 通过
             use azalea::pathfinder::goals::RadiusGoal;
-            let target = azalea::Vec3::new(below.x as f64 + 0.5, below.y as f64 + 0.5, below.z as f64 + 0.5);
-            let goto_fut = bot.goto(RadiusGoal { pos: target, radius: 1.5 });
+            let target = azalea::Vec3::new(
+                below.x as f64 + 0.5,
+                below.y as f64 + 0.5,
+                below.z as f64 + 0.5,
+            );
+            let goto_fut = bot.goto(RadiusGoal {
+                pos: target,
+                radius: 1.5,
+            });
             let _ = tokio::time::timeout(Duration::from_secs(3), goto_fut).await;
             // 走完后等 200ms 让物理稳定
             sleep(Duration::from_millis(200)).await;
             eprintln!(
                 "[place] 放置 {item} 于 ({},{},{}) 首次失败（{}），已重新接近 below 旁 1.5m + look_at 对齐视线，重试一次",
-                placement_pos.x, placement_pos.y, placement_pos.z,
-                block_kind_at(bot, placement_pos).map(|k| format!("{k:?}")).unwrap_or_else(|| "空气".to_string())
+                placement_pos.x,
+                placement_pos.y,
+                placement_pos.z,
+                block_kind_at(bot, placement_pos)
+                    .map(|k| format!("{k:?}"))
+                    .unwrap_or_else(|| "空气".to_string())
             );
         }
     }
@@ -353,7 +384,10 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
         // 原 bug：成功消息用 pos，但 placement_pos 可能因自动重定位而不同 →
         // LLM 被告知"已放在 X"但实际在 Y，后续 open(X) 必然失败。
         let relocate_note = if relocated {
-            format!("（原坐标 ({},{},{}) 无效，已自动移到附近合法位置）", pos.x, pos.y, pos.z)
+            format!(
+                "（原坐标 ({},{},{}) 无效，已自动移到附近合法位置）",
+                pos.x, pos.y, pos.z
+            )
         } else {
             String::new()
         };
@@ -363,7 +397,9 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
         ))
     } else {
         // 检查 placement_pos 现在是什么方块，给 LLM 更准确的诊断
-        let now_kind = block_kind_at(bot, placement_pos).map(|k| format!("{k:?}")).unwrap_or_else(|| "空气".to_string());
+        let now_kind = block_kind_at(bot, placement_pos)
+            .map(|k| format!("{k:?}"))
+            .unwrap_or_else(|| "空气".to_string());
         Err(format!(
             "放置 {item} 于 ({},{},{}) 失败——放置后该处为 {now_kind}（期望 {}，已重试 2 次）。\
              可能原因：1) bot 距离过远（>4.5m，reach 检查失败）；2) 服务端拒绝放置（保护区/碰撞）；\
@@ -462,7 +498,9 @@ pub async fn do_open_container(bot: &Client, pos: BlockPos) -> Result<String, St
             // 用新坐标重新走 open_container 流程
             return do_open_container_inner(bot, nearby, Some(relocated_note)).await;
         }
-        let actual = block_kind.map(|k| format!("{k:?}")).unwrap_or_else(|| "空气".to_string());
+        let actual = block_kind
+            .map(|k| format!("{k:?}"))
+            .unwrap_or_else(|| "空气".to_string());
         return Err(format!(
             "({},{},{}) 处不是容器方块（当前为 {actual}），且附近 5 格内未找到任何容器。容器方块包括：crafting_table / furnace / chest / barrel / shulker_box / blast_furnace / smoker / brewing_stand 等。\
              建议：1) 检查坐标是否正确；2) 重新 place 一个容器后立即 open。",
@@ -510,7 +548,10 @@ async fn do_open_container_inner(
     match handle {
         Some(h) => {
             std::mem::forget(h);
-            Ok(format!("已打开容器 ({},{},{}){note}", effective_pos.x, effective_pos.y, effective_pos.z))
+            Ok(format!(
+                "已打开容器 ({},{},{}){note}",
+                effective_pos.x, effective_pos.y, effective_pos.z
+            ))
         }
         None => Err(format!(
             "({},{},{}) 处虽有容器方块但 open_container_at 返回 None——可能 bot 视线被阻挡或服务端拒绝。{note}\
@@ -590,9 +631,7 @@ fn find_nearby_container_block(bot: &Client, origin: BlockPos, radius: i32) -> O
                     continue; // 跳过 origin 本身（已确认不是容器）
                 }
                 let pos = BlockPos::new(origin.x + dx, origin.y + dy, origin.z + dz);
-                let kind = world
-                    .get_block_state(pos)
-                    .map(|s| s.into());
+                let kind = world.get_block_state(pos).map(|s| s.into());
                 if let Some(bk) = kind {
                     if is_container_block(bk) {
                         // 曼哈顿距离作优先级，距离近的优先
@@ -614,12 +653,20 @@ fn find_nearby_container_block(bot: &Client, origin: BlockPos, radius: i32) -> O
 ///
 /// 与 `find_valid_placement_nearby` 相同，但允许自定义扫描半径。
 /// 用于 3 格半径找不到时的扩大搜索（地下空间狭窄，常需要 5 格）。
-fn find_valid_placement_nearby_radius(bot: &Client, origin: BlockPos, radius: i32) -> Option<BlockPos> {
+fn find_valid_placement_nearby_radius(
+    bot: &Client,
+    origin: BlockPos,
+    radius: i32,
+) -> Option<BlockPos> {
     let world = bot.world().ok()?;
     let world = world.read();
     let bot_pos = bot.position().ok();
     let (bot_x, bot_y, bot_z) = if let Some(bp) = bot_pos {
-        (bp.x.floor() as i32, bp.y.floor() as i32, bp.z.floor() as i32)
+        (
+            bp.x.floor() as i32,
+            bp.y.floor() as i32,
+            bp.z.floor() as i32,
+        )
     } else {
         (i32::MIN, i32::MIN, i32::MIN)
     };
@@ -683,7 +730,11 @@ fn find_valid_placement_nearby(bot: &Client, origin: BlockPos) -> Option<BlockPo
     // bot 当前占据的格（foot + head）
     let bot_pos = bot.position().ok();
     let (bot_x, bot_y, bot_z) = if let Some(bp) = bot_pos {
-        (bp.x.floor() as i32, bp.y.floor() as i32, bp.z.floor() as i32)
+        (
+            bp.x.floor() as i32,
+            bp.y.floor() as i32,
+            bp.z.floor() as i32,
+        )
     } else {
         (i32::MIN, i32::MIN, i32::MIN) // 无法读取时不会匹配任何位置
     };
@@ -739,8 +790,8 @@ fn find_valid_placement_nearby(bot: &Client, origin: BlockPos) -> Option<BlockPo
 /// block_interact 因 reach 检查失败而静默无效，导致 place 100% 失败。
 /// 最多等 5 秒，超时也不报错（让后续距离检查自己判定）。
 async fn walk_to_reach_for_place(bot: &Client, pos: BlockPos) {
-    use azalea::pathfinder::goals::RadiusGoal;
     use azalea::Vec3;
+    use azalea::pathfinder::goals::RadiusGoal;
     let p = match bot.position() {
         Ok(p) => p,
         Err(_) => return,
@@ -755,6 +806,9 @@ async fn walk_to_reach_for_place(bot: &Client, pos: BlockPos) {
     }
     // 用 RadiusGoal 走到 pos 旁 1.5m 范围
     let target = Vec3::new(pos.x as f64 + 0.5, pos.y as f64 + 0.5, pos.z as f64 + 0.5);
-    let goto_fut = bot.goto(RadiusGoal { pos: target, radius: 1.5 });
+    let goto_fut = bot.goto(RadiusGoal {
+        pos: target,
+        radius: 1.5,
+    });
     let _ = tokio::time::timeout(Duration::from_secs(5), goto_fut).await;
 }

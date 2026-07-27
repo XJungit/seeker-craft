@@ -3,9 +3,9 @@
 
 use std::time::Duration;
 
+use azalea::Client;
 use azalea::entity::metadata::Villager;
 use azalea::prelude::*;
-use azalea::Client;
 use azalea_protocol::packets::game::s_select_trade::ServerboundSelectTrade;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::query::With;
@@ -54,10 +54,9 @@ pub async fn do_trade(bot: &Client, ext: &SharedExt, offer_index: u32) -> anyhow
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("无村民交易报价"))?;
         let idx = offer_index as usize;
-        let offer = m
-            .offers
-            .get(idx)
-            .ok_or_else(|| anyhow::anyhow!("报价索引越界：{offer_index}，共 {} 个", m.offers.len()))?;
+        let offer = m.offers.get(idx).ok_or_else(|| {
+            anyhow::anyhow!("报价索引越界：{offer_index}，共 {} 个", m.offers.len())
+        })?;
         if offer.out_of_stock {
             return Err(anyhow::anyhow!(
                 "该报价已售罄（out_of_stock），需等待村民补货"

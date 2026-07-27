@@ -140,7 +140,8 @@ impl ActionLibrary {
             action.call_count = 0; // 重置计数
             let json = serde_json::to_string_pretty(&action)
                 .map_err(|e| format!("序列化动作失败: {e}"))?;
-            std::fs::write(&path, json).map_err(|e| format!("写入 {} 失败: {e}", path.display()))?;
+            std::fs::write(&path, json)
+                .map_err(|e| format!("写入 {} 失败: {e}", path.display()))?;
         }
         // 插入内存（覆盖同名）
         self.actions.insert(action.name.clone(), action);
