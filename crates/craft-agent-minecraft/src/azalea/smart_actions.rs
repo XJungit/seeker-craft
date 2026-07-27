@@ -228,18 +228,38 @@ pub async fn collect_block_smart(
                 break;
             }
         }
+        // P26 新增（2026-07-27）：背包无镐时自动 auto_craft wooden_pickaxe。
+        // 原 code 只报错让 LLM 合成，但 LLM 常忽略提示直接重试 gather → 死循环。
+        // 学习自 mindcraft craftRecipe：mindcraft 在需要工具时会主动 craft。
+        // 这里调用 do_auto_craft 递归合成 wooden_pickaxe（会自动处理
+        // log→planks→stick→table→pickaxe 全链路）。
+        if !found_pickaxe {
+            eprintln!("[smart_gather] P26: 背包无镐，尝试 auto_craft wooden_pickaxe");
+            match crate::azalea::auto_craft::do_auto_craft(bot, "wooden_pickaxe", 1).await {
+                Ok(msg) => {
+                    eprintln!("[smart_gather] P26: auto_craft 成功 - {msg}");
+                    // 等待背包同步，然后验证镐已就位
+                    sleep(Duration::from_millis(500)).await;
+                    if has_any_pickaxe_in_inventory(bot).await {
+                        found_pickaxe = true;
+                        eprintln!("[smart_gather] P26: wooden_pickaxe 已就位，继续采集");
+                    } else {
+                        eprintln!("[smart_gather] P26: auto_craft 报成功但背包未同步到镐");
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[smart_gather] P26: auto_craft wooden_pickaxe 失败: {e}");
+                }
+            }
+        }
         if !found_pickaxe {
             return Err(format!(
-                "采集 {item} 失败：背包无镐，矿石/石头类方块徒手挖不掉（不掉落物品）。\n\
+                "采集 {item} 失败：背包无镐且自动合成 wooden_pickaxe 失败（可能缺原料：需要 oak_log 或 oak_planks）。\n\
                  解决步骤：\n\
-                 1. 先 perceive 查看背包，确认是否已有镐（搜 *_pickaxe）\n\
-                 2a. 若已有镐：用 equip(item='xxx_pickaxe') 装备主手后重试 gather\n\
-                 2b. 若无镐：根据背包原料合成——\n\
-                     - wooden_pickaxe = oak_planks×3 + stick×2（craft 2×2 即可）\n\
-                     - stone_pickaxe = cobblestone×3 + stick×2（需 craft_3x3 工作台）\n\
-                     - iron_pickaxe = iron_ingot×3 + stick×2（需 craft_3x3 工作台）\n\
-                     stick 由 2 个 planks 合成 4 个\n\
-                 3. 合成后 equip 装备，再重试 gather"
+                 1. 先 gather('oak_log') 获取原木\n\
+                 2. craft('oak_planks') → craft('stick') → craft_3x3('wooden_pickaxe')\n\
+                 3. equip(item='wooden_pickaxe') 装备主手\n\
+                 4. 重试 gather('{item}')"
             ));
         }
     }
