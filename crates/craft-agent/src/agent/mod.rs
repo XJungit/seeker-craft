@@ -1067,16 +1067,33 @@ impl Agent {
                 && content.is_empty()
                 && response.reasoning.is_some()
                 && response.reasoning.as_deref().map_or(false, |r| !r.is_empty());
-            // P12 修复（2026-07-26）：过早宣告任务完成检测。
+            // P12 + P56 修复（2026-07-26/27）：过早宣告任务完成检测。
             // LLM 在纯文字回复里宣告"任务完成/目标完成"但未实际验证，
             // 此时目标仍在 Active 态，应强制 perceive 验证而非停止行动。
+            //
+            // P56 扩展（2026-07-27）：scan_20260727_205138.md 显示 step 11/14/33/41
+            // 都出现 LLM 宣告"smelt 任务完成 ✅"但无 tool_call，浪费 4 轮。
+            // 原关键词列表漏掉了「✅」「已验证」「最终确认」等总结性措辞，
+            // 现在扩展到任何包含「✅」或总结性关键词的纯文字回复。
             let is_premature_completion = content.contains("任务完成")
                 || content.contains("目标完成")
                 || content.contains("目标已全部完成")
                 || content.contains("全部完成")
                 || content.contains("任务已全部完成")
                 || content.contains("已完成所有")
-                || content.contains("最终成果");
+                || content.contains("最终成果")
+                // P56 新增：覆盖 scan 报告里实际出现的措辞
+                || content.contains('✅')
+                || content.contains("已验证")
+                || content.contains("验证完成")
+                || content.contains("已确认")
+                || content.contains("最终确认")
+                || content.contains("任务 ✅")
+                || content.contains("任务完成")
+                || content.contains("smelt 任务")
+                || content.contains("craft 任务")
+                || content.contains("gather 任务")
+                || content.contains("mine 任务");
             // 文字伪调用检测：LLM 在 assistant 文字里写 `tool(...)` 伪调用而不产生真实 tool_calls。
             let _lower = content.to_lowercase();
             let is_pseudo_call = content.contains("【工具")
