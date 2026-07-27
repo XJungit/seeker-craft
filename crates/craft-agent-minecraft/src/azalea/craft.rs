@@ -1626,6 +1626,17 @@ pub async fn do_smelt(
     clear_cursor(&inv).await;
 
     for _ in 0..crafts_needed {
+        // P38 本质修复（2026-07-27）：每次迭代重新获取 inv，避免用旧快照查找原料。
+        // 原bug：inv 在函数开头获取（行 1542），clear_grid 后熔炉槽位物品被 shift_click
+        // 回背包，但 inv 还是旧快照——find_source_slot 用旧数据找不到被移回背包的 raw_iron
+        // （旧 inv 里 raw_iron 还在 slot 0，不在 player_slots_range）。
+        // 表现：move_stack(src_in, 0) 用错误的 src_in（旧位置），实际物品不在那里，
+        // move_stack 静默失败，输入槽保持空 → smelt 等待 30s 超时 → "输入=空" 错误。
+        //
+        // 修复：每次迭代重新 bot.get_inventory() 拿最新 inv，find_source_slot 用最新数据。
+        let inv = bot
+            .get_inventory()
+            .map_err(|e| format!("获取容器失败（熔炼中）: {e:?}"))?;
         let src_in = find_source_slot(&inv, input_kind)
             .ok_or_else(|| format!("背包缺少输入 {}", recipe.input))?;
         // P22: 按优先级找燃料——LLM 指定的优先，找不到则 fallback 到任何可燃物
@@ -1651,10 +1662,15 @@ pub async fn do_smelt(
         // P10 修复：vanilla 单次熔炼需 200 ticks = 10s（燃料点燃还有额外延迟），
         // 原来只等 1.2s，结果槽必然是空的 → smelt 稳定失败（实测 80% 失败率）。
         // 改为轮询结果槽最多 30s，一有产物立刻继续，不必等满。
+        // P38: 每次轮询也重新获取 inv，确保看到最新的结果槽状态
         let mut has_result = false;
         for _ in 0..300 {
             sleep(Duration::from_millis(100)).await;
-            let r = inv
+            let inv_now = match bot.get_inventory() {
+                Ok(i) => i,
+                Err(_) => continue,
+            };
+            let r = inv_now
                 .slots()
                 .as_ref()
                 .and_then(|s| s.get(2))
