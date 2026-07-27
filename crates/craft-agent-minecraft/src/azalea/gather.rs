@@ -504,10 +504,15 @@ pub async fn do_gather(bot: &Client, item: &str, count: u32) -> Result<String, S
             String::new()
         };
         if gathered > 0 {
-            // 部分成功：明确告知已有数量，让 LLM 判断是否够用
-            Err(format!(
+            // P55 改进（2026-07-27）：部分成功返回 Ok 而非 Err。
+            // 原 P35 返回 Err，导致 LLM 把"got 14/16"当成失败并反复重试同一区域，
+            // 浪费轮次（实测 gather 100% 失败率，3/3 都卡在部分成功）。
+            // mindcraft 哲学：工具返回能做的部分，LLM 决策下一步。
+            // 部分成功 = 工具正常工作，只是资源不足，应返回 Ok 让 LLM 判断。
+            Ok(format!(
                 "采集 {item} 部分完成：已采集 {gathered}/{need}（差 {shortage} 个）{reason}。\n\
-                 当前背包已有 {gathered} 个 {drop_item_name}，请判断：\n\
+                 当前背包已有 {gathered} 个 {drop_item_name}。\n\
+                 下一步建议：\n\
                  - 若 {gathered} 个够用（如合成只需部分），可直接进行下一步（craft/smelt）；\n\
                  - 若不够，请 go 到其他区域寻找更多 {item}，或换一个采集目标。{drop_hint}"
             ))
