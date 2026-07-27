@@ -59,15 +59,20 @@ const FEW_SHOT_EXAMPLES: &[Example] = &[
             ("system", "Action output:\nSuccessfully crafted stone_pickaxe, you now have 1 stone_pickaxe."),
         ],
     },
-    // 铁矿 → 熔炼铁锭
+    // 铁矿 → 熔炼铁锭（P52 修正：对齐 9.2 铁律，furnace 必须用 craft_3x3 + place，
+    // 不再示范 auto_craft(furnace)——该调用会被工具拒绝返回 Err）
     Example {
         keywords: &["iron_ore", "铁矿", "iron", "铁", "smelt", "熔炼", "furnace", "熔炉"],
         turns: &[
             ("assistant", "gather(item=\"iron_ore\", count=3) 挖铁矿。需石镐+。"),
             ("system", "Action output:\nSuccessfully gathered 3 iron_ore, you now have 3 iron_ore."),
-            ("assistant", "auto_craft(item=\"furnace\", count=1) 一键合成并放置熔炉。"),
-            ("system", "Action output:\nPlaced furnace at (-489, 88, -145)."),
-            ("assistant", "open(x=-489, y=88, z=-145) 打开熔炉，再 smelt(output=\"iron_ingot\", fuel=\"coal\", count=3) 烧 3 个铁锭。"),
+            ("assistant", "熔炼前必须有 furnace。先确认背包有无 furnace（perceive 看背包），没有就 craft_3x3 合成：先 gather(cobblestone,8) → open 工作台 → craft_3x3(item=\"furnace\", count=1)。"),
+            ("system", "Action output:\nSuccessfully crafted furnace, you now have 1 furnace."),
+            ("assistant", "place(item=\"furnace\", x=-489, y=88, z=-145) 放熔炉，再 open(x=-489, y=88, z=-145) 打开。"),
+            ("system", "Action output:\nOpened furnace at (-489, 88, -145)."),
+            ("assistant", "还需燃料。gather(item=\"coal_ore\", count=1) 挖煤得 coal（或用 planks/log 代替）。"),
+            ("system", "Action output:\nSuccessfully gathered 1 coal."),
+            ("assistant", "smelt(output=\"iron_ingot\", fuel=\"coal\", count=3) 烧 3 个铁锭。"),
             ("system", "Action output:\nSuccessfully smelted 3 iron_ingot, you now have 3 iron_ingot."),
         ],
     },
@@ -81,13 +86,16 @@ const FEW_SHOT_EXAMPLES: &[Example] = &[
             ("system", "Action output:\nCould not find any zombie nearby. Health: 19/20."),
         ],
     },
-    // 食物：狩猎 + 烤肉
+    // 食物：狩猎 + 烤肉（P52 修正：对齐 9.2 铁律，furnace 必须用 craft_3x3 + place，
+    // 不再示范 auto_craft(furnace)）
     Example {
         keywords: &["cow", "pig", "sheep", "chicken", "牛", "猪", "羊", "鸡", "food", "hungry", "饿", "饱食"],
         turns: &[
             ("assistant", "附近 cow:3。goto 走过去后 attack(target=\"cow\") 击杀。"),
             ("system", "Action output:\nSuccessfully killed cow, dropped raw_beef x2."),
-            ("assistant", "auto_craft(item=\"furnace\", count=1); open 后 smelt(output=\"cooked_beef\", fuel=\"coal\", count=2) 烤熟。"),
+            ("assistant", "烤肉需要 furnace。若背包无 furnace：gather(cobblestone,8) → open 工作台 → craft_3x3(furnace) → place → open furnace。"),
+            ("system", "Action output:\nOpened furnace at (-489, 88, -145)."),
+            ("assistant", "smelt(output=\"cooked_beef\", fuel=\"coal\", count=2) 烤熟（coal 也可换 planks/log）。"),
             ("system", "Action output:\nSuccessfully smelted 2 cooked_beef, you now have 2 cooked_beef."),
         ],
     },
