@@ -263,18 +263,28 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
         ));
     }
 
-    // 距离检查：pathfinder 可能找不到路，走不到 reach 范围内。
-    // 此时直接返回错误，让 LLM 知道要先 goto。
+    // P29 修复（2026-07-27）：距离检查必须用 bot → below，而不是 bot → placement_pos。
+    // 原因：block_interact(below) 让 azalea 发 ServerboundUseItemOn 包，服务端做 reach
+    // 校验时是针对 below 方块（点击的方块），不是 placement_pos（新方块位置）。
+    // below 在 placement_pos 下方 1 格，所以 bot → below 距离 ≈ bot → placement_pos + 1m。
+    // 原代码用 placement_pos 算距离，阈值 5.0m，实际 bot → below 已 6.0m，服务端静默拒绝。
+    // 错误现象：放置后该处仍为空气，重试 2 次都失败（服务端从未收到有效包）。
+    //
+    // 同时把阈值从 5.0m 降到 4.5m：vanilla 服务端 reach 阈值约 4.5-5.0m，留 0.5m 余量。
     if let Ok(p) = bot.position() {
-        let dx = p.x - (placement_pos.x as f64 + 0.5);
-        let dy = p.y - (placement_pos.y as f64 + 0.5);
-        let dz = p.z - (placement_pos.z as f64 + 0.5);
-        let dist = (dx * dx + dy * dy + dz * dz).sqrt();
-        if dist > 5.0 {
+        let dx = p.x - (below.x as f64 + 0.5);
+        let dy = p.y - (below.y as f64 + 0.5);
+        let dz = p.z - (below.z as f64 + 0.5);
+        let dist_to_below = (dx * dx + dy * dy + dz * dz).sqrt();
+        if dist_to_below > 4.5 {
             return Err(format!(
-                "放置 {item} 于 ({},{},{}) 失败：bot 距目标 {dist:.1}m 过远（>5m，pathfinder 未能走到 reach 范围）。\
-                 当前 bot 位置 ({:.1},{:.1},{:.1})。建议：先 goto 到目标旁 1-2m 再 place。",
-                placement_pos.x, placement_pos.y, placement_pos.z, p.x, p.y, p.z
+                "放置 {item} 于 ({},{},{}) 失败：bot 距下方方块 ({},{},{}) {dist_to_below:.1}m 过远（>4.5m，服务端 reach 校验拒绝）。\
+                 当前 bot 位置 ({:.1},{:.1},{:.1})。\
+                 建议：先 goto 到 ({},{}) 旁 1-2m 再 place（注意 Y 不需要严格对齐，reach 是 3D 距离）。",
+                placement_pos.x, placement_pos.y, placement_pos.z,
+                below.x, below.y, below.z,
+                p.x, p.y, p.z,
+                below.x, below.z
             ));
         }
     }
@@ -284,12 +294,17 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
     // 常因瞬时同步问题（主手刚切换、服务端 reach 校验时序），第二次往往成功。
     // 学习自 mindcraft placeBlock：mindcraft 也只放一次，但 mineflayer 的
     // block_update 事件即时返回。azalea 需要更鲁棒的重试。
+    //
+    // P29 增强：第二次重试前用 pathfinder 重新走到 below 旁 1.5m。
+    // 原因：第一次失败常因 bot 与 below 距离在 reach 边界（4.0-4.5m），
+    // 服务端有时拒绝。重新走到 1.5m 内可以确保 reach 通过。
     let expected_block = item_to_block_kind(item);
     let mut placed_ok = false;
     for attempt in 0..2u8 {
         bot.block_interact(below);
-        // 首次等 200ms 让服务端处理，重试时等更久（500ms）让前一次的副作用消散
-        sleep(if attempt == 0 { Duration::from_millis(200) } else { Duration::from_millis(500) }).await;
+        // 首次等 400ms 让服务端处理（原 200ms 不够，BlockUpdate 包同步需要时间），
+        // 重试时等 600ms 让前一次的副作用消散
+        sleep(if attempt == 0 { Duration::from_millis(400) } else { Duration::from_millis(600) }).await;
         placed_ok = verify_block_placed(bot, placement_pos, expected_block).await;
         if placed_ok {
             break;
@@ -302,8 +317,16 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
                 );
                 break;
             }
+            // P29：重新走到 below 旁 1.5m，确保 reach 通过
+            use azalea::pathfinder::goals::RadiusGoal;
+            use azalea::Vec3;
+            let target = Vec3::new(below.x as f64 + 0.5, below.y as f64 + 0.5, below.z as f64 + 0.5);
+            let goto_fut = bot.goto(RadiusGoal { pos: target, radius: 1.5 });
+            let _ = tokio::time::timeout(Duration::from_secs(3), goto_fut).await;
+            // 走完后等 200ms 让物理稳定
+            sleep(Duration::from_millis(200)).await;
             eprintln!(
-                "[place] 放置 {item} 于 ({},{},{}) 首次失败（{}），重试一次",
+                "[place] 放置 {item} 于 ({},{},{}) 首次失败（{}），已重新接近 below 旁 1.5m，重试一次",
                 placement_pos.x, placement_pos.y, placement_pos.z,
                 block_kind_at(bot, placement_pos).map(|k| format!("{k:?}")).unwrap_or_else(|| "空气".to_string())
             );

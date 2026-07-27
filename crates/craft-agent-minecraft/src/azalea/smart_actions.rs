@@ -152,6 +152,90 @@ pub fn scan_blocks_multi(
     best.map(|(p, _)| p)
 }
 
+/// P30 新增（2026-07-27）：返回目标方块的典型 Y 生成范围（vanilla 规则）。
+///
+/// 用于 gather 失败时给 LLM 明确的 Y 提示：
+/// - "oak_log 在 Y=60~100 生成，bot 当前 Y=43（地下），需要先 goto 地表"
+/// - "diamond_ore 在 Y=-64~-16 生成，bot 当前 Y=40（地表），需要先 mine_below 到深地下"
+///
+/// 数据来源：minecraft.fandom.com 1.20+ ore distribution + vanilla block 生成规则。
+/// 返回 None 表示该方块无明确 Y 限制（如 grass_block/dirt 在任何 Y 都可能存在）。
+fn typical_y_range(item: &str) -> Option<(i32, i32)> {
+    let bare = item.strip_prefix("minecraft:").unwrap_or(item);
+    match bare {
+        // 原木类：地表生成（Y 60~100，森林/平原）
+        "oak_log" | "birch_log" | "spruce_log" | "jungle_log" | "acacia_log"
+        | "dark_oak_log" | "mangrove_log" | "cherry_log" | "pale_oak_log" => Some((60, 100)),
+        // 木板/工作台等：人造，无 Y 限制
+        // 矿石类（vanilla 1.18+ ore distribution）：
+        "coal_ore" | "deepslate_coal_ore" => Some((-64, 128)),
+        "iron_ore" | "deepslate_iron_ore" => Some((-64, 72)),
+        "copper_ore" | "deepslate_copper_ore" => Some((-16, 112)),
+        "gold_ore" | "deepslate_gold_ore" => Some((-64, 32)),
+        "diamond_ore" | "deepslate_diamond_ore" => Some((-64, 16)),
+        "emerald_ore" | "deepslate_emerald_ore" => Some((-64, 32)),
+        "lapis_ore" | "deepslate_lapis_ore" => Some((-64, 64)),
+        "redstone_ore" | "deepslate_redstone_ore" => Some((-64, 16)),
+        // 石材类：地下（Y < 60）
+        "stone" | "cobblestone" | "granite" | "diorite" | "andesite" | "tuff"
+        | "deepslate" | "netherrack" | "basalt" | "blackstone" | "end_stone" => Some((-64, 60)),
+        // 沙子/沙砾：地表（Y > 60，沙漠/河边）
+        "sand" | "red_sand" | "sandstone" | "red_sandstone" | "gravel" => Some((60, 128)),
+        // 草/泥土/原木：地表
+        "grass_block" | "dirt" | "podzol" | "mycelium" | "coarse_dirt" => Some((60, 128)),
+        // 水/冰：地表或地下水源
+        "water" | "ice" | "packed_ice" | "blue_ice" => Some((-64, 128)),
+        // 雪：地表
+        "snow" | "snow_block" => Some((60, 128)),
+        // 仙人掌：沙漠地表
+        "cactus" => Some((60, 128)),
+        // 甘蔗：水边地表
+        "sugar_cane" => Some((60, 128)),
+        // 竹子：地表
+        "bamboo" => Some((60, 128)),
+        // 花草/蘑菇：地表
+        "dandelion" | "poppy" | "rose_bush" | "peony" | "red_mushroom" | "brown_mushroom"
+        | "allium" | "azure_bluet" | "blue_orchid" | "cornflower" | "lily_of_the_valley"
+        | "orange_tulip" | "oxeye_daisy" | "pink_tulip" | "red_tulip" | "white_tulip"
+        | "wither_rose" | "sunflower" | "lilac" => Some((60, 128)),
+        _ => None,
+    }
+}
+
+/// P30 新增：根据目标方块的 Y 范围和 bot 当前 Y，生成位置建议 hint。
+///
+/// 返回 String：
+/// - 空字符串：目标无 Y 限制或 bot 已在合适 Y 范围
+/// - 非空：明确的 Y 提示（如"bot 当前 Y=43，oak_log 在 Y=60~100 生成，需先 goto 地表"）
+fn y_range_hint(item: &str, bot_y: i32) -> String {
+    let bare = item.strip_prefix("minecraft:").unwrap_or(item);
+    let Some((y_min, y_max)) = typical_y_range(bare) else {
+        return String::new();
+    };
+    if bot_y >= y_min && bot_y <= y_max {
+        return String::new();
+    }
+    let target_desc = if bare.ends_with("_log") || bare.ends_with("_wood") {
+        "（原木类需要先找到森林/树木群系）"
+    } else if bare.ends_with("_ore") {
+        "（矿石类需要挖到对应深度）"
+    } else if matches!(bare, "stone" | "cobblestone" | "granite" | "diorite" | "andesite" | "tuff" | "deepslate") {
+        "（石材类在地下生成）"
+    } else if matches!(bare, "sand" | "red_sand" | "sandstone" | "red_sandstone") {
+        "（沙子类在沙漠/河边地表生成）"
+    } else {
+        ""
+    };
+    let action = if bot_y < y_min {
+        format!("bot 当前 Y={bot_y}（过低），需要先 goto 到 Y≥{y_min} 的地表或更高位置")
+    } else {
+        format!("bot 当前 Y={bot_y}（过高），需要先 mine_below 到 Y≤{y_max} 的地下")
+    };
+    format!(
+        "\n【Y 范围不匹配】{item} 通常在 Y={y_min}~{y_max} 生成，{action}{target_desc}。"
+    )
+}
+
 /// P28 新增（2026-07-27）：扫描附近所有矿石类型，返回去重的矿石名列表。
 ///
 /// 用于 gather 失败时给 LLM 提供替代建议（如"找不到 iron_ore 但附近有 coal_ore"）。
@@ -479,11 +563,17 @@ pub async fn collect_block_smart(
                         item
                     )
                 };
+                // P30 新增：Y 范围检测，给 LLM 明确的位置建议。
+                let bot_y = bot
+                    .position()
+                    .map(|p| p.y.floor() as i32)
+                    .unwrap_or(0);
+                let y_hint = y_range_hint(item, bot_y);
                 return Err(format!(
                     "半径 16 内找不到 {item}（已采集 {gathered}/{need}），即使自动下挖 10 格也未暴露矿石。\
                      vanilla 规则：{item} 通常生成在 Y=15~80 的石头层中。\
                      建议：1) goto 到山体/洞穴入口再 gather；2) 用 mine_below 手动挖到 Y<60 后重试；\
-                     3) 换一个生物群系探索（沙漠/海洋下方矿石分布不同）。{alt_hint}"
+                     3) 换一个生物群系探索（沙漠/海洋下方矿石分布不同）。{alt_hint}{y_hint}"
                 ));
             }
             if round == max_rounds - 1 {
@@ -498,9 +588,15 @@ pub async fn collect_block_smart(
                 } else {
                     String::new()
                 };
+                // P30 新增：Y 范围检测
+                let bot_y = bot
+                    .position()
+                    .map(|p| p.y.floor() as i32)
+                    .unwrap_or(0);
+                let y_hint = y_range_hint(item, bot_y);
                 return Err(format!(
                     "半径 {radius} 内找不到 {item}（已采集 {gathered}/{need}）。\
-                     若 {item} 在地下（如 stone 在地表下），先用 mine_below() 挖到 Y<60 暴露岩石层，再重试 gather。{alt_hint}"
+                     若 {item} 在地下（如 stone 在地表下），先用 mine_below() 挖到 Y<60 暴露岩石层，再重试 gather。{alt_hint}{y_hint}"
                 ));
             }
             continue;

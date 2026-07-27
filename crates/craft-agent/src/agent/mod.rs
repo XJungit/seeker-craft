@@ -527,6 +527,9 @@ pub struct Agent {
     recent_calls: std::collections::VecDeque<String>,
     /// P8 连续纯文字回复计数（≥2 时强制注入更强 nudge）。
     text_only_count: u32,
+    /// P31 连续"假完成"宣告计数（LLM 说"任务完成"但目标仍 Active）。
+    /// ≥2 时注入更强 nudge，明确禁止再用文字宣告完成。
+    fake_completion_count: u32,
     /// P8 连续工具失败计数（用于检测"反复尝试同一件事都失败"模式）。
     consecutive_failures: u32,
     /// P8 上次位置记录（用于检测位置卡死）。
@@ -585,6 +588,7 @@ impl Agent {
             recent_calls: std::collections::VecDeque::with_capacity(10),
             compaction_provider,
             text_only_count: 0,
+            fake_completion_count: 0,
             consecutive_failures: 0,
             last_position_key: None,
             position_stale_turns: 0,
@@ -1077,12 +1081,33 @@ impl Agent {
                  不要在文字里写任何 tool() 调用）。请重新回复：文字只说 1 句意图，\
                  然后通过 function calling 输出真实 tool_calls。")
             } else if is_premature_completion && self.current_goal().is_some() {
-                // P12：LLM 过早宣告完成但目标仍 Active，强制 perceive 验证
+                // P12 + P31：LLM 过早宣告完成但目标仍 Active，强制 perceive 验证。
+                // P31 加强：用 fake_completion_count 计数，连续多次假完成时注入更强 nudge。
+                self.fake_completion_count = self.fake_completion_count.saturating_add(1);
                 let goal = self.current_goal().unwrap_or("");
-                format!("{goal_hint}【验证】你宣告「任务完成」，但目标仍在执行中：{goal}\n\
-                 文字宣告**不算完成**——必须通过 function calling 调用 perceive 查看实际状态，\
-                 确认目标物品在背包/目标位置已到达，才算真正完成。\n\
-                 请立即调用 perceive 验证当前状态，不要只用文字说完成了。")
+                let nudge = if self.fake_completion_count >= 3 {
+                    // 连续 3+ 次假完成：最后通牒
+                    format!("{goal_hint}【最后通牒】你已连续 {} 次宣告「任务完成」，但目标仍在执行中：{goal}\n\
+                     **禁止再用任何文字宣告完成！** 文字宣告永远不算完成。\n\
+                     你必须立即调用 perceive 工具查看实际状态。如果 perceive 显示目标未达成，\n\
+                     继续调用其他工具行动（gather/mine/craft/smelt 等），直到目标真正达成。\n\
+                     再用文字说「完成」将被视为故障，系统会强制注入工具调用。",
+                     self.fake_completion_count)
+                } else if self.fake_completion_count == 2 {
+                    // 连续 2 次假完成：更强警告
+                    format!("{goal_hint}【严重警告】你已连续 2 次宣告「任务完成」，但目标仍在执行中：{goal}\n\
+                     文字宣告**不算完成**——你被禁止再用文字说「完成」「已达成」「全部完成」等词。\n\
+                     必须立即调用 perceive 工具验证实际状态。perceive 会显示背包物品和当前位置，\n\
+                     你需要对比目标要求，确认每个目标物品都在背包中。若缺少，继续调用 gather/mine/craft/smelt 等工具获取。",
+                    )
+                } else {
+                    // 第 1 次假完成：温和提示
+                    format!("{goal_hint}【验证】你宣告「任务完成」，但目标仍在执行中：{goal}\n\
+                     文字宣告**不算完成**——必须通过 function calling 调用 perceive 查看实际状态，\n\
+                     确认目标物品在背包/目标位置已到达，才算真正完成。\n\
+                     请立即调用 perceive 验证当前状态，不要只用文字说完成了。")
+                };
+                nudge
             } else if self.text_only_count >= 2 {
                 // 连续 2+ 次纯文字：列出可用工具强制行动
                 let tool_list: Vec<&str> = self.tools.tools().iter().map(|t| t.name()).collect();
@@ -1106,8 +1131,11 @@ impl Agent {
             self.persist_turn()?;
             return Ok((log, true));
         }
-        // 有工具调用：重置纯文字计数
+        // 有工具调用：重置纯文字计数和假完成计数
+        // P31：LLM 调用了工具（哪怕是 perceive），说明它不再只用文字 fake completion，
+        // 重置 fake_completion_count 给 LLM 重新开始的机会。
         self.text_only_count = 0;
+        self.fake_completion_count = 0;
 
         // Track obs streak from tool names
         let obs_tools: &[&str] = &["perceive", "visual_perceive", "look"];
