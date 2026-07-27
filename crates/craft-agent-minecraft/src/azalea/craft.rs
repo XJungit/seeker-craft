@@ -3591,7 +3591,7 @@ mod tests {
         } else {
             1
         };
-        let _fuel_needed = if fuel_per_item == 0 {
+        let fuel_needed = if fuel_per_item == 0 {
             actual_smelt_count
         } else {
             (actual_smelt_count + fuel_per_item - 1) / fuel_per_item
@@ -3603,7 +3603,7 @@ mod tests {
         let original_count = actual_smelt_count;
         let actual_smelt_count = actual_smelt_count.min(MAX_SMELT_PER_BATCH);
         // 分批后燃料需求也要重新计算
-        let _fuel_needed = if fuel_per_item == 0 {
+        let fuel_needed = if fuel_per_item == 0 {
             actual_smelt_count
         } else {
             (actual_smelt_count + fuel_per_item - 1) / fuel_per_item
