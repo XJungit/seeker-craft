@@ -2107,15 +2107,16 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
                 // 已在 hotbar？
                 if let Some(h) = find_hotbar_slot_for(&inv, kind) {
                     bot.set_selected_hotbar_slot(h);
-                    sleep(Duration::from_millis(80)).await;
-                    // P5 修复：验证主手实际持有物——避免服务端同步延迟导致"已装备"但实际未切。
-                    return match verify_held_item(bot, kind).await {
-                        true => format!("已装备 {item} 到主手（hotbar 槽 {h}）"),
-                        false => format!(
-                            "装备 {item} 失败：set_selected_hotbar_slot({h}) 后主手仍未持有 {item}\
-                             （可能服务端同步延迟，建议稍后重试或用 perceive 确认手持物品）"
-                        ),
-                    };
+                    // P24 修复：用轮询替代单次 sleep+verify，覆盖服务端同步延迟场景。
+                    // 原 sleep(80ms) + verify_held_item 只查一次，200ms 内同步没完成就误报失败。
+                    // 现在轮询最多 1.5s，主手一就绪立即返回。
+                    if wait_for_held_item(bot, kind, 1500).await {
+                        return format!("已装备 {item} 到主手（hotbar 槽 {h}）");
+                    }
+                    return format!(
+                        "装备 {item} 失败：set_selected_hotbar_slot({h}) 后主手仍未持有 {item}\
+                         （已轮询 1.5s，可能服务端同步延迟或 hotbar 内容被覆盖，建议稍后重试）"
+                    );
                 }
 
                 // 不在 hotbar，从主背包 shift_click 到 hotbar（服务端找第一个空槽）
@@ -2307,6 +2308,36 @@ async fn verify_held_item(bot: &Client, expected: ItemKind) -> bool {
         Ok(st) if !st.is_empty() => st.kind() == expected,
         _ => false,
     }
+}
+
+/// P24 新增（2026-07-27）：轮询等待主手变为指定物品。
+///
+/// 背景：`set_selected_hotbar_slot` 只是在本地 ECS 触发一个事件，真正发包
+/// （`ServerboundSetCarriedItem`）由 `ensure_has_sent_carried_item` 系统在
+/// 下一个 tick 发送，服务端处理后才会更新 bot 主手。原代码 `sleep(200ms)`
+/// 后直接 `block_interact`，但：
+/// 1. 200ms（4 tick）可能不够——如果 bevy Update 被其他系统占用，发包会延迟。
+/// 2. 即使服务端收到切换包，hotbar[slot] 的内容可能还没同步（shift_click
+///    是 QuickMove，服务端异步处理），导致服务端认为 bot 主手是空手/旧物品。
+/// 3. `block_interact` 用 `force_block` 绕过 crosshair 检查，但服务端仍会
+///    校验 bot 主手物品——空手不会放下方块。
+///
+/// 修复：轮询最多 `timeout_ms`（默认 1500ms），每 100ms 查一次主手物品。
+/// 一旦主手变为 expected 立即返回 true；超时返回 false。
+///
+/// 学习自 mindcraft equipItem：mindcraft 也只是 sleep(200) 后检查一次，
+/// 但 mineflayer 的 inventory 同步比 azalea 更即时（mineflayer 是纯 JS，
+/// 没有 bevy ECS 的 tick 延迟）。azalea 需要更保守的同步策略。
+pub async fn wait_for_held_item(bot: &Client, expected: ItemKind, timeout_ms: u64) -> bool {
+    let rounds = (timeout_ms / 100).max(1) as usize;
+    for _ in 0..rounds {
+        sleep(Duration::from_millis(100)).await;
+        match bot.get_held_item() {
+            Ok(st) if !st.is_empty() && st.kind() == expected => return true,
+            _ => continue,
+        }
+    }
+    false
 }
 
 /// 验证指定盔甲槽（5=helmet/6=chestplate/7=leggings/8=boots）是否持有指定 ItemKind。

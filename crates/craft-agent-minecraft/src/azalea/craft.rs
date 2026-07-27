@@ -474,7 +474,6 @@ fn expand_ingredient_aliases(kind: ItemKind) -> Vec<ItemKind> {
         })
         .collect()
 }
-}
 
 /// 清空合成网格里的残留物品（回背包）。返回是否已全部清空。
 ///

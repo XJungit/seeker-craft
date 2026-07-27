@@ -218,12 +218,34 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
         }
     };
     bot.set_selected_hotbar_slot(slot);
-    // P5 关键修复：50ms 不够让服务端收到 ServerboundSetCarriedItem 并切换手持物品。
-    // ensure_has_sent_carried_item 系统在 GameTick（50ms）里发 packet，服务端处理后
-    // 才认为 bot 持有 crafting_table。如果太早 block_interact，服务端按"空手/旧物品"
-    // 处理 use_item_on，拒绝放置 → place 100% 失败。
-    // 等 200ms（4 tick）确保 packet 已发送并被服务端处理。
-    sleep(Duration::from_millis(200)).await;
+    // P24 修复（2026-07-27）：原代码 sleep(200ms) 后直接 block_interact，但
+    // set_selected_hotbar_slot 的同步链路是：
+    //   本地 ECS 事件 → ensure_has_sent_carried_item 系统（下个 tick）→
+    //   ServerboundSetCarriedItem 包 → 服务端处理 → bot 主手切换
+    // 200ms（4 tick）有时不够，特别是 bevy Update 被其他系统占用时。
+    // 更糟：即使服务端切了 slot，hotbar[slot] 内容可能还没同步（shift_click
+    // 是 QuickMove，服务端异步处理），导致服务端认为 bot 主手是空手。
+    //
+    // 修复：用 wait_for_held_item 轮询最多 1.5s，确认主手确实是目标物品
+    // 才 block_interact。如果超时，返回明确错误让 LLM 重试。
+    if !crate::azalea::wait_for_held_item(bot, kind, 1500).await {
+        let held_desc = bot
+            .get_held_item()
+            .ok()
+            .and_then(|st| {
+                if st.is_empty() {
+                    Some("空手".to_string())
+                } else {
+                    Some(format!("{}x{}", st.kind().to_str(), st.count()))
+                }
+            })
+            .unwrap_or_else(|| "无法读取主手".to_string());
+        return Err(format!(
+            "放置 {item} 失败：set_selected_hotbar_slot({slot}) 后主手仍为 {held_desc}\
+             （期望 {item}）。可能原因：1) 服务端同步延迟（shift_click 移动物品后 hotbar 内容未就绪）；\
+             2) hotbar 槽位内容被其他操作覆盖。建议：稍后重试 place，或先 perceive 确认背包状态。"
+        ));
+    }
 
     // P5 关键修复：block_interact(pos) 是「右键点击 pos 处的方块」，
     // 但 pos 是目标空气格——服务端无法右键空气放置方块。
@@ -257,13 +279,36 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
         }
     }
 
-    bot.block_interact(below);
-    sleep(Duration::from_millis(200)).await;
-
-    // P5 关键修复 2：验证 pos 处的方块是否变成了期望的 BlockKind，
-    // 而不是只查"非空气"。这样能区分"实际放上去了"与"位置本来就被占据"。
+    // P25-2 修复（2026-07-27）：放置失败时自动重试一次。
+    // 原 code 只 block_interact 一次，若失败直接报错。但实测发现首次放置失败
+    // 常因瞬时同步问题（主手刚切换、服务端 reach 校验时序），第二次往往成功。
+    // 学习自 mindcraft placeBlock：mindcraft 也只放一次，但 mineflayer 的
+    // block_update 事件即时返回。azalea 需要更鲁棒的重试。
     let expected_block = item_to_block_kind(item);
-    let placed_ok = verify_block_placed(bot, placement_pos, expected_block).await;
+    let mut placed_ok = false;
+    for attempt in 0..2u8 {
+        bot.block_interact(below);
+        // 首次等 200ms 让服务端处理，重试时等更久（500ms）让前一次的副作用消散
+        sleep(if attempt == 0 { Duration::from_millis(200) } else { Duration::from_millis(500) }).await;
+        placed_ok = verify_block_placed(bot, placement_pos, expected_block).await;
+        if placed_ok {
+            break;
+        }
+        if attempt == 0 {
+            // 首次失败，重试前重新确认主手物品（可能被其他操作覆盖）
+            if !crate::azalea::wait_for_held_item(bot, kind, 800).await {
+                eprintln!(
+                    "[place] 重试放弃：主手物品已不是 {item}（可能被其他操作覆盖）"
+                );
+                break;
+            }
+            eprintln!(
+                "[place] 放置 {item} 于 ({},{},{}) 首次失败（{}），重试一次",
+                placement_pos.x, placement_pos.y, placement_pos.z,
+                block_kind_at(bot, placement_pos).map(|k| format!("{k:?}")).unwrap_or_else(|| "空气".to_string())
+            );
+        }
+    }
     if placed_ok {
         // P5 关键修复：成功消息必须用 placement_pos（实际放置位置）而非 pos（LLM 原始坐标）。
         // 原 bug：成功消息用 pos，但 placement_pos 可能因自动重定位而不同 →
@@ -281,7 +326,7 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
         // 检查 placement_pos 现在是什么方块，给 LLM 更准确的诊断
         let now_kind = block_kind_at(bot, placement_pos).map(|k| format!("{k:?}")).unwrap_or_else(|| "空气".to_string());
         Err(format!(
-            "放置 {item} 于 ({},{},{}) 失败——放置后该处为 {now_kind}（期望 {}）。\
+            "放置 {item} 于 ({},{},{}) 失败——放置后该处为 {now_kind}（期望 {}，已重试 2 次）。\
              可能原因：1) bot 距离过远（>4.5m，reach 检查失败）；2) 服务端拒绝放置（保护区/碰撞）；\
              3) 物品未真正选到手中。建议：先 goto 到目标旁 1-2m，确认 line-of-sight，再 place。",
             placement_pos.x, placement_pos.y, placement_pos.z, item
@@ -330,8 +375,15 @@ fn block_kind_at(bot: &Client, pos: BlockPos) -> Option<BlockKind> {
 /// 导致 verify 误判为失败（实际已放置但本地缓存还没更新）或误判为成功
 /// （本地缓存未更新但 verify 不再重查）。改为轮询最多 1 秒（每 100ms 查一次），
 /// 一旦看到期望方块就立即返回 true；超时返回 false。
+///
+/// P25 修复（2026-07-27）：1 秒（10 次）不够，实测 place 失败案例中
+/// 服务端同步有时超过 1s（block_interact → ServerboundUseItemOn 包 →
+/// 服务端 ACK → BlockUpdate 包 → 本地世界缓存更新）。延长到 2.5 秒（25 次）。
+/// 学习自 mindcraft placeBlock：mindcraft sleep 200ms 后单次查，但 mineflayer
+/// 的 world 事件比 azalea 更即时（mineflayer 直接监听 block_update 包）。
+/// azalea 的 bevy ECS 架构多了一层系统调度，需要更保守的超时。
 async fn verify_block_placed(bot: &Client, pos: BlockPos, expected: Option<BlockKind>) -> bool {
-    for _ in 0..10 {
+    for _ in 0..25 {
         sleep(Duration::from_millis(100)).await;
         let now = block_kind_at(bot, pos);
         let ok = match expected {

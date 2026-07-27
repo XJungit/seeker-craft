@@ -1,16 +1,32 @@
-P22+P23: aggressive auto-discard + fuel fallback + ingredient alias substitution
+P24+P25: wait_for_held_item polling + place retry + verify timeout extension
 
-P22 修复 (craft 100% 失败 + smelt 100% 失败):
-- auto_discard_junk 阈值从 empty<2 提到 empty<6，避免两次 craft 之间积满垃圾
-- 2x2 craft 检测 result slot 实际类型（LLM 传 oak_planks 但 bot 有 birch_log
-  → 服务端产出 birch_planks → 按 oak_planks 计数会误报失败）
-- smelt 燃料 fallback 列表 (coal/charcoal > log > planks > stick)
-  学习自 mindcraft furnaces.js：mindcraft 不指定燃料类型直接用任何可燃物
+P24 修复 (place 75% 失败 + gather equip 失败):
+- 新增 wait_for_held_item(bot, kind, timeout_ms) 轮询函数
+  - 最多等 1.5s，每 100ms 查一次主手物品
+  - 替代原 sleep(200ms) + verify_held_item 单次检查
+- do_place: set_selected_hotbar_slot 后调用 wait_for_held_item
+  - 失败时返回明确错误（含当前主手物品描述）
+- do_equip: 同样用 wait_for_held_item 替代单次 verify
+  - 覆盖服务端同步延迟场景
 
-P23 修复 (craft 100% 失败 - 缺 oak_planks 但有 birch_log):
-- find_ingredient_slot 增加 expand_ingredient_aliases 兜底
-- 支持 *_planks / *_log / *_wood / coal|charcoal 互替
-- vanilla 9 种木材 (oak/birch/spruce/jungle/acacia/dark_oak/mangrove/cherry/pale_oak)
+根因分析（学习自 azalea 源码 + mindcraft equipItem）:
+- set_selected_hotbar_slot 只触发本地 ECS 事件
+- 真正发包（ServerboundSetCarriedItem）由 ensure_has_sent_carried_item
+  系统在下一个 tick 发送
+- 服务端处理后 bot 主手才切换
+- 200ms（4 tick）有时不够，bevy Update 被其他系统占用时会延迟
+- 即使服务端切了 slot，hotbar[slot] 内容可能还没同步（shift_click
+  是 QuickMove，服务端异步处理），导致服务端认为 bot 主手是空手
 
-学习自 mindcraft getItemId mapping：mindcraft 用一个 mapping 表把 oak_planks
-映射到所有 planks 变体。本项目手动列出 vanilla 9 种木材。
+mindcraft 的 equipItem 只 sleep(200) 后查一次，但 mineflayer 的
+inventory 同步比 azalea 更即时（mineflayer 是纯 JS，无 bevy ECS
+tick 延迟）。azalea 需要更保守的轮询策略。
+
+P25 修复 (place 75% 失败 - 验证超时):
+- verify_block_placed 轮询从 1s（10次）延长到 2.5s（25次）
+  - 服务端同步链路：block_interact → ServerboundUseItemOn 包 →
+    服务端 ACK → BlockUpdate 包 → 本地世界缓存更新
+  - 实测有时超过 1s
+- do_place 增加重试逻辑（最多 2 次）
+  - 首次失败后重新确认主手物品，再重试一次
+  - 学习自 mindcraft placeBlock 的容错思路
