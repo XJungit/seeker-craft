@@ -1610,6 +1610,21 @@ pub async fn do_smelt(
     let crafts_needed = (count.max(1) + output_per - 1) / output_per;
     let mut smelted = 0u32;
 
+    // P32 本质修复（2026-07-27）：开始熔炼前清理熔炉槽位 + 光标残留。
+    // 原bug：do_smelt 从不调用 clear_grid/clear_cursor（P10/P11 给 craft 加了，smelt 漏了）。
+    // 导致：
+    // 1) 上一轮 smelt 失败后，槽 0/1 残留物品（如 dark_oak_planks）
+    // 2) move_stack(src_in, 0) 用 left_click 实现，left_click(0) 会交换：
+    //    光标拿起槽 0 原物品（dark_oak_planks），把 raw_iron 放到槽 0
+    // 3) 光标持有 dark_oak_planks，下一轮 move_stack(src_fuel, 1) 的 left_click(src_fuel)
+    //    会把 dark_oak_planks 放到 src_fuel 槽位（覆盖燃料）
+    // 4) 状态污染：槽 0 最终变成 dark_oak_planks（被服务端同步回来），raw_iron 不知去向
+    //
+    // 修复：smelt 开始前先清理熔炉槽 0/1（shift_click 回背包），并清理光标。
+    // 这是 craft 路径早已有的逻辑，smelt 路径漏了——本质是状态管理不一致。
+    clear_grid(&inv, 0..=1).await;
+    clear_cursor(&inv).await;
+
     for _ in 0..crafts_needed {
         let src_in = find_source_slot(&inv, input_kind)
             .ok_or_else(|| format!("背包缺少输入 {}", recipe.input))?;
@@ -1626,8 +1641,12 @@ pub async fn do_smelt(
                      3) mine coal_ore 获得 coal（最佳燃料）。"
                 )
             })?;
+        // P32: 每次 move_stack 前清理光标，防止上一轮 left_click 交换留下的残留
+        clear_cursor(&inv).await;
         move_stack(&inv, src_in, 0).await; // 输入槽
+        clear_cursor(&inv).await; // move_stack 后光标可能持有槽 0 原物品
         move_stack(&inv, src_fuel, 1).await; // 燃料槽
+        clear_cursor(&inv).await; // 清理光标残留
 
         // P10 修复：vanilla 单次熔炼需 200 ticks = 10s（燃料点燃还有额外延迟），
         // 原来只等 1.2s，结果槽必然是空的 → smelt 稳定失败（实测 80% 失败率）。

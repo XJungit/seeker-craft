@@ -298,9 +298,26 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
     // P29 增强：第二次重试前用 pathfinder 重新走到 below 旁 1.5m。
     // 原因：第一次失败常因 bot 与 below 距离在 reach 边界（4.0-4.5m），
     // 服务端有时拒绝。重新走到 1.5m 内可以确保 reach 通过。
+    //
+    // P33 本质修复（2026-07-27）：每次 block_interact 前用 bot.look_at 让 bot 看向 below。
+    // 原因：azalea 的 block_interact 用 force_block 绕过客户端视线，但服务端
+    // 仍然根据 bot 的视线方向（LookDirection）判断 place 位置。如果 bot 没看向
+    // below，服务端可能把方块放到别处或拒绝。
+    // 错误现象：放置后该处仍为空气（重试 2 次都失败），但 bot 距离、主手、below
+    // 都正确——根因就是 bot 视线方向不对。
+    // 学习自 mindcraft placeBlock：mineflayer 的 placeBlock 直接用 raytrace 找
+    // below 方块，bot 视线天然对准 below。azalea 的 force_block 跳过了视线对齐。
     let expected_block = item_to_block_kind(item);
     let mut placed_ok = false;
+    let below_center = azalea::Vec3::new(
+        below.x as f64 + 0.5,
+        below.y as f64 + 0.5,
+        below.z as f64 + 0.5,
+    );
     for attempt in 0..2u8 {
+        // P33: 让 bot 看向 below 方块中心，确保服务端 place 校验通过
+        bot.look_at(below_center);
+        sleep(Duration::from_millis(150)).await; // 等 LookAtEvent 生效
         bot.block_interact(below);
         // 首次等 400ms 让服务端处理（原 200ms 不够，BlockUpdate 包同步需要时间），
         // 重试时等 600ms 让前一次的副作用消散
@@ -319,14 +336,13 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
             }
             // P29：重新走到 below 旁 1.5m，确保 reach 通过
             use azalea::pathfinder::goals::RadiusGoal;
-            use azalea::Vec3;
-            let target = Vec3::new(below.x as f64 + 0.5, below.y as f64 + 0.5, below.z as f64 + 0.5);
+            let target = azalea::Vec3::new(below.x as f64 + 0.5, below.y as f64 + 0.5, below.z as f64 + 0.5);
             let goto_fut = bot.goto(RadiusGoal { pos: target, radius: 1.5 });
             let _ = tokio::time::timeout(Duration::from_secs(3), goto_fut).await;
             // 走完后等 200ms 让物理稳定
             sleep(Duration::from_millis(200)).await;
             eprintln!(
-                "[place] 放置 {item} 于 ({},{},{}) 首次失败（{}），已重新接近 below 旁 1.5m，重试一次",
+                "[place] 放置 {item} 于 ({},{},{}) 首次失败（{}），已重新接近 below 旁 1.5m + look_at 对齐视线，重试一次",
                 placement_pos.x, placement_pos.y, placement_pos.z,
                 block_kind_at(bot, placement_pos).map(|k| format!("{k:?}")).unwrap_or_else(|| "空气".to_string())
             );
