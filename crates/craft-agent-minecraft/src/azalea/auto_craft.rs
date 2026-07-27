@@ -264,6 +264,82 @@ async fn has_item(bot: &Client, item: &str) -> u32 {
     t
 }
 
+/// P27 新增（2026-07-27）：背包中 item 的数量（含别名变体）。
+///
+/// 背景：`has_item` 只精确匹配 kind。但 auto_craft 递归 ensure("oak_planks") 时，
+/// bot 背包可能只有 dark_oak_planks——`has_item` 返回 0 → ensure 继续递归
+/// gather oak_planks → 在地下找不到 oak_planks → auto_craft 100% 失败。
+///
+/// 修复：planks/log/wood 等同类物品的别名变体也算满足。
+/// 学习自 mindcraft craftRecipe：mindcraft 在 craftRecipe 时用 getItemId 把
+/// "oak_planks" 映射到任意 planks 变体——auto_craft 也应该如此。
+async fn has_item_with_aliases(bot: &Client, item: &str) -> u32 {
+    let inv = match bot.get_inventory() {
+        Ok(i) => i,
+        Err(_) => return 0,
+    };
+    let menu = match inv.menu().ok().flatten() {
+        Some(m) => m,
+        None => return 0,
+    };
+    let range = menu.player_slots_range();
+    let slots = match inv.slots() {
+        Some(s) => s,
+        None => return 0,
+    };
+    let k = match ItemKind::from_str(&normalize(item)) {
+        Ok(k) => k,
+        Err(_) => return 0,
+    };
+    // 收集所有需要计数的 kind（精确 + 别名）
+    let mut kinds_to_count: Vec<ItemKind> = vec![k];
+    for alt in expand_ingredient_aliases_pub(k) {
+        if !kinds_to_count.contains(&alt) {
+            kinds_to_count.push(alt);
+        }
+    }
+    let mut t = 0u32;
+    for s in range {
+        if let Some(st) = slots.get(s) {
+            if !st.is_empty() && kinds_to_count.contains(&st.kind()) {
+                t += st.count().max(0) as u32;
+            }
+        }
+    }
+    t
+}
+
+/// P27 新增：craft.rs 的 expand_ingredient_aliases 的 pub 包装。
+/// auto_craft 模块需要用它做别名检查。
+fn expand_ingredient_aliases_pub(kind: ItemKind) -> Vec<ItemKind> {
+    let name = kind.to_str();
+    let bare = name.strip_prefix("minecraft:").unwrap_or(name);
+    let aliases: Vec<&str> = if bare.ends_with("_planks") {
+        vec![
+            "oak_planks", "birch_planks", "spruce_planks", "jungle_planks",
+            "acacia_planks", "dark_oak_planks", "mangrove_planks", "cherry_planks", "pale_oak_planks",
+        ]
+    } else if bare.ends_with("_log") {
+        vec![
+            "oak_log", "birch_log", "spruce_log", "jungle_log",
+            "acacia_log", "dark_oak_log", "mangrove_log", "cherry_log", "pale_oak_log",
+        ]
+    } else if bare.ends_with("_wood") {
+        vec![
+            "oak_wood", "birch_wood", "spruce_wood", "jungle_wood",
+            "acacia_wood", "dark_oak_wood", "mangrove_wood", "cherry_wood", "pale_oak_wood",
+        ]
+    } else if matches!(bare, "coal" | "charcoal") {
+        vec!["coal", "charcoal"]
+    } else {
+        return Vec::new();
+    };
+    aliases
+        .iter()
+        .filter_map(|s| ItemKind::from_str(&format!("minecraft:{s}")).ok())
+        .collect()
+}
+
 /// bot 头顶上方的空气格（用于临时放置工作台/熔炉）。
 fn overhead_slot(bot: &Client) -> Option<BlockPos> {
     let p = bot.position().ok()?;
@@ -276,8 +352,14 @@ fn overhead_slot(bot: &Client) -> Option<BlockPos> {
 
 /// 确保背包有 `amount` 个 `item`：沿配方图递归满足原料。
 async fn ensure(bot: &Client, item: &str, amount: u32) -> Result<(), String> {
-    // 已足够则直接返回
-    let already = has_item(bot, item).await;
+    // P27 修复（2026-07-27）：用 has_item_with_aliases 替代 has_item。
+    // 原 has_item 只精确匹配 kind——ensure("oak_planks") 时若背包只有
+    // dark_oak_planks，返回 0 → ensure 继续递归 gather oak_planks →
+    // 在地下找不到 oak_planks → auto_craft 100% 失败。
+    // 现在：planks/log/wood 等同类物品的别名变体也算满足。
+    // 学习自 mindcraft craftRecipe：mindcraft 用 getItemId 把 oak_planks
+    // 映射到任意 planks 变体——auto_craft 也应该如此。
+    let already = has_item_with_aliases(bot, item).await;
     if already >= amount {
         return Ok(());
     }
