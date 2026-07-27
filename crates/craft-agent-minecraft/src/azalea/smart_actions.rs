@@ -152,6 +152,77 @@ pub fn scan_blocks_multi(
     best.map(|(p, _)| p)
 }
 
+/// P28 新增（2026-07-27）：扫描附近所有矿石类型，返回去重的矿石名列表。
+///
+/// 用于 gather 失败时给 LLM 提供替代建议（如"找不到 iron_ore 但附近有 coal_ore"）。
+/// 学习自 mindcraft collectBlock：mindcraft 在找不到目标方块时会列出附近可用方块。
+async fn scan_nearby_ores(bot: &Client, radius: i32) -> Vec<String> {
+    let world = match bot.world() {
+        Ok(w) => w,
+        Err(_) => return Vec::new(),
+    };
+    let w = world.read();
+    let center = match bot.position() {
+        Ok(p) => p,
+        Err(_) => return Vec::new(),
+    };
+    let cx = center.x.floor() as i32;
+    let cy = center.y.floor() as i32;
+    let cz = center.z.floor() as i32;
+    let mut found: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for dx in -radius..=radius {
+        for dy in -radius..=radius {
+            for dz in -radius..=radius {
+                let pos = BlockPos::new(cx + dx, cy + dy, cz + dz);
+                if let Some(state) = w.get_block_state(pos) {
+                    let bk: BlockKind = state.into();
+                    let name = format!("{bk:?}");
+                    if name.ends_with("_ore") {
+                        found.insert(name);
+                    }
+                }
+            }
+        }
+    }
+    let mut v: Vec<String> = found.into_iter().collect();
+    v.sort();
+    v
+}
+
+/// P28 新增（2026-07-27）：扫描附近所有原木类型，返回去重的原木名列表。
+async fn scan_nearby_wood(bot: &Client, radius: i32) -> Vec<String> {
+    let world = match bot.world() {
+        Ok(w) => w,
+        Err(_) => return Vec::new(),
+    };
+    let w = world.read();
+    let center = match bot.position() {
+        Ok(p) => p,
+        Err(_) => return Vec::new(),
+    };
+    let cx = center.x.floor() as i32;
+    let cy = center.y.floor() as i32;
+    let cz = center.z.floor() as i32;
+    let mut found: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for dx in -radius..=radius {
+        for dy in -radius..=radius {
+            for dz in -radius..=radius {
+                let pos = BlockPos::new(cx + dx, cy + dy, cz + dz);
+                if let Some(state) = w.get_block_state(pos) {
+                    let bk: BlockKind = state.into();
+                    let name = format!("{bk:?}");
+                    if name.ends_with("_log") || name.ends_with("_wood") || name.ends_with("_stem") {
+                        found.insert(name);
+                    }
+                }
+            }
+        }
+    }
+    let mut v: Vec<String> = found.into_iter().collect();
+    v.sort();
+    v
+}
+
 /// 走到最近的指定方块种类（多别名）并挖掘，直到背包积累足够数量。
 /// 学习自 Mindcraft collectBlock：别名展开 + 多轮采集 + 失败跳出。
 ///
@@ -393,17 +464,43 @@ pub async fn collect_block_smart(
                     }
                     // 没找到，继续下一轮下挖
                 }
+                // P28 新增（2026-07-27）：扫描附近所有矿石类型，给 LLM 替代建议。
+                // 原 code 只报"找不到 iron_ore"，LLM 反复重试 gather iron_ore → 死循环。
+                // 学习自 mindcraft collectBlock：mindcraft 在找不到目标时会列出附近可用方块。
+                let alt_ores = scan_nearby_ores(bot, 16).await;
+                let alt_hint = if alt_ores.is_empty() {
+                    String::new()
+                } else {
+                    format!(
+                        "\n附近已探测到其他矿石：{}。\
+                         若任务允许替代（如 coal_ore 可作燃料、copper_ore 可熔炼铜锭），\
+                         可改 gather 这些矿石；或继续 mine_below 向更深处探索 {}。",
+                        alt_ores.join(", "),
+                        item
+                    )
+                };
                 return Err(format!(
                     "半径 16 内找不到 {item}（已采集 {gathered}/{need}），即使自动下挖 10 格也未暴露矿石。\
                      vanilla 规则：{item} 通常生成在 Y=15~80 的石头层中。\
                      建议：1) goto 到山体/洞穴入口再 gather；2) 用 mine_below 手动挖到 Y<60 后重试；\
-                     3) 换一个生物群系探索（沙漠/海洋下方矿石分布不同）。"
+                     3) 换一个生物群系探索（沙漠/海洋下方矿石分布不同）。{alt_hint}"
                 ));
             }
             if round == max_rounds - 1 {
+                // P28：非矿石类也加替代建议（如 oak_log 找不到时列附近原木种类）
+                let alt_hint = if item_kind_str.ends_with("_log") || item_kind_str.ends_with("_wood") {
+                    let alt_woods = scan_nearby_wood(bot, 16).await;
+                    if alt_woods.is_empty() {
+                        String::new()
+                    } else {
+                        format!("\n附近已探测到其他原木：{}。可改 gather 这些原木替代。", alt_woods.join(", "))
+                    }
+                } else {
+                    String::new()
+                };
                 return Err(format!(
                     "半径 {radius} 内找不到 {item}（已采集 {gathered}/{need}）。\
-                     若 {item} 在地下（如 stone 在地表下），先用 mine_below() 挖到 Y<60 暴露岩石层，再重试 gather。"
+                     若 {item} 在地下（如 stone 在地表下），先用 mine_below() 挖到 Y<60 暴露岩石层，再重试 gather。{alt_hint}"
                 ));
             }
             continue;
