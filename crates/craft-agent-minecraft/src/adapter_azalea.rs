@@ -378,6 +378,16 @@ fn is_failure_detail(msg: &str) -> bool {
         || msg.contains("不支持的槽位")
         || msg.contains("获取背包失败")
         || msg.contains("命令执行超时")
+        || msg.contains("超时")
+        || msg.contains("cannot")
+        || msg.contains("can't")
+        || msg.contains("不能")
+        || msg.contains("无法")
+        || msg.contains("不足")
+        || msg.contains("没有")
+        || msg.contains("not found")
+        || msg.contains("not have")
+        || msg.contains("insufficient")
 }
 
 /// 将 MinecraftAction 转换为 BotCommand（供 push_cmd_and_wait 使用）。
