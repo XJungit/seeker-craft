@@ -500,6 +500,108 @@ vendor/azalea 是**独立 git 仓库 + 独立 cargo workspace**，改它有三�
 
 ---
 
+## 九-bis、Mindcraft 哲学对齐原则（2026-07-27 教训固化）
+
+> 本节源于 2026-07-27 用户严厉反馈："修了这么久还在修 smelt 和 craft"。
+> P8～P44 共 26 次"本质修复"全部失败，根因是违反 Mindcraft 哲学。
+> **本节约束优先级高于第三节"关键架构约束"，冲突时以本节为准。**
+
+### 9.1 核心哲学：bot 工具只做能做的，做不了就 return Err 让 LLM 决策
+
+学习自 `mindcraft-bots/mindcraft` 的 `src/agent/library/skills.js`：
+- `craftRecipe`: 背包无 crafting_table → `log("requires a crafting table"); return false;`
+- `smeltItem`: 背包无 furnace → `log("no furnace nearby"); return false;`
+- `collectBlock`: 无镐 → 让 LLM 自己规划合成
+
+**禁止做的"自动满足依赖"反模式**（P44/P42 死循环根源）：
+```
+❌ ensure_table_open(furnace) → do_auto_craft(furnace)
+   → 需要 crafting_table → ensure_table_open(crafting_table)
+   → 需要 oak_log → 地下无 oak_log → 失败 → 整条链返回 Err
+   → LLM 看到错误再调 smelt → 又触发同一死循环 → 100% 失败
+
+❌ gather(iron_ore) → do_auto_craft(wooden_pickaxe)
+   → 需要 oak_planks → 需要 oak_log → gather(oak_log)
+   → oak_log 在地表，bot 在地下 → 失败
+```
+
+**正确做法**：
+```
+✅ 做不了就 return Err，错误消息列出完整解决步骤
+✅ LLM 负责规划：先 craft 工具方块 → 再用工具方块合成/熔炼
+✅ bot 工具是"原子操作"，不是"自主体"
+```
+
+### 9.2 工具实现四条铁律
+
+1. **不自动合成工具方块**（crafting_table/furnace/blast_furnace/smoker）
+   - 这些是 3×3 配方，需要桌才能合成，自动合成会死循环
+   - 例外：crafting_table 是 2×2 配方不死循环，可自动合成
+
+2. **不自动合成工具**（pickaxe/axe/sword/shovel/hoe）
+   - wooden_pickaxe 需要 oak_log（地表），bot 在地下时无法获取
+   - 让 LLM 明确规划：craft planks → craft stick → craft pickaxe → equip
+
+3. **不自动满足原料依赖**（如 gather oak_log 给 auto_craft）
+   - bot 工具调用是原子的：LLM 调 gather(oak_log) → 工具返回 → LLM 决策下一步
+   - 不要在工具内部链式调用其他工具
+
+4. **错误消息必须列出完整解决步骤**
+   - 不是"背包无 furnace"一句话
+   - 而是"1. 先 craft('crafting_table')；2. 再 craft_3x3('furnace')；3. 重试 smelt"
+
+### 9.3 系统性重构方向（用户 2026-07-27 批准）
+
+> 不再打补丁，按以下四个方向系统性重构 craft/smelt。
+
+#### 方向 A：写 mock 容器集成测试
+- 在不需要 MC server 的情况下验证 `do_craft_3x3` / `do_smelt` 的状态机正确性
+- 覆盖边界条件：背包满、原料不足、燃料不够、炉子已在使用、容器同步延迟
+- 目标：cargo test 即可验证工具逻辑，不需要跑 LLM 实机
+
+#### 方向 B：逐函数对齐 mindcraft skills.js
+- 把 mindcraft craftRecipe/smeltItem 的每个边界条件列出来
+- 逐个写测试对齐：placedTable/placedFurnace 回收、takeOutput 循环、燃料灵活选择
+- mindcraft 源码位置：`src/agent/library/skills.js`（line 63 craftRecipe, line 274 smeltItem）
+
+#### 方向 C：用 RecipeBook 完全替代手写 SHAPED_RECIPES
+- mindcraft 用 prismarine-recipe 全量配方，我方手写表永远补不齐
+- 我方已有 `recipe_book.rs` + `builtin_recipes.json`（vanilla 26.2 全量配方书）
+- 目标：craft_3x3 优先查 RecipeBook，手写表仅作 fallback
+
+#### 方向 D：smelt 学习 mindcraft 的 takeOutput 循环
+- mindcraft：`while (total < num) { await sleep(1s); if (furnace.outputItem()) { takeOutput() } }`
+- 我方现状：固定等 30s → 一次性 shift_click(2)
+- 目标：动态轮询结果槽，一有产物立刻取，11s 无产出才超时
+
+### 9.4 azalea 插件能力评估（2026-07-27）
+
+azalea 用 Bevy ECS 插件机制（`impl Plugin for XxxPlugin { fn build(&self, app) }`）。
+现有插件：PathfinderPlugin / InventoryPlugin / ContainerPlugin / AutoRespawnPlugin 等。
+
+**适合做成插件的场景**（事件驱动 + 系统 schedule）：
+- 容器状态同步监听（ContainerStateChangedEvent → 自动更新本地缓存）
+- 产物自动收集（OutputSlotChangedEvent → 自动 shift_click 收集）
+- 燃料耗尽预警（Fuel depleted → 通知 LLM）
+
+**不适合做成插件的场景**（命令式拉取）：
+- craft/smelt 本身（LLM 调用一次，执行完返回结果）
+- gather/mine/attack（同上）
+
+**结论**：craft/smelt 主体逻辑保持普通 async fn，但可以把"产物自动收集"、
+"容器状态同步"等事件驱动部分抽成插件，提高稳定性。
+这是 P47+ 的优化方向，优先级低于方向 A-D。
+
+### 9.5 反太极、反打补丁约束
+
+- **不准声称"本质修复"**：除非有 mock 集成测试覆盖该 bug 场景
+- **不准说"已验证"**：除非 cargo test 通过 + LLM 实机跑通
+- **遇到反复 bug 必须联网学习**：mindcraft / mineflayer / prismarine-recipe 源码
+- **不准立即调工具**：用户发消息后先思考、先列计划，再动手
+- **修同一工具超过 3 次必须停止打补丁**：升级为系统性重构
+
+---
+
 ## 九、最终目标检查清单
 
 - [ ] bot 能自主采集、合成、建造
