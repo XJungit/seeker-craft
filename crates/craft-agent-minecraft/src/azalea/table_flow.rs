@@ -535,43 +535,40 @@ pub async fn ensure_table_open(
     // 修复：furnace/blast_furnace/smoker 是 3×3 配方，不能 2×2 合成。只有 crafting_table
     // 能 2×2 自动合成。furnace 类需 LLM 显式 craft_3x3("furnace") 先造好放背包。
     if count_in_inventory(bot, item_id) == 0 {
-        // P44 本质修复（2026-07-27）：furnace 类桌不在背包时，调 do_auto_craft 自动合成，
-        // 而不是直接报错让 LLM 处理。
+        // P45 本质修复（2026-07-27）：回归 Mindcraft 哲学——bot 工具只做能做的，
+        // 做不了的就 return Err 让 LLM 决策。学习自 mindcraft skills.js craftRecipe:
+        //   if (hasTable) { place it } else { log("requires crafting table"); return false; }
         //
-        // 原bug: furnace 类桌直接报错 → LLM 调 craft_3x3('furnace') → craft_3x3 又调
-        // ensure_table_open('crafting_table') → 需要 crafting_table → 需要 oak_log
-        // → 地下无 oak_log → 死循环 → smelt 100% 失败。
+        // 删除 P44 的 do_auto_craft(furnace) 调用——它是死循环根源：
+        //   ensure_table_open(furnace) → do_auto_craft(furnace)
+        //   → do_auto_craft 需要 crafting_table → ensure_table_open(crafting_table)
+        //   → 背包无 crafting_table → 又调 do_auto_craft(crafting_table)
+        //   → 需要 oak_log → 地下无 oak_log → 失败
+        // 这是用户反馈"修了这么久还在修 smelt 和 craft"的根本原因。
         //
-        // 修复：do_auto_craft 有 P40 工具方块复用 + 递归满足原料，能在地下成功合成 furnace
-        // （furnace = cobblestone×8，cobblestone 可通过 mine stone 获得，不需地表资源）。
-        // do_auto_craft 内部会复用已放置的 crafting_table（P40），不会死循环。
+        // furnace/blast_furnace/smoker 是 3×3 配方，必须先有 crafting_table 才能合成。
+        // bot 不应自动合成它们——LLM 应该明确规划：先 craft_3x3('furnace')（需要桌），
+        // 或先 craft('crafting_table')（2×2 不需要桌）再 craft_3x3('furnace')。
+        //
+        // crafting_table 是 2×2 配方，不需要桌，自动合成是安全的（不会死循环）。
         if table_kind != "crafting_table" && table_kind != "table" && table_kind != "workbench" {
-            eprintln!("[table_flow] P44: 背包无 {item_id}，尝试 auto_craft 自动合成");
-            match crate::azalea::auto_craft::do_auto_craft(bot, item_id, 1).await {
-                Ok(msg) => {
-                    eprintln!("[table_flow] P44: auto_craft {item_id} 成功: {msg}");
-                    // 等待背包同步（do_auto_craft 内部 shift_click 后服务端同步需要时间）
-                    sleep(Duration::from_millis(500)).await;
-                    if count_in_inventory(bot, item_id) == 0 {
-                        return Err(format!(
-                            "自动合成 {item_id} 报成功但背包未检测到（可能服务端同步延迟）。\
-                             建议：perceive 查看背包，或重试本工具。"
-                        ));
-                    }
-                    // 合成成功，继续往下走放置流程
+            return Err(format!(
+                "背包未持有 {item_id}，且 {table_kind} 是 3×3 配方无法自动合成（需要工作台）。\n\
+                 这是 Mindcraft 哲学：bot 工具不主动合成工具方块，由 LLM 决策。\n\
+                 解决步骤：\n\
+                 1. 检查附近是否有已放置的 {table_kind}（P41 已扫描 32 格内未找到）；\n\
+                 2. 若无：先 craft('crafting_table') 合成工作台（2×2 背包合成，需要 4 个任意木板）；\n\
+                 3. 再 craft_3x3('{table_kind}') 合成 {table_kind}（{furnace_recipe}）；\n\
+                 4. 最后重试本工具（smelt/craft_3x3 会自动放置并打开 {table_kind}）。",
+                furnace_recipe = match table_kind {
+                    "furnace" => "8 个 cobblestone 围一圈，挖 stone 即可获得 cobblestone",
+                    "blast_furnace" => "5 iron_ingot + 1 furnace + 3 smooth_stone",
+                    "smoker" => "4 oak_log + 1 furnace + 4 cobblestone",
+                    _ => "参见 vanilla 配方",
                 }
-                Err(e) => {
-                    return Err(format!(
-                        "背包未持有 {item_id} 且自动合成失败：{e}。\n\
-                         furnace 需要 cobblestone×8（挖 stone 获得 cobblestone），\n\
-                         crafting_table 需要 oak_planks×4（砍树获得 oak_log）。\n\
-                         建议：1) 先 mine 一些 stone 获得 cobblestone；\n\
-                         2) 或先 gather oak_log 合成 crafting_table。"
-                    ));
-                }
-            }
+            ));
         } else {
-        // 尝试自动合成 crafting_table（2×2：4 木板）
+        // crafting_table 是 2×2 配方，不需要桌，可以安全自动合成（不会死循环）
         // 先检查是否有木板（任意 *_planks）
         if let Ok(inv) = bot.get_inventory() {
             let has_planks = inv.menu().ok().flatten().map(|m| {
@@ -656,7 +653,7 @@ pub async fn ensure_table_open(
                 "背包无 {item_id}（请先 craft 或 gather 一个，或在工具调用时指定 table_x/y/z 用附近已有的桌）"
             ));
         }
-        } // 关闭 P44 else { crafting_table 分支 }
+        } // 关闭 P45 else { crafting_table 分支 }
     }
 
     // P5 关键修复：跳过 overhead_slot（bot 自己占据头顶格，服务端拒绝放置），

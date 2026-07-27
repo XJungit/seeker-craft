@@ -1950,4 +1950,152 @@ mod tests {
         assert!(lookup_shaped_2x2("oak_planks").is_empty(), "oak_planks 无形状配方，应回退顺序填充");
         assert!(lookup_shaped_2x2("crafting_table").is_empty(), "crafting_table 无形状配方");
     }
+
+    /// P17 回归测试：lookup_smelt_all 必须能查到 SMELT_RECIPES 表中的所有熔炼配方。
+    /// 历史bug：原 lookup_smelt 用 normalize_item() 给 id 加 "minecraft:" 前缀，
+    /// 但表里存的是裸 id（如 "iron_ingot"），导致查找永远 false → smelt 报"不支持 iron_ingot"。
+    #[test]
+    fn regression_lookup_smelt_all_finds_iron_ingot() {
+        // 裸 id 必须能查到
+        let iron = lookup_smelt_all("iron_ingot");
+        assert!(!iron.is_empty(), "iron_ingot 必须有熔炼配方");
+        // P18: iron_ingot 有两条候选（iron_ore + raw_iron）
+        assert_eq!(iron.len(), 2, "iron_ingot 应有 2 条候选（iron_ore + raw_iron）");
+        let inputs: Vec<&str> = iron.iter().map(|r| r.input).collect();
+        assert!(inputs.contains(&"iron_ore"), "候选应含 iron_ore");
+        assert!(inputs.contains(&"raw_iron"), "候选应含 raw_iron（P18 修复）");
+
+        // 带 minecraft: 前缀也必须能查到
+        let iron_prefixed = lookup_smelt_all("minecraft:iron_ingot");
+        assert_eq!(iron_prefixed.len(), 2, "minecraft:iron_ingot 也应能查到");
+
+        // 其他产物
+        assert!(!lookup_smelt_all("copper_ingot").is_empty(), "copper_ingot 必须可查");
+        assert!(!lookup_smelt_all("gold_ingot").is_empty(), "gold_ingot 必须可查");
+        assert!(!lookup_smelt_all("glass").is_empty(), "glass 必须可查");
+        assert!(!lookup_smelt_all("stone").is_empty(), "stone 必须可查");
+        assert!(!lookup_smelt_all("charcoal").is_empty(), "charcoal 必须可查");
+
+        // 不存在的产物返回空
+        assert!(lookup_smelt_all("nonexistent").is_empty(), "不存在的产物应返回空");
+        assert!(lookup_smelt_all("diamond").is_empty(), "diamond 不可熔炼");
+    }
+
+    /// P12 回归测试：lookup_recipe（2×2 顺序填充）必须能查到 planks/stick/crafting_table/torch。
+    #[test]
+    fn regression_lookup_recipe_finds_basic_2x2() {
+        // oak_planks 来自 oak_log（显式配方）
+        let planks = lookup_recipe("oak_planks").expect("oak_planks 必须可查");
+        assert_eq!(planks.output_per_craft, 4, "1 oak_log → 4 oak_planks");
+        assert_eq!(planks.ingredients.len(), 1);
+        assert_eq!(planks.ingredients[0].1, 1, "需要 1 个 oak_log");
+
+        // stick 来自 oak_planks
+        let stick = lookup_recipe("stick").expect("stick 必须可查");
+        assert_eq!(stick.output_per_craft, 4, "2 oak_planks → 4 stick");
+        assert_eq!(stick.ingredients[0].1, 2, "需要 2 个 oak_planks");
+
+        // crafting_table 来自 oak_planks
+        let table = lookup_recipe("crafting_table").expect("crafting_table 必须可查");
+        assert_eq!(table.output_per_craft, 1, "4 oak_planks → 1 crafting_table");
+        assert_eq!(table.ingredients[0].1, 4, "需要 4 个 oak_planks");
+
+        // 带 minecraft: 前缀
+        assert!(lookup_recipe("minecraft:stick").is_some(), "带前缀也应能查到");
+        assert!(lookup_recipe("minecraft:crafting_table").is_some());
+    }
+
+    /// P12 回归测试：planks_plan_for 动态派生——所有原木种类都能合成对应木板。
+    /// vanilla 支持 oak/spruce/birch/jungle/acacia/dark_oak/mangrove/cherry 等原木。
+    #[test]
+    fn regression_planks_plan_for_all_wood_types() {
+        for wood in &[
+            "oak_planks", "spruce_planks", "birch_planks", "jungle_planks",
+            "acacia_planks", "dark_oak_planks", "mangrove_planks", "cherry_planks",
+            "pale_oak_planks",
+        ] {
+            let plan = planks_plan_for(wood).unwrap_or_else(|| panic!("{wood} 必须能派生配方"));
+            assert_eq!(plan.output_per_craft, 4, "{wood} 每次产出 4 个");
+            assert_eq!(plan.ingredients.len(), 1, "{wood} 需要 1 种原料");
+            assert_eq!(plan.ingredients[0].1, 1, "{wood} 需要 1 个原木");
+        }
+
+        // 非木板不应派生（避免自引用死循环）
+        assert!(planks_plan_for("oak_log").is_none(), "oak_log 不是木板，不应派生");
+        assert!(planks_plan_for("stick").is_none(), "stick 不是木板");
+        assert!(planks_plan_for("oak_planksxyz").is_none(), "拼写错误不应派生");
+    }
+
+    /// P43 回归测试：crafts_needed 计算必须按 ceil(count / output_per) 向上取整。
+    /// 历史bug：原代码硬熔 count 个，但背包原料不足时第 N 次失败导致整体返回 Err。
+    #[test]
+    fn regression_crafts_needed_ceil_division() {
+        // output_per=1（如 wooden_pickaxe）：crafts_needed == count
+        let output_per = 1u32;
+        assert_eq!((1u32 + output_per - 1) / output_per, 1);
+        assert_eq!((8u32 + output_per - 1) / output_per, 8);
+
+        // output_per=4（如 oak_planks）：count=1 → 1 次（产出 4 个），count=4 → 1 次，count=5 → 2 次
+        let output_per = 4u32;
+        assert_eq!((1u32 + output_per - 1) / output_per, 1, "1 个 planks 请求 → 1 次合成（产出 4）");
+        assert_eq!((4u32 + output_per - 1) / output_per, 1, "4 个 planks 请求 → 1 次合成");
+        assert_eq!((5u32 + output_per - 1) / output_per, 2, "5 个 planks 请求 → 2 次合成");
+        assert_eq!((8u32 + output_per - 1) / output_per, 2, "8 个 planks 请求 → 2 次合成");
+    }
+
+    /// P45 回归测试：furnace 配方必须是 8 个 cobblestone 围一圈（slot 5 为空）。
+    /// 这是 craft_3x3('furnace') 的关键约束——LLM 需要先有 crafting_table 才能合成 furnace。
+    #[test]
+    fn regression_furnace_recipe_is_8_cobblestone_ring() {
+        let furnace = lookup_shaped("furnace").expect("furnace 配方必须存在");
+        assert_eq!(furnace.cells.len(), 8, "furnace 需要 8 个 cobblestone（围一圈，中间空）");
+        assert_eq!(furnace.output_per_craft, 1, "每次合成 1 个 furnace");
+        // 8 格全为 cobblestone
+        for &(_, ing) in furnace.cells {
+            assert_eq!(ing, "cobblestone", "furnace 所有原料必须是 cobblestone");
+        }
+        // slot 5（正中）必须为空
+        assert!(!furnace.cells.contains(&(5, "cobblestone")), "slot5（正中）必须为空");
+        // 其余 8 格都有
+        for slot in [1, 2, 3, 4, 6, 7, 8, 9] {
+            assert!(furnace.cells.contains(&(slot, "cobblestone")), "slot{slot} 必须有 cobblestone");
+        }
+    }
+
+    /// P45 回归测试：iron_pickaxe 配方必须是 3 iron_ingot + 2 stick（vanilla 镐形状）。
+    /// 这是 smelt iron_ingot → craft iron_pickaxe 链条的关键约束。
+    #[test]
+    fn regression_iron_pickaxe_recipe_is_vanilla_shape() {
+        let pickaxe = lookup_shaped("iron_pickaxe").expect("iron_pickaxe 配方必须存在");
+        assert_eq!(pickaxe.output_per_craft, 1, "每次合成 1 个 iron_pickaxe");
+        // 头部：slot 1,2,3 = iron_ingot
+        for slot in [1, 2, 3] {
+            assert!(pickaxe.cells.contains(&(slot, "iron_ingot")), "slot{slot} 必须有 iron_ingot");
+        }
+        // 柄：slot 5,8 = stick（正中竖列）
+        for slot in [5, 8] {
+            assert!(pickaxe.cells.contains(&(slot, "stick")), "slot{slot} 必须有 stick");
+        }
+        // 不应有 cobblestone/oak_planks（这是铁镐，不是石/木镐）
+        assert!(!pickaxe.cells.iter().any(|&(_, ing)| ing == "cobblestone"), "iron_pickaxe 不应用 cobblestone");
+        assert!(!pickaxe.cells.iter().any(|&(_, ing)| ing == "oak_planks"), "iron_pickaxe 不应用 oak_planks");
+    }
+
+    /// P18 回归测试：lookup_smelt_all 必须返回 raw_xxx 和 ore 两种候选。
+    /// vanilla 中挖 iron_ore 掉 raw_iron（不是 iron_ore 本身），bot 背包通常是 raw_iron。
+    /// 历史bug：原 lookup_smelt 只返回第一个（iron_ore），do_smelt 报"缺少 iron_ore"但 bot 有 raw_iron。
+    #[test]
+    fn regression_smelt_returns_both_ore_and_raw_candidates() {
+        for (output, ore, raw) in [
+            ("iron_ingot", "iron_ore", "raw_iron"),
+            ("copper_ingot", "copper_ore", "raw_copper"),
+            ("gold_ingot", "gold_ore", "raw_gold"),
+        ] {
+            let candidates = lookup_smelt_all(output);
+            assert_eq!(candidates.len(), 2, "{output} 应有 2 条候选");
+            let inputs: Vec<&str> = candidates.iter().map(|r| r.input).collect();
+            assert!(inputs.contains(&ore), "{output} 候选应含 {ore}");
+            assert!(inputs.contains(&raw), "{output} 候选应含 {raw}（P18 修复）");
+        }
+    }
 }

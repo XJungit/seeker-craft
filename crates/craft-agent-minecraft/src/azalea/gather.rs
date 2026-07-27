@@ -14,7 +14,7 @@ use super::{
     has_any_pickaxe_in_inventory, is_hard_block, is_log_block, pickaxe_tier_name,
     pickaxe_to_craft_for_tier,
 };
-use super::auto_craft::do_auto_craft;
+// P46: do_auto_craft 已删除——回归 Mindcraft 哲学，bot 不主动合成工具。
 use azalea::BlockPos;
 use azalea::container::ContainerHandleRef;
 use azalea::pathfinder::goals::BlockPosGoal;
@@ -184,63 +184,39 @@ pub async fn do_gather(bot: &Client, item: &str, count: u32) -> Result<String, S
             }
         }
         if !found_pickaxe {
-            // P42 本质修复（2026-07-27）：背包无镐时自动合成，不直接报错甩给 LLM。
+            // P46 本质修复（2026-07-27）：回归 Mindcraft 哲学——bot 工具只做能做的，
+            // 做不了的就 return Err 让 LLM 决策。学习自 mindcraft skills.js collectBlock:
+            //   if (!mc.getItemCraftingRecipes(itemName)) { log; return false; }
+            //   bot 不主动合成工具，由 LLM 规划。
             //
-            // 原bug：gather 报"背包无镐"让 LLM 去合成，LLM 调 craft_3x3 合成镐又需要
-            // crafting_table（地下无 oak_log → 失败），死循环 → gather 0/N 永远失败。
+            // 删除 P42 的 do_auto_craft(wooden_pickaxe) 调用——它是死循环根源：
+            //   gather(iron_ore) → do_auto_craft(wooden_pickaxe)
+            //   → do_auto_craft 需要 oak_planks → craft 2x2 oak_planks → 需要 oak_log
+            //   → gather(oak_log) → oak_log 在地表 → bot 在地下 → 失败
+            // 这是用户反馈"修了这么久还在修 smelt 和 craft"的根本原因之一。
             //
-            // 本质修复：gather 直接调 do_auto_craft 自动合成所需 tier 的镐。
-            // do_auto_craft 有 P40 的工具方块复用逻辑（复用已放置的 crafting_table），
-            // 能在地下成功合成——打破"无镐→craft_3x3→无桌→无 oak_log"死循环。
-            //
-            // 合成什么镐：根据目标方块所需 tier 选择最低能用的镐（节省原料）。
-            // - tier 1（石头/煤矿/铁矿）→ wooden_pickaxe
-            // - tier 2（铁/铜/金）→ stone_pickaxe（但需 cobblestone，无镐挖不了石头 → 兜底 wooden）
-            // - tier 3（钻石/绿宝石）→ iron_pickaxe（需 iron_ingot，无镐挖不了铁 → 兜底 wooden）
-            //
-            // 实际策略：无镐时只能从 wooden_pickaxe 起步（wooden_pickaxe 只需 planks+stick，
-            // planks 来自 oak_log，auto_craft 会自动 gather oak_log）。
-            // 合成 wooden_pickaxe 后，后续可逐步升级。
-            let pickaxe_name = "wooden_pickaxe";
-            eprintln!("[gather] P42: 背包无镐，自动合成 {}", pickaxe_name);
-            // 用 Box::pin 打破 do_gather → do_auto_craft → do_gather 的 async 递归
-            // （Rust async fn 递归需要 boxing）。递归会终止：do_auto_craft(wooden_pickaxe)
-            // 内部 gather oak_log，oak_log 不是矿石，不触发 P42 自动合成镐。
-            match Box::pin(do_auto_craft(bot, pickaxe_name, 1)).await {
-                Ok(msg) => {
-                    eprintln!("[gather] P42: 合成 {} 成功: {}", pickaxe_name, msg);
-                    // 等待背包同步（do_auto_craft 内部 shift_click 后服务端同步需要时间）
-                    for retry in 0..5u8 {
-                        sleep(Duration::from_millis(400)).await;
-                        if has_any_pickaxe_in_inventory(bot).await {
-                            eprintln!("[gather] P42: 镐已进入背包（retry {}），继续 gather", retry);
-                            found_pickaxe = true;
-                            break;
-                        }
-                    }
-                    if !found_pickaxe {
-                        return Err(format!(
-                            "采集 {item} 失败：自动合成 {pickaxe_name} 报成功但背包未检测到镐\
-                             （可能服务端同步延迟）。建议：perceive 查看背包，或 equip 后重试。"
-                        ));
-                    }
-                }
-                Err(e) => {
-                    return Err(format!(
-                        "采集 {item} 失败：背包无镐，矿石/石头类方块徒手挖不掉（不掉落物品）。\n\
-                         已尝试自动合成 {pickaxe_name} 但失败：{e}\n\
-                         解决步骤：\n\
-                         1. 先 perceive 查看背包，确认是否已有镐（搜 *_pickaxe）\n\
-                         2a. 若已有镐：用 equip(item='xxx_pickaxe') 装备主手后重试 gather\n\
-                         2b. 若无镐：根据背包原料合成——\n\
-                             - wooden_pickaxe = oak_planks×3 + stick×2（craft 2×2 即可）\n\
-                             - stone_pickaxe = cobblestone×3 + stick×2（需 craft_3x3 工作台）\n\
-                             - iron_pickaxe = iron_ingot×3 + stick×2（需 craft_3x3 工作台）\n\
-                             stick 由 2 个 planks 合成 4 个\n\
-                         3. 合成后 equip 装备，再重试 gather"
-                    ));
-                }
-            }
+            // wooden_pickaxe 是 2×2 配方（craft 工具，不需要桌），LLM 应该明确规划：
+            // 1. craft('oak_planks') 把 oak_log 变成 oak_planks（2×2）
+            // 2. craft('stick') 把 oak_planks 变成 stick（2×2）
+            // 3. craft('wooden_pickaxe') 合成木镐（2×2）
+            // 4. equip('wooden_pickaxe') 装备主手
+            // 5. 重试 gather
+            return Err(format!(
+                "采集 {item} 失败：背包无镐，矿石/石头类方块徒手挖不掉（不掉落物品）。\n\
+                 这是 Mindcraft 哲学：bot 工具不主动合成工具，由 LLM 决策。\n\
+                 解决步骤：\n\
+                 1. 先 perceive 查看背包，确认是否已有镐（搜 *_pickaxe）\n\
+                 2a. 若已有镐：用 equip(item='xxx_pickaxe') 装备主手后重试 gather\n\
+                 2b. 若无镐：用 craft 工具（2×2 背包合成，不需要工作台）合成——\n\
+                     步骤1: craft('oak_planks', count=1)  # 1 个 oak_log → 4 个 oak_planks\n\
+                     步骤2: craft('stick', count=2)         # 4 个 oak_planks → 8 个 stick\n\
+                     步骤3: craft('wooden_pickaxe', count=1) # 3 oak_planks + 2 stick → 1 wooden_pickaxe\n\
+                     步骤4: equip('wooden_pickaxe')          # 装备主手\n\
+                     步骤5: 重试 gather('{item}')\n\
+                 3. 若需更高 tier 的镐（挖铁/钻石等）：\n\
+                    - stone_pickaxe = cobblestone×3 + stick×2（需 craft_3x3 工作台）\n\
+                    - iron_pickaxe = iron_ingot×3 + stick×2（需 craft_3x3 工作台 + smelt iron_ingot）"
+            ));
         }
     }
 
