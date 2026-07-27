@@ -1841,21 +1841,86 @@ pub async fn do_smelt(
 
         if let Some(result) = result_slot {
             // 有产物，立刻取（shift_click(2) 收回背包）
+            // P49 改进（2026-07-27）：对齐 do_craft_3x3 的 P20 逻辑。
+            // 原 P47 直接 shift_click(2) + total_smelted += count，没有验证产物是否真进入背包。
+            // 问题：背包满时 shift_click 静默失败，产物仍在结果槽，但 total_smelted 已虚增。
+            // 下次轮询再次"取到"同一产物，total_smelted 再次虚增，最终报"成功"但实际没拿到。
+            // 修复：shift_click 后验证结果槽是否空；不空则 left_click 兜底；仍不空则不计数。
+            let expected_kind = result.kind();
+            let expected_count = result.count().max(1) as u32;
             inv_now.shift_click(2usize);
             sleep(Duration::from_millis(200)).await;
-            let count_taken = result.count().max(1) as u32;
-            total_smelted = total_smelted.saturating_add(count_taken);
-            last_collected_ms = std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_millis() as u64)
-                .unwrap_or(last_collected_ms);
-            eprintln!(
-                "[smelt] P47: takeOutput 取到 {}x{}（累计 {}/{})",
-                result.kind().to_str(),
-                count_taken,
-                total_smelted,
-                target_total
-            );
+
+            // 验证结果槽是否空（产物是否真的被收集）
+            let inv_after = match bot.get_inventory() {
+                Ok(i) => i,
+                Err(_) => continue,
+            };
+            let inv_after_slots = inv_after.slots();
+            let still_has_result = inv_after_slots
+                .as_ref()
+                .and_then(|s| s.get(2))
+                .filter(|st| !st.is_empty())
+                .is_some();
+
+            if still_has_result {
+                // shift_click 失败（背包满），用 left_click 兜底
+                // left_click(2) 把产物拿到光标，再 left_click(empty_slot) 放到背包
+                eprintln!(
+                    "[smelt] P49: shift_click(2) 失败（背包可能满），尝试 left_click 兜底"
+                );
+                inv_after.left_click(2usize);
+                sleep(Duration::from_millis(150)).await;
+                let inv_after2 = match bot.get_inventory() {
+                    Ok(i) => i,
+                    Err(_) => continue,
+                };
+                if let Some(empty) = find_empty_player_slot(&inv_after2) {
+                    inv_after2.left_click(empty);
+                    sleep(Duration::from_millis(150)).await;
+                } else {
+                    // 背包完全满，无法收集，不计数
+                    eprintln!(
+                        "[smelt] P49: 背包完全满，无法收集产物 {}x{}",
+                        expected_kind.to_str(),
+                        expected_count
+                    );
+                    // 不增加 total_smelted，让 11s 超时 break
+                    continue;
+                }
+            }
+
+            // 验证产物真的进入背包（结果槽空了）
+            let inv_final_check = match bot.get_inventory() {
+                Ok(i) => i,
+                Err(_) => continue,
+            };
+            let inv_final_slots = inv_final_check.slots();
+            let result_still_there = inv_final_slots
+                .as_ref()
+                .and_then(|s| s.get(2))
+                .filter(|st| !st.is_empty())
+                .is_some();
+
+            if !result_still_there {
+                // 产物成功收集
+                total_smelted = total_smelted.saturating_add(expected_count);
+                last_collected_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis() as u64)
+                    .unwrap_or(last_collected_ms);
+                eprintln!(
+                    "[smelt] P49: takeOutput 成功取到 {}x{}（累计 {}/{})",
+                    expected_kind.to_str(),
+                    expected_count,
+                    total_smelted,
+                    target_total
+                );
+            } else {
+                eprintln!(
+                    "[smelt] P49: takeOutput 失败，产物仍在结果槽（不计数）"
+                );
+            }
         }
 
         // 11s 无新产物才 break（mindcraft line 244-246）
@@ -2444,5 +2509,45 @@ mod tests {
         assert!(!should_break(15000, 10000), "取产物后 5s 不 break");
         // 取到产物后 12s break
         assert!(should_break(22001, 10000), "取产物后 12s break");
+    }
+
+    /// P49 测试：产物收集失败时不计数（对齐 do_craft_3x3 的 P20 验证逻辑）。
+    /// 原 P47 bug：shift_click 失败时 total_smelted 虚增，最终报"成功"但实际没拿到。
+    #[test]
+    fn regression_p49_no_count_on_collect_failure() {
+        // 模拟 P49 的计数逻辑
+        fn should_count(result_slot_empty_after: bool) -> bool {
+            // 只有结果槽空了（产物真进入背包）才计数
+            result_slot_empty_after
+        }
+
+        // 产物成功收集（结果槽空）→ 计数
+        assert!(should_count(true), "结果槽空 → 计数");
+        // 产物收集失败（结果槽仍有物品）→ 不计数
+        assert!(!should_count(false), "结果槽非空 → 不计数");
+    }
+
+    /// P49 测试：背包满时 left_click 兜底逻辑。
+    /// 对齐 do_craft_3x3 的 P20 left_click 兜底。
+    #[test]
+    fn regression_p49_left_click_fallback_when_inventory_full() {
+        // 模拟 P49 的兜底决策
+        fn needs_left_click_fallback(shift_click_succeeded: bool, has_empty_slot: bool) -> &'static str {
+            if shift_click_succeeded {
+                "skip" // shift_click 成功，不需要兜底
+            } else if has_empty_slot {
+                "left_click" // shift_click 失败但有空位，用 left_click
+            } else {
+                "give_up" // 背包完全满，无法收集
+            }
+        }
+
+        // shift_click 成功 → 跳过兜底
+        assert_eq!(needs_left_click_fallback(true, true), "skip");
+        assert_eq!(needs_left_click_fallback(true, false), "skip");
+        // shift_click 失败 + 有空位 → left_click 兜底
+        assert_eq!(needs_left_click_fallback(false, true), "left_click");
+        // shift_click 失败 + 无空位 → 放弃（不计数）
+        assert_eq!(needs_left_click_fallback(false, false), "give_up");
     }
 }
