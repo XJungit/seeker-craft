@@ -283,6 +283,36 @@ fn build_fallback_suggestion(failed_tools: &[&str]) -> String {
     }
 }
 
+/// P53（2026-07-27）：从工具错误消息中抽取「建议：...」段。
+///
+/// 工具实现层（craft.rs / smelt / gather 等）在 Err 消息里嵌入明确的解决步骤，
+/// 例如：
+///   "背包未持有 furnace。建议：先 craft_3x3('furnace') 合成一个"
+///   "背包缺少燃料 coal。建议：1) gather oak_log；2) craft planks 后做燃料"
+///
+/// 本函数提取「建议：」之后的所有文本（直到字符串结尾或下一个换行符之前），
+/// 让 agent 主循环把它升级为强制 nudge 注入 user 消息，避免 LLM 无视建议
+/// 原地重试同一失败工具。
+///
+/// 支持中英文冒号（「：」/「:」），不区分大小写。返回 None 表示错误消息
+/// 未包含建议段（agent 走原有 consecutive_failures 路径）。
+fn extract_error_suggestion(err_msg: &str) -> Option<String> {
+    // 找「建议」二字的字节位置
+    let key = "建议";
+    let idx = err_msg.find(key)?;
+    // 跳过「建议」二字，再跳过紧随的冒号（中英文都接受）
+    let after_key = &err_msg[idx + key.len()..];
+    let after_colon = after_key.trim_start_matches(['：', ':', ' ', '\t']);
+    // 取到行尾或字符串结尾（建议段通常在一行内，多行建议用「；」或「；」分隔）
+    let end = after_colon.find('\n').unwrap_or(after_colon.len());
+    let suggestion = after_colon[..end].trim();
+    if suggestion.is_empty() {
+        None
+    } else {
+        Some(suggestion.to_string())
+    }
+}
+
 // ── Config ──
 
 /// SelfPrompter 三态状态机（学习自 Mindcraft self_prompter.js）。
@@ -1203,6 +1233,8 @@ impl Agent {
         // user 消息（否则 DeepSeek/OpenAI 报 400：tool 消息必须紧跟其 tool_calls）。
         // 故先暂存，待本轮 tool result 全部 push 之后再注入。
         let mut loop_nudge: Option<String> = None;
+        // P53：错误驱动重规划 nudge（同 loop_nudge 一样，必须延迟到 tool result 之后注入）
+        let mut error_suggestion: Option<String> = None;
         if repeat_count >= 4 {
             // P12 修复（2026-07-26）：针对 mine_below 的死循环给出具体建议。
             // mine_below 无参数，连续调用签名必然相同，但 bot 实际在向下挖。
@@ -1343,10 +1375,22 @@ impl Agent {
             }
 
             batch_results.sort_by_key(|(idx, _, _, _, _)| *idx);
+            // P53（2026-07-27）：错误驱动重规划 nudge。
+            // 当工具 Err 文本含「建议：先 X」时，agent 主循环注入强制 user 消息
+            // 「上一工具建议立即调用 X，禁止重试原工具」，把建议升级为指令。
+            // 解决 LLM 抄 few-shot 调 auto_craft(furnace) 被拒后原地重试的死循环。
             for (idx, msg, is_err, call_id, tool_name) in batch_results {
                 let tc = &calls[idx];
                 if is_err {
                     turn_had_error = true;
+                    // 抽取错误消息中的「建议：...」段（支持中英文冒号）
+                    if error_suggestion.is_none()
+                        && let Some(sug) = extract_error_suggestion(&msg)
+                    {
+                        error_suggestion = Some(format!(
+                            "工具 {tool_name} 失败并给出建议：{sug}"
+                        ));
+                    }
                 }
                 self.events.push(AgentEvent::ToolExecutionStart {
                     tool_call_id: call_id.clone(),
@@ -1431,6 +1475,22 @@ impl Agent {
         // 与 tool result 之间导致 DeepSeek/OpenAI 400。
         if let Some(nudge) = loop_nudge.take() {
             self.messages.push(Message::user(nudge));
+        } else if let Some(suggestion) = error_suggestion.take() {
+            // P53：错误驱动重规划 nudge（优先级高于 consecutive_failures）。
+            // 当工具 Err 含「建议：先 X」时，强制 LLM 按 X 执行，禁止重试原工具。
+            // 这解决 LLM 抄 few-shot 调 auto_craft(furnace) 被拒后仍原地重试的死循环。
+            let nudge = format!(
+                "【错误驱动重规划】{suggestion}\n\n\
+                 **强制指令**：\n\
+                 1. 立即按上述建议调用对应工具，**禁止重试刚刚失败的工具**\n\
+                 2. 如果建议包含多个步骤（如「先 X → 再 Y → 重试 Z」），用 run_plan 一次执行\n\
+                 3. 不要宣告任务完成或放弃，按建议链路推进\n\
+                 4. 若建议原料不足，先 perceive 查看背包，再 gather 缺的原料"
+            );
+            self.messages.push(Message::user(nudge));
+            log.push(format!(
+                "[t{turn}] 错误驱动 nudge: 注入强制重规划指令"
+            ));
         } else if self.consecutive_failures >= 3 {
             // P1 改进4+6: 连续 3+ 轮失败 — 注入诊断提示 + 自动回退链建议
             let failed_tools: Vec<&str> = calls.iter().map(|tc| tc.name.as_str()).collect();
