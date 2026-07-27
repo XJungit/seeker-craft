@@ -535,14 +535,42 @@ pub async fn ensure_table_open(
     // 修复：furnace/blast_furnace/smoker 是 3×3 配方，不能 2×2 合成。只有 crafting_table
     // 能 2×2 自动合成。furnace 类需 LLM 显式 craft_3x3("furnace") 先造好放背包。
     if count_in_inventory(bot, item_id) == 0 {
-        // furnace 类桌不能 2×2 合成，直接返回错误让 LLM 先 craft_3x3
+        // P44 本质修复（2026-07-27）：furnace 类桌不在背包时，调 do_auto_craft 自动合成，
+        // 而不是直接报错让 LLM 处理。
+        //
+        // 原bug: furnace 类桌直接报错 → LLM 调 craft_3x3('furnace') → craft_3x3 又调
+        // ensure_table_open('crafting_table') → 需要 crafting_table → 需要 oak_log
+        // → 地下无 oak_log → 死循环 → smelt 100% 失败。
+        //
+        // 修复：do_auto_craft 有 P40 工具方块复用 + 递归满足原料，能在地下成功合成 furnace
+        // （furnace = cobblestone×8，cobblestone 可通过 mine stone 获得，不需地表资源）。
+        // do_auto_craft 内部会复用已放置的 crafting_table（P40），不会死循环。
         if table_kind != "crafting_table" && table_kind != "table" && table_kind != "workbench" {
-            return Err(format!(
-                "背包未持有 {item_id}（{table_kind} 是 3×3 合成物品，无法自动合成）。\
-                 建议：先 craft_3x3('{item_id}') 合成一个（furnace 需要 cobblestone×8），\
-                 再重新调用本工具。"
-            ));
-        }
+            eprintln!("[table_flow] P44: 背包无 {item_id}，尝试 auto_craft 自动合成");
+            match crate::azalea::auto_craft::do_auto_craft(bot, item_id, 1).await {
+                Ok(msg) => {
+                    eprintln!("[table_flow] P44: auto_craft {item_id} 成功: {msg}");
+                    // 等待背包同步（do_auto_craft 内部 shift_click 后服务端同步需要时间）
+                    sleep(Duration::from_millis(500)).await;
+                    if count_in_inventory(bot, item_id) == 0 {
+                        return Err(format!(
+                            "自动合成 {item_id} 报成功但背包未检测到（可能服务端同步延迟）。\
+                             建议：perceive 查看背包，或重试本工具。"
+                        ));
+                    }
+                    // 合成成功，继续往下走放置流程
+                }
+                Err(e) => {
+                    return Err(format!(
+                        "背包未持有 {item_id} 且自动合成失败：{e}。\n\
+                         furnace 需要 cobblestone×8（挖 stone 获得 cobblestone），\n\
+                         crafting_table 需要 oak_planks×4（砍树获得 oak_log）。\n\
+                         建议：1) 先 mine 一些 stone 获得 cobblestone；\n\
+                         2) 或先 gather oak_log 合成 crafting_table。"
+                    ));
+                }
+            }
+        } else {
         // 尝试自动合成 crafting_table（2×2：4 木板）
         // 先检查是否有木板（任意 *_planks）
         if let Ok(inv) = bot.get_inventory() {
@@ -628,6 +656,7 @@ pub async fn ensure_table_open(
                 "背包无 {item_id}（请先 craft 或 gather 一个，或在工具调用时指定 table_x/y/z 用附近已有的桌）"
             ));
         }
+        } // 关闭 P44 else { crafting_table 分支 }
     }
 
     // P5 关键修复：跳过 overhead_slot（bot 自己占据头顶格，服务端拒绝放置），
