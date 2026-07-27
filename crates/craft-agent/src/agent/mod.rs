@@ -1450,8 +1450,39 @@ impl Agent {
                 {
                     let goal = goal_val.as_str().unwrap_or("");
                     if goal.is_empty() {
-                        // 空目标 → 停止（Stopped）
-                        self.stop_goal();
+                        // P58 修复（2026-07-27）：拦截 set_goal("") 绕过 P56 检测。
+                        // 实测：LLM 用 set_goal(goal="") 清空目标来绕过 P56 plain_text_reply 检测，
+                        // 文字说"任务完成 ✅"但同时有 set_goal("") 调用，P56 检测在 `if calls.is_empty()` 块内不触发。
+                        // 修复：如果 LLM 文字包含"任务完成/✅"等关键词，且当前目标仍 Active，
+                        // 拒绝 stop_goal()，注入 nudge 强制 perceive 验证。
+                        let assistant_text = response.content.as_deref().unwrap_or("");
+                        let declares_completion = assistant_text.contains('✅')
+                            || assistant_text.contains("任务完成")
+                            || assistant_text.contains("已验证")
+                            || assistant_text.contains("最终确认")
+                            || assistant_text.contains("目标完成")
+                            || assistant_text.contains("全部完成");
+                        if declares_completion && self.current_goal().is_some() {
+                            // 拒绝清空目标，注入 P58 nudge
+                            let current_goal = self.current_goal().unwrap_or("").to_string();
+                            self.fake_completion_count = self.fake_completion_count.saturating_add(1);
+                            let nudge = format!(
+                                "【P58 拦截】你调用了 set_goal(\"\") 清空目标，但文字宣告「任务完成 ✅」。\n\
+                                 当前目标仍在执行中：{current_goal}\n\
+                                 **禁止用 set_goal(\"\") 绕过验证！** 文字宣告永远不算完成。\n\
+                                 你必须立即调用 perceive 工具查看实际状态，对比目标要求逐项验证。\n\
+                                 若 perceive 显示目标未达成，继续调用 gather/mine/craft/smelt 等工具推进。\n\
+                                 再用文字说「完成」或 set_goal(\"\") 清空目标将被视为故障。"
+                            );
+                            self.messages.push(Message::user(nudge));
+                            log.push(format!(
+                                "[t{turn}] P58 拦截: set_goal(\"\") + 文字宣告完成，注入强制验证 nudge"
+                            ));
+                            // 不调用 stop_goal()，保留原目标
+                        } else {
+                            // 空目标 → 停止（Stopped）
+                            self.stop_goal();
+                        }
                     } else {
                         // 非空目标 → 进入 Active 态（覆盖任何 Paused/Stopped）
                         self.set_goal(goal);

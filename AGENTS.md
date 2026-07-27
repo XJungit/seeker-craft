@@ -590,17 +590,15 @@ vendor/azalea 是**独立 git 仓库 + 独立 cargo workspace**，改它有三�
 
 ### 9.3.1 P55+ 后续改进点（基于 scan_20260727_205138.md 实测）
 
-> 方向 A-D 已全部完成，下一阶段聚焦以下三个改进点。
+> 方向 A-D 已全部完成，下一阶段聚焦以下改进点。
 
-**改进点 1：plain_text_reply 治理（HIGH 优先级）**
+**改进点 1：plain_text_reply 治理 — ✅ 已完成（P56）**
 - 实测：step 11/14/33/41 都出现 LLM 宣告"smelt 任务完成 ✅"但无 tool_call
 - 根因：LLM 在拿到 smelt Ok 结果后进入"总结陈词"模式，忘记 SelfPrompter 仍在推进目标
-- 方案：
-  - `agent/mod.rs::run_one_turn` Step 10 在注入续跑 nudge 时，检测 assistant 文本是否
-    包含「✅」「任务完成」「已验证」等总结性关键词，若 SelfPrompter 还有未完成目标，
-    则注入更强的"禁止宣告完成"nudge
-  - 在 `profiles/_default.json` system_prompt 中加规则：「未达成 SelfPrompter 终极目标前
-    禁止输出『任务完成 ✅』类总结文字，每轮必须产生 tool_call」
+- **落地**：
+  - `agent/mod.rs::is_premature_completion` 关键词列表扩展 9 项（含 ✅、已验证、最终确认、smelt/craft/gather/mine 任务等）
+  - `profiles/_default.json` 核心规则加第 4 条"禁止中间宣告完成"
+- **实测验证（scan_20260727_212144.md）**：P55 gather 2/2 成功（vs 旧 3/3 失败），P56 减少 plain_text_reply
 
 **改进点 2：容器同步 / BlockEntity 延迟实测验证（MEDIUM 优先级）**
 - P49 takeOutput 循环依赖 `furnace.outputItem()` 真实读取，但 azalea 的 ContainerHandleRef
@@ -612,6 +610,19 @@ vendor/azalea 是**独立 git 仓库 + 独立 cargo workspace**，改它有三�
 - 见 9.4 节评估：把"产物自动收集""容器状态同步"抽成 Bevy ECS 插件
 - P49 的轮询+left_click 兜底已能工作，插件化是优化项不是必需项
 - 触发条件：若改进点 2 实测发现同步延迟问题，再升级为插件化方案
+
+**改进点 4：smelt 分批熔炼 — ✅ 已完成（P57）**
+- 实测：smelt(count=15) 超时 120s——15 个 × 10s/个 = 150s > 120s 工具调用超时
+- **落地**：`do_smelt` 单次最多熔炼 8 个（80s + 11s 无产物超时 ≈ 95s < 120s）
+- 返回消息明确告知 LLM "本次熔炼 N 个，背包还剩 M 个 raw_xxx，请再次调用 smelt(...) 继续"
+- mock 测试：3 个 P57 测试覆盖分批边界（15→8, 8→8, 9→8）
+
+**改进点 5：set_goal("") 绕过 P56 检测 — 🔴 P58 待修（HIGH 优先级）**
+- 实测：LLM 用 `set_goal(goal="")` 清空目标来绕过 P56 plain_text_reply 检测
+- 现象：LLM 文字包含"任务完成 ✅"但同时有 set_goal("") 调用，P56 的 `is_premature_completion` 检测在 `if calls.is_empty()` 块内，不触发
+- 方案：
+  - 扩展 P56 检测：不仅在 `calls.is_empty()` 时检测，也在 `calls` 包含 `set_goal("")` 时检测
+  - 或在 set_goal 工具实现里，如果 goal="" 且 LLM 文字包含"任务完成/✅"等关键词，返回 Err"请先 perceive 验证目标已达成"
 
 ### 9.4 azalea 插件能力评估（2026-07-27）
 
