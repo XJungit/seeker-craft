@@ -51,3 +51,20 @@ For optimal DeepSeek cache hit rates:
 - Inspect `session_entries` for tool call history and compaction boundaries.
 - Use `Agent::abort()` to stop retries on unrecoverable errors.
 - Session files are plain JSONL — greppable and diffable.
+
+## P56/P58: Plain-Text Reply & set_goal("") Bypass
+
+The session records two special nudge injections:
+
+- **P56 nudge** (`[tN] 注入续跑 nudge`): triggered when the LLM returns a
+  text-only reply (no `tool_calls`) containing premature-completion keywords
+  (✅, 任务完成, 已验证, 最终确认, smelt/craft/gather/mine 任务, etc.).
+  The nudge forces the LLM to keep producing tool calls.
+- **P58 nudge** (`[tN] P58 拦截: set_goal("") + 文字宣告完成`): triggered when
+  the LLM calls `set_goal(goal="")` while its text declares "task complete ✅".
+  The agent refuses `stop_goal()` and injects a mandatory perceive-verification
+  nudge. `fake_completion_count` increments each time this fires.
+
+These nudges appear in the JSONL as user messages from the agent itself
+(content starts with `【续跑】` or `【P58 拦截】`). When replaying a session,
+they help identify where the LLM tried to "give up" mid-task.

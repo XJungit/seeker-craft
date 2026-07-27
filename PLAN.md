@@ -1,139 +1,154 @@
-# Craft-Agent 重构计划（最终版）
+# Craft-Agent 项目计划
 
-## 核心架构
-
-```
-LLM ──→ {"goal": "craft iron_pickaxe", "cancel_if": "health<6"}
-         ↓
-    Rust (转发)
-         ↓ TCP
-    Java Mod: GoalEngine
-         ↓
-    自动分解目标 → 自动执行 → 自动容错 → 返回结果
-```
-
-**LLM 不写代码，不调工具，只发目标。** Mod 侧全自动。
+> 当前路线：**azalea-bot**（Rust 全栈客户端 bot，直连 MC 服务器，原生支持 MC 26.2）。
+> 旧 Java Mod 路线（GoalEngine 在 Java 侧自动分解目标）已废弃——见 [docs/adr.md](./docs/adr.md) ADR-004。
+> 当前架构：LLM 通过 37 个工具直接控制 bot，bot 工具只做原子动作，做不了的返回 Err 让 LLM 决策（Mindcraft 哲学）。
 
 ---
 
-## 为什么会超越 Mindcraft
+## 终极目标
 
-| 对比 | Mindcraft | 我们 |
-|------|-----------|------|
-| LLM 写什么 | JS 代码，每步控制 | 目标，一句话 |
-| 代码质量 | LLM 写，经常 bug，重试 5 次 | 预编译 Java，0 bug |
-| 执行环境 | Node.js eval 沙箱 | Java Mod 原生，服务端 |
-| 游戏状态 | Mineflayer 客户端模拟 | 原版服务端真实数据 |
-| 容错 | LLM 自己 try-catch | Mod 自动处理 |
-| 工具链 | 靠 LLM 自己组合 | Mod 自动规划 |
-| 中断 | 常死循环 | 内置 cancel_if 条件 |
+LLM 大模型控制 bot 通过 Minecraft（抵达末地 + 击败末影龙）。
 
-**Mindcraft 的局限性**：它必须让 LLM 写代码，因为 Mineflayer 只提供原子 skill，不组合就没法用。代码生成是 Mineflayer 的 crutch。
+达成路径（按依赖顺序）：
 
-**我们的优势**：跑在服务端，可以直接调原版所有 API。不需要 LLM 写代码，Mod 自己就能做所有事情。
+1. **早期生存**：砍树 → 合成木镐 → 挖石 → 合成石镐 → 建庇护所
+2. **中期工业化**：挖铁 → 熔铁 → 铁镐/铁装 → 挖钻石 → 钻石镐/钻装
+3. **下界**：建传送门 → 探索 → 找堡垒 → 杀烈焰人 → 得烈焰棒
+4. **末影珍珠**：杀末影人 → 得末影珍珠
+5. **末地**：合成末影之眼 → 找要塞 → 激活传送门 → 进末地
+6. **击败末影龙**：破坏水晶 + 床炸/剑砍
 
 ---
 
-## GoalEngine 设计
+## 当前状态（2026-07-27）
 
-### 目标格式
+### 已完成
 
-```json
-{
-  "goal": "craft iron_pickaxe",
-  "cancel_if": {"health": "< 6", "hunger": "< 4"}
-}
-```
+- **架构落地**：三层 crate（craft-agent / craft-agent-minecraft / craft-agent-model / craft-agent-viewer）
+- **37 个 LLM 工具**：覆盖感知/记忆/移动/挖掘/战斗/合成/熔炼/采集/放置/容器/装备/交易/建造/计划/脚本/自定义动作/知识搜索
+- **Agent 主循环 13 步**：drain_queues → 压缩检查 → 易变注入清理 → auto_perceive → modes 反应 → SelfPrompter → 动态上下文 → WorldMemory → LLM → 纯文字检测 → 死循环检测 → 并行执行 → 技能抽取
+- **两层 modes 反应系统**：Agent 层注入提示 + Handler 层直接执行（火/岩浆脱困、自动反击）
+- **WorldMemory 空间记忆**：坐标主键 + 分块索引 + 6 种记忆类型 + 每 20 tick 扫描
+- **配方知识库（双层）**：RecipeBook（vanilla 26.2 全量）+ 手写 SHAPED_RECIPES fallback
+- **蓝图系统**：可复用建筑模板
+- **自定义动作**：rhai 嵌入式脚本引擎
+- **Web 仪表盘**：Axum + SSE 实时观察 bot 状态
+- **全自动化测试工具链**：cargo test 234 个测试 + PowerShell 诊断脚本 + LLM 实机测试 + scan/diag 报告
 
-### 内置目标分解规则
+### P55-P58 最新修复（2026-07-27）
 
-```
-"craft iron_pickaxe"
-  → 检查 iron_ingot×3 + stick×2
-  → 缺 stick → 子目标 "get stick"
-    → 检查 planks×2
-    → 缺 planks → 子目标 "get planks"
-      → 砍树 → 合成 planks
-  → 缺 iron_ingot → 子目标 "get iron_ingot"
-    → 检查 raw_iron×3
-    → 缺 raw_iron → 子目标 "get raw_iron"
-      → 装备 stone_pickaxe+
-      → 找 iron_ore → 挖 ×3
-    → 烧 raw_iron → iron_ingot
-  → 合成 iron_pickaxe
-  → equip
-  → 报告完成
-```
+- **P55**：gather 部分成功返回 Ok 而非 Err（修复 100% 失败率）
+- **P56**：plain_text_reply 治理（9 个关键词 + profile 规则禁止宣告完成）
+- **P57**：smelt 分批熔炼（单次上限 8 个，避免 120s 工具超时）
+- **P58**：拦截 set_goal("") 绕过 P56 检测
 
-### 目标列表（初期）
+### 系统性重构（9.3 节方向 A-D 全部完成）
 
-| 目标 | 内部行为 |
-|------|---------|
-| `craft <item>` | 检查材料→自动收集→自动合成→equip |
-| `get <item> ×N` | 自动采集或合成 |
-| `build <blueprint>` | 检查材料→自动收集→建造 |
-| `hunt food` | 找动物→杀→捡→烧肉 |
-| `explore cave` | 找洞→下→插火把→挖矿→回 |
-| `defend base` | 检查周围→杀威胁→修复 |
-| `smelt <item> ×N` | 找炉子→放料→等→取 |
-| `enchant <item> <level>` | 做书架→附魔台→附魔 |
-
-### 容错机制（内置，不需要 LLM 管）
-
-- 血量 < 6 → 自动吃食物，目标暂停
-- 饥饿 < 4 → 自动吃食物，目标暂停
-- 背包满 → 自动丢弃垃圾或回家放箱子
-- 工具损坏 → 自动造新的
-- 被攻击 → 自动反击/逃跑
-- 天黑 → 自动回安全地点
-- 目标失败 → 报告原因 + 建议
+- **方向 A**：mock 容器集成测试（43 个测试覆盖 mindcraft 边界条件）
+- **方向 B**：逐函数对齐 mindcraft skills.js（placedTable 回收、takeOutput 循环、燃料 fallback）
+- **方向 C**：RecipeBook 替代手写 SHAPED_RECIPES
+- **方向 D**：smelt takeOutput 动态轮询（1s 间隔 + 11s 无产物超时）
 
 ---
 
-## 实施阶段
+## 下一阶段目标
 
-### Phase 0: 基础设施（2 天）
-- [ ] 弃用 `move_to`，统一 `nav_to`
-- [ ] VanillaPathfinder 调参稳定
-- [ ] autoSurvive 增强（自动吃、自动反击、自动逃跑）
-- [ ] 背包管理（自动丢弃、自动整理）
+### 改进点 2：容器同步 / BlockEntity 延迟实测验证（MEDIUM）
 
-### Phase 1: GoalEngine 核心（3 天）
-- [ ] `GoalEngine.java` — 目标状态机框架
-- [ ] 目标分解规则引擎（材料检查→子目标展开）
-- [ ] 自动采集系统（`CollectController`，挖→捡一条龙）
-- [ ] 自动合成系统（`CraftingController`，完整配方表）
-- [ ] 容错系统（血量/饥饿/背包/中断检查）
+P49 takeOutput 循环依赖 `furnace.outputItem()` 真实读取，azalea 的 ContainerHandleRef 状态同步可能有 1-2 tick 延迟。需在 LLM 实机测试中观察是否出现"产物已烧好但 shift_click 取不到"现象。
 
-### Phase 2: 目标覆盖（3 天）
-- [ ] `craft <item>` — 完整工具/装备合成链
-- [ ] `get <item> ×N` — 自动采集/合成
-- [ ] `hunt food` — 打猎+烹饪
-- [ ] `build <blueprint>` — 蓝图建造
-- [ ] `smelt <item> ×N` — 熔炼
-- [ ] `enchant <item> <level>` — 附魔
+### 改进点 3：azalea 插件化产物自动收集（LOW）
 
-### Phase 3: 打磨 + 测试（2 天）
-- [ ] smoke test 覆盖全部目标
-- [ ] 边界情况处理
-- [ ] 性能优化
+把"产物自动收集""容器状态同步"抽成 Bevy ECS 插件。P49 的轮询+left_click 兜底已能工作，插件化是优化项不是必需项。触发条件：改进点 2 实测发现同步延迟问题。
+
+### 通关路径推进
+
+当前 bot 已能完成早期+中期生存（砍树/挖矿/合成/熔炼）。下一步需推进到：
+
+- **下界传送门**：需要 lava + obsidian（或水浇岩浆）+ flint_and_steel
+- **末地传送门**：需要 ender_pearl + blaze_powder → ender_eye + 找要塞
+- **击败末影龙**：需要 bow + bed 爆炸战术
+
+---
+
+## 自动化测试协议
+
+### 测试命令
+
+```bash
+# 全量编译
+cargo build --workspace
+
+# 全量测试（234 个）
+cargo test --workspace --no-fail-fast
+
+# 核心 crate 测试
+cargo test -p craft-agent --lib                  # 122 个
+cargo test -p craft-agent-minecraft --features azalea-bot --lib  # 118 个
+cargo test -p craft-agent-model --lib            # 23 个
+
+# 端到端 LLM 测试
+cargo run -p craft-agent-viewer -- --goal "..." --steps 40 --port 8080
+```
+
+### 全自动化工具链
+
+```
+cargo test (234) → 编译 → 端到端 LLM 测试 → scan_run.ps1 分析 → auto_diag.ps1 诊断
+     ↑                                                              ↓
+     └────── 修复代码 ←──── 分析报告 ←──────────────────────────────┘
+```
+
+测试失败时的决策树见 [AGENTS.md](./AGENTS.md) 第 2.1 节。
+
+---
+
+## 关键架构约束
+
+### System Prompt 字节稳定性
+
+DeepSeek prefix cache 要求 system prompt 每次调用字节完全一致。
+- 严禁把动态变量塞进 system prompt
+- 动态内容通过 `build_dynamic_instructions_msg()` 返回 user message
+- 有回归测试 `regression_system_prompt_byte_stable_across_obs_streak`
+
+### Mindcraft 哲学（9.1-9.5 节）
+
+bot 工具只做能做的，做不了就 return Err 让 LLM 决策。
+- 不自动合成工具方块（furnace/pickaxe 等）
+- 不自动满足原料依赖
+- 错误消息必须列出完整解决步骤
+
+详见 [AGENTS.md](./AGENTS.md) 第九-bis 节。
+
+### 工具名规范
+
+实际工具名禁止用假名：
+- `go`（不是 goto/move_to/walk_to）
+- `gather`（不是 collect/pickup_item）
+- `mine`（不是 dig/break）
+- `attack`（不是 combat/fight）
+- `craft`（不是 make/create）
+- `place`（不是 put/set）
 
 ---
 
 ## 时间线
 
-| 阶段 | 内容 | 工时 |
+| 阶段 | 内容 | 状态 |
 |------|------|------|
-| Phase 0 | 基础设施 | 2 天 |
-| Phase 1 | GoalEngine 核心 | 3 天 |
-| Phase 2 | 目标覆盖 | 3 天 |
-| Phase 3 | 打磨测试 | 2 天 |
-| **总计** | | **10 天** |
+| Phase 0 | 架构落地（三层 crate + 37 工具 + 13 步主循环） | ✅ 完成 |
+| Phase 1 | 早期+中期生存（砍树/挖矿/合成/熔炼） | ✅ 完成 |
+| Phase 2 | P54-P58 系统性重构（mock 测试 + Mindcraft 对齐） | ✅ 完成 |
+| Phase 3 | 下界传送门 + 末影珍珠 | 🔲 进行中 |
+| Phase 4 | 末地传送门 + 击败末影龙 | 🔲 待启动 |
 
 ---
 
 ## 结论
 
-不再让 LLM 写代码，不再让 LLM 调工具。**LLM 只发目标，Mod 全自动执行。**
+不再追求"LLM 只发目标，Mod 全自动执行"的旧设计（已废弃，见 ADR-004）。
+当前架构：**LLM 通过 37 个工具直接控制 bot，bot 工具是原子操作，做不了的返回 Err 让 LLM 决策**。
 
-这是超越 Mindcraft 的唯一路径——因为 Mindcraft 的架构决定了它必须让 LLM 写代码，而我们不需要。
+这是超越 Mindcraft 的路径——azalea 协议层 + Rust 全栈 + Mindcraft 哲学对齐 + 全自动化测试工具链。

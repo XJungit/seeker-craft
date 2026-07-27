@@ -17,7 +17,7 @@ After the tutorials, read the crate README for the crate you'll work on:
 - [`craft-agent`](../../crates/craft-agent/README.md) — core runtime abstractions
 - [`craft-agent-minecraft`](../../crates/craft-agent-minecraft/README.md) — Minecraft adapter
 - [`craft-agent-model`](../../crates/craft-agent-model/README.md) — LLM/VLM clients
-- [`craft-agent-viewer`](../../crates/craft-agent-viewer/README.md) — TUI viewer
+- [`craft-agent-viewer`](../../crates/craft-agent-viewer/README.md) — Web dashboard (Axum + SSE)
 
 ## Common Tasks
 

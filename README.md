@@ -53,13 +53,17 @@ cargo run -p craft-agent-viewer -- --goal "收集木头做工作台" --steps 40 
 | [`crates/craft-agent/`](./crates/craft-agent/) | 核心运行时：Agent 主循环、工具系统、会话管理 |
 | [`crates/craft-agent-minecraft/`](./crates/craft-agent-minecraft/) | Minecraft 适配器与工具集 |
 | [`crates/craft-agent-model/`](./crates/craft-agent-model/) | LLM/VLM 客户端与配置 |
-| [`crates/craft-agent-viewer/`](./crates/craft-agent-viewer/) | TUI 运行仪表盘 |
+| [`crates/craft-agent-viewer/`](./crates/craft-agent-viewer/) | Web 仪表盘（Axum + SSE） |
 
 ## 文档导航
 
 - [`docs/README.md`](./docs/README.md)：文档总览（含教程、设计归档、crate 文档链接）
 - [`docs/tutorials/INDEX.md`](./docs/tutorials/INDEX.md)：教程索引（推荐阅读顺序）
-- [`ARCHITECTURE.md`](./ARCHITECTURE.md)：分层架构与运行时流程
+- [`ARCHITECTURE.md`](./ARCHITECTURE.md)：分层架构、13 步主循环、37 工具、P56-P58 治理
+- [`PLAN.md`](./PLAN.md)：项目计划（azalea-bot 路线 + 通关路径 + 自动化测试协议）
+- [`AGENTS.md`](./AGENTS.md)：全自动工作流手册（含 9-bis 节 Mindcraft 哲学约束）
+- [`docs/CHANGELOG.md`](./docs/CHANGELOG.md)：变更日志（P55-P58 最新修复）
+- [`docs/adr.md`](./docs/adr.md)：架构决策记录（ADR-001 azalea-only / ADR-004 LLM-driven tools）
 - [`game-agent-design.md`](./game-agent-design.md)：⚠️ 历史设计文档（部分过时）
 - [`CONTRIBUTING.md`](./CONTRIBUTING.md)：贡献指南
 - [`CODE_OF_CONDUCT.md`](./CODE_OF_CONDUCT.md)：行为准则
