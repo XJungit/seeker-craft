@@ -1625,6 +1625,35 @@ pub async fn do_smelt(
     clear_grid(&inv, 0..=1).await;
     clear_cursor(&inv).await;
 
+    // P43 本质修复（2026-07-27）：根据背包实际原料数量调整 crafts_needed。
+    // 原 bug：LLM 调 smelt(count=8) 但背包只有 3 个 raw_iron → 前 3 次成功，第 4 次报
+    // "背包缺少输入 raw_iron" → smelt 整体返回 Err → 已熔炼的 iron_ingot 留在熔炉结果槽
+    // bot 没拿 → 下一次 smelt 又报同样错误 → 100% 失败死循环。
+    //
+    // 本质修复：开始熔炼前统计背包实际原料数量，按实际数量熔炼，不硬熔 count 个。
+    // 若实际数量 < count，在返回消息里说明实际熔炼了多少，让 LLM 知道还需要再 gather。
+    // 这与 P38（每次迭代重新获取 inv）互补：P38 修"用旧 inv 找不到原料"，
+    // P43 修"原料根本不够还要硬熔"。
+    let inv_for_count = bot
+        .get_inventory()
+        .map_err(|e| format!("获取容器失败（P43 计数）: {e:?}"))?;
+    let actual_input = count_item_in_player_slots(&inv_for_count, input_kind);
+    let requested = crafts_needed;
+    let crafts_needed = if actual_input == 0 {
+        return Err(format!(
+            "背包无 {}（熔炼 {} 需要 {}）。请先 gather 采集 {} 后再 smelt。",
+            recipe.input, output, recipe.input, recipe.input
+        ));
+    } else if actual_input < crafts_needed {
+        eprintln!(
+            "[smelt] P43: 背包只有 {} 个 {}，少于请求的 {} 个（count={}），按实际数量熔炼 {} 个",
+            actual_input, recipe.input, requested, count, actual_input
+        );
+        actual_input
+    } else {
+        crafts_needed
+    };
+
     for _ in 0..crafts_needed {
         // P38 本质修复（2026-07-27）：每次迭代重新获取 inv，避免用旧快照查找原料。
         // 原bug：inv 在函数开头获取（行 1542），clear_grid 后熔炉槽位物品被 shift_click
@@ -1719,9 +1748,17 @@ pub async fn do_smelt(
         smelted += output_per;
     }
 
-    Ok(format!(
-        "熔炼 {output} x{count} 完成（约 {smelted}，共 {crafts_needed} 次）"
-    ))
+    Ok(if crafts_needed < requested {
+        format!(
+            "熔炼 {output} 完成：实际熔炼 {smelted} 个（请求 {count}，但背包只有 {actual_input} 个 {input}，已全部熔炼）。\
+             若需更多 {output}，请先 gather 采集 {input} 后再 smelt。",
+            input = recipe.input
+        )
+    } else {
+        format!(
+            "熔炼 {output} x{count} 完成（约 {smelted}，共 {crafts_needed} 次）"
+        )
+    })
 }
 
 /// 酿造：在已打开的酿造台菜单中，把 `base`（默认 water_bottle）用 `ingredient` 酿成结果。

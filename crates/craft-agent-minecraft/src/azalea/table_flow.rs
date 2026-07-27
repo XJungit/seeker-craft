@@ -234,6 +234,78 @@ pub async fn ensure_table_open(
         return Ok(pos);
     }
 
+    // P41 本质修复（2026-07-27）：扫描附近已放置的工具方块复用。
+    //
+    // 原bug：craft_3x3 66.7% 失败 + smelt 100% 失败的根因。
+    // bot 在地下挖矿时，之前 craft_3x3('crafting_table') / craft_3x3('furnace')
+    // 已放置过桌/炉在世界里，但 ensure_table_open 的 step 3（自动放置）只检查背包——
+    // 背包没有 crafting_table 时硬去合成（需要 oak_log，地下无 oak_log → 失败）。
+    //
+    // 本质修复：在 step 2（hint_pos）之前，先扫描附近 32 格内是否已放置同种方块。
+    // 有则走过去打开（复用 step 2 的 walk_to_reach + open_container_at 逻辑），
+    // 不需要重新合成、不需要重新放置——符合 vanilla 玩家行为：
+    // 玩家在地下挖矿时通常就地放工作台/熔炉，下次回来找它，而不是每次重新合成。
+    //
+    // 这与 P40（auto_craft.rs）的 find_nearby_placed_block 同思路，但作用层不同：
+    // P40 修 auto_craft 的 ensure(furnace) → ensure(crafting_table) → ensure(oak_log) 链；
+    // P41 修 craft_3x3/smelt 工具直接调用的 ensure_table_open。
+    // 两者互补，共同消除"地下缺 oak_log 无法合成桌/炉"的死循环。
+    if hint_pos.is_none() {
+        let expected_block = table_block_kind(table_kind);
+        // 从 bot.position() 算 BlockPos 作为扫描中心
+        let center = bot
+            .position()
+            .ok()
+            .map(|p| BlockPos::new(p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32))
+            .unwrap_or(BlockPos::new(0, 0, 0));
+        if let Some(placed_pos) = find_table_block_nearby(bot, center, expected_block, 32) {
+            eprintln!(
+                "[table_flow] P41: 附近 32 格内找到已放置的 {} 于 ({},{},{})，复用之（不重新合成/放置）",
+                table_kind, placed_pos.x, placed_pos.y, placed_pos.z
+            );
+            // 走到附近并打开（复用 step 2 的逻辑：walk_to_reach + open_container_at 重试）
+            let final_dist = walk_to_reach(bot, placed_pos).await;
+            if final_dist <= 4.5 {
+                let mut reuse_ok = false;
+                for _attempt in 0..3u8 {
+                    walk_to_reach(bot, placed_pos).await;
+                    sleep(Duration::from_millis(150)).await;
+                    match bot.open_container_at(placed_pos).await {
+                        Ok(Some(h)) => {
+                            std::mem::forget(h);
+                            let mut opened = false;
+                            for _ in 0..20 {
+                                if is_container_open(bot) {
+                                    opened = true;
+                                    break;
+                                }
+                                sleep(Duration::from_millis(50)).await;
+                            }
+                            if opened {
+                                sleep(Duration::from_millis(300)).await;
+                                if is_container_open(bot) {
+                                    sleep(Duration::from_millis(100)).await;
+                                    reuse_ok = true;
+                                    break;
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                    sleep(Duration::from_millis(200)).await;
+                }
+                if reuse_ok {
+                    return Ok(placed_pos);
+                }
+                // 复用失败（可能 LOS 被挡/方块被破坏），fall through 到 step 2/3 重新放置
+                eprintln!(
+                    "[table_flow] P41: 复用 ({},{},{}) 处 {} 失败，回退到自动放置流程",
+                    placed_pos.x, placed_pos.y, placed_pos.z, table_kind
+                );
+            }
+        }
+    }
+
     // 2. hint_pos 给定：走到附近并打开
     if let Some(pos) = hint_pos {
         // P5 修复：实际走到容器旁（之前只检查距离不移动，导致 bot 离桌 3-4m 时
