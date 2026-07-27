@@ -404,7 +404,8 @@ fn run_agent(
         // WI 模板已修复为真实工具名（gather/attack/goto/mine），可安全开启给 LLM 场景化提示。
         // MC_KNOWLEDGE_BASE 仍关闭（azalea 路线用 perceive 结构化数据 + 上方 mc_knowledge 替代）。
         .with_knowledge_base(None)
-        .with_knowledge_tool(false);
+        .with_knowledge_tool(false)
+        .with_modes_config(profile.modes);
 
     let mut agent = {
         let path = Path::new(session_path);
