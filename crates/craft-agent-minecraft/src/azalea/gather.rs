@@ -10,8 +10,9 @@
 
 use super::{
     auto_equip_best_axe, auto_equip_best_pickaxe, best_pickaxe_tier_in_inventory,
-    block_required_pickaxe_tier, has_any_axe_in_inventory, has_any_pickaxe_in_inventory,
-    is_hard_block, is_log_block, pickaxe_tier_name, pickaxe_to_craft_for_tier,
+    block_drops_item, block_required_pickaxe_tier, has_any_axe_in_inventory,
+    has_any_pickaxe_in_inventory, is_hard_block, is_log_block, pickaxe_tier_name,
+    pickaxe_to_craft_for_tier,
 };
 use azalea::BlockPos;
 use azalea::container::ContainerHandleRef;
@@ -106,6 +107,22 @@ pub async fn do_gather(bot: &Client, item: &str, count: u32) -> Result<String, S
         .map_err(|_| {
             format!("无法解析方块种类 {item}（采集需方块形态，如 oak_log / stone / coal_ore）")
         })?;
+
+    // P39 本质修复（2026-07-27）：统计**实际掉落物**而不是 LLM 传入的方块名。
+    //
+    // vanilla 1.18+ 中挖 iron_ore 方块掉落 raw_iron 物品（不是 iron_ore），
+    // 挖 coal_ore 掉落 coal，挖 stone 掉落 cobblestone，等等。
+    // 原 gather 用 `target`（= ItemKind::IronOre）去 count_item 统计背包数量，
+    // 永远返回 0 → 24 轮都失败 → 0/N 错误。
+    //
+    // 修复：用 block_drops_item(block_kind) 拿到实际掉落物 ItemKind 来统计。
+    // 若该方块「本身即是掉落物」（如 dirt, cobblestone, oak_log），返回 None，
+    // 回退到 LLM 传入的 item 名（= target）。
+    let drop_item = block_drops_item(block_kind).unwrap_or(target);
+    let drop_item_name = {
+        let s = drop_item.to_str();
+        s.strip_prefix("minecraft:").unwrap_or(s).to_string()
+    };
 
     let need = count.max(1);
     let mut gathered = 0u32;
@@ -284,9 +301,10 @@ pub async fn do_gather(bot: &Client, item: &str, count: u32) -> Result<String, S
         }
 
         // 4) 挖掘目标方块
+        // P39: 用 drop_item（实际掉落物）统计，不是 LLM 传的 target（方块名）
         let before = {
             let inv = bot.get_inventory().map_err(|e| format!("{e:?}"))?;
-            count_item(&inv, target)
+            count_item(&inv, drop_item)
         };
         let mine_start = Instant::now();
         bot.start_mining(target_pos);
@@ -300,7 +318,7 @@ pub async fn do_gather(bot: &Client, item: &str, count: u32) -> Result<String, S
                 Ok(i) => i,
                 Err(_) => continue,
             };
-            let now = count_item(&inv, target);
+            let now = count_item(&inv, drop_item);
             if now > before {
                 gathered = now;
                 done = true;
@@ -391,7 +409,7 @@ pub async fn do_gather(bot: &Client, item: &str, count: u32) -> Result<String, S
                         Ok(i) => i,
                         Err(_) => continue,
                     };
-                    let now = count_item(&inv, target);
+                    let now = count_item(&inv, drop_item);
                     if now > before {
                         gathered = now;
                         done = true;
@@ -432,7 +450,17 @@ pub async fn do_gather(bot: &Client, item: &str, count: u32) -> Result<String, S
     }
 
     if gathered >= need {
-        Ok(format!("采集 {item} 完成（背包 {gathered} 个）"))
+        // P39: 若实际掉落物 != LLM 传入的方块名（如 gather iron_ore 实际得到 raw_iron），
+        // 在返回消息里明确告知 LLM，避免 LLM 后续用错误物品名 craft/smelt。
+        if drop_item != target {
+            Ok(format!(
+                "采集 {item} 完成（挖 {item} 方块掉落 {drop_item_name}，背包现有 {gathered} 个 {drop_item_name}）。\n\
+                 注意：vanilla 中挖 {item} 方块掉落的是 {drop_item_name}，不是 {item} 物品。\
+                 后续合成/熔炼请使用 {drop_item_name} 作为原料。"
+            ))
+        } else {
+            Ok(format!("采集 {item} 完成（背包 {gathered} 个）"))
+        }
     } else {
         let reason = last_skip_reason
             .map(|r| format!("；最后原因: {r}"))
@@ -447,13 +475,19 @@ pub async fn do_gather(bot: &Client, item: &str, count: u32) -> Result<String, S
         // 2) 如果已有部分，是否够用（让 LLM 自行判断）
         // 3) 如果完全没采到，根据 block_kind 判断需要什么工具，给针对性建议
         let shortage = need.saturating_sub(gathered);
+        // P39: 在错误消息中也用 drop_item_name，让 LLM 知道实际会得到什么物品
+        let drop_hint = if drop_item != target {
+            format!("\n                 注意：vanilla 中挖 {item} 方块掉落的是 {drop_item_name}，不是 {item}。")
+        } else {
+            String::new()
+        };
         if gathered > 0 {
             // 部分成功：明确告知已有数量，让 LLM 判断是否够用
             Err(format!(
                 "采集 {item} 部分完成：已采集 {gathered}/{need}（差 {shortage} 个）{reason}。\n\
-                 当前背包已有 {gathered} 个 {item}，请判断：\n\
+                 当前背包已有 {gathered} 个 {drop_item_name}，请判断：\n\
                  - 若 {gathered} 个够用（如合成只需部分），可直接进行下一步（craft/smelt）；\n\
-                 - 若不够，请 go 到其他区域寻找更多 {item}，或换一个采集目标。"
+                 - 若不够，请 go 到其他区域寻找更多 {item}，或换一个采集目标。{drop_hint}"
             ))
         } else {
             // 完全失败：根据 block_kind 判断需要什么工具，给针对性建议
@@ -486,9 +520,9 @@ pub async fn do_gather(bot: &Client, item: &str, count: u32) -> Result<String, S
                 String::new()
             };
             Err(format!(
-                "采集 {item} 完全失败：未采集到任何 {item}（0/{need}）{reason}。\n\
+                "采集 {item} 完全失败：未采集到任何 {drop_item_name}（0/{need}）{reason}。\n\
                  建议：\n\
-                 - go 到其他区域寻找 {item}（当前半径 32 内无该方块）{tool_hint}"
+                 - go 到其他区域寻找 {item}（当前半径 32 内无该方块）{tool_hint}{drop_hint}"
             ))
         }
     }

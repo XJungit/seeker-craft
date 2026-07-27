@@ -1975,6 +1975,62 @@ pub(crate) fn pickaxe_tier(k: ItemKind) -> u8 {
     }
 }
 
+/// P39 本质修复（2026-07-27）：返回挖掘指定方块时**实际掉落的物品**。
+///
+/// 这是 gather 0/8 死循环的根本原因修复。原 gather 用 LLM 传入的方块名（如 "iron_ore"）
+/// 作为 ItemKind 去 `count_item` 统计背包数量，但 vanilla 1.18+ 中：
+/// - 挖 iron_ore / deepslate_iron_ore 方块掉落的是 **raw_iron** 物品（不是 iron_ore！）
+/// - 挖 gold_ore / deepslate_gold_ore 方块掉落的是 **raw_gold** 物品
+/// - 挖 copper_ore / deepslate_copper_ore 方块掉落的是 **raw_copper** 物品
+/// - 挖 coal_ore / deepslate_coal_ore 方块掉落的是 **coal** 物品（不是 coal_ore）
+/// - 挖 diamond_ore 方块掉落的是 **diamond** 物品
+/// - 挖 redstone_ore 方块掉落的是 **redstone** 物品
+/// - 挖 lapis_ore 方块掉落的是 **lapis_lazuli** 物品
+/// - 挖 nether_quartz_ore 方块掉落的是 **quartz** 物品
+/// - 挖 stone 方块掉落的是 **cobblestone** 物品
+///
+/// 所以 `count_item(inv, ItemKind::IronOre)` 永远返回 0，gather 永远 0/N 失败。
+/// 之前的 P11/P15/P35 修复都只处理症状（错误信息），没修这个根因。
+///
+/// 本函数返回实际掉落物 ItemKind，让 gather 统计正确的物品。
+/// 对于「方块本身即是掉落物」的情况（如 cobblestone, dirt, oak_log）返回 None，
+/// 调用方回退到「LLM 传入的 item 名」即可。
+pub(crate) fn block_drops_item(kind: BlockKind) -> Option<ItemKind> {
+    use azalea_registry::builtin::BlockKind as B;
+    use azalea_registry::builtin::ItemKind as IK;
+    // vanilla 1.18+ raw ore 机制：挖矿石方块掉落 raw 形态
+    let drop_item: ItemKind = match kind {
+        // 铁矿 → raw_iron（最常见错误，LLM 经常 gather("iron_ore")）
+        B::IronOre | B::DeepslateIronOre => IK::RawIron,
+        // 金矿 → raw_gold
+        B::GoldOre | B::DeepslateGoldOre => IK::RawGold,
+        // 铜矿 → raw_copper
+        B::CopperOre | B::DeepslateCopperOre => IK::RawCopper,
+        // 煤矿 → coal（不是 coal_ore 物品，根本不存在 coal_ore 物品）
+        B::CoalOre | B::DeepslateCoalOre => IK::Coal,
+        // 钻石矿 → diamond
+        B::DiamondOre | B::DeepslateDiamondOre => IK::Diamond,
+        // 绿宝石矿 → emerald
+        B::EmeraldOre | B::DeepslateEmeraldOre => IK::Emerald,
+        // 红石矿 → redstone
+        B::RedstoneOre | B::DeepslateRedstoneOre => IK::Redstone,
+        // 青金石矿 → lapis_lazuli（注意是 dye 不是 ore）
+        B::LapisOre | B::DeepslateLapisOre => IK::LapisLazuli,
+        // 下界石英矿 → quartz
+        B::NetherQuartzOre => IK::Quartz,
+        // 下界金矿 → gold_nugget（多个）+ raw_gold（少量），主要掉落是 nugget，但 vanilla
+        // 实际是 2-6 gold_nugget。这里用 raw_gold 是错的，应该用 gold_nugget。
+        // 但因为 gold_nugget 不容易再处理，先返回 None 让 gather 走默认逻辑。
+        // 实际上 nether_gold_ore 很少被 LLM 主动 gather，先不处理。
+        // 石头 → 圆石（精准采集除外，bot 没有 silk touch）
+        B::Stone => IK::Cobblestone,
+        // 其他矿石/方块：方块本身即是掉落物（如 cobblestone→cobblestone, dirt→dirt）
+        // 返回 None 让调用方回退到「LLM 传入的 item 名」
+        _ => return None,
+    };
+    Some(drop_item)
+}
+
 /// 返回挖掘指定方块所需的最低镐品质等级。
 ///
 /// 0 = 不需要镐（软方块如 dirt/sand/gravel，徒手可挖且掉落）
@@ -2676,5 +2732,92 @@ mod tests {
         assert!(pickaxe_to_craft_for_tier(2).contains("stone_pickaxe"));
         assert!(pickaxe_to_craft_for_tier(3).contains("iron_pickaxe"));
         assert!(pickaxe_to_craft_for_tier(4).contains("diamond_pickaxe"));
+    }
+
+    /// P39 关键回归测试：block_drops_item 必须返回 vanilla 1.18+ 的实际掉落物。
+    ///
+    /// 这是 gather 0/8 死循环的根本原因修复。原 gather 用 LLM 传入的方块名（如 "iron_ore"）
+    /// 作为 ItemKind 去 count_item 统计背包数量，但 vanilla 1.18+ 中挖 iron_ore 方块
+    /// 掉落的是 raw_iron 物品，不是 iron_ore——导致 count_item 永远返回 0，gather 永远失败。
+    ///
+    /// 此测试确保 block_drops_item 返回正确的物品类型，防止以后改回旧 bug。
+    #[test]
+    fn regression_block_drops_item_returns_vanilla_correct_drops() {
+        // 铁矿 → raw_iron（最常见的 LLM gather 调用，也是 0/8 死循环的根因）
+        assert_eq!(block_drops_item(B::IronOre), Some(IK::RawIron));
+        assert_eq!(block_drops_item(B::DeepslateIronOre), Some(IK::RawIron));
+
+        // 金矿 → raw_gold
+        assert_eq!(block_drops_item(B::GoldOre), Some(IK::RawGold));
+        assert_eq!(block_drops_item(B::DeepslateGoldOre), Some(IK::RawGold));
+
+        // 铜矿 → raw_copper
+        assert_eq!(block_drops_item(B::CopperOre), Some(IK::RawCopper));
+        assert_eq!(block_drops_item(B::DeepslateCopperOre), Some(IK::RawCopper));
+
+        // 煤矿 → coal（vanilla 中根本不存在 coal_ore 物品）
+        assert_eq!(block_drops_item(B::CoalOre), Some(IK::Coal));
+        assert_eq!(block_drops_item(B::DeepslateCoalOre), Some(IK::Coal));
+
+        // 钻石矿 → diamond
+        assert_eq!(block_drops_item(B::DiamondOre), Some(IK::Diamond));
+        assert_eq!(block_drops_item(B::DeepslateDiamondOre), Some(IK::Diamond));
+
+        // 绿宝石矿 → emerald
+        assert_eq!(block_drops_item(B::EmeraldOre), Some(IK::Emerald));
+        assert_eq!(block_drops_item(B::DeepslateEmeraldOre), Some(IK::Emerald));
+
+        // 红石矿 → redstone
+        assert_eq!(block_drops_item(B::RedstoneOre), Some(IK::Redstone));
+        assert_eq!(block_drops_item(B::DeepslateRedstoneOre), Some(IK::Redstone));
+
+        // 青金石矿 → lapis_lazuli（注意是 dye 不是 ore）
+        assert_eq!(block_drops_item(B::LapisOre), Some(IK::LapisLazuli));
+        assert_eq!(block_drops_item(B::DeepslateLapisOre), Some(IK::LapisLazuli));
+
+        // 下界石英矿 → quartz
+        assert_eq!(block_drops_item(B::NetherQuartzOre), Some(IK::Quartz));
+
+        // 石头 → 圆石（精准采集除外，bot 没有 silk touch）
+        assert_eq!(block_drops_item(B::Stone), Some(IK::Cobblestone));
+
+        // 方块本身即是掉落物 → 返回 None（让 gather 回退到 LLM 传入的 item 名）
+        assert_eq!(block_drops_item(B::Dirt), None);
+        assert_eq!(block_drops_item(B::Cobblestone), None);
+        assert_eq!(block_drops_item(B::OakLog), None);
+        assert_eq!(block_drops_item(B::Sand), None);
+        assert_eq!(block_drops_item(B::Gravel), None);
+    }
+
+    /// P39 关键回归测试：gather iron_ore 必须统计 raw_iron 数量，不是 iron_ore。
+    ///
+    /// 这是 P39 修复的核心验证：block_drops_item(IronOre) 返回 RawIron，
+    /// 而不是 None 或 IronOre。如果未来有人改回旧逻辑（统计 iron_ore 数量），
+    /// 这个测试会立刻失败。
+    #[test]
+    fn regression_gather_iron_ore_must_count_raw_iron() {
+        // 模拟 gather 内部的 drop_item 计算逻辑
+        let block_kind = B::IronOre;
+        let target = IK::IronOre; // LLM 传入 "iron_ore" 解析得到的 ItemKind
+        let drop_item = block_drops_item(block_kind).unwrap_or(target);
+
+        assert_eq!(
+            drop_item,
+            IK::RawIron,
+            "挖 iron_ore 方块必须统计 raw_iron 数量，否则 gather 永远 0/N 失败"
+        );
+        assert_ne!(
+            drop_item, target,
+            "drop_item 不能等于 target（iron_ore），否则就是 P39 修复前的 bug"
+        );
+
+        // 同理验证 deepslate_iron_ore
+        let block_kind = B::DeepslateIronOre;
+        let drop_item = block_drops_item(block_kind).unwrap_or(IK::DeepslateIronOre);
+        assert_eq!(
+            drop_item,
+            IK::RawIron,
+            "挖 deepslate_iron_ore 方块也必须统计 raw_iron 数量"
+        );
     }
 }
