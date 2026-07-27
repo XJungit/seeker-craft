@@ -51,14 +51,13 @@ impl Agent {
             _ => None,
         })?;
 
-        // 模式开关从 config 读取（profile.rs 的 Modes struct 已定义 10 个开关，
-        // 但 AgentConfig 暂未持有 Modes 字段——这里用条件判断模拟开关，默认全开）。
-        // TODO: 后续 AgentConfig 增加 modes: Modes 字段后，按开关逐个判断。
+        // 模式开关从 AgentConfig.modes 读取（Modes struct 已定义 10 个开关）。
+        // 每个模式触发前检查对应开关，关闭的模式不触发。
 
         // 生命/饱食检测：perceive 输出格式 "生命: 5/20  饱食: 20/20"
         let health_low = (0..=6).any(|n| perception.contains(&format!("生命: {n}/")));
         let hunger_low = (0..=6).any(|n| perception.contains(&format!("饱食: {n}/")));
-        if health_low || hunger_low {
+        if (health_low || hunger_low) && self.config.modes.self_preservation {
             if self.last_mode_trigger != 1 {
                 self.last_mode_trigger = 1;
                 let action = if health_low {
@@ -85,7 +84,7 @@ impl Agent {
             || perception.contains("phantom")
             || perception.contains("witch");
         let has_creeper = perception.contains("creeper");
-        if has_hostile {
+        if has_hostile && self.config.modes.self_defense {
             if self.last_mode_trigger != 2 {
                 self.last_mode_trigger = 2;
                 let action = if has_creeper {
@@ -115,7 +114,7 @@ impl Agent {
             && !perception.contains("cooked_beef")
             && !perception.contains("bread")
             && !perception.contains("apple");
-        if has_animal && low_food && self.last_mode_trigger != 4 {
+        if has_animal && low_food && self.config.modes.hunting && self.last_mode_trigger != 4 {
             self.last_mode_trigger = 4;
             return Some(ModeReaction {
                 prompt: Some(
@@ -132,7 +131,7 @@ impl Agent {
         // item_collecting：背包刚挖/刚战斗后提示捡物
         // 简化判断：最近一轮 mine/attack 后 perceive 提示背包未满
         let just_mined = perception.contains("脚下: air") || perception.contains("前方: air");
-        if just_mined && self.last_mode_trigger != 5 {
+        if just_mined && self.config.modes.item_collecting && self.last_mode_trigger != 5 {
             self.last_mode_trigger = 5;
             return Some(ModeReaction {
                 prompt: Some(
@@ -151,7 +150,7 @@ impl Agent {
             || perception.contains("biome: cave")
             || perception.contains("biome: dripstone")
             || perception.contains("biome: lush");
-        if in_dark && self.last_mode_trigger != 6 {
+        if in_dark && self.config.modes.torch_placing && self.last_mode_trigger != 6 {
             self.last_mode_trigger = 6;
             return Some(ModeReaction {
                 prompt: Some(
@@ -166,7 +165,7 @@ impl Agent {
         }
 
         // unstuck：连续观察 5+ 步，提示换工具
-        if self.obs_streak >= 5 && self.last_mode_trigger != 3 {
+        if self.obs_streak >= 5 && self.config.modes.unstuck && self.last_mode_trigger != 3 {
             self.last_mode_trigger = 3;
             return Some(ModeReaction {
                 prompt: Some(format!(

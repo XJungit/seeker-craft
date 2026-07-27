@@ -17,6 +17,7 @@ use crate::core::memory::WorldMemory;
 use crate::core::session::Session;
 use crate::core::skill::SkillLibrary;
 use crate::core::tool::{ToolEffects, ToolRegistry, ToolResult, plan_tool_effect_batches};
+use crate::profile::Modes;
 use anyhow::Result;
 use serde::Serialize;
 use serde_json::Value;
@@ -377,6 +378,8 @@ pub struct AgentConfig {
     pub enable_world_info: bool,
     pub enable_self_prompt: bool,
     pub enable_modes: bool,
+    /// 逐模式开关（从 profile 加载，控制每个模式是否自动触发）。
+    pub modes: Modes,
     /// 是否注册 manage_knowledge 工具（动态世界知识增删）。
     /// mod 路线默认 true；azalea 等无世界知识库的路线设 false，
     /// 避免向 LLM 暴露不存在/无用的工具导致上游偶发 400。
@@ -404,6 +407,7 @@ impl AgentConfig {
             enable_world_info: true,
             enable_self_prompt: true,
             enable_modes: true,
+            modes: Modes::default(),
             // 默认关闭 mod 专属知识污染：新路线（azalea 等）开箱即用、
             // 仅见自身工具集；mod 路线在 demo 里显式 .with_knowledge_base/
             // world_info/enable_knowledge_tool 开启。
@@ -436,6 +440,11 @@ impl AgentConfig {
         self.retry = r;
         self
     }
+    pub fn with_modes_config(mut self, m: Modes) -> Self {
+        self.modes = m;
+        self
+    }
+
     pub fn with_auto_perceive(mut self, v: bool) -> Self {
         self.auto_perceive = v;
         self
