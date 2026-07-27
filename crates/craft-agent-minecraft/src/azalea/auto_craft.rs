@@ -4,7 +4,7 @@
 
 use azalea::BlockPos;
 use azalea::prelude::*;
-use azalea_registry::builtin::ItemKind;
+use azalea_registry::builtin::{BlockKind, ItemKind};
 use std::str::FromStr;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -92,13 +92,11 @@ async fn ensure_via_book(bot: &Client, item: &str, amount: u32) -> Option<Result
                         return Some(Err(e));
                     }
                 }
-                let at = match overhead_slot(bot) {
-                    Some(a) => a,
-                    None => return Some(Err("无法计算放置点".to_string())),
+                // P40: 优先复用附近已放置的工作台，无则放置新的
+                let at = match ensure_placed_tool_block(bot, "crafting_table").await {
+                    Ok(p) => p,
+                    Err(e) => return Some(Err(e)),
                 };
-                if let Err(e) = do_place(bot, "crafting_table", at).await {
-                    return Some(Err(e));
-                }
                 sleep(Duration::from_millis(200)).await;
                 if let Err(e) = do_open_container(bot, at).await {
                     return Some(Err(e));
@@ -123,13 +121,11 @@ async fn ensure_via_book(bot: &Client, item: &str, amount: u32) -> Option<Result
                     return Some(Err(e));
                 }
             }
-            let at = match overhead_slot(bot) {
-                Some(a) => a,
-                None => return Some(Err("无法计算放置点".to_string())),
+            // P40: 优先复用附近已放置的锻造台
+            let at = match ensure_placed_tool_block(bot, "smithing_table").await {
+                Ok(p) => p,
+                Err(e) => return Some(Err(e)),
             };
-            if let Err(e) = do_place(bot, "smithing_table", at).await {
-                return Some(Err(e));
-            }
             sleep(Duration::from_millis(200)).await;
             if let Err(e) = do_open_container(bot, at).await {
                 return Some(Err(e));
@@ -150,13 +146,11 @@ async fn ensure_via_book(bot: &Client, item: &str, amount: u32) -> Option<Result
                     return Some(Err(e));
                 }
             }
-            let at = match overhead_slot(bot) {
-                Some(a) => a,
-                None => return Some(Err("无法计算放置点".to_string())),
+            // P40: 优先复用附近已放置的切石机
+            let at = match ensure_placed_tool_block(bot, "stonecutter").await {
+                Ok(p) => p,
+                Err(e) => return Some(Err(e)),
             };
-            if let Err(e) = do_place(bot, "stonecutter", at).await {
-                return Some(Err(e));
-            }
             sleep(Duration::from_millis(200)).await;
             if let Err(e) = do_open_container(bot, at).await {
                 return Some(Err(e));
@@ -177,13 +171,11 @@ async fn ensure_via_book(bot: &Client, item: &str, amount: u32) -> Option<Result
                     return Some(Err(e));
                 }
             }
-            let at = match overhead_slot(bot) {
-                Some(a) => a,
-                None => return Some(Err("无法计算放置点".to_string())),
+            // P40: 优先复用附近已放置的酿造台
+            let at = match ensure_placed_tool_block(bot, "brewing_stand").await {
+                Ok(p) => p,
+                Err(e) => return Some(Err(e)),
             };
-            if let Err(e) = do_place(bot, "brewing_stand", at).await {
-                return Some(Err(e));
-            }
             sleep(Duration::from_millis(200)).await;
             if let Err(e) = do_open_container(bot, at).await {
                 return Some(Err(e));
@@ -200,13 +192,11 @@ async fn ensure_via_book(bot: &Client, item: &str, amount: u32) -> Option<Result
                     return Some(Err(e));
                 }
             }
-            let at = match overhead_slot(bot) {
-                Some(a) => a,
-                None => return Some(Err("无法计算放置点".to_string())),
+            // P40: 优先复用附近已放置的熔炉
+            let at = match ensure_placed_tool_block(bot, "furnace").await {
+                Ok(p) => p,
+                Err(e) => return Some(Err(e)),
             };
-            if let Err(e) = do_place(bot, "furnace", at).await {
-                return Some(Err(e));
-            }
             sleep(Duration::from_millis(200)).await;
             if let Err(e) = do_open_container(bot, at).await {
                 return Some(Err(e));
@@ -371,8 +361,33 @@ async fn ensure(bot: &Client, item: &str, amount: u32) -> Result<(), String> {
 
     // 优先用本地配方书（覆盖 3×3 合成 / 锻造 / 熔炼等），免手写表。
     if let Some(res) = ensure_via_book(bot, item, needed).await {
+        if res.is_ok() {
+            return Ok(());
+        }
+        // P40 本质修复（2026-07-27）：配方书合成失败时，工具方块 fallback 扫描附近已放置的复用。
+        //
+        // 原bug：bot 在地下挖矿时，crafting_table/furnace 已放置在世界某处（之前 auto_craft
+        // 放置过），但背包没有——ensure(crafting_table) → ensure(planks) → ensure(oak_log)
+        // → 地下无 oak_log → 失败 → auto_craft(iron_ingot) 100% 失败。
+        //
+        // 修复：工具方块 ensure_via_book 失败时，扫描附近 32 格内是否已放置同种方块。
+        // 有则复用（符合 vanilla 玩家行为：玩家在地下挖矿时通常会带着工作台/熔炉，
+        // 或用完就地放下，下次需要时回去找），无才返回原错误。
+        if is_tool_block(item) {
+            if let Some(_pos) = find_nearby_placed_block(bot, item, 32).await {
+                return Ok(());
+            }
+        }
         return res;
     }
+
+    // P40: 无配方书条目时，工具方块先扫描附近已放置的
+    if is_tool_block(item) {
+        if let Some(_pos) = find_nearby_placed_block(bot, item, 32).await {
+            return Ok(());
+        }
+    }
+
     let recipe = lookup(item)
         .ok_or_else(|| format!("auto_craft 无法制造 {item}（无配方且非可采集方块）"))?;
 
@@ -401,10 +416,9 @@ async fn ensure(bot: &Client, item: &str, amount: u32) -> Result<(), String> {
             for (inp, amt) in recipe.inputs {
                 Box::pin(ensure(bot, inp, amt * needed)).await?;
             }
-            // 确保有熔炉并放置/打开
+            // P40: 确保熔炉已放置并打开（优先复用附近已放置的）
             Box::pin(ensure(bot, "furnace", 1)).await?;
-            let at = overhead_slot(bot).ok_or("无法计算放置点")?;
-            do_place(bot, "furnace", at).await?;
+            let at = ensure_placed_tool_block(bot, "furnace").await?;
             sleep(Duration::from_millis(200)).await;
             do_open_container(bot, at).await?;
             sleep(Duration::from_millis(200)).await;
@@ -419,10 +433,9 @@ async fn ensure(bot: &Client, item: &str, amount: u32) -> Result<(), String> {
                         StoredRecipe::Shaped { .. } | StoredRecipe::Shapeless { .. } => {
                             // 先满足配方书里的全部原料
                             ensure_recipe_inputs(bot, r, needed).await?;
-                            // 确保有工作台并放置/打开
+                            // P40: 确保工作台已放置并打开（优先复用附近已放置的）
                             Box::pin(ensure(bot, "crafting_table", 1)).await?;
-                            let at = overhead_slot(bot).ok_or("无法计算放置点")?;
-                            do_place(bot, "crafting_table", at).await?;
+                            let at = ensure_placed_tool_block(bot, "crafting_table").await?;
                             sleep(Duration::from_millis(200)).await;
                             do_open_container(bot, at).await?;
                             sleep(Duration::from_millis(200)).await;
@@ -433,10 +446,9 @@ async fn ensure(bot: &Client, item: &str, amount: u32) -> Result<(), String> {
                         StoredRecipe::Smithing { .. } => {
                             // 先满足模板/基础/附加三类原料
                             ensure_recipe_inputs(bot, r, needed).await?;
-                            // 确保有锻造台并放置/打开
+                            // P40: 确保锻造台已放置并打开（优先复用附近已放置的）
                             Box::pin(ensure(bot, "smithing_table", 1)).await?;
-                            let at = overhead_slot(bot).ok_or("无法计算放置点")?;
-                            do_place(bot, "smithing_table", at).await?;
+                            let at = ensure_placed_tool_block(bot, "smithing_table").await?;
                             sleep(Duration::from_millis(200)).await;
                             do_open_container(bot, at).await?;
                             sleep(Duration::from_millis(200)).await;
@@ -451,10 +463,9 @@ async fn ensure(bot: &Client, item: &str, amount: u32) -> Result<(), String> {
             for (inp, amt) in recipe.inputs {
                 Box::pin(ensure(bot, inp, amt * needed)).await?;
             }
-            // 确保有工作台并放置/打开
+            // P40: 确保工作台已放置并打开（优先复用附近已放置的）
             Box::pin(ensure(bot, "crafting_table", 1)).await?;
-            let at = overhead_slot(bot).ok_or("无法计算放置点")?;
-            do_place(bot, "crafting_table", at).await?;
+            let at = ensure_placed_tool_block(bot, "crafting_table").await?;
             sleep(Duration::from_millis(200)).await;
             do_open_container(bot, at).await?;
             sleep(Duration::from_millis(200)).await;
@@ -462,6 +473,82 @@ async fn ensure(bot: &Client, item: &str, amount: u32) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// P40 新增（2026-07-27）：确保工具方块（crafting_table/furnace 等）已放置并返回位置。
+///
+/// **本质修复**：优先复用附近 8 格内已放置的同种方块（bot 在地下挖矿时通常已放置过），
+/// 避免每次 auto_craft 都重新合成放置新的——既节省背包资源，又避免"地下缺 oak_log
+/// 无法合成 crafting_table"的死循环。找不到已放置的才放置新的。
+///
+/// 返回方块位置，供后续 do_open_container 使用。
+async fn ensure_placed_tool_block(bot: &Client, item: &str) -> Result<BlockPos, String> {
+    // P40: 优先复用附近 8 格已放置的
+    if let Some(pos) = find_nearby_placed_block(bot, item, 8).await {
+        return Ok(pos);
+    }
+    // 否则放置新的
+    let at = overhead_slot(bot).ok_or("无法计算放置点")?;
+    do_place(bot, item, at).await?;
+    Ok(at)
+}
+
+/// P40 新增（2026-07-27）：判断 item 是否为「工具方块」（auto_craft 会放置并打开的方块）。
+///
+/// 这些方块放置后持久存在于世界，可被复用——bot 在地下挖矿时通常已放置过，
+/// auto_craft 不应重新合成（缺 oak_log 地表资源无法合成 crafting_table）。
+fn is_tool_block(item: &str) -> bool {
+    let b = item.strip_prefix("minecraft:").unwrap_or(item);
+    matches!(
+        b,
+        "crafting_table" | "furnace" | "blast_furnace" | "smoker"
+            | "smithing_table" | "stonecutter" | "brewing_stand" | "anvil"
+            | "cartography_table" | "loom" | "grindstone"
+    )
+}
+
+/// P40 新增（2026-07-27）：扫描附近已放置的工具方块（crafting_table/furnace 等）。
+///
+/// **本质修复**：auto_craft(iron_ingot) 在地下失败因为 ensure(furnace) → ensure(crafting_table)
+/// → ensure(oak_log) → 地下无 oak_log → 失败。但 bot 之前已放置过 furnace/crafting_table
+/// 在世界里，auto_craft 应复用附近已放置的，而不是重新合成。
+///
+/// 符合 vanilla 玩家行为：玩家在地下挖矿时通常会带着工作台/熔炉，或用完就地放下，
+/// 下次需要时回去找——而不是每次都重新合成一个新的。
+///
+/// 返回最近的已放置方块位置（按欧氏距离），找不到返回 None。
+async fn find_nearby_placed_block(bot: &Client, item: &str, radius: i32) -> Option<BlockPos> {
+    let bare = item.strip_prefix("minecraft:").unwrap_or(item);
+    // 只扫描工具方块（避免对普通物品做无意义扫描）
+    if !is_tool_block(bare) {
+        return None;
+    }
+    let target_kind = BlockKind::from_str(&format!("minecraft:{bare}")).ok()?;
+
+    let world = bot.world().ok()?;
+    let w = world.read();
+    let center = bot.position().ok()?;
+    let cx = center.x.floor() as i32;
+    let cy = center.y.floor() as i32;
+    let cz = center.z.floor() as i32;
+    let mut best: Option<(BlockPos, i32)> = None;
+    for dx in -radius..=radius {
+        for dy in -radius..=radius {
+            for dz in -radius..=radius {
+                let pos = BlockPos::new(cx + dx, cy + dy, cz + dz);
+                if let Some(state) = w.get_block_state(pos) {
+                    let bk: BlockKind = state.into();
+                    if bk == target_kind {
+                        let dist = dx * dx + dy * dy + dz * dz;
+                        if best.map_or(true, |(_, d)| dist < d) {
+                            best = Some((pos, dist));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    best.map(|(p, _)| p)
 }
 
 /// P11 新增：判断 item 是否为「地表资源」（地下找不到）。
