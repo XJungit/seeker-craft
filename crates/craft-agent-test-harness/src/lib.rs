@@ -1191,4 +1191,110 @@ mod tests {
         assert!(cfg.workspace);
         assert_eq!(cfg.timeout_secs, 300);
     }
+
+    #[test]
+    fn test_analyzed_issue_fields() {
+        let issue = AnalyzedIssue {
+            category: "test_category".into(),
+            severity: "HIGH".into(),
+            step: Some(5),
+            detail: "test detail".into(),
+            suggested_fix_file: Some("test.rs".into()),
+            suggested_fix: Some("fix it".into()),
+        };
+        assert_eq!(issue.category, "test_category");
+        assert_eq!(issue.severity, "HIGH");
+        assert_eq!(issue.step, Some(5));
+        assert!(issue.detail.contains("test"));
+    }
+
+    #[test]
+    fn test_tool_error_stats_default() {
+        let stats = ToolErrorStats::default();
+        assert_eq!(stats.calls, 0);
+        assert_eq!(stats.errors, 0);
+        assert!(stats.error_samples.is_empty());
+    }
+
+    #[test]
+    fn test_test_result_roundtrip() {
+        let result = TestResult {
+            name: "test_name".into(),
+            crate_name: "test_crate".into(),
+            file_path: Some("src/test.rs".into()),
+            passed: true,
+            failure_message: None,
+            duration_ms: 100,
+        };
+        assert_eq!(result.name, "test_name");
+        assert!(result.passed);
+        assert!(result.failure_message.is_none());
+    }
+
+    #[test]
+    fn test_test_run_summary_failed_tests() {
+        let summary = TestRunSummary {
+            tests: vec![
+                TestResult {
+                    name: "passing_test".into(),
+                    crate_name: "test".into(),
+                    file_path: None,
+                    passed: true,
+                    failure_message: None,
+                    duration_ms: 10,
+                },
+                TestResult {
+                    name: "failing_test".into(),
+                    crate_name: "test".into(),
+                    file_path: None,
+                    passed: false,
+                    failure_message: Some("assertion failed".into()),
+                    duration_ms: 20,
+                },
+            ],
+            passed: 1,
+            failed: 1,
+            total_duration_ms: 30,
+            build_ok: true,
+            build_error: None,
+        };
+        assert_eq!(summary.failed_tests().len(), 1);
+        assert_eq!(summary.failed_tests()[0].name, "failing_test");
+    }
+
+    #[test]
+    fn test_extract_position_edge_cases() {
+        // Extra spaces
+        assert_eq!(extract_position("位置: (  -10 ,  64 ,  20 )"), Some((-10, 64, 20)));
+        // No matching marker
+        assert_eq!(extract_position("pos: (10, 64, 20)"), None);
+        // Multiple markers - should find first
+        assert_eq!(extract_position("位置: (1, 2, 3) 坐标: (4, 5, 6)"), Some((1, 2, 3)));
+    }
+
+    #[test]
+    fn test_tool_error_stats_increment() {
+        let mut stats = ToolErrorStats::default();
+        stats.calls += 1;
+        stats.errors += 1;
+        stats.error_samples.push("error message".into());
+        assert_eq!(stats.calls, 1);
+        assert_eq!(stats.errors, 1);
+        assert_eq!(stats.error_samples.len(), 1);
+    }
+
+    #[test]
+    fn test_known_issues_all_have_fix() {
+        let issues = build_known_issues();
+        for issue in &issues {
+            assert!(!issue.root_cause.is_empty(), "issue {:?} has no root_cause", issue.symptom.first());
+            assert!(!issue.fix_description.is_empty(), "issue {:?} has no fix_description", issue.symptom.first());
+        }
+    }
+
+    #[test]
+    fn test_fix_engine_load() {
+        let engine = FixEngine::load(std::path::Path::new("."));
+        assert!(!engine.known_issues.is_empty());
+    }
 }
