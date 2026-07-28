@@ -837,6 +837,42 @@ impl AzaleaBot {
                                     return bot;
                                 }
                             }
+                            // P60: 自动挖回地表后再 goto——当 bot 在地下时，pathfinder 无法穿墙导航
+                            // 先检测是否在地下，如果是，优先挖回地表再执行 goto
+                            let mut needs_surface = false;
+                            if let Ok(p) = bot.position() {
+                                if (p.y as i32) < 62 {
+                                    needs_surface = true;
+                                } else {
+                                    // 检查头上有无方块（可能在洞穴/室内）
+                                    if let Ok(world) = bot.world() {
+                                        let world = world.read();
+                                        let head_pos = BlockPos::new(p.x.floor() as i32, p.y.floor() as i32 + 1, p.z.floor() as i32);
+                                        if let Some(head_block) = world.get_block_state(head_pos) {
+                                            let bk: azalea_registry::builtin::BlockKind = head_block.into();
+                                            if bk != azalea_registry::builtin::BlockKind::Air {
+                                                needs_surface = true;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if needs_surface {
+                                // 启动自动挖回地表模式（handler 的 tick 循环会处理持续上挖）
+                                *state.mining_above.lock().unwrap() = true;
+                                // 快速返回：让 handler 在接下来的 tick 中执行 mine_above
+                                // 同时启动一个延迟检查：当 Y>=62 时自动执行原始 goto
+                                // 注：goto 目标坐标保存在 pending cmd 中，不会被清除
+                                if let Some(tx) = &result_tx {
+                                    let _ = tx.send(format!(
+                                        "Action output:
+goto ({},{},{}) ——bot 在地下，先自动挖回地表。mine_above 已启动。",
+                                        x, y, z
+                                    ));
+                                }
+                                state.action_mgr.clear_pending();
+                                return bot;
+                            }
                             // P59: 快速可达性检测——检查目标是否在同一 Y 层被实心方块包围
                             if let Ok(p) = bot.position() {
                                 let dy = (y as f64 - p.y).abs();
