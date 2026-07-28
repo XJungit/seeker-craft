@@ -837,6 +837,56 @@ impl AzaleaBot {
                                     return bot;
                                 }
                             }
+                            // P59: 快速可达性检测——检查目标是否在同一 Y 层被实心方块包围
+                            if let Ok(p) = bot.position() {
+                                let dy = (y as f64 - p.y).abs();
+                                let dxz = ((p.x - x as f64).powi(2) + (p.z - z as f64).powi(2)).sqrt();
+                                if dxz < 5.0 && dy < 2.0 {
+                                    if let Ok(world) = bot.world() { let world = world.read();
+                                        let head_pos = BlockPos::new(p.x.floor() as i32, p.y.floor() as i32 + 1, p.z.floor() as i32);
+                                        if let Some(head_block) = world.get_block_state(head_pos) {
+                                            let bk: azalea_registry::builtin::BlockKind = head_block.into();
+                                            if bk != azalea_registry::builtin::BlockKind::Air {
+                                                if let Some(tx) = &result_tx {
+                                                    let _ = tx.send(format!(
+                                                        "Action output:
+goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
+先用 perceive 确认位置，若 Y<62 说明在地下，需用 mine_above 挖回地表。",
+                                                        x, y, z
+                                                    ));
+                                                }
+                                                state.action_mgr.clear_pending();
+                                                return bot;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // P59: 快速可达性检测——检查目标是否在同一 Y 层被实心方块包围
+                            if let Ok(p) = bot.position() {
+                                let dy = (y as f64 - p.y).abs();
+                                let dxz = ((p.x - x as f64).powi(2) + (p.z - z as f64).powi(2)).sqrt();
+                                if dxz < 5.0 && dy < 2.0 {
+                                    if let Ok(world) = bot.world() { let world = world.read();
+                                        let head_pos = BlockPos::new(p.x.floor() as i32, p.y.floor() as i32 + 1, p.z.floor() as i32);
+                                        if let Some(head_block) = world.get_block_state(head_pos) {
+                                            let bk: azalea_registry::builtin::BlockKind = head_block.into();
+                                            if bk != azalea_registry::builtin::BlockKind::Air {
+                                                if let Some(tx) = &result_tx {
+                                                    let _ = tx.send(format!(
+                                                        "Action output:
+goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
+先用 perceive 确认位置，若 Y<62 说明在地下，需用 mine_above 挖回地表。",
+                                                        x, y, z
+                                                    ));
+                                                }
+                                                state.action_mgr.clear_pending();
+                                                return bot;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                             bot.start_goto(BlockPosGoal(BlockPos::new(x, y, z)));
                         }
                         BotCommand::Mine { x, y, z } => {
