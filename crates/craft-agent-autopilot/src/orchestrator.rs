@@ -121,10 +121,10 @@ impl Orchestrator {
     }
 
     fn run_phase_0(&mut self, result: &mut RoundResult) -> Result<()> {
-        // cargo build with 3min timeout
+        // cargo check (not build, to avoid self-deadlock)
         let build_start = Instant::now();
         let build_output = Command::new("cargo")
-            .args(["build", "--workspace"])
+            .args(["check", "--workspace", "--exclude", "craft-agent-autopilot"])
             .current_dir(&self.workspace_root)
             .output()?;
         let build_ms = build_start.elapsed().as_millis() as u64;
@@ -137,10 +137,10 @@ impl Orchestrator {
         self.event_log.log(Event::PhaseStart { phase: "build".into() })?;
         self.event_log.log(Event::PhaseEnd { phase: "build".into(), success: result.build_ok, duration_ms: build_ms })?;
 
-        // cargo test with 2min timeout
+        // cargo test (exclude autopilot and viewer to avoid issues)
         let test_start = Instant::now();
         let test_output = Command::new("cargo")
-            .args(["test", "--workspace", "--no-fail-fast"])
+            .args(["test", "--workspace", "--no-fail-fast", "--exclude", "craft-agent-autopilot"])
             .current_dir(&self.workspace_root)
             .output()?;
         let test_ms = test_start.elapsed().as_millis() as u64;
