@@ -189,17 +189,31 @@ impl Orchestrator {
         // Kill existing viewer
         let _ = Command::new("taskkill").args(["/F", "/IM", "craft-agent-viewer.exe"]).output();
 
-        // Start viewer
-        let viewer_result = Command::new("cargo")
-            .args([
-                "run", "-p", "craft-agent-viewer", "--",
-                "--goal", "继续推进当前任务",
-                "--steps", "0",
-                "--port", &self.viewer_port.to_string(),
-                "--mc", &self.mc_addr,
-            ])
-            .current_dir(&self.workspace_root)
-            .spawn();
+        // Use pre-built binary instead of cargo run (faster startup)
+        let viewer_exe = self.workspace_root.join("target").join("debug").join("craft-agent-viewer.exe");
+        let viewer_result = if viewer_exe.exists() {
+            Command::new(&viewer_exe)
+                .args([
+                    "--goal", "继续推进当前任务",
+                    "--steps", "0",
+                    "--port", &self.viewer_port.to_string(),
+                    "--mc", &self.mc_addr,
+                ])
+                .current_dir(&self.workspace_root)
+                .spawn()
+        } else {
+            // Fallback to cargo run
+            Command::new("cargo")
+                .args([
+                    "run", "-p", "craft-agent-viewer", "--",
+                    "--goal", "继续推进当前任务",
+                    "--steps", "0",
+                    "--port", &self.viewer_port.to_string(),
+                    "--mc", &self.mc_addr,
+                ])
+                .current_dir(&self.workspace_root)
+                .spawn()
+        };
 
         let mut viewer_proc = match viewer_result {
             Ok(proc) => proc,
@@ -209,20 +223,24 @@ impl Orchestrator {
             }
         };
 
-        // Wait for viewer ready (max 30s)
-        let deadline = Instant::now() + Duration::from_secs(30);
+        // Wait for viewer ready (max 60s)
+        let deadline = Instant::now() + Duration::from_secs(60);
         let mut ready = false;
         while Instant::now() < deadline {
             if reqwest::blocking::get(format!("http://{viewer_addr}/api/status")).is_ok() {
                 ready = true;
                 break;
             }
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            tokio::time::sleep(Duration::from_secs(2)).await;
         }
 
         if !ready {
-            eprintln!("Viewer not ready within 30s");
+            eprintln!("[Round {}] Viewer not ready within 60s, skipping LLM test", self.round);
             let _ = viewer_proc.kill();
+            self.event_log.log(crate::event_log::Event::LlmError {
+                error: "Viewer failed to start within timeout".into(),
+            })?;
+            result.llm_stuck_steps = 1;
             return Ok(());
         }
 
