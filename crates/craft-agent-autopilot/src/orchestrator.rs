@@ -198,6 +198,7 @@ impl Orchestrator {
                     "--steps", "0",
                     "--port", &self.viewer_port.to_string(),
                     "--mc", &self.mc_addr,
+                    "--username", "CraftAgent",
                 ])
                 .current_dir(&self.workspace_root)
                 .spawn()
@@ -210,6 +211,7 @@ impl Orchestrator {
                     "--steps", "0",
                     "--port", &self.viewer_port.to_string(),
                     "--mc", &self.mc_addr,
+                    "--username", "CraftAgent",
                 ])
                 .current_dir(&self.workspace_root)
                 .spawn()

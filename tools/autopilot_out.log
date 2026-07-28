@@ -1,4 +1,3 @@
-   Compiling craft-agent-autopilot v0.1.0 (D:\Craft-Agent\crates\craft-agent-autopilot)
 warning: unused import: `HashMap`
  --> crates\craft-agent-autopilot\src\anomaly.rs:4:24
   |
@@ -234,7 +233,7 @@ warning: associated functions `search`, `search_mindcraft`, and `search_general`
    |        ^^^^^^^^^^^^^^
 
 warning: `craft-agent-autopilot` (bin "craft-agent-autopilot") generated 29 warnings (run `cargo fix --bin "craft-agent-autopilot" -p craft-agent-autopilot` to apply 9 suggestions)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.28s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.22s
      Running `target\debug\craft-agent-autopilot.exe`
 ╔══════════════════════════════════════════════════════════╗
 ║     Craft-Agent Autopilot — 全自动化自进化系统           ║
@@ -242,6 +241,3 @@ warning: `craft-agent-autopilot` (bin "craft-agent-autopilot") generated 29 warn
 ╚══════════════════════════════════════════════════════════╝
 
 === Round 1 ===
-Round 1: build=OK test=327/328 anomalies=0 hypotheses=0/0 knowledge=0
-
-=== Round 2 ===

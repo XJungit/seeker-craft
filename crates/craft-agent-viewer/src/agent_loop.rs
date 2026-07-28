@@ -281,7 +281,7 @@ fn run_agent(
         });
     }
 
-    let bot_username = if username.is_empty() { "craftbot".to_string() } else { username.to_string() };
+    let bot_username = if username.is_empty() { "CraftAgent".to_string() } else { username.to_string() };
     // 连接 azalea adapter：azalea 内部用独立 OS 线程跑自己的 runtime，
     // 此处仅用一次性局部 runtime 把 async connect 跑完，拿到句柄后立即 drop。
     let adapter = {
