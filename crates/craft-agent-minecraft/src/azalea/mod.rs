@@ -732,7 +732,7 @@ impl AzaleaBot {
                                 }
                                 BotCommand::Goto { x, y, z } => {
                                     format!(
-                                        "Action output:\ngoto ({},{},{}) 超时——可能路径被阻或目标不可达。建议改 goto 附近 3 格外空地脱困。",
+                                        "Action output:\ngoto ({},{},{}) 超时——路径被阻或目标不可达。可能在地下：先用 perceive 确认位置，若 Y<62 说明在地下，需用 mine_above 挖回地表再用 goto。",
                                         x, y, z
                                     )
                                 }

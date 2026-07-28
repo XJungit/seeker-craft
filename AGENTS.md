@@ -483,9 +483,46 @@ vendor/azalea 是**独立 git 仓库 + 独立 cargo workspace**，改它有三�
 就能读到（`Inventory` 与 `state_id` 都是 pub），完全不必碰 vendor。
 优先选不动 vendor 的方案，能省掉上面整套 rev 同步的复杂度与风险。
 
+## 八-bis、MCP 服务器与插件配置
+
+### 8.3 已配置的 MCP 服务器
+
+| 服务器 | 传输方式 | 用途 | 配置 |
+|--------|---------|------|------|
+| node_repl | stdio | Node.js 运行时，执行 JS 脚本、控制浏览器 | 内置，无需手动配置 |
+| tavily | SSE | 联网搜索，用于获取最新信息、查阅文档 | config.toml 中配置 API Key |
+| context7 | stdio (npx) | 获取最新库文档/代码示例，减少 LLM 幻觉 | npx -y @upstash/context7-mcp@latest |
+
+### 8.4 已安装的插件
+
+| 插件 | 来源 | 用途 | 状态 |
+|------|------|------|------|
+| browser | openai-bundled | 控制应用内浏览器 | ✅ 已启用 |
+| chrome | openai-bundled | 控制用户 Chrome 浏览器（使用已有会话/cookie） | ✅ 已启用 |
+| computer-use | openai-bundled | 控制 Windows 桌面应用 | ✅ 已启用 |
+| visualize | openai-bundled | 创建可视化图表、交互工具 | ✅ 已启用 |
+| documents | openai-primary-runtime | 创建/编辑 Word 文档 | ✅ 已启用 |
+| pdf | openai-primary-runtime | 读取/创建 PDF 文件 | ✅ 已启用 |
+| spreadsheets | openai-primary-runtime | 创建/编辑电子表格 | ✅ 已启用 |
+| presentations | openai-primary-runtime | 创建/编辑 PPT 演示文稿 | ✅ 已启用 |
+| template-creator | openai-primary-runtime | 创建可复用的模板 skill | ✅ 已启用 |
+
+### 8.5 插件使用原则
+
+- **浏览器优先顺序**：browser（应用内浏览器）→ chrome（用户 Chrome）→ computer-use（桌面控制）
+- 需要登录态的网站优先用 chrome（利用已有会话）
+- 本地文件/静态页面优先用 browser
+- 桌面应用自动化用 computer-use
+
+## 九、Mindcraft 哲学对齐原则（2026-07-27 教训固化）
+
+> 本节源于 2026-07-27 用户严厉反馈："修了这么久还在修 smelt 和 craft"。
+> P8～P44 共 26 次"本质修复"全部失败，根因是违反 Mindcraft 哲学。
+> **本节约束优先级高于第三节"关键架构约束"，冲突时以本节为准。**
+
 ---
 
-## 九、与 Mindcraft 的关键差异
+### 9.0 与 Mindcraft 的关键差异
 
 | 特性 | Mindcraft | Craft-Agent |
 |------|-----------|-------------|
@@ -499,13 +536,6 @@ vendor/azalea 是**独立 git 仓库 + 独立 cargo workspace**，改它有三�
 | 并行执行 | 无 | 按副作用分组并行 |
 
 ---
-
-## 九-bis、Mindcraft 哲学对齐原则（2026-07-27 教训固化）
-
-> 本节源于 2026-07-27 用户严厉反馈："修了这么久还在修 smelt 和 craft"。
-> P8～P44 共 26 次"本质修复"全部失败，根因是违反 Mindcraft 哲学。
-> **本节约束优先级高于第三节"关键架构约束"，冲突时以本节为准。**
-
 ### 9.1 核心哲学：bot 工具只做能做的，做不了就 return Err 让 LLM 决策
 
 学习自 `mindcraft-bots/mindcraft` 的 `src/agent/library/skills.js`：
@@ -652,13 +682,23 @@ azalea 用 Bevy ECS 插件机制（`impl Plugin for XxxPlugin { fn build(&self, 
 
 ---
 
-## 九、最终目标检查清单
+## 十、最终目标检查清单（实时进度）
 
-- [ ] bot 能自主采集、合成、建造
-- [ ] bot 能自主战斗、避险
-- [ ] bot 能自主探索、下矿
-- [ ] bot 能到达下界
-- [ ] bot 能到达末地
-- [ ] bot 能击败末影龙
-- [ ] 全自动化测试覆盖所有关键路径
-- [ ] 无需手动打开 Minecraft 调试
+### ✅ 已完成
+- [x] 全自动化测试覆盖关键路径（122+43+23 = 188+ 个测试）
+- [x] Mock 容器集成测试覆盖 craft/smelt 边界条件
+- [x] 无需手动打开 Minecraft 即可验证工具逻辑
+- [x] plain_text_reply 治理（P56）、smelt 分批熔炼（P57）
+
+### 🔄 进行中
+- [ ] set_goal("") 绕过检测修复（P58 — HIGH）
+- [ ] bot 能自主采集、合成、建造（核心循环）
+
+### 📅 里程碑
+- [ ] 阶段一：bot 能自主采集、合成、建造
+- [ ] 阶段二：bot 能自主战斗、避险
+- [ ] 阶段三：bot 能自主探索、下矿
+- [ ] 阶段四：bot 能到达下界
+- [ ] 阶段五：bot 能到达末地
+- [ ] 阶段六：bot 能击败末影龙
+
