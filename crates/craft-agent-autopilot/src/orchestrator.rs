@@ -101,13 +101,13 @@ impl Orchestrator {
         // Phase 0: Build + Test
         self.run_phase_0(&mut result)?;
 
-        // Phase 2: Anomaly Detection
-        self.run_phase_2(&mut result)?;
-
-        // Phase 2b: LLM real-machine test (if build+test passed)
+        // Phase 2b: LLM real-machine test (always run if build+test passed)
         if result.build_ok && result.test_ok {
             self.run_phase_2b(&mut result).await?;
         }
+
+        // Phase 2: Anomaly Detection (after all phases have run)
+        self.run_phase_2(&mut result)?;
 
         // Phase 3: Root cause analysis (if anomalies found)
         if !result.anomalies.is_empty() {
@@ -116,6 +116,9 @@ impl Orchestrator {
 
         // Phase 4: Knowledge update
         self.anomaly_detector.add_history(self.event_log.clone());
+
+        // Determine if progress was made
+        result.has_progress = result.llm_steps > 0 || result.hypotheses_succeeded > 0;
 
         Ok(result)
     }
