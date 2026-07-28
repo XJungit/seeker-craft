@@ -846,13 +846,18 @@ impl AzaleaBot {
                                         let head_pos = BlockPos::new(p.x.floor() as i32, p.y.floor() as i32 + 1, p.z.floor() as i32);
                                         if let Some(head_block) = world.get_block_state(head_pos) {
                                             let bk: azalea_registry::builtin::BlockKind = head_block.into();
-                                            if bk != azalea_registry::builtin::BlockKind::Air {
+                                            if bk != azalea_registry::builtin::BlockKind::Air || (p.y as i32) < 62 {
+                                                let reason = if (p.y as i32) < 62 {
+                                                    format!("bot 当前 Y={} 在地下（Y<62）。", p.y as i32)
+                                                } else {
+                                                    "bot 头上有方块（可能在地下）。".to_string()
+                                                };
                                                 if let Some(tx) = &result_tx {
                                                     let _ = tx.send(format!(
                                                         "Action output:
-goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
-先用 perceive 确认位置，若 Y<62 说明在地下，需用 mine_above 挖回地表。",
-                                                        x, y, z
+goto ({},{},{}) 失败——{}
+必须先用 mine_above() 挖回地表（Y>=62），才能用 goto 导航。",
+                                                        x, y, z, reason
                                                     ));
                                                 }
                                                 state.action_mgr.clear_pending();
