@@ -98,6 +98,12 @@ fn tool_need_for_block(world: &azalea_world::World, pos: BlockPos) -> ToolNeed {
 }
 
 pub async fn do_gather(bot: &Client, item: &str, count: u32) -> Result<String, String> {
+    // P61: auto-equip best tool before gathering
+    if item.ends_with("_ore") || item == "ancient_debris" || item == "stone" || item == "cobblestone" || item == "deepslate" {
+        let _ = super::auto_equip_best_pickaxe(bot).await;
+    } else if item.ends_with("_log") || item.ends_with("_stem") {
+        let _ = super::auto_equip_best_axe(bot).await;
+    }
     let target = ItemKind::from_str(&normalize_item(item))
         .or_else(|_| ItemKind::from_str(item))
         .map_err(|_| format!("未知物品 {item}"))?;
@@ -559,3 +565,4 @@ fn normalize_item(item: &str) -> String {
         format!("minecraft:{item}")
     }
 }
+
