@@ -1,0 +1,241 @@
+warning: unused import: `HashMap`
+ --> crates\craft-agent-autopilot\src\anomaly.rs:4:24
+  |
+4 | use std::collections::{HashMap, HashSet};
+  |                        ^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `std::collections::HashMap`
+ --> crates\craft-agent-autopilot\src\experiment.rs:5:5
+  |
+5 | use std::collections::HashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::path::Path`
+ --> crates\craft-agent-autopilot\src\experiment.rs:6:5
+  |
+6 | use std::path::Path;
+  |     ^^^^^^^^^^^^^^^
+
+warning: unused import: `std::time::Duration`
+ --> crates\craft-agent-autopilot\src\experiment.rs:8:5
+  |
+8 | use std::time::Duration;
+  |     ^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `std::path::Path`
+ --> crates\craft-agent-autopilot\src\git.rs:4:5
+  |
+4 | use std::path::Path;
+  |     ^^^^^^^^^^^^^^^
+
+warning: unused import: `Path`
+ --> crates\craft-agent-autopilot\src\knowledge.rs:6:17
+  |
+6 | use std::path::{Path, PathBuf};
+  |                 ^^^^
+
+warning: unused import: `crate::hypothesis::Hypothesis`
+ --> crates\craft-agent-autopilot\src\orchestrator.rs:6:5
+  |
+6 | use crate::hypothesis::Hypothesis;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `serde::Deserialize`
+ --> crates\craft-agent-autopilot\src\web_research.rs:4:5
+  |
+4 | use serde::Deserialize;
+  |     ^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `query`
+  --> crates\craft-agent-autopilot\src\web_research.rs:63:23
+   |
+63 |     fn search_general(query: &str) -> Result<Vec<ResearchResult>> {
+   |                       ^^^^^ help: if this is intentional, prefix it with an underscore: `_query`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: enum `NextAction` is never used
+ --> crates\craft-agent-autopilot\src\decision.rs:4:10
+  |
+4 | pub enum NextAction {
+  |          ^^^^^^^^^^
+  |
+  = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: struct `DecisionEngine` is never constructed
+  --> crates\craft-agent-autopilot\src\decision.rs:12:12
+   |
+12 | pub struct DecisionEngine;
+   |            ^^^^^^^^^^^^^^
+
+warning: associated function `decide` is never used
+  --> crates\craft-agent-autopilot\src\decision.rs:15:12
+   |
+14 | impl DecisionEngine {
+   | ------------------- associated function in this implementation
+15 |     pub fn decide(
+   |            ^^^^^^
+
+warning: field `round_id` is never read
+  --> crates\craft-agent-autopilot\src\event_log.rs:74:5
+   |
+73 | pub struct EventLog {
+   |            -------- field in this struct
+74 |     round_id: u64,
+   |     ^^^^^^^^
+   |
+   = note: `EventLog` has a derived impl for the trait `Clone`, but this is intentionally ignored during dead code analysis
+
+warning: fields `hypothesis`, `build_ok`, `test_ok`, `reverted`, and `reason` are never read
+   --> crates\craft-agent-autopilot\src\experiment.rs:119:9
+    |
+118 | pub struct ExperimentResult {
+    |            ---------------- fields in this struct
+119 |     pub hypothesis: Hypothesis,
+    |         ^^^^^^^^^^
+120 |     pub build_ok: bool,
+    |         ^^^^^^^^
+121 |     pub test_ok: bool,
+    |         ^^^^^^^
+122 |     pub improved: bool,
+123 |     pub reverted: bool,
+    |         ^^^^^^^^
+124 |     pub reason: String,
+    |         ^^^^^^
+    |
+    = note: `ExperimentResult` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis
+
+warning: function `revert_last` is never used
+  --> crates\craft-agent-autopilot\src\git.rs:23:8
+   |
+23 | pub fn revert_last() -> Result<()> {
+   |        ^^^^^^^^^^^
+
+warning: function `diff` is never used
+  --> crates\craft-agent-autopilot\src\git.rs:28:8
+   |
+28 | pub fn diff() -> Result<String> {
+   |        ^^^^
+
+warning: function `status` is never used
+  --> crates\craft-agent-autopilot\src\git.rs:33:8
+   |
+33 | pub fn status() -> Result<String> {
+   |        ^^^^^^
+
+warning: field `prediction` is never read
+ --> crates\craft-agent-autopilot\src\hypothesis.rs:6:9
+  |
+4 | pub struct Hypothesis {
+  |            ---------- field in this struct
+5 |     pub cause: String,
+6 |     pub prediction: String,
+  |         ^^^^^^^^^^
+  |
+  = note: `Hypothesis` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis
+
+warning: method `summary` is never used
+  --> crates\craft-agent-autopilot\src\hypothesis.rs:13:12
+   |
+12 | impl Hypothesis {
+   | --------------- method in this implementation
+13 |     pub fn summary(&self) -> String {
+   |            ^^^^^^^
+
+warning: method `len` is never used
+  --> crates\craft-agent-autopilot\src\knowledge.rs:85:12
+   |
+25 | impl KnowledgeBase {
+   | ------------------ method in this implementation
+...
+85 |     pub fn len(&self) -> usize {
+   |            ^^^
+
+warning: struct `BotSnapshot` is never constructed
+ --> crates\craft-agent-autopilot\src\monitor.rs:7:12
+  |
+7 | pub struct BotSnapshot {
+  |            ^^^^^^^^^^^
+
+warning: field `sources` is never read
+  --> crates\craft-agent-autopilot\src\monitor.rs:24:5
+   |
+23 | pub struct ConsistencyEngine {
+   |            ----------------- field in this struct
+24 |     sources: Vec<SourceReliability>,
+   |     ^^^^^^^
+
+warning: methods `cross_validate`, `consistent`, `degrade_source`, and `active_sources` are never used
+  --> crates\craft-agent-autopilot\src\monitor.rs:38:12
+   |
+27 | impl ConsistencyEngine {
+   | ---------------------- methods in this implementation
+...
+38 |     pub fn cross_validate(&self, snapshots: &[BotSnapshot]) -> ValidationResult {
+   |            ^^^^^^^^^^^^^^
+...
+59 |     fn consistent(&self, a: &BotSnapshot, b: &BotSnapshot) -> bool {
+   |        ^^^^^^^^^^
+...
+80 |     pub fn degrade_source(&mut self, name: &str) {
+   |            ^^^^^^^^^^^^^^
+...
+86 |     pub fn active_sources(&self) -> Vec<&SourceReliability> {
+   |            ^^^^^^^^^^^^^^
+
+warning: enum `ValidationResult` is never used
+  --> crates\craft-agent-autopilot\src\monitor.rs:92:10
+   |
+92 | pub enum ValidationResult {
+   |          ^^^^^^^^^^^^^^^^
+
+warning: function `poll_viewer` is never used
+  --> crates\craft-agent-autopilot\src\monitor.rs:99:8
+   |
+99 | pub fn poll_viewer(addr: &str) -> Result<BotSnapshot> {
+   |        ^^^^^^^^^^^
+
+warning: field `consistency_engine` is never read
+  --> crates\craft-agent-autopilot\src\orchestrator.rs:22:5
+   |
+15 | pub struct Orchestrator {
+   |            ------------ field in this struct
+...
+22 |     consistency_engine: ConsistencyEngine,
+   |     ^^^^^^^^^^^^^^^^^^
+
+warning: struct `ResearchResult` is never constructed
+ --> crates\craft-agent-autopilot\src\web_research.rs:7:12
+  |
+7 | pub struct ResearchResult {
+  |            ^^^^^^^^^^^^^^
+
+warning: struct `WebResearch` is never constructed
+  --> crates\craft-agent-autopilot\src\web_research.rs:14:12
+   |
+14 | pub struct WebResearch;
+   |            ^^^^^^^^^^^
+
+warning: associated functions `search`, `search_mindcraft`, and `search_general` are never used
+  --> crates\craft-agent-autopilot\src\web_research.rs:17:12
+   |
+16 | impl WebResearch {
+   | ---------------- associated functions in this implementation
+17 |     pub fn search(query: &str) -> Result<Vec<ResearchResult>> {
+   |            ^^^^^^
+...
+29 |     fn search_mindcraft(query: &str) -> Result<Vec<ResearchResult>> {
+   |        ^^^^^^^^^^^^^^^^
+...
+63 |     fn search_general(query: &str) -> Result<Vec<ResearchResult>> {
+   |        ^^^^^^^^^^^^^^
+
+warning: `craft-agent-autopilot` (bin "craft-agent-autopilot") generated 29 warnings (run `cargo fix --bin "craft-agent-autopilot" -p craft-agent-autopilot` to apply 9 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 2.02s
+     Running `target\debug\craft-agent-autopilot.exe`
+Commit failed: git commit failed: fatal: Unable to create 'D:/Craft-Agent/.git/index.lock': File exists.
+
+Another git process seems to be running in this repository, or the lock file may be stale
+
