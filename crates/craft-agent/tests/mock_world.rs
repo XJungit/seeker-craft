@@ -137,14 +137,16 @@ mod tests {
         let mut world = MockWorld::new();
         world.set_block(BlockPos::new(0, 64, 0), BlockKind::Stone);
         let state = world.get_block_state(BlockPos::new(0, 64, 0)).unwrap();
-        assert_eq!(state.into(), BlockKind::Stone);
+        let block_kind: BlockKind = state.into();
+        assert_eq!(block_kind, BlockKind::Stone);
     }
 
     #[test]
     fn mock_world_default() {
         let world = MockWorld::with_default(BlockKind::Stone);
         let state = world.get_block_state(BlockPos::new(100, 100, 100)).unwrap();
-        assert_eq!(state.into(), BlockKind::Stone);
+        let block_kind: BlockKind = state.into();
+        assert_eq!(block_kind, BlockKind::Stone);
     }
 
     #[test]

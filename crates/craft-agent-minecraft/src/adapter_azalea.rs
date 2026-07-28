@@ -15,7 +15,7 @@ use craft_agent::core::adapter::GameAdapter;
 use craft_agent::core::memory::WorldMemory;
 use craft_agent::core::types::{Action, ExecResult, MinecraftAction, Screenshot, WorldState};
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, atomic::AtomicBool};
 
 /// Minecraft azalea 适配器。
 #[allow(dead_code)]
@@ -32,6 +32,8 @@ pub struct MinecraftAzaleaAdapter {
     memory: Option<WorldMemory>,
     /// 玩家聊天消息队列（agent loop 每步前消费）
     pub chat_queue: Arc<Mutex<VecDeque<String>>>,
+    /// 任务完成停止标志：TaskCompleteTool 验证通过后置 true。
+    pub should_stop: Arc<AtomicBool>,
 }
 
 #[derive(Clone)]
@@ -112,6 +114,7 @@ impl MinecraftAzaleaAdapter {
             stuck_since: Mutex::new(None),
             memory,
             chat_queue: chat_queue.clone(),
+            should_stop: Arc::new(AtomicBool::new(false)),
         }));
 
         // 后台消费事件流，更新共享 Arc 内的 `last` 缓存。

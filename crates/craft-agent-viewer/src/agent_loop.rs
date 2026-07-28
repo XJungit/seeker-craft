@@ -148,6 +148,7 @@ pub fn spawn_agent_loop(
     model_config_path: String,
     event_tx: broadcast::Sender<AgentEvent>,
     mc_addr: String,
+    username: String,
 ) -> anyhow::Result<()> {
     if controller.running.swap(true, Ordering::Relaxed) {
         let _ = event_tx.send(AgentEvent::Error {
@@ -179,27 +180,54 @@ pub fn spawn_agent_loop(
 
     // Share abort signal with controller for instant stop
     let abort = controller.abort.clone();
+    let _ = tx.send(AgentEvent::Log {
+        text: "[DEBUG] 准备 spawn agent 线程".into(),
+    });
     std::thread::spawn(move || {
+        let _ = tx.send(AgentEvent::Log {
+            text: "[DEBUG] agent 线程已启动".into(),
+        });
         let goal = controller.status.lock().unwrap().goal.clone();
         let _ = dotenvy::dotenv();
-        if let Err(e) = run_agent(
-            &goal,
-            max_steps,
-            &session_path,
-            &model_config_path,
-            &ctrl,
-            &tx,
-            &abort,
-            &mc_addr,
-        ) {
-            let _ = tx.send(AgentEvent::Error {
-                message: format!("{e}"),
-            });
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            run_agent(
+                &goal,
+                max_steps,
+                &session_path,
+                &model_config_path,
+                &ctrl,
+                &tx,
+                &abort,
+                &mc_addr,
+                &username,
+            )
+        }));
+        match result {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
+                let _ = tx.send(AgentEvent::Error {
+                    message: format!("{e}"),
+                });
+            }
+            Err(panic) => {
+                let msg = if let Some(s) = panic.downcast_ref::<String>() {
+                    s.clone()
+                } else if let Some(s) = panic.downcast_ref::<&str>() {
+                    s.to_string()
+                } else {
+                    "未知 panic".to_string()
+                };
+                let _ = tx.send(AgentEvent::Error {
+                    message: format!("Agent 线程 panic: {msg}"),
+                });
+            }
         }
+        let _ = tx.send(AgentEvent::Log {
+            text: "[DEBUG] agent 线程即将结束".into(),
+        });
         ctrl.running.store(false, Ordering::Relaxed);
         ctrl.pause.store(false, Ordering::Relaxed);
     });
-
     Ok(())
 }
 
@@ -214,6 +242,7 @@ fn run_agent(
     event_tx: &broadcast::Sender<AgentEvent>,
     abort: &Arc<AtomicBool>,
     mc_addr: &str,
+    username: &str,
 ) -> anyhow::Result<()> {
     let model_cfg = ModelConfig::load(cfg_path)?;
     let perceive_cfg = model_cfg.perceive.unwrap_or_default();
@@ -252,6 +281,7 @@ fn run_agent(
         });
     }
 
+    let bot_username = if username.is_empty() { "craftbot".to_string() } else { username.to_string() };
     // 连接 azalea adapter：azalea 内部用独立 OS 线程跑自己的 runtime，
     // 此处仅用一次性局部 runtime 把 async connect 跑完，拿到句柄后立即 drop。
     let adapter = {
@@ -260,7 +290,7 @@ fn run_agent(
             .build()?;
         rt.block_on(ArcAzaleaAdapter::connect_with_memory(
             mc_addr,
-            "craftbot",
+            &bot_username,
             world_mem.clone(),
         ))
         .map_err(|e| {
@@ -377,7 +407,7 @@ fn run_agent(
 
     // 渲染最终 system prompt（替换 $NAME / $SELF_PROMPT 等占位符）
     let mut replacements = std::collections::HashMap::new();
-    replacements.insert("NAME".to_string(), "craftbot".to_string());
+    replacements.insert("NAME".to_string(), bot_username.clone());
     replacements.insert("SELF_PROMPT".to_string(), "".to_string()); // SelfPrompter 在 agent loop 内每轮重注
     replacements.insert("MEMORY".to_string(), "".to_string());
     replacements.insert("STATS".to_string(), "".to_string());
@@ -409,14 +439,26 @@ fn run_agent(
 
     let mut agent = {
         let path = Path::new(session_path);
-        let sess = if path.exists() {
-            Session::open(path)?
+        let sess = if path.exists() && path.metadata().map(|m| m.len() > 0).unwrap_or(false) {
+            // 尝试加载现有 session，失败则创建新的
+            match Session::open(path) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("[agent_loop] session 文件损坏，创建新 session: {e}");
+                    let mut s = Session::new("minecraft-control-panel");
+                    if let Some(parent) = path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let _ = s.save_to(path);
+                    s
+                }
+            }
         } else {
             let mut s = Session::new("minecraft-control-panel");
             if let Some(parent) = path.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            s.save_to(path)?;
+            let _ = s.save_to(path);
             s
         };
         let mut agent = Agent::new(Box::new(Lp { llm }), registry, agent_cfg)
@@ -522,7 +564,7 @@ fn run_agent(
                     let _ = progress_tx.send(AgentEvent::Log {
                         text: format!("⏳ 第 {progress_step} 步: LLM 思考中 (已等 {waited_secs}s)"),
                     });
-                    if waited_secs >= 120 && !progress_abort.load(Ordering::Relaxed) {
+                    if waited_secs >= 45 && !progress_abort.load(Ordering::Relaxed) {
                         progress_abort.store(true, Ordering::Relaxed);
                         let _ = progress_tx.send(AgentEvent::Log {
                             text: format!(
@@ -530,7 +572,7 @@ fn run_agent(
                             ),
                         });
                     }
-                    if waited_secs >= 180 {
+                    if waited_secs >= 60 {
                         break;
                     }
                     std::thread::sleep(std::time::Duration::from_secs(10));
@@ -552,6 +594,18 @@ fn run_agent(
         let (step_log, should_continue) = step_result?;
         for line in &step_log {
             let _ = event_tx.send(AgentEvent::Log { text: line.clone() });
+        }
+
+        // 检查任务完成停止标志
+        if let Ok(adapter_guard) = ctrl.game_adapter.read() {
+            if let Some(adapter) = adapter_guard.as_ref() {
+                if adapter.0.lock().unwrap().should_stop.load(Ordering::Relaxed) {
+                    let _ = event_tx.send(AgentEvent::Done {
+                        reason: "任务完成（task_complete 验证通过）".into(),
+                    });
+                    break;
+                }
+            }
         }
 
         // 实时推送 perceive 状态给前端（LLM 当前看到的游戏世界）

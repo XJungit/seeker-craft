@@ -392,6 +392,13 @@ pub struct AgentConfig {
     pub world_info: Option<WorldInfoLib>,
     /// 世界记忆库（空间-状态长期记忆）。可外部注入共享实例（适配器/工具共用）。
     pub world_memory: WorldMemory,
+    /// 卡死检测阈值：连续 N 轮失败时停止 agent（动态步数调整）。
+    /// 0 = 禁用卡死检测，始终跑满 max_iterations。
+    pub stuck_threshold: u32,
+    /// 连续 N 次纯文字回复（无 tool_calls）时强制停止。
+    pub text_only_stop: u32,
+    /// 全局 wall-clock 超时（秒），超过后强制停止。0 = 禁用。
+    pub global_timeout_secs: u64,
 }
 impl AgentConfig {
     pub fn new(prompt: String, max_iterations: u32) -> Self {
@@ -415,6 +422,9 @@ impl AgentConfig {
             knowledge_base: None,
             world_info: None,
             world_memory: WorldMemory::new(),
+            stuck_threshold: 3,
+            text_only_stop: 3,
+            global_timeout_secs: 300,
         }
     }
     /// 设置静态知识库（`None` 关闭，仅用工具自描述）。
@@ -425,6 +435,11 @@ impl AgentConfig {
     /// 设置世界信息库（`None` 为空库，不注入任何路线专属提示）。
     pub fn with_world_info(mut self, wi: Option<WorldInfoLib>) -> Self {
         self.world_info = wi;
+        self
+    }
+    /// 设置卡死检测阈值（连续 N 轮失败时停止）。0 = 禁用。
+    pub fn with_stuck_threshold(mut self, n: u32) -> Self {
+        self.stuck_threshold = n;
         self
     }
     /// 设置是否注册 manage_knowledge 工具。
@@ -575,10 +590,17 @@ pub struct Agent {
     last_position_key: Option<String>,
     /// P8 位置未变轮数。
     position_stale_turns: u32,
+    /// 任务完成标志：tool 调用 task_complete 后置 true，下一轮停止循环。
+    task_complete_verified: bool,
 }
 impl Agent {
     pub fn abort(&self) {
         self.retry_abort.store(true, Ordering::Relaxed);
+    }
+
+    /// 标记任务完成（由 TaskCompleteTool 调用）。
+    pub fn mark_task_complete(&mut self) {
+        self.task_complete_verified = true;
     }
 
     /// 返回知识字符串（工具参考自动从 ToolRegistry 生成），缓存复用保 prefix-cache 稳定
@@ -631,6 +653,7 @@ impl Agent {
             consecutive_failures: 0,
             last_position_key: None,
             position_stale_turns: 0,
+            task_complete_verified: false,
         }
     }
 
@@ -764,9 +787,37 @@ impl Agent {
         self.retry_abort.store(false, Ordering::Relaxed);
         let mut all_logs = Vec::new();
         self.events.push(AgentEvent::AgentStart);
+        let mut consecutive_failures = 0u32;
+        let round_start = std::time::Instant::now();
         for _ in 0..self.config.max_iterations {
+            // 全局 wall-clock 超时检查
+            if self.config.global_timeout_secs > 0
+                && round_start.elapsed().as_secs() >= self.config.global_timeout_secs
+            {
+                all_logs.push(format!(
+                    "[超时] 全局超时 {}s，强制停止",
+                    self.config.global_timeout_secs
+                ));
+                self.events.push(AgentEvent::AgentEnd);
+                return Ok(all_logs);
+            }
             match self.run_one_turn() {
-                Ok((log, true)) => all_logs.extend(log),
+                Ok((log, true)) => {
+                    // 先检查是否有工具失败，再移动 log（避免 borrow of moved value）
+                    let has_failure = log.iter().any(|l| l.contains("失败") || l.contains("超时") || l.contains("错误"));
+                    all_logs.extend(log);
+                    if has_failure {
+                        consecutive_failures += 1;
+                    } else {
+                        consecutive_failures = 0;
+                    }
+                    // 卡死检测：连续 N 轮失败时停止
+                    if self.config.stuck_threshold > 0 && consecutive_failures >= self.config.stuck_threshold {
+                        all_logs.push(format!("[卡死检测] 连续 {consecutive_failures} 轮失败，自动停止（阈值 {}）", self.config.stuck_threshold));
+                        self.events.push(AgentEvent::AgentEnd);
+                        return Ok(all_logs);
+                    }
+                }
                 Ok((log, false)) => {
                     all_logs.extend(log);
                     self.events.push(AgentEvent::AgentEnd);
@@ -1055,6 +1106,13 @@ impl Agent {
             self.obs_streak += 1;
             // P0 改进1: SelfPrompter 强制执行 — 连续纯文字回复计数
             self.text_only_count = self.text_only_count.saturating_add(1);
+            // 连续 N 次纯文字回复 → 强制停止（不再 nudge）
+            if self.config.text_only_stop > 0 && self.text_only_count >= self.config.text_only_stop {
+                log.push(format!("[卡死检测] 连续 {} 次纯文字回复，强制停止", self.text_only_count));
+                self.events.push(AgentEvent::AgentEnd);
+                self.messages.push(Message::assistant_response(&response));
+                return Ok((log, false));
+            }
             self.events.push(AgentEvent::Assistant {
                 content: response.content.clone(),
                 reasoning: response.reasoning.clone(),

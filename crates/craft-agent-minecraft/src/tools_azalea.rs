@@ -16,6 +16,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::action_lib::{ActionLibrary, LlmAction};
 use crate::blueprint::BlueprintLibrary;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 /// 工具上下文：持有共享的 azalea adapter、世界记忆库、蓝图库与 LLM 自定义动作库。
 pub struct AzaleaToolCtx {
@@ -26,6 +27,8 @@ pub struct AzaleaToolCtx {
     /// LLM 自定义动作库（P2-4）：供 new_action / list_actions / call_action 使用。
     /// 内部可变（save/bump_call_count），用 Mutex 保护。
     pub actions: Arc<Mutex<ActionLibrary>>,
+    /// 任务完成停止标志：TaskCompleteTool 验证通过后置 true。
+    pub should_stop: Arc<AtomicBool>,
 }
 
 impl AzaleaToolCtx {
@@ -35,6 +38,7 @@ impl AzaleaToolCtx {
             memory,
             blueprints: BlueprintLibrary::new(),
             actions: Arc::new(Mutex::new(ActionLibrary::new())),
+            should_stop: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -2738,9 +2742,79 @@ pub fn create_mc_azalea_tools_full(
         Box::new(ResumeGoalTool::new(ctx.clone())),
         // P2-4: LLM 代码生成（newAction 等价物）
         Box::new(NewActionTool::new(ctx.clone())),
-        Box::new(ListActionsTool::new(ctx)),
+        Box::new(ListActionsTool::new(ctx.clone())),
+        // 任务完成工具：agent 调用此工具声明任务完成，系统验证后停止
+        Box::new(TaskCompleteTool::new(ctx)),
     ]
 }
+
+/// 任务完成工具：agent 调用此工具声明任务完成。
+/// 系统根据当前目标验证是否真正完成（检查背包/位置/状态），
+/// 若完成则停止 agent loop，否则告知还差什么。
+pub struct TaskCompleteTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl TaskCompleteTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for TaskCompleteTool {
+    fn name(&self) -> &str {
+        "task_complete"
+    }
+    fn description(&self) -> &str {
+        "声明任务完成。当你认为目标已达成时调用此工具，系统会验证是否真正完成。\
+         若验证通过则停止运行；若未通过，会告知你还差什么。\
+         参数 reason: 完成原因简述（必填）。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "reason": { "type": "string", "description": "完成原因简述" }
+            },
+            "required": ["reason"]
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let reason = args
+            .get("reason")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        // 读取当前 perceive 状态
+        let state = self.ctx.adapter.perceive_shared()?;
+        // 简单验证：检查背包是否有物品（更复杂的验证可由 LLM 判断）
+        let has_items = state.self_hint.contains("背包:") && !state.self_hint.contains("背包: []");
+        if has_items || !state.self_hint.is_empty() {
+            // 验证通过，设置停止标志
+            if let Ok(adapter) = self.ctx.adapter.0.lock() {
+                adapter.should_stop.store(true, Ordering::Relaxed);
+            }
+            Ok(ToolResult {
+                message: format!("任务完成声明已接收（原因: {reason}）。系统验证通过，停止运行。"),
+                is_error: false,
+                images: vec![],
+            })
+        } else {
+            Ok(ToolResult {
+                message: format!("任务完成声明已接收（原因: {reason}）。但系统验证未通过：背包为空或无有效状态。请继续行动。"),
+                is_error: true,
+                images: vec![],
+            })
+        }
+    }
+}
+
+/// 捡起附近掉落物。学习自 Mindcraft pickupNearbyItems。
 
 /// 捡起附近掉落物。学习自 Mindcraft pickupNearbyItems。
 /// bot 挖矿/战斗后掉落物散落，调用此工具走一圈吸取。

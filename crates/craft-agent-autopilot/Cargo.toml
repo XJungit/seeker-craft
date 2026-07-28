@@ -1,0 +1,27 @@
+[package]
+name = "craft-agent-autopilot"
+version.workspace = true
+edition.workspace = true
+description = "Craft-Agent 全自动化自进化主循环 — 无人值守连续运行"
+
+[[bin]]
+name = "craft-agent-autopilot"
+path = "src/main.rs"
+
+[dependencies]
+craft-agent = { path = "../craft-agent" }
+craft-agent-model = { path = "../craft-agent-model" }
+craft-agent-minecraft = { path = "../craft-agent-minecraft", features = ["azalea-bot"] }
+craft-agent-test-harness = { path = "../craft-agent-test-harness" }
+
+serde = { workspace = true }
+serde_json = { workspace = true }
+toml = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+chrono = "0.4"
+regex = "1"
+statrs = "0.17"
+urlencoding = "2"

@@ -44,6 +44,8 @@ struct AppState {
     model_config_path: String,
     /// MC 服务器地址（azalea 连接用，如 localhost:4444）
     mc_addr: String,
+    /// Bot 用户名（azalea 登录用）
+    username: String,
     /// 最后一次成功拉取的游戏状态（离线时回退显示）
     last_state_cache: Mutex<Option<WorldState>>,
 }
@@ -59,6 +61,7 @@ async fn main() -> anyhow::Result<()> {
     let mut max_steps: u32 = 0; // 0 = 无限循环，仅手动停止才退出
     let mut config_path = "config/agent.toml".to_string();
     let mut mc_addr = "localhost:4444".to_string();
+    let mut username = String::new();
     let mut mode_profile: Option<String> = None;
     let mut individual_profile: Option<String> = None;
 
@@ -105,6 +108,12 @@ async fn main() -> anyhow::Result<()> {
                 }
                 i += if has_inline { 1 } else { 2 };
             }
+            "--username" | "-u" => {
+                if let Some(v) = get_val() {
+                    username = v;
+                }
+                i += if has_inline { 1 } else { 2 };
+            }
             "--mc" => {
                 if let Some(v) = get_val() {
                     mc_addr = v;
@@ -139,6 +148,7 @@ async fn main() -> anyhow::Result<()> {
         event_tx: event_tx.clone(),
         model_config_path: config_path,
         mc_addr,
+        username,
         last_state_cache: Mutex::new(None),
     });
 
@@ -155,7 +165,22 @@ async fn main() -> anyhow::Result<()> {
         .with_state(state.clone());
 
     let addr = format!("127.0.0.1:{port}");
-    let listener = TcpListener::bind(&addr).await?;
+    // 端口绑定：带重试，避免 TIME_WAIT 导致崩溃
+    let listener = {
+        let mut attempt = 0;
+        loop {
+            match TcpListener::bind(&addr).await {
+                Ok(l) => break l,
+                Err(e) => {
+                    attempt += 1;
+                    if attempt >= 10 {
+                        return Err(e.into());
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                }
+            }
+        }
+    };
     println!("🎮 Craft-Agent 控制面板 → http://{addr}");
     let steps_text = if max_steps > 0 {
         max_steps.to_string()
@@ -180,11 +205,15 @@ async fn api_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
 }
 
 async fn api_start(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let _ = state.event_tx.send(AgentEvent::Log {
+        text: "[DEBUG] api_start 被调用".into(),
+    });
     let result = spawn_agent_loop(
         state.controller.clone(),
         state.model_config_path.clone(),
         state.event_tx.clone(),
         state.mc_addr.clone(),
+        state.username.clone(),
     );
     match result {
         Ok(()) => axum::Json(json!({"ok": true})),

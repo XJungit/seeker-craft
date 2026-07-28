@@ -299,7 +299,7 @@ fn scenario_craft_first_tools() {
 /// Expected decision: gather("stone", 8) → craft("stone_pickaxe", 1)
 #[test]
 fn scenario_cave_mine_stone() {
-    let mut world = MockWorld::with_default(BlockKind::Stone);
+    let world = MockWorld::with_default(BlockKind::Stone);
     let inv = MockInventory::new(36);
 
     // Bot has no stone, world is full of stone
