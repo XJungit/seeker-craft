@@ -225,7 +225,7 @@ pub fn timeout_ticks(cmd: &BotCommand) -> u64 {
         BotCommand::Attack { .. } => 60,        // 3s
         BotCommand::BlockInteract { .. } => 60, // 3s
         // 寻路/挖掘
-        BotCommand::Goto { .. } => 60,  // 3s（长距离由 32m 限制拦截）
+        BotCommand::Goto { .. } => 30,  // 1.5s（长距离由 32m 限制拦截；无路径时快速失败）
         BotCommand::Mine { .. } => 200, // 10s（深板岩/黑曜石等硬方块可能慢；wooden_pickaxe 挖 deepslate ~4.5s）
         BotCommand::MineBelow => 200,   // 10s（持续下挖，由 Y≤-61 停止）
         BotCommand::MineAbove => 200,   // 10s（持续上挖，由头顶空气/Y≥320 停止）
