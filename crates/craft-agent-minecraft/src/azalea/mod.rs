@@ -446,7 +446,7 @@ impl AzaleaBot {
                 .expect("azalea runtime");
             rt.block_on(async move {
                 let _ = ClientBuilder::new()
-                    .add_plugins(azalea::auto_reconnect::AutoReconnectPlugin).add_plugins(crate::azalea::ext_state::CraftAgentPlugin { ext: ext.clone() })
+                    .add_plugins(crate::azalea::ext_state::CraftAgentPlugin { ext: ext.clone() })
                     .set_handler(AzaleaBot::handle)
                     .set_state(state)
                     .start(account, addr.as_str())
