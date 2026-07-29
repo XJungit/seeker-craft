@@ -516,3 +516,183 @@ Round 3: build=OK test=0/0 anomalies=0 hypotheses=0/0 knowledge=0
 [Round 4] Phase 2b START
 [Round 4] Starting viewer: user=CraftAgent, port=8080
 [Round 4] Viewer started PID=27804
+🎮 Craft-Agent 控制面板 → http://127.0.0.1:8080
+   目标: 继续推进当前任务
+   步数: 无限循环
+   Session: sessions/mc_run.jsonl
+[Round 4] Agent started
+[agent_loop] 加载蓝图 4 个，自定义动作 1 个
+[2m2026-07-29T03:24:19.333056Z[0m [33m WARN[0m [2mazalea_client::client[0m[2m:[0m GameTick is more than 10 ticks behind, skipping ticks so we don't have to burst too much
+[2m2026-07-29T03:24:30.359386Z[0m [33m WARN[0m [2mazalea::pathfinder[0m[2m:[0m Azalea was compiled with no optimizations, which may result in significantly reduced pathfinding performance. Consider following the steps at https://azalea.rs/azalea/#optimization for faster performance in debug mode.
+[2m2026-07-29T03:24:30.359525Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto YGoal { y: 33 }, starting from BlockPos { x: -487, y: 28, z: -169 }
+[2m2026-07-29T03:24:30.407773Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 47.7614ms
+[2m2026-07-29T03:24:31.522616Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -485, y: 29, z: -170 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:24:31.522872Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 1 (starting at BlockPos { x: -486, y: 28, z: -170 })
+[2m2026-07-29T03:24:31.552076Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 27.0101ms
+[2m2026-07-29T03:24:31.564016Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -485, y: 29, z: -170 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:24:31.629354Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -485, y: 29, z: -170 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:24:31.662443Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -485, y: 29, z: -170 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:24:31.722813Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -485, y: 29, z: -170 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:24:31.785582Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -485, y: 29, z: -170 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:24:31.815686Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -485, y: 29, z: -170 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:24:31.878882Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -485, y: 29, z: -170 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:24:31.912973Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -485, y: 29, z: -170 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:24:31.972596Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -485, y: 29, z: -170 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:24:32.035984Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -485, y: 29, z: -170 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:24:32.066977Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -485, y: 29, z: -170 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:24:32.128480Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -485, y: 29, z: -170 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:24:32.189940Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -485, y: 29, z: -170 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:24:32.221586Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -485, y: 29, z: -170 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:24:32.283068Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -485, y: 29, z: -170 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:24:32.313973Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -485, y: 29, z: -170 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:24:32.377039Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -485, y: 29, z: -170 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:24:32.440953Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -485, y: 29, z: -170 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:24:32.471564Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -485, y: 29, z: -170 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:24:32.535094Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -485, y: 29, z: -170 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:24:32.565172Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -485, y: 29, z: -170 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:24:32.625829Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -485, y: 29, z: -170 }, data: MoveData }, cost: 46.382847 }), ignoring
+[equip] stone_pickaxe not found in inventory (attempt 1), retrying after 200ms
+[equip] stone_pickaxe not found in inventory (attempt 2), retrying after 200ms
+[2m2026-07-29T03:24:48.670383Z[0m [32m INFO[0m [2mazalea::pathfinder::execute[0m[2m:[0m goal was reached!
+[2m2026-07-29T03:24:48.694371Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto YGoal { y: 38 }, starting from BlockPos { x: -487, y: 33, z: -168 }
+[2m2026-07-29T03:24:48.749034Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 54.36ms
+[craft] P23 别名替换：minecraft:oak_planks -> minecraft:dark_oak_planks（背包无前者，用后者替代）
+[craft] P23 别名替换：minecraft:oak_planks -> minecraft:dark_oak_planks（背包无前者，用后者替代）
+[craft] P23 别名替换：minecraft:oak_planks -> minecraft:dark_oak_planks（背包无前者，用后者替代）
+[craft] P23 别名替换：minecraft:oak_planks -> minecraft:dark_oak_planks（背包无前者，用后者替代）
+[2m2026-07-29T03:25:09.213024Z[0m [32m INFO[0m [2mazalea::pathfinder::execute[0m[2m:[0m goal was reached!
+[2m2026-07-29T03:25:09.237189Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto YGoal { y: 43 }, starting from BlockPos { x: -486, y: 38, z: -172 }
+[2m2026-07-29T03:25:09.278193Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 40.6609ms
+[table_flow] P41: 附近 32 格内找到已放置的 crafting_table 于 (-488,39,-186)，复用之（不重新合成/放置）
+[2m2026-07-29T03:25:11.261719Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 70.7717ms
+[2m2026-07-29T03:25:11.278242Z[0m [33m WARN[0m [2mazalea_client::client[0m[2m:[0m GameTick is more than 10 ticks behind, skipping ticks so we don't have to burst too much
+[2m2026-07-29T03:25:40.433269Z[0m [32m INFO[0m [2mazalea::pathfinder::execute[0m[2m:[0m goal was reached!
+[2m2026-07-29T03:25:40.457892Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto YGoal { y: 44 }, starting from BlockPos { x: -488, y: 39, z: -185 }
+[2m2026-07-29T03:25:40.465165Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 6.9705ms
+[2m2026-07-29T03:25:44.634807Z[0m [32m INFO[0m [2mazalea::pathfinder::execute[0m[2m:[0m goal was reached!
+[2m2026-07-29T03:25:44.659339Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto YGoal { y: 49 }, starting from BlockPos { x: -495, y: 44, z: -182 }
+[2m2026-07-29T03:25:44.668779Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 9.1404ms
+[2m2026-07-29T03:25:53.999087Z[0m [32m INFO[0m [2mazalea::pathfinder::execute[0m[2m:[0m goal was reached!
+[2m2026-07-29T03:25:54.024135Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto YGoal { y: 54 }, starting from BlockPos { x: -484, y: 49, z: -178 }
+[2m2026-07-29T03:25:54.047054Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 22.6104ms
+[2m2026-07-29T03:26:15.196238Z[0m [32m INFO[0m [2mazalea::pathfinder::execute[0m[2m:[0m goal was reached!
+[2m2026-07-29T03:26:15.245932Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto YGoal { y: 59 }, starting from BlockPos { x: -480, y: 54, z: -187 }
+[2m2026-07-29T03:26:15.246078Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto YGoal { y: 59 }, starting from BlockPos { x: -480, y: 54, z: -187 }
+[2m2026-07-29T03:26:15.339591Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 91.6726ms
+[2m2026-07-29T03:26:15.339658Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 91.8253ms
+[2m2026-07-29T03:26:15.339701Z[0m [33m WARN[0m [2mazalea::pathfinder[0m[2m:[0m finished calculating a path, but it's outdated
+[table_flow] P41: 附近 32 格内找到已放置的 crafting_table 于 (-488,39,-186)，复用之（不重新合成/放置）
+[2m2026-07-29T03:26:56.606518Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 6.5276ms
+[2m2026-07-29T03:26:56.622195Z[0m [33m WARN[0m [2mazalea_client::client[0m[2m:[0m GameTick is more than 10 ticks behind, skipping ticks so we don't have to burst too much
+[2m2026-07-29T03:26:58.346003Z[0m [33m WARN[0m [2mazalea::pathfinder[0m[2m:[0m channel lagged by 1
+[2m2026-07-29T03:26:58.456206Z[0m [33m WARN[0m [2mazalea::pathfinder[0m[2m:[0m channel lagged by 1
+[2m2026-07-29T03:26:58.590662Z[0m [33m WARN[0m [2mazalea::pathfinder[0m[2m:[0m channel lagged by 2
+[2m2026-07-29T03:26:58.685068Z[0m [33m WARN[0m [2mazalea::pathfinder[0m[2m:[0m channel lagged by 1
+[2m2026-07-29T03:27:01.625077Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 3.2534ms
+[2m2026-07-29T03:27:02.042363Z[0m [32m INFO[0m [2mazalea::pathfinder::execute[0m[2m:[0m goal was reached!
+[2m2026-07-29T03:27:02.067311Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto YGoal { y: 44 }, starting from BlockPos { x: -488, y: 39, z: -185 }
+[2m2026-07-29T03:27:02.075482Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 7.8839ms
+[craft 3x3] P48: 'stone_pickaxe' 命中 RecipeBook (shaped)，走 book 路径
+[2m2026-07-29T03:27:05.043168Z[0m [32m INFO[0m [2mazalea::pathfinder::execute[0m[2m:[0m goal was reached!
+[2m2026-07-29T03:27:05.066923Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto YGoal { y: 49 }, starting from BlockPos { x: -485, y: 44, z: -180 }
+[2m2026-07-29T03:27:05.073450Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 6.1692ms
+[2m2026-07-29T03:27:05.099493Z[0m [33m WARN[0m [2mazalea_client::plugins::inventory[0m[2m:[0m Got SetContainerContentEvent for container with ID 1, but the current container ID is 0
+[2m2026-07-29T03:27:05.099664Z[0m [33m WARN[0m [2mazalea_client::plugins::inventory[0m[2m:[0m Got SetContainerContentEvent for container with ID 1, but the current container ID is 0
+[2m2026-07-29T03:27:07.453041Z[0m [32m INFO[0m [2mazalea::pathfinder::execute[0m[2m:[0m goal was reached!
+[2m2026-07-29T03:27:07.475321Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto YGoal { y: 54 }, starting from BlockPos { x: -484, y: 49, z: -178 }
+[2m2026-07-29T03:27:07.482872Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 7.2545ms
+[2m2026-07-29T03:27:15.404470Z[0m [32m INFO[0m [2mazalea::pathfinder::execute[0m[2m:[0m goal was reached!
+[2m2026-07-29T03:27:15.496223Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto YGoal { y: 59 }, starting from BlockPos { x: -480, y: 54, z: -187 }
+[2m2026-07-29T03:27:15.496352Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto YGoal { y: 59 }, starting from BlockPos { x: -480, y: 54, z: -187 }
+[2m2026-07-29T03:27:15.496423Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto YGoal { y: 59 }, starting from BlockPos { x: -480, y: 54, z: -187 }
+[2m2026-07-29T03:27:15.535986Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 37.7592ms
+[2m2026-07-29T03:27:15.536035Z[0m [33m WARN[0m [2mazalea::pathfinder[0m[2m:[0m finished calculating a path, but it's outdated
+[2m2026-07-29T03:27:15.539804Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 41.484ms
+[2m2026-07-29T03:27:15.540715Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 42.4972ms
+[2m2026-07-29T03:27:15.540755Z[0m [33m WARN[0m [2mazalea::pathfinder[0m[2m:[0m finished calculating a path, but it's outdated
+[2m2026-07-29T03:27:25.448793Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 157.4992ms (incomplete path)
+[2m2026-07-29T03:27:25.449143Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -465, y: 56, z: -181 }), starting from BlockPos { x: -475, y: 59, z: -187 } (currently at BlockPos { x: -476, y: 58, z: -187 })
+[2m2026-07-29T03:27:25.744439Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 294.9362ms
+[2m2026-07-29T03:27:28.160127Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 25.6794ms
+[2m2026-07-29T03:27:29.528307Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:29.588584Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:29.623622Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:29.686993Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:29.747124Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:29.778972Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:29.838608Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:29.874223Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:29.931093Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:29.991452Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:30.024529Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:30.084566Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:30.143632Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:30.175248Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:30.235857Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:30.299436Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:30.330268Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:30.391530Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:30.422855Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:30.484062Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:30.545935Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:30.576612Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:30.638158Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:30.672789Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:30.736197Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:30.795311Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:30.827828Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:30.890711Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:30.927891Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:31.000306Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:31.031163Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:31.092302Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:31.126739Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:31.185249Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:31.239867Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:31.280125Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:31.340780Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:31.578039Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 143.6184ms (incomplete path)
+[2m2026-07-29T03:27:31.578378Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -465, y: 56, z: -181 }), starting from BlockPos { x: -474, y: 63, z: -187 } (currently at BlockPos { x: -474, y: 58, z: -187 })
+[2m2026-07-29T03:27:31.586542Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:31.598730Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:31.618571Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:31.629851Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:31.649628Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:31.662454Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:31.680074Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:31.741926Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:31.773858Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:31.834661Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 256.0246ms
+[2m2026-07-29T03:27:31.835650Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 0 (Edge { movement: Movement { target: BlockPos { x: -473, y: 60, z: -187 }, data: MoveData }, cost: 46.382847 }), ignoring
+[2m2026-07-29T03:27:31.893350Z[0m [33m WARN[0m [2mazalea::pathfinder::execute[0m[2m:[0m pathfinder timeout, trying to patch path
+[2m2026-07-29T03:27:31.913150Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 19.54ms
+[2m2026-07-29T03:27:31.917031Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 6 (starting at BlockPos { x: -474, y: 58, z: -187 })
+[2m2026-07-29T03:27:33.767240Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 135.6402ms (incomplete path)
+[2m2026-07-29T03:27:33.767532Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -465, y: 56, z: -181 }), starting from BlockPos { x: -474, y: 63, z: -187 } (currently at BlockPos { x: -475, y: 59, z: -188 })
+[2m2026-07-29T03:27:33.994849Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 227.0791ms
+[2m2026-07-29T03:27:34.361365Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 13.3145ms
+[2m2026-07-29T03:27:37.899924Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 156.7556ms (incomplete path)
+[2m2026-07-29T03:27:37.900194Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -465, y: 56, z: -181 }), starting from BlockPos { x: -477, y: 64, z: -189 } (currently at BlockPos { x: -474, y: 60, z: -188 })
+[2m2026-07-29T03:27:38.198259Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 297.7347ms
+[2m2026-07-29T03:27:40.624251Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 18.0079ms
+[2m2026-07-29T03:27:44.139986Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 154.0575ms (incomplete path)
+[2m2026-07-29T03:27:44.140299Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -465, y: 56, z: -181 }), starting from BlockPos { x: -472, y: 66, z: -190 } (currently at BlockPos { x: -475, y: 63, z: -190 })
+[2m2026-07-29T03:27:44.453916Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 313.3631ms
+[2m2026-07-29T03:27:45.927268Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 4 (starting at BlockPos { x: -474, y: 64, z: -190 })
+[2m2026-07-29T03:27:46.034296Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 106.7993ms
+[2m2026-07-29T03:27:46.046142Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 20 (starting at BlockPos { x: -474, y: 64, z: -190 })
+[2m2026-07-29T03:27:46.051135Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 4.7263ms
+[2m2026-07-29T03:27:46.065730Z[0m [33m WARN[0m [2mazalea::pathfinder::execute::patching[0m[2m:[0m path obstructed at index 24 (starting at BlockPos { x: -474, y: 64, z: -190 })
+[2m2026-07-29T03:27:46.974131Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 11.2878ms
+[Round 4] Phase 2b END: steps=17
+[Round 4] Phase 2b END
+[Round 4] Session Analysis: steps=16 tools=16 errors=5 gather=0 craft=3 mine=2 goto=4 pos_changes=2 stuck=false progress=true
+Round 4: build=OK test=0/0 anomalies=0 hypotheses=0/0 knowledge=0
+
+=== Round 5 ===
+[Round 5] Phase 0 START
+[Round 5] Phase 0 END: build=true, test=false
+[Round 5] Phase 2b START
+[Round 5] Phase 2b START
+[Round 5] Starting viewer: user=CraftAgent, port=8080
+[Round 5] Viewer started PID=7056
