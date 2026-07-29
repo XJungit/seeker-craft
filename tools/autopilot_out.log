@@ -636,3 +636,40 @@ Round 2: build=OK test=0/0 anomalies=0 hypotheses=0/0 knowledge=0
 [2m2026-07-29T02:56:34.392687Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 1.1257621s (incomplete path)
 [2m2026-07-29T02:56:40.013750Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 182.0142ms (incomplete path)
 [2m2026-07-29T02:56:40.014028Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -495, y: 92, z: -160 }), starting from BlockPos { x: -494, y: 92, z: -158 } (currently at BlockPos { x: -492, y: 95, z: -156 })
+[2m2026-07-29T02:56:45.039123Z[0m [33m WARN[0m [2mazalea::pathfinder::astar[0m[2m:[0m No best node found, returning first node
+[2m2026-07-29T02:56:45.040074Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 5.0261342s (empty path)
+[2m2026-07-29T02:56:45.054294Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -495, y: 92, z: -160 }), starting from BlockPos { x: -494, y: 92, z: -158 }
+[2m2026-07-29T02:56:50.096658Z[0m [33m WARN[0m [2mazalea::pathfinder::astar[0m[2m:[0m No best node found, returning first node
+[2m2026-07-29T02:56:50.097671Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 5.0434184s (empty path)
+[2m2026-07-29T02:56:50.121010Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -495, y: 92, z: -160 }), starting from BlockPos { x: -494, y: 92, z: -158 }
+[2m2026-07-29T02:56:55.231109Z[0m [33m WARN[0m [2mazalea::pathfinder::astar[0m[2m:[0m No best node found, returning first node
+[2m2026-07-29T02:56:55.232073Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 5.1110858s (empty path)
+[2m2026-07-29T02:56:55.247798Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -495, y: 92, z: -160 }), starting from BlockPos { x: -494, y: 92, z: -158 }
+[2m2026-07-29T02:57:00.344014Z[0m [33m WARN[0m [2mazalea::pathfinder::astar[0m[2m:[0m No best node found, returning first node
+[2m2026-07-29T02:57:00.344971Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 5.0972796s (empty path)
+[2m2026-07-29T02:57:00.351898Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -495, y: 92, z: -160 }), starting from BlockPos { x: -494, y: 92, z: -158 }
+[2m2026-07-29T02:57:00.939021Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -493, y: 91, z: -156 }), starting from BlockPos { x: -494, y: 92, z: -158 }
+[2m2026-07-29T02:57:00.966271Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 26.9046ms
+[2m2026-07-29T02:57:02.161511Z[0m [32m INFO[0m [2mazalea::pathfinder::execute[0m[2m:[0m the path we just swapped to was empty, so reached end of path
+[gather] round 0: 装备 wooden_pickaxe 失败：set_selected_hotbar_slot(5) 后主手仍未持有 wooden_pickaxe（已轮询 1.5s，可能服务端同步延迟或 hotbar 内容被覆盖，建议稍后重试）
+[2m2026-07-29T02:57:05.397734Z[0m [33m WARN[0m [2mazalea::pathfinder::astar[0m[2m:[0m No best node found, returning first node
+[2m2026-07-29T02:57:05.399010Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 5.0472157s (empty path)
+[2m2026-07-29T02:57:05.399045Z[0m [33m WARN[0m [2mazalea::pathfinder[0m[2m:[0m finished calculating a path, but it's outdated
+[2m2026-07-29T02:57:05.974639Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -493, y: 91, z: -156 }), starting from BlockPos { x: -493, y: 92, z: -158 }
+[2m2026-07-29T02:57:05.992886Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 17.9758ms
+[2m2026-07-29T02:57:07.026176Z[0m [32m INFO[0m [2mazalea::pathfinder::execute[0m[2m:[0m the path we just swapped to was empty, so reached end of path
+[gather] round 1: 装备 wooden_pickaxe 失败：set_selected_hotbar_slot(5) 后主手仍未持有 wooden_pickaxe（已轮询 1.5s，可能服务端同步延迟或 hotbar 内容被覆盖，建议稍后重试）
+[2m2026-07-29T02:57:11.018034Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -493, y: 89, z: -157 }), starting from BlockPos { x: -493, y: 91, z: -158 }
+[2m2026-07-29T02:57:11.034054Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 15.7016ms
+[2m2026-07-29T02:57:12.046936Z[0m [32m INFO[0m [2mazalea::pathfinder::execute[0m[2m:[0m the path we just swapped to was empty, so reached end of path
+[gather] round 2: 装备 wooden_pickaxe 失败：set_selected_hotbar_slot(5) 后主手仍未持有 wooden_pickaxe（已轮询 1.5s，可能服务端同步延迟或 hotbar 内容被覆盖，建议稍后重试）
+[2m2026-07-29T02:57:16.151219Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -493, y: 89, z: -157 }), starting from BlockPos { x: -493, y: 90, z: -158 }
+[2m2026-07-29T02:57:16.161263Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 9.7313ms
+[2m2026-07-29T02:57:17.208857Z[0m [32m INFO[0m [2mazalea::pathfinder::execute[0m[2m:[0m the path we just swapped to was empty, so reached end of path
+[gather] round 3: 装备 wooden_pickaxe 失败：set_selected_hotbar_slot(5) 后主手仍未持有 wooden_pickaxe（已轮询 1.5s，可能服务端同步延迟或 hotbar 内容被覆盖，建议稍后重试）
+[2m2026-07-29T02:57:21.246393Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -493, y: 87, z: -158 }), starting from BlockPos { x: -493, y: 89, z: -158 }
+[2m2026-07-29T02:57:21.254970Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 8.2781ms
+[2m2026-07-29T02:57:22.615334Z[0m [32m INFO[0m [2mazalea::pathfinder::execute[0m[2m:[0m the path we just swapped to was empty, so reached end of path
+[Round 3] Phase 2b END: steps=6
+[Round 3] Phase 2b END
+Round 3: build=OK test=0/0 anomalies=0 hypotheses=0/0 knowledge=0
