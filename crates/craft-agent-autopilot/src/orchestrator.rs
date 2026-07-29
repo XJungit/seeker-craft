@@ -198,13 +198,14 @@ impl Orchestrator {
             let _ = std::fs::rename(&session_path, &archive_path);
         }
 
-        // Kill existing viewer
+        // Kill existing viewer and wait for MC server to disconnect
         let _ = Command::new("taskkill").args(["/F", "/IM", "craft-agent-viewer.exe"]).output();
-        std::thread::sleep(std::time::Duration::from_secs(2));
+        // Wait for MC server to disconnect old player (important!)
+        std::thread::sleep(std::time::Duration::from_secs(5));
 
         let viewer_exe = self.workspace_root.join("target").join("debug").join("craft-agent-viewer.exe");
-        // Use unique username per round to avoid "duplicate_login" kick
-        let bot_username = format!("CraftAgent_R{}", self.round);
+        // Use FIXED username "CraftAgent" to preserve inventory across rounds
+        let bot_username = "CraftAgent".to_string();
         eprintln!("[Round {}] Starting viewer: user={}, port={}", self.round, bot_username, self.viewer_port);
         let viewer_result = if viewer_exe.exists() {
             Command::new(&viewer_exe)

@@ -233,7 +233,7 @@ warning: associated functions `search`, `search_mindcraft`, and `search_general`
    |        ^^^^^^^^^^^^^^
 
 warning: `craft-agent-autopilot` (bin "craft-agent-autopilot") generated 29 warnings (run `cargo fix --bin "craft-agent-autopilot" -p craft-agent-autopilot` to apply 9 suggestions)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.23s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.39s
      Running `target\debug\craft-agent-autopilot.exe`
 ╔══════════════════════════════════════════════════════════╗
 ║     Craft-Agent Autopilot — 全自动化自进化系统           ║
@@ -245,34 +245,66 @@ warning: `craft-agent-autopilot` (bin "craft-agent-autopilot") generated 29 warn
 [Round 1] Phase 0 END: build=true, test=false
 [Round 1] Phase 2b START
 [Round 1] Phase 2b START
-[Round 1] Starting viewer: user=CraftAgent_R1, port=8080
-[Round 1] Viewer started PID=2552
+[Round 1] Starting viewer: user=CraftAgent, port=8080
+[Round 1] Viewer started PID=16416
 🎮 Craft-Agent 控制面板 → http://127.0.0.1:8080
    目标: 继续推进当前任务
    步数: 无限循环
    Session: sessions/mc_run.jsonl
 [Round 1] Agent started
 [agent_loop] 加载蓝图 4 个，自定义动作 1 个
+[2m2026-07-29T02:52:23.640907Z[0m [33m WARN[0m [2mazalea_client::client[0m[2m:[0m GameTick is more than 10 ticks behind, skipping ticks so we don't have to burst too much
+[2m2026-07-29T02:52:35.655765Z[0m [33m WARN[0m [2mazalea::pathfinder[0m[2m:[0m Azalea was compiled with no optimizations, which may result in significantly reduced pathfinding performance. Consider following the steps at https://azalea.rs/azalea/#optimization for faster performance in debug mode.
+[2m2026-07-29T02:52:35.655881Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:35.719617Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:35.750845Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:35.814568Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:35.845169Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:35.908988Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:35.971322Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:36.002841Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:36.068197Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:36.097603Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:36.160814Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:36.225674Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:36.255660Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:36.318828Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:36.348685Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:36.411367Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:36.475396Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:36.506707Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:36.569936Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:36.600174Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:36.664753Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:36.694818Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:36.704575Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 1.0482253s (incomplete path)
+[2m2026-07-29T02:52:36.704641Z[0m [33m WARN[0m [2mazalea::pathfinder[0m[2m:[0m finished calculating a path, but it's outdated
+[2m2026-07-29T02:52:36.755400Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 1.0041566s (incomplete path)
+[2m2026-07-29T02:52:36.755461Z[0m [33m WARN[0m [2mazalea::pathfinder[0m[2m:[0m finished calculating a path, but it's outdated
+[2m2026-07-29T02:52:36.756910Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 1.036751s (incomplete path)
+[2m2026-07-29T02:52:36.756955Z[0m [33m WARN[0m [2mazalea::pathfinder[0m[2m:[0m finished calculating a path, but it's outdated
+[2m2026-07-29T02:52:36.757761Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:36.822531Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:36.852475Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:36.915523Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:36.946730Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:37.011107Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:37.074050Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:37.105312Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:37.168106Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -502, y: 103, z: -153 }
+[2m2026-07-29T02:52:37.769975Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 1.0648253s (incomplete path)
+[2m2026-07-29T02:52:37.770110Z[0m [33m WARN[0m [2mazalea::pathfinder[0m[2m:[0m finished calculating a path, but it's outdated
+[2m2026-07-29T02:52:37.815259Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 1.0568641s (incomplete path)
+[2m2026-07-29T02:52:37.815315Z[0m [33m WARN[0m [2mazalea::pathfinder[0m[2m:[0m finished calculating a path, but it's outdated
+[2m2026-07-29T02:52:37.878962Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 1.0561867s (incomplete path)
+[2m2026-07-29T02:52:37.879013Z[0m [33m WARN[0m [2mazalea::pathfinder[0m[2m:[0m finished calculating a path, but it's outdated
+[2m2026-07-29T02:52:38.814679Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 1.0438892s (incomplete path)
+[2m2026-07-29T02:52:40.163010Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 232.9519ms (incomplete path)
+[2m2026-07-29T02:52:40.163484Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -490, y: 103, z: -160 }), starting from BlockPos { x: -493, y: 103, z: -157 } (currently at BlockPos { x: -497, y: 103, z: -156 })
 [gather] 背包无斧，将徒手砍 dark_oak_log（效率低）
-[2m2026-07-29T02:48:05.004492Z[0m [33m WARN[0m [2mazalea::pathfinder[0m[2m:[0m Azalea was compiled with no optimizations, which may result in significantly reduced pathfinding performance. Consider following the steps at https://azalea.rs/azalea/#optimization for faster performance in debug mode.
-[2m2026-07-29T02:48:05.004611Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -484, y: 104, z: -154 }), starting from BlockPos { x: -487, y: 106, z: -155 }
-[2m2026-07-29T02:48:06.123380Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 1.1184061s (incomplete path)
-[smart_gather] 警告：方块消失但未拾取到物品（背包无斧，可能徒手砍树拾取延迟）。继续下一轮尝试。
-[2m2026-07-29T02:48:09.844871Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -484, y: 103, z: -154 }), starting from BlockPos { x: -487, y: 106, z: -155 }
-[2m2026-07-29T02:48:10.960923Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 1.1157279s (incomplete path)
-[2m2026-07-29T02:48:11.160554Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 180.9749ms (incomplete path)
-[2m2026-07-29T02:48:11.160841Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -484, y: 103, z: -154 }), starting from BlockPos { x: -486, y: 106, z: -155 } (currently at BlockPos { x: -487, y: 106, z: -155 })
-[2m2026-07-29T02:48:11.227084Z[0m [32m INFO[0m [2mazalea::pathfinder::execute[0m[2m:[0m the path we just swapped to was empty, so reached end of path
-[2m2026-07-29T02:48:12.273241Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 1.11206s (incomplete path)
-[smart_gather] 警告：方块消失但未拾取到物品（背包无斧，可能徒手砍树拾取延迟）。继续下一轮尝试。
-[2m2026-07-29T02:48:15.844088Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -484, y: 104, z: -153 }), starting from BlockPos { x: -486, y: 106, z: -155 }
-[2m2026-07-29T02:48:16.966621Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 1.1223055s (incomplete path)
-[smart_gather] 警告：方块消失但未拾取到物品（背包无斧，可能徒手砍树拾取延迟）。继续下一轮尝试。
-[2m2026-07-29T02:48:20.698074Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -483, y: 104, z: -154 }), starting from BlockPos { x: -486, y: 106, z: -155 }
-[2m2026-07-29T02:48:21.784717Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 1.086476s (incomplete path)
-[smart_gather] 警告：方块消失但未拾取到物品（背包无斧，可能徒手砍树拾取延迟）。继续下一轮尝试。
-[2m2026-07-29T02:48:25.578739Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -484, y: 103, z: -153 }), starting from BlockPos { x: -486, y: 106, z: -155 }
-[2m2026-07-29T02:48:26.741367Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 1.1623799s (incomplete path)
-[Round 1] Phase 2b END: steps=3
-[Round 1] Phase 2b END
-Round 1: build=OK test=0/0 anomalies=0 hypotheses=0/0 knowledge=0
+[2m2026-07-29T02:52:43.456334Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -494, y: 100, z: -154 }), starting from BlockPos { x: -493, y: 103, z: -157 }
+[2m2026-07-29T02:52:43.487464Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 30.799ms
+[2m2026-07-29T02:52:44.126146Z[0m [32m INFO[0m [2mazalea::pathfinder::execute[0m[2m:[0m the path we just swapped to was empty, so reached end of path
+[2m2026-07-29T02:52:45.189224Z[0m [33m WARN[0m [2mazalea::pathfinder::astar[0m[2m:[0m No best node found, returning first node
+[2m2026-07-29T02:52:45.190193Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 5.0267476s (empty path)
+[2m2026-07-29T02:52:45.190215Z[0m [33m WARN[0m [2mazalea::pathfinder[0m[2m:[0m finished calculating a path, but it's outdated
