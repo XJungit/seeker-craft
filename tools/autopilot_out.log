@@ -308,3 +308,22 @@ warning: `craft-agent-autopilot` (bin "craft-agent-autopilot") generated 29 warn
 [2m2026-07-29T02:52:45.189224Z[0m [33m WARN[0m [2mazalea::pathfinder::astar[0m[2m:[0m No best node found, returning first node
 [2m2026-07-29T02:52:45.190193Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 5.0267476s (empty path)
 [2m2026-07-29T02:52:45.190215Z[0m [33m WARN[0m [2mazalea::pathfinder[0m[2m:[0m finished calculating a path, but it's outdated
+[smart_gather] 警告：方块消失但未拾取到物品（背包无斧，可能徒手砍树拾取延迟）。继续下一轮尝试。
+[2m2026-07-29T02:52:48.771616Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -493, y: 100, z: -153 }), starting from BlockPos { x: -493, y: 104, z: -155 }
+[2m2026-07-29T02:52:49.810688Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 1.038802s (incomplete path)
+[2m2026-07-29T02:52:50.017980Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 179.1695ms (incomplete path)
+[2m2026-07-29T02:52:50.018589Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -493, y: 100, z: -153 }), starting from BlockPos { x: -494, y: 101, z: -154 } (currently at BlockPos { x: -493, y: 104, z: -155 })
+[2m2026-07-29T02:52:50.790516Z[0m [32m INFO[0m [2mazalea::pathfinder::execute[0m[2m:[0m the path we just swapped to was empty, so reached end of path
+[2m2026-07-29T02:52:54.274108Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -494, y: 99, z: -154 }), starting from BlockPos { x: -494, y: 101, z: -154 }
+[2m2026-07-29T02:52:54.296112Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 21.6722ms
+[2m2026-07-29T02:52:55.088770Z[0m [33m WARN[0m [2mazalea::pathfinder::astar[0m[2m:[0m No best node found, returning first node
+[2m2026-07-29T02:52:55.089716Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 5.0710554s (empty path)
+[2m2026-07-29T02:52:55.089803Z[0m [33m WARN[0m [2mazalea::pathfinder[0m[2m:[0m finished calculating a path, but it's outdated
+[2m2026-07-29T02:52:57.719139Z[0m [33m WARN[0m [2mazalea::pathfinder::astar[0m[2m:[0m No best node found, returning first node
+[2m2026-07-29T02:52:57.719211Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 161.8908ms (empty path)
+[2m2026-07-29T02:52:57.719467Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -494, y: 98, z: -154 }), starting from BlockPos { x: -494, y: 99, z: -154 } (currently at BlockPos { x: -494, y: 101, z: -154 })
+[2m2026-07-29T02:52:57.727948Z[0m [32m INFO[0m [2mazalea::pathfinder::execute[0m[2m:[0m the path we just swapped to was empty, so reached end of path
+[2m2026-07-29T02:52:58.036925Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -494, y: 98, z: -154 }), starting from BlockPos { x: -494, y: 100, z: -154 }
+[Round 1] Phase 2b END: steps=3
+[Round 1] Phase 2b END
+Round 1: build=OK test=0/0 anomalies=0 hypotheses=0/0 knowledge=0
