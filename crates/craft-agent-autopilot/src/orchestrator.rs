@@ -190,7 +190,12 @@ impl Orchestrator {
         let _ = Command::new("taskkill").args(["/F", "/IM", "craft-agent-viewer.exe"]).output();
 
         // Use pre-built binary instead of cargo run (faster startup)
+        // Kill any existing viewer first
+        let _ = Command::new("taskkill").args(["/F", "/IM", "craft-agent-viewer.exe"]).output();
+        std::thread::sleep(std::time::Duration::from_secs(2));
+
         let viewer_exe = self.workspace_root.join("target").join("debug").join("craft-agent-viewer.exe");
+        eprintln!("[Round {}] Starting viewer: exists={}", self.round, viewer_exe.exists());
         let viewer_result = if viewer_exe.exists() {
             Command::new(&viewer_exe)
                 .args([
@@ -203,7 +208,7 @@ impl Orchestrator {
                 .current_dir(&self.workspace_root)
                 .spawn()
         } else {
-            // Fallback to cargo run
+            eprintln!("[Round {}] Viewer not found, using cargo run", self.round);
             Command::new("cargo")
                 .args([
                     "run", "-p", "craft-agent-viewer", "--",
@@ -218,9 +223,16 @@ impl Orchestrator {
         };
 
         let mut viewer_proc = match viewer_result {
-            Ok(proc) => proc,
+            Ok(proc) => {
+                eprintln!("[Round {}] Viewer started PID={}", self.round, proc.id());
+                proc
+            }
             Err(e) => {
-                eprintln!("Failed to start viewer: {e}");
+                eprintln!("[Round {}] Failed to start viewer: {e}", self.round);
+                self.event_log.log(crate::event_log::Event::LlmError {
+                    error: format!("Viewer start failed: {e}"),
+                })?;
+                result.llm_stuck_steps = 1;
                 return Ok(());
             }
         };
