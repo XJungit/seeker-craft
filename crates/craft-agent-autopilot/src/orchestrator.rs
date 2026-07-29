@@ -99,11 +99,22 @@ impl Orchestrator {
         self.event_log = EventLog::new(round_id, &self.sessions_dir);
 
         // Phase 0: Build + Test
+        eprintln!("[Round {}] Phase 0 START", self.round);
         self.run_phase_0(&mut result)?;
+        eprintln!("[Round {}] Phase 0 END: build={}, test={}", self.round, result.build_ok, result.test_ok);
 
         // Phase 2b: LLM real-machine test (always run if build+test passed)
         if result.build_ok && result.test_ok {
-            self.run_phase_2b(&mut result).await?;
+            eprintln!("[Round {}] Phase 2b START", self.round);
+            match self.run_phase_2b(&mut result).await {
+                Ok(_) => eprintln!("[Round {}] Phase 2b END", self.round),
+                Err(e) => {
+                    eprintln!("[Round {}] Phase 2b ERROR: {e}", self.round);
+                    result.llm_stuck_steps = 1;
+                }
+            }
+        } else {
+            eprintln!("[Round {}] Phase 2b SKIP: build={}, test={}", self.round, result.build_ok, result.test_ok);
         }
 
         // Phase 2: Anomaly Detection (after all phases have run)
@@ -240,9 +251,9 @@ impl Orchestrator {
         let deadline = Instant::now() + Duration::from_secs(60);
         let mut ready = false;
         while Instant::now() < deadline {
-            if reqwest::blocking::get(format!("http://{viewer_addr}/api/status")).is_ok() {
-                ready = true;
-                break;
+            match reqwest::blocking::get(format!("http://{viewer_addr}/api/status")) {
+                Ok(_) => { ready = true; break; }
+                Err(_) => {}
             }
             tokio::time::sleep(Duration::from_secs(2)).await;
         }
@@ -250,17 +261,23 @@ impl Orchestrator {
         if !ready {
             eprintln!("[Round {}] Viewer not ready within 60s, skipping LLM test", self.round);
             let _ = viewer_proc.kill();
-            self.event_log.log(crate::event_log::Event::LlmError {
+            if let Err(e) = self.event_log.log(crate::event_log::Event::LlmError {
                 error: "Viewer failed to start within timeout".into(),
-            })?;
+            }) {
+                eprintln!("[Round {}] Failed to log event: {e}", self.round);
+            }
             result.llm_stuck_steps = 1;
             return Ok(());
         }
 
         // Start agent
-        let _ = reqwest::blocking::Client::new()
+        match reqwest::blocking::Client::new()
             .post(format!("http://{viewer_addr}/api/start"))
-            .send();
+            .send()
+        {
+            Ok(_) => eprintln!("[Round {}] Agent started", self.round),
+            Err(e) => eprintln!("[Round {}] Failed to start agent: {e}", self.round),
+        }
 
         // Poll until done or timeout (5 min global)
         let deadline = Instant::now() + Duration::from_secs(300);
@@ -299,6 +316,7 @@ impl Orchestrator {
             .send();
         let _ = viewer_proc.kill();
 
+        eprintln!("[Round {}] Phase 2b END: steps={}", self.round, result.llm_steps);
         Ok(())
     }
 
