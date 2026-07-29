@@ -256,3 +256,6 @@ Round 4: build=OK test=327/328 anomalies=0 hypotheses=0/0 knowledge=0
 Round 5: build=OK test=327/328 anomalies=0 hypotheses=0/0 knowledge=0
 ⚠ 连续 5 轮无进展，触发全局回顾...
 [GlobalReview] 触发全局回顾...
+
+=== Round 6 ===
+Round 6: build=OK test=327/328 anomalies=0 hypotheses=0/0 knowledge=0
