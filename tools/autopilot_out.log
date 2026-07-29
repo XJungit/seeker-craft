@@ -233,7 +233,7 @@ warning: associated functions `search`, `search_mindcraft`, and `search_general`
    |        ^^^^^^^^^^^^^^
 
 warning: `craft-agent-autopilot` (bin "craft-agent-autopilot") generated 29 warnings (run `cargo fix --bin "craft-agent-autopilot" -p craft-agent-autopilot` to apply 9 suggestions)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.09s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.23s
      Running `target\debug\craft-agent-autopilot.exe`
 ╔══════════════════════════════════════════════════════════╗
 ║     Craft-Agent Autopilot — 全自动化自进化系统           ║
@@ -243,23 +243,13 @@ warning: `craft-agent-autopilot` (bin "craft-agent-autopilot") generated 29 warn
 === Round 1 ===
 [Round 1] Phase 0 START
 [Round 1] Phase 0 END: build=true, test=false
-[Round 1] Phase 2b SKIP: build=true, test=false
-Round 1: build=OK test=327/328 anomalies=0 hypotheses=0/0 knowledge=0
-
-=== Round 2 ===
-[Round 2] Phase 0 START
-[Round 2] Phase 0 END: build=true, test=false
-[Round 2] Phase 2b SKIP: build=true, test=false
-Round 2: build=OK test=327/328 anomalies=0 hypotheses=0/0 knowledge=0
-
-=== Round 3 ===
-[Round 3] Phase 0 START
-[Round 3] Phase 0 END: build=true, test=false
-[Round 3] Phase 2b SKIP: build=true, test=false
-Round 3: build=OK test=327/328 anomalies=0 hypotheses=0/0 knowledge=0
-
-=== Round 4 ===
-[Round 4] Phase 0 START
-[Round 4] Phase 0 END: build=true, test=false
-[Round 4] Phase 2b SKIP: build=true, test=false
-Round 4: build=OK test=327/328 anomalies=0 hypotheses=0/0 knowledge=0
+[Round 1] Phase 2b START
+[Round 1] Phase 2b START
+[Round 1] Starting viewer: user=CraftAgent_R1, port=8080
+[Round 1] Viewer started PID=2552
+🎮 Craft-Agent 控制面板 → http://127.0.0.1:8080
+   目标: 继续推进当前任务
+   步数: 无限循环
+   Session: sessions/mc_run.jsonl
+[Round 1] Agent started
+[agent_loop] 加载蓝图 4 个，自定义动作 1 个
