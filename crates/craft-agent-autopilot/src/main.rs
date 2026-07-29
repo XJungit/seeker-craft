@@ -22,6 +22,7 @@ mod knowledge;
 mod monitor;
 mod orchestrator;
 mod root_cause;
+mod session_analysis;
 mod web_research;
 
 use anyhow::Result;

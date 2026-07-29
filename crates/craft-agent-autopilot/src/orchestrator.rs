@@ -113,6 +113,21 @@ impl Orchestrator {
                     result.llm_stuck_steps = 1;
                 }
             }
+
+            // Analyze LLM session for real progress
+            let session_path = self.sessions_dir.join("mc_run.jsonl");
+            let analysis = crate::session_analysis::analyze_session(&session_path);
+            eprintln!("[Round {}] Session Analysis: {}", self.round, analysis.summary);
+
+            // Update result with analysis
+            result.llm_steps = analysis.total_steps;
+            result.has_progress = analysis.is_making_progress;
+
+            // If LLM is stuck, inject strategy hint for next round
+            if analysis.is_stuck {
+                eprintln!("[Round {}] LLM STUCK DETECTED - will inject strategy hint next round", self.round);
+                // TODO: Inject hint into viewer prompt
+            }
         } else {
             eprintln!("[Round {}] Phase 2b SKIP: build={}", self.round, result.build_ok);
         }
@@ -281,8 +296,8 @@ impl Orchestrator {
             Err(e) => eprintln!("[Round {}] Failed to start agent: {e}", self.round),
         }
 
-        // Poll until done or timeout (5 min global)
-        let deadline = Instant::now() + Duration::from_secs(300);
+        // Poll until done or timeout (10 min global - give LLM more time to make progress)
+        let deadline = Instant::now() + Duration::from_secs(600);
         while Instant::now() < deadline {
             tokio::time::sleep(Duration::from_secs(5)).await;
 
