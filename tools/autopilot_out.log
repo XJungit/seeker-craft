@@ -233,7 +233,7 @@ warning: associated functions `search`, `search_mindcraft`, and `search_general`
    |        ^^^^^^^^^^^^^^
 
 warning: `craft-agent-autopilot` (bin "craft-agent-autopilot") generated 29 warnings (run `cargo fix --bin "craft-agent-autopilot" -p craft-agent-autopilot` to apply 9 suggestions)
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.15s
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.10s
      Running `target\debug\craft-agent-autopilot.exe`
 ╔══════════════════════════════════════════════════════════╗
 ║     Craft-Agent Autopilot — 全自动化自进化系统           ║
@@ -241,15 +241,3 @@ warning: `craft-agent-autopilot` (bin "craft-agent-autopilot") generated 29 warn
 ╚══════════════════════════════════════════════════════════╝
 
 === Round 1 ===
-Round 1: build=OK test=327/328 anomalies=0 hypotheses=0/0 knowledge=0
-
-=== Round 2 ===
-Round 2: build=OK test=327/328 anomalies=0 hypotheses=0/0 knowledge=0
-
-=== Round 3 ===
-Round 3: build=OK test=327/328 anomalies=0 hypotheses=0/0 knowledge=0
-
-=== Round 4 ===
-Round 4: build=OK test=327/328 anomalies=0 hypotheses=0/0 knowledge=0
-
-=== Round 5 ===

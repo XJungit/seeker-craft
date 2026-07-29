@@ -175,6 +175,7 @@ impl Orchestrator {
     }
 
     async fn run_phase_2b(&mut self, result: &mut RoundResult) -> Result<()> {
+        eprintln!("[Round {}] Phase 2b START", self.round);
         let viewer_addr = format!("127.0.0.1:{}", self.viewer_port);
 
         // Archive old session
