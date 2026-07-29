@@ -1004,3 +1004,50 @@ Round 7: build=OK test=0/0 anomalies=0 hypotheses=0/0 knowledge=0
 [Round 8] Phase 2b START
 [Round 8] Starting viewer: user=CraftAgent, port=8080
 [Round 8] Viewer started PID=28228
+🎮 Craft-Agent 控制面板 → http://127.0.0.1:8080
+   目标: 继续推进当前任务
+   步数: 无限循环
+   Session: sessions/mc_run.jsonl
+[Round 8] Agent started
+[agent_loop] 加载蓝图 4 个，自定义动作 1 个
+[2m2026-07-29T03:33:06.656219Z[0m [33m WARN[0m [2mazalea_client::client[0m[2m:[0m GameTick is more than 10 ticks behind, skipping ticks so we don't have to burst too much
+[2m2026-07-29T03:33:26.926132Z[0m [33m WARN[0m [2mazalea::pathfinder[0m[2m:[0m Azalea was compiled with no optimizations, which may result in significantly reduced pathfinding performance. Consider following the steps at https://azalea.rs/azalea/#optimization for faster performance in debug mode.
+[2m2026-07-29T03:33:26.926307Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto RadiusGoal { pos: Vec3 { x: -482.5, y: 26.5, z: -174.5 }, radius: 1.5 }, starting from BlockPos { x: -478, y: 30, z: -178 }
+[2m2026-07-29T03:33:26.942881Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 16.157ms
+[table_flow] P41: 附近 32 格内找到已放置的 crafting_table 于 (-488,39,-186)，复用之（不重新合成/放置）
+[2m2026-07-29T03:33:48.061532Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 28.1877ms
+[2m2026-07-29T03:33:48.078030Z[0m [33m WARN[0m [2mazalea_client::client[0m[2m:[0m GameTick is more than 10 ticks behind, skipping ticks so we don't have to burst too much
+[P34] 尝试挖 (-479,28,-178) 腾出放置位（距离 1）
+[P34] 挖 (-479,28,-178) 超时，尝试下一个候选
+[P34] 尝试挖 (-478,28,-179) 腾出放置位（距离 1）
+[P34] 挖 (-478,28,-179) 超时，尝试下一个候选
+[P34] 尝试挖 (-478,28,-177) 腾出放置位（距离 1）
+[P34] 挖 (-478,28,-177) 超时，尝试下一个候选
+[P34] 尝试挖 (-477,28,-178) 腾出放置位（距离 1）
+[P34] 挖 (-477,28,-178) 超时，尝试下一个候选
+[P34] 尝试挖 (-478,27,-178) 腾出放置位（距离 1）
+[Round 8] Phase 2b END: steps=5
+[Round 8] Phase 2b END
+[Round 8] Session Analysis: steps=4 tools=4 errors=1 gather=0 craft=0 mine=0 goto=2 pos_changes=1 stuck=false progress=false
+Round 8: build=OK test=0/0 anomalies=0 hypotheses=0/0 knowledge=0
+
+=== Round 9 ===
+[Round 9] Phase 0 START
+[Round 9] Phase 0 END: build=true, test=false
+[Round 9] Phase 2b START
+[Round 9] Phase 2b START
+[Round 9] Starting viewer: user=CraftAgent, port=8080
+[Round 9] Viewer started PID=14520
+🎮 Craft-Agent 控制面板 → http://127.0.0.1:8080
+   目标: 继续推进当前任务
+   步数: 无限循环
+   Session: sessions/mc_run.jsonl
+[Round 9] Agent started
+[agent_loop] 加载蓝图 4 个，自定义动作 1 个
+[2m2026-07-29T03:34:23.891849Z[0m [33m WARN[0m [2mazalea_client::client[0m[2m:[0m GameTick is more than 10 ticks behind, skipping ticks so we don't have to burst too much
+[table_flow] P41: 附近 32 格内找到已放置的 crafting_table 于 (-488,39,-186)，复用之（不重新合成/放置）
+[2m2026-07-29T03:34:53.574763Z[0m [33m WARN[0m [2mazalea::pathfinder[0m[2m:[0m Azalea was compiled with no optimizations, which may result in significantly reduced pathfinding performance. Consider following the steps at https://azalea.rs/azalea/#optimization for faster performance in debug mode.
+[2m2026-07-29T03:34:53.574939Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto RadiusGoal { pos: Vec3 { x: -487.5, y: 39.5, z: -185.5 }, radius: 1.5 }, starting from BlockPos { x: -478, y: 28, z: -178 }
+[2m2026-07-29T03:34:53.583582Z[0m [33m WARN[0m [2mazalea_client::client[0m[2m:[0m GameTick is more than 10 ticks behind, skipping ticks so we don't have to burst too much
+[2m2026-07-29T03:34:53.610783Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 35.4301ms
+[P34] 尝试挖 (-479,28,-178) 腾出放置位（距离 1）
