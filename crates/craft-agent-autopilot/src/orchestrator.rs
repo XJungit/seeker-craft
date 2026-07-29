@@ -188,14 +188,12 @@ impl Orchestrator {
 
         // Kill existing viewer
         let _ = Command::new("taskkill").args(["/F", "/IM", "craft-agent-viewer.exe"]).output();
-
-        // Use pre-built binary instead of cargo run (faster startup)
-        // Kill any existing viewer first
-        let _ = Command::new("taskkill").args(["/F", "/IM", "craft-agent-viewer.exe"]).output();
         std::thread::sleep(std::time::Duration::from_secs(2));
 
         let viewer_exe = self.workspace_root.join("target").join("debug").join("craft-agent-viewer.exe");
-        eprintln!("[Round {}] Starting viewer: exists={}", self.round, viewer_exe.exists());
+        // Use unique username per round to avoid "duplicate_login" kick
+        let bot_username = format!("CraftAgent_R{}", self.round);
+        eprintln!("[Round {}] Starting viewer: user={}, port={}", self.round, bot_username, self.viewer_port);
         let viewer_result = if viewer_exe.exists() {
             Command::new(&viewer_exe)
                 .args([
@@ -203,7 +201,7 @@ impl Orchestrator {
                     "--steps", "0",
                     "--port", &self.viewer_port.to_string(),
                     "--mc", &self.mc_addr,
-                    "--username", "CraftAgent",
+                    "--username", &bot_username,
                 ])
                 .current_dir(&self.workspace_root)
                 .spawn()
@@ -216,7 +214,7 @@ impl Orchestrator {
                     "--steps", "0",
                     "--port", &self.viewer_port.to_string(),
                     "--mc", &self.mc_addr,
-                    "--username", "CraftAgent",
+                    "--username", &bot_username,
                 ])
                 .current_dir(&self.workspace_root)
                 .spawn()
