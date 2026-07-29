@@ -254,3 +254,9 @@ Round 2: build=OK test=327/328 anomalies=0 hypotheses=0/0 knowledge=0
 
 === Round 3 ===
 [Round 3] Phase 0 START
+[Round 3] Phase 0 END: build=true, test=false
+[Round 3] Phase 2b SKIP: build=true, test=false
+Round 3: build=OK test=327/328 anomalies=0 hypotheses=0/0 knowledge=0
+
+=== Round 4 ===
+[Round 4] Phase 0 START
