@@ -253,3 +253,26 @@ warning: `craft-agent-autopilot` (bin "craft-agent-autopilot") generated 29 warn
    Session: sessions/mc_run.jsonl
 [Round 1] Agent started
 [agent_loop] 加载蓝图 4 个，自定义动作 1 个
+[gather] 背包无斧，将徒手砍 dark_oak_log（效率低）
+[2m2026-07-29T02:48:05.004492Z[0m [33m WARN[0m [2mazalea::pathfinder[0m[2m:[0m Azalea was compiled with no optimizations, which may result in significantly reduced pathfinding performance. Consider following the steps at https://azalea.rs/azalea/#optimization for faster performance in debug mode.
+[2m2026-07-29T02:48:05.004611Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -484, y: 104, z: -154 }), starting from BlockPos { x: -487, y: 106, z: -155 }
+[2m2026-07-29T02:48:06.123380Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 1.1184061s (incomplete path)
+[smart_gather] 警告：方块消失但未拾取到物品（背包无斧，可能徒手砍树拾取延迟）。继续下一轮尝试。
+[2m2026-07-29T02:48:09.844871Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -484, y: 103, z: -154 }), starting from BlockPos { x: -487, y: 106, z: -155 }
+[2m2026-07-29T02:48:10.960923Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 1.1157279s (incomplete path)
+[2m2026-07-29T02:48:11.160554Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 180.9749ms (incomplete path)
+[2m2026-07-29T02:48:11.160841Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -484, y: 103, z: -154 }), starting from BlockPos { x: -486, y: 106, z: -155 } (currently at BlockPos { x: -487, y: 106, z: -155 })
+[2m2026-07-29T02:48:11.227084Z[0m [32m INFO[0m [2mazalea::pathfinder::execute[0m[2m:[0m the path we just swapped to was empty, so reached end of path
+[2m2026-07-29T02:48:12.273241Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 1.11206s (incomplete path)
+[smart_gather] 警告：方块消失但未拾取到物品（背包无斧，可能徒手砍树拾取延迟）。继续下一轮尝试。
+[2m2026-07-29T02:48:15.844088Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -484, y: 104, z: -153 }), starting from BlockPos { x: -486, y: 106, z: -155 }
+[2m2026-07-29T02:48:16.966621Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 1.1223055s (incomplete path)
+[smart_gather] 警告：方块消失但未拾取到物品（背包无斧，可能徒手砍树拾取延迟）。继续下一轮尝试。
+[2m2026-07-29T02:48:20.698074Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -483, y: 104, z: -154 }), starting from BlockPos { x: -486, y: 106, z: -155 }
+[2m2026-07-29T02:48:21.784717Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 1.086476s (incomplete path)
+[smart_gather] 警告：方块消失但未拾取到物品（背包无斧，可能徒手砍树拾取延迟）。继续下一轮尝试。
+[2m2026-07-29T02:48:25.578739Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m got goto BlockPosGoal(BlockPos { x: -484, y: 103, z: -153 }), starting from BlockPos { x: -486, y: 106, z: -155 }
+[2m2026-07-29T02:48:26.741367Z[0m [32m INFO[0m [2mazalea::pathfinder[0m[2m:[0m Pathfinder took 1.1623799s (incomplete path)
+[Round 1] Phase 2b END: steps=3
+[Round 1] Phase 2b END
+Round 1: build=OK test=0/0 anomalies=0 hypotheses=0/0 knowledge=0
