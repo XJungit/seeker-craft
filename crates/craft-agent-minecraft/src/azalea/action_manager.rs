@@ -256,6 +256,11 @@ pub fn timeout_ticks(cmd: &BotCommand) -> u64 {
         BotCommand::ChestView { .. } => 200,     // 10s
         BotCommand::ChestWithdraw { .. } => 400, // 20s
         BotCommand::ChestDeposit { .. } => 400,  // 20s
+        // P68：跟随/停止跟随是持续模式（handler 每 tick 自行推进），不需要长超时；
+        // give 基于 discard，给 20s 余量。
+        BotCommand::Follow { .. } => 20,
+        BotCommand::StopFollow => 20,
+        BotCommand::Give { .. } => 400,
     }
 }
 
@@ -301,6 +306,9 @@ pub fn cmd_signature(cmd: &BotCommand) -> String {
         BotCommand::ChestView { .. } => "chest_view(#,#,#)".to_string(),
         BotCommand::ChestWithdraw { item, count, .. } => format!("chest_withdraw({item},{count})"),
         BotCommand::ChestDeposit { item, count, .. } => format!("chest_deposit({item},{count})"),
+        BotCommand::Follow { .. } => "follow".to_string(),
+        BotCommand::StopFollow => "stop_follow".to_string(),
+        BotCommand::Give { item, count, .. } => format!("give({item},{count})"),
     }
 }
 
@@ -495,5 +503,35 @@ mod tests {
         );
         // Smelt 超时 800 tick，100 tick 不应超时
         assert!(am.check_timeout(100).is_none());
+    }
+
+    #[test]
+    fn test_timeout_follow_give_defined() {
+        // P68：Follow/StopFollow/Give 必须有超时阈值（不应 panic / 缺臂）。
+        assert_eq!(timeout_ticks(&BotCommand::Follow { target: None }), 20);
+        assert_eq!(timeout_ticks(&BotCommand::StopFollow), 20);
+        assert_eq!(
+            timeout_ticks(&BotCommand::Give {
+                item: "dirt".into(),
+                count: 0,
+                target: None
+            }),
+            400
+        );
+    }
+
+    #[test]
+    fn test_signature_follow_give() {
+        // P68：新增命令的签名应唯一且不 panic。
+        assert_eq!(cmd_signature(&BotCommand::Follow { target: Some("steve".into()) }), "follow");
+        assert_eq!(cmd_signature(&BotCommand::StopFollow), "stop_follow");
+        assert_eq!(
+            cmd_signature(&BotCommand::Give {
+                item: "cooked_beef".into(),
+                count: 3,
+                target: None
+            }),
+            "give(cooked_beef,3)"
+        );
     }
 }

@@ -406,6 +406,49 @@ mod failure_detail_tests {
     }
 }
 
+#[cfg(test)]
+mod p68_follow_give_tests {
+    use super::mc_to_cmd;
+    use crate::azalea::BotCommand;
+    use craft_agent::core::types::MinecraftAction;
+
+    #[test]
+    fn action_follow_maps_to_botcmd() {
+        assert!(matches!(
+            mc_to_cmd(MinecraftAction::Follow { target: Some("steve".into()) }),
+            BotCommand::Follow { target: Some(_) }
+        ));
+        assert!(matches!(
+            mc_to_cmd(MinecraftAction::Follow { target: None }),
+            BotCommand::Follow { target: None }
+        ));
+    }
+
+    #[test]
+    fn action_stopfollow_maps_to_botcmd() {
+        assert!(matches!(
+            mc_to_cmd(MinecraftAction::StopFollow),
+            BotCommand::StopFollow
+        ));
+    }
+
+    #[test]
+    fn action_give_maps_to_botcmd() {
+        match mc_to_cmd(MinecraftAction::Give {
+            item: "cooked_beef".into(),
+            count: 3,
+            target: None,
+        }) {
+            BotCommand::Give { item, count, target } => {
+                assert_eq!(item, "cooked_beef");
+                assert_eq!(count, 3);
+                assert!(target.is_none());
+            }
+            _ => panic!("Give 未映射到 BotCommand::Give"),
+        }
+    }
+}
+
 /// 将 MinecraftAction 转换为 BotCommand（供 push_cmd_and_wait 使用）。
 fn mc_to_cmd(mc: MinecraftAction) -> BotCommand {
     match mc {
@@ -476,6 +519,13 @@ fn mc_to_cmd(mc: MinecraftAction) -> BotCommand {
             z,
             item,
             count,
+        },
+        MinecraftAction::Follow { target } => BotCommand::Follow { target },
+        MinecraftAction::StopFollow => BotCommand::StopFollow,
+        MinecraftAction::Give { item, count, target } => BotCommand::Give {
+            item,
+            count,
+            target,
         },
     }
 }

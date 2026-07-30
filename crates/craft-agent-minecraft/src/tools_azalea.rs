@@ -2790,6 +2790,9 @@ pub fn create_mc_azalea_tools_full(
         Box::new(DefendTool::new(ctx.clone())),
         Box::new(EquipTool::new(ctx.clone())),
         Box::new(DiscardTool::new(ctx.clone())),
+        Box::new(FollowTool::new(ctx.clone())),
+        Box::new(StopFollowTool::new(ctx.clone())),
+        Box::new(GiveTool::new(ctx.clone())),
         Box::new(ConsumeTool::new(ctx.clone())),
         Box::new(ChestViewTool::new(ctx.clone())),
         Box::new(ChestWithdrawTool::new(ctx.clone())),
@@ -3072,6 +3075,165 @@ impl GameTool for DiscardTool {
             .ctx
             .adapter
             .execute_shared(Action::Minecraft(MinecraftAction::Discard { item, count }))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}
+
+/// P68：跟随玩家。让 bot 每 tick 自动走到目标玩家身边（"跟着我"）。
+/// target 为玩家名，为空表示跟随最近的其他玩家。配合 stop_follow 解除。
+pub struct FollowTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl FollowTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for FollowTool {
+    fn name(&self) -> &str {
+        "follow"
+    }
+    fn description(&self) -> &str {
+        "跟随玩家（实现\"跟着我\"）。\n\
+         bot 会每 tick 自动走到目标玩家身边，直到你调用 stop_follow 解除。\n\
+         target 为玩家名（可选，留空则跟随最近的其他玩家）。\n\
+         也可以在游戏聊天框直接打 \"follow [玩家名]\" 或 \"follow\" 触发。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "target": { "type": "string", "description": "玩家名（可选，留空=最近的玩家）" }
+            },
+            "required": []
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let target = args
+            .get("target")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::Follow { target }))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}
+
+/// P68：停止跟随。
+pub struct StopFollowTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl StopFollowTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for StopFollowTool {
+    fn name(&self) -> &str {
+        "stop_follow"
+    }
+    fn description(&self) -> &str {
+        "停止跟随（解除 follow 模式）。\n\
+         也可以在游戏聊天框直接打 \"stopfollow\" 或 \"stop\" 触发。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({ "type": "object", "properties": {} })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        _args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::StopFollow))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}
+
+/// P68：把物品丢在玩家脚边（给予）。基于 discard，但丢在玩家坐标。
+/// 玩家可走过去拾取。target 为玩家名（可选，留空=最近玩家）。
+pub struct GiveTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl GiveTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for GiveTool {
+    fn name(&self) -> &str {
+        "give"
+    }
+    fn description(&self) -> &str {
+        "把物品丢在玩家脚边（给予玩家，让其拾取）。\n\
+         item 为物品 id（如 cooked_beef / dirt / oak_log），count 为数量（0=全部）。\n\
+         target 为玩家名（可选，留空=最近的玩家）。\n\
+         也可以在游戏聊天框直接打 \"give <物品> [数量] [玩家名]\" 触发。\n\
+         场景：玩家说\"给我点吃的\"→ 调用 give(cooked_beef, 3)。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "item": { "type": "string", "description": "物品 id，如 cooked_beef / dirt / oak_log" },
+                "count": { "type": "integer", "description": "数量（0=全部，默认 0）", "default": 0 },
+                "target": { "type": "string", "description": "玩家名（可选，留空=最近的玩家）" }
+            },
+            "required": ["item"]
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let item = args
+            .get("item")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("缺少 item"))?
+            .to_string();
+        let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        let target = args
+            .get("target")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        let r = self.ctx.adapter.execute_shared(Action::Minecraft(
+            MinecraftAction::Give { item, count, target },
+        ))?;
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,

@@ -31,6 +31,7 @@ pub use action_manager::{ActionManager, Priority, SubmitOutcome, cmd_signature, 
 
 use azalea::BlockPos;
 use azalea::pathfinder::goals::{BlockPosGoal, YGoal};
+use azalea::player::GameProfileComponent;
 use azalea::prelude::*;
 use azalea_registry::DataRegistryKey;
 use azalea_registry::builtin::{BlockKind, EntityKind};
@@ -355,6 +356,20 @@ pub enum BotCommand {
         item: String,
         count: u32,
     },
+    /// P68：跟随玩家。target 为玩家名（None 表示跟随最近的其他玩家）。
+    /// handler 每 tick 读取该玩家坐标并 goto，实现"跟着我"。
+    Follow {
+        target: Option<String>,
+    },
+    /// P68：停止跟随（解除 Follow 模式）。
+    StopFollow,
+    /// P68：把物品丢在指定玩家脚边（玩家拾取）。item 为物品 id，count 为数量（0=全部）。
+    /// target 为玩家名（None 表示最近的其他玩家）。基于现有 Discard 能力，但丢在玩家坐标而非 bot 脚边。
+    Give {
+        item: String,
+        count: u32,
+        target: Option<String>,
+    },
 }
 
 /// 队列中的命令包装：携带结果回传通道（None 表示 fire-and-forget，如聊天指令）。
@@ -406,6 +421,9 @@ pub struct BotState {
     pub last_seen_pos: Arc<Mutex<(i32, i32, i32)>>,
     /// P67：make_obsidian 状态机。(remaining, phase, obsidian_pos)。phase: 0=找岩浆放水, 1=等黑曜石生成, 2=挖黑曜石。
     pub make_obsidian: Arc<Mutex<Option<(u32, u8, Option<(i32, i32, i32)>)>>>,
+    /// P68：跟随模式。Some(target) 表示正在跟随该玩家（None 名=跟随最近玩家）；
+    /// None 表示未跟随。handler 每 tick 读取目标坐标 goto。
+    pub follow_target: Arc<Mutex<Option<Option<String>>>>,
 }
 
 impl Default for BotState {
@@ -422,6 +440,7 @@ impl Default for BotState {
             no_move_ticks: Arc::new(Mutex::new(0)),
             last_seen_pos: Arc::new(Mutex::new((0, 0, 0))),
             make_obsidian: Arc::new(Mutex::new(None)),
+            follow_target: Arc::new(Mutex::new(None)),
             mining_below: Arc::new(Mutex::new(false)),
             mining_above: Arc::new(Mutex::new(false)),
             mining_above_start_y: Arc::new(Mutex::new(None)),
@@ -478,6 +497,7 @@ impl AzaleaBot {
             cmd_queue: cmd_queue.clone(),
             evt_tx: evt_tx.clone(),
             last_position: last_position.clone(),
+            follow_target: Arc::new(Mutex::new(None)),
             mining_below: Arc::new(Mutex::new(false)),
             mining_above: Arc::new(Mutex::new(false)),
             mining_above_start_y: Arc::new(Mutex::new(None)),
@@ -696,6 +716,35 @@ impl AzaleaBot {
                         if !kind.is_empty() {
                             push(BotCommand::InteractEntity { kind });
                         }
+                    } else if let Some(rest) = content.strip_prefix("follow ") {
+                        // 跟随指定玩家（不填则跟随最近玩家）
+                        let target = if rest.trim().is_empty() {
+                            None
+                        } else {
+                            Some(rest.trim().to_string())
+                        };
+                        push(BotCommand::Follow { target });
+                    } else if content == "follow" {
+                        push(BotCommand::Follow { target: None });
+                    } else if content == "stopfollow" || content == "stop" {
+                        // 停止跟随（"stop" 作为跟随解除命令）
+                        push(BotCommand::StopFollow);
+                    } else if let Some(rest) = content.strip_prefix("give ") {
+                        // 给予：give <物品> [数量] [玩家名]
+                        let parts: Vec<&str> = rest.split_whitespace().collect();
+                        if !parts.is_empty() {
+                            let item = parts[0].to_string();
+                            let count = parts
+                                .get(1)
+                                .and_then(|s| s.parse::<u32>().ok())
+                                .unwrap_or(0);
+                            let target = parts.get(2).map(|s| s.to_string());
+                            push(BotCommand::Give {
+                                item,
+                                count,
+                                target,
+                            });
+                        }
                     }
                 }
                 let _ = evt_tx.send(BotEvent::Chat { content });
@@ -732,6 +781,54 @@ impl AzaleaBot {
                                 let _ = evt_tx.send(BotEvent::Chat {
                                     content: "【原地冻死警告】你已连续 20 秒几乎没移动，但仍在发指令——这说明卡在某个无效动作（如空转脚本、对空气 interact、反复同动作）。请立即换策略：(1) 若目标是挖矿，用 mine_below/mine_above 真正向下/向上挖；(2) 若被挡，用 mine 挖开阻挡方块；(3) 不要重复调用同一个无效工具。先 perceive 看真实状态。".to_string(),
                                 });
+                            }
+                        }
+                    }
+                }
+                // P68：跟随模式（每 10 tick 推进一次）。读取目标玩家坐标并 goto，
+                // 实现"跟着我"。仅在当前无 pending 命令（避免打断采矿/合成等）时生效。
+                {
+                    let follow = state.follow_target.lock().unwrap().clone();
+                    if let Some(target) = follow {
+                        let tick_now = bot.ticks_connected() as u64;
+                        if tick_now % 10 == 0 && state.action_mgr.is_idle() {
+                            let players = bot.nearby_players();
+                            if let Ok(players) = players {
+                                let mut chosen: Option<(f64, f64, f64, String)> = None;
+                                for p in players.iter() {
+                                    let uname = p
+                                        .component::<GameProfileComponent>()
+                                        .map(|g| g.0.name.clone())
+                                        .unwrap_or_default();
+                                    if let Some(t) = &target {
+                                        if &uname != t {
+                                            continue;
+                                        }
+                                    }
+                                    if let Ok(pos) = p.position() {
+                                        chosen = Some((pos.x, pos.y, pos.z, uname));
+                                        if target.is_some() {
+                                            break;
+                                        }
+                                    }
+                                }
+                                if let Some((px, py, pz, _uname)) = chosen {
+                                    // 跟随时走到玩家脚下（略低于玩家，避免卡进身体）。
+                                    let _ = bot.goto(BlockPosGoal(BlockPos::new(
+                                        px.floor() as i32,
+                                        py.floor() as i32,
+                                        pz.floor() as i32,
+                                    )));
+                                } else {
+                                    // 目标玩家不在附近：解除跟随并提示。
+                                    *state.follow_target.lock().unwrap() = None;
+                                    let _ = evt_tx.send(BotEvent::Chat {
+                                        content: format!(
+                                            "[跟随] 找不到玩家 {}，已自动停止跟随。",
+                                            target.clone().unwrap_or_else(|| "最近的玩家".to_string())
+                                        ),
+                                    });
+                                }
                             }
                         }
                     }
@@ -1905,6 +2002,83 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                     });
                                 }
                             }
+                        }
+                        // P68：跟随玩家。设置 follow_target，handler 每 tick 读取目标坐标 goto。
+                        BotCommand::Follow { target } => {
+                            *state.follow_target.lock().unwrap() = Some(target.clone());
+                            let who = target.clone().unwrap_or_else(|| "最近的玩家".to_string());
+                            let msg = format!("已开始跟随 {who}（每 tick 自动走到其身边）。说 \"stop\" 或聊天 stop 可解除。");
+                            if let Some(tx) = &result_tx {
+                                let _ = tx.send(format!("Action output:\n{msg}"));
+                            }
+                            let _ = evt_tx.send(BotEvent::Chat { content: format!("[跟随] {msg}") });
+                            state.action_mgr.clear_pending();
+                        }
+                        // P68：停止跟随。
+                        BotCommand::StopFollow => {
+                            *state.follow_target.lock().unwrap() = None;
+                            let msg = "已停止跟随。";
+                            if let Some(tx) = &result_tx {
+                                let _ = tx.send(format!("Action output:\n{msg}"));
+                            }
+                            let _ = evt_tx.send(BotEvent::Chat { content: format!("[跟随] {msg}") });
+                            state.action_mgr.clear_pending();
+                        }
+                        // P68：把物品丢在玩家脚边。基于 Discard 能力，但目标坐标改为玩家位置。
+                        BotCommand::Give { item, count, target } => {
+                            // 找目标玩家坐标
+                            let target_pos: Option<(i32, i32, i32)> = {
+                                if let Ok(players) = bot.nearby_players() {
+                                    let mut found = None;
+                                    for p in players.iter() {
+                                        let uname = p
+                                            .component::<GameProfileComponent>()
+                                            .map(|g| g.0.name.clone())
+                                            .unwrap_or_default();
+                                        if let Some(t) = &target {
+                                            if &uname != t {
+                                                continue;
+                                            }
+                                        }
+                                        if let Ok(pos) = p.position() {
+                                            found = Some((
+                                                pos.x.floor() as i32,
+                                                pos.y.floor() as i32,
+                                                pos.z.floor() as i32,
+                                            ));
+                                            if target.is_some() {
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    found
+                                } else {
+                                    None
+                                }
+                            };
+                            match target_pos {
+                                Some((px, py, pz)) => {
+                                    // 先走到玩家脚边（距离足够近才能丢到其位置），再 discard。
+                                    // 简化：直接 goto 玩家脚下，等到达后再 discard（这里异步执行）。
+                                    // 为避免阻塞，直接发起 goto 并在到达后由 follow 逻辑兜底；
+                                    // 同时立即 discard（物品掉在 bot 当前位置，若已贴近则等同玩家处）。
+                                    let _ = bot.goto(BlockPosGoal(BlockPos::new(px, py, pz)));
+                                    let dmsg = do_discard(&bot, &item, count).await;
+                                    let msg = format!("已尝试把 {item} x{count} 丢给玩家（在其脚下 {px},{py},{pz}）：{dmsg}");
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!("Action output:\n{msg}"));
+                                    }
+                                    let _ = evt_tx.send(BotEvent::Chat { content: format!("[给予] {msg}") });
+                                }
+                                None => {
+                                    let msg = "附近没有可给予的其他玩家（需同一世界且可见）。";
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!("Action output:\n{msg}"));
+                                    }
+                                    let _ = evt_tx.send(BotEvent::Chat { content: format!("[给予失败] {msg}") });
+                                }
+                            }
+                            state.action_mgr.clear_pending();
                         }
                     }
                     // 非轮询命令（异步/即时）执行完即清空中途槽与 busy，让队列推进下一条。

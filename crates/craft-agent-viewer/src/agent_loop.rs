@@ -639,7 +639,12 @@ fn run_agent(
         // 消费聊天消息（玩家在 MC 里发的消息注入到 agent）
         let chat_msgs = adapter.drain_chat();
         for msg in &chat_msgs {
-            agent.queue_steering(format!("玩家说: {msg}"));
+            // P68：玩家在游戏聊天框说的话就是指令（可中文）。用工具执行，例如：
+            // 跟随→follow / 停下→stop_follow / 给物品→give / 采集→gather / 挖矿→minebelow。
+            agent.queue_steering(format!(
+                "玩家在游戏聊天框对你说：「{msg}」。这是玩家的直接指令（可能是中文），请用你的工具执行：\
+                 跟随他就调用 follow，给物品就调用 give，砍树/挖矿用 gather/minebelow，等等。不要只回复，要真正行动。"
+            ));
             let _ = event_tx.send(AgentEvent::Log {
                 text: format!("💬 收到聊天: {msg}"),
             });
