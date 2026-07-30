@@ -136,16 +136,16 @@ pub mod real {
 
         /// 从环境变量构造（快速本地测试用，等价于 Agnes 默认后端）：
         /// - `AGNES_API_KEY`（必需）
-        /// - `AGNES_API_BASE`（可选，默认 `https://apihub.agnes-ai.com/v1`）
-        /// - `AGNES_MODEL`（可选，默认 `agnes-2.0-flash`）
+        /// - `AGNES_API_BASE`（可选，默认 `https://api.agnes-ai.cn/v1`）
+        /// - `AGNES_MODEL`（可选，默认 `agnes-2.5-flash`）
         pub fn from_env() -> Result<Self> {
             let api_key = std::env::var("AGNES_API_KEY")
                 .map_err(|_| anyhow::anyhow!("未设置环境变量 AGNES_API_KEY"))?;
             let base = std::env::var("AGNES_API_BASE")
-                .unwrap_or_else(|_| "https://apihub.agnes-ai.com/v1".to_string());
+                .unwrap_or_else(|_| "https://api.agnes-ai.cn/v1".to_string());
             let endpoint = format!("{}/chat/completions", base.trim_end_matches('/'));
             let model =
-                std::env::var("AGNES_MODEL").unwrap_or_else(|_| "agnes-2.0-flash".to_string());
+                std::env::var("AGNES_MODEL")            .unwrap_or_else(|_| "agnes-2.5-flash".to_string());
             Ok(Self::new(endpoint, model, api_key))
         }
 

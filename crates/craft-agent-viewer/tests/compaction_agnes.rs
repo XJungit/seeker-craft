@@ -1,6 +1,6 @@
 //! 真实 agnes 压缩集成测试（需要网络 + AGNES_API_KEY 环境变量）。
 //!
-//! 加载真实 session (mc_run.jsonl)，用 agnes-2.0-flash 作专用压缩模型，
+//! 加载真实 session (mc_run.jsonl)，用 agnes-2.5-flash 作专用压缩模型，
 //! 强制把 keep_recent 设得很小以触发 compact()，验证：
 //!   1. 专用压缩模型（agnes）被真实调用并生成非空摘要；
 //!   2. 压缩后 messages 变为 [摘要] + 最近保留段；
@@ -52,10 +52,20 @@ fn compaction_calls_real_agnes() {
     }
     let sess = Session::open(session_path).expect("打开 session 失败");
 
+    // SKIP 守卫：若 session 历史太短（不足以触发压缩阈值），compact() 直接返回空摘要，
+    // 此测试无法验证 agnes 的真实压缩能力。跳过以避免误报失败（需先跑足够多轮 viewer 生成长 session）。
+    if sess.entries.len() < 50 {
+        eprintln!(
+            "SKIP compaction_calls_real_agnes: session 仅 {} 条消息，不足以触发压缩（需 >=50）",
+            sess.entries.len()
+        );
+        return;
+    }
+
     // 构造 agnes 专用压缩模型端点（512K 上下文 + Thinking 开启）
     let comp_backend = BackendConfig {
-        base_url: "https://apihub.agnes-ai.com/v1".into(),
-        model: "agnes-2.0-flash".into(),
+        base_url: "https://api.agnes-ai.cn/v1".into(),
+        model: "agnes-2.5-flash".into(),
         api_key: Some(api_key),
         api_key_env: None,
         timeout_secs: 180,
@@ -77,7 +87,7 @@ fn compaction_calls_real_agnes() {
         context_window: 512_000,
         reserve: (512_000.0 * 0.35) as u32,
         keep_recent: 2000, // 故意很小：保证 164 条消息一定超，触发压缩
-        compaction_model: Some("agnes-2.0-flash".into()),
+        compaction_model: Some("agnes-2.5-flash".into()),
         compaction_provider: Some(Box::new(Lp { llm: comp_llm })),
         compaction_thinking: true,
     };

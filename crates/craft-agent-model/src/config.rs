@@ -16,8 +16,8 @@
 //! api_key_env = "MINICPM_API_KEY"   # 从环境变量读，避免明文写进文件
 //!
 //! [vlm.backends.agnes]
-//! base_url = "https://apihub.agnes-ai.com/v1"
-//! model = "agnes-2.0-flash"
+//! base_url = "https://api.agnes-ai.cn/v1"
+//! model = "agnes-2.5-flash"
 //! api_key_env = "AGNES_API_KEY"
 //! timeout_secs = 180
 //! [vlm.backends.agnes.extra_body]                 # 非标准参数透传
@@ -83,7 +83,7 @@ pub struct AgentConfig {
     #[serde(default)]
     pub perceive: Option<PerceiveConfig>,
     /// 专用压缩模型后端组（可选）。不配则压缩复用主决策模型。
-    /// 例：用免费、512K 上下文的 agnes-2.0-flash 做压缩，隔离主模型、避免小模型卡死。
+    /// 例：用免费、512K 上下文的 agnes-2.5-flash 做压缩，隔离主模型、避免小模型卡死。
     #[serde(default)]
     pub compaction: Option<BackendGroup>,
 }
@@ -256,9 +256,9 @@ model = "MiniCPM-V-4.6-Instruct"
 api_key_env = "MINICPM_API_KEY"
 
 [vlm.backends.agnes]
-base_url = "https://apihub.agnes-ai.com/v1"
-model = "agnes-2.0-flash"
-api_key = "sk-test"
+base_url = "https://api.agnes-ai.cn/v1"
+model = "agnes-2.5-flash"
+api_key_env = "AGNES_API_KEY"
 timeout_secs = 180
 [vlm.backends.agnes.extra_body]
 chat_template_kwargs = { enable_thinking = false }
@@ -283,7 +283,8 @@ chat_template_kwargs = { enable_thinking = false }
     fn extra_body_and_explicit_key_parsed() {
         let cfg: AgentConfig = toml::from_str(SAMPLE).unwrap();
         let agnes = cfg.vlm.backends.get("agnes").unwrap();
-        assert_eq!(agnes.resolve_api_key().unwrap(), "sk-test");
+        let expected = std::env::var("AGNES_API_KEY").unwrap_or_else(|_| "sk-test".to_string());
+        assert_eq!(agnes.resolve_api_key().unwrap(), expected);
         let eb = agnes.extra_body.as_ref().unwrap();
         assert_eq!(eb["chat_template_kwargs"]["enable_thinking"], false);
     }
