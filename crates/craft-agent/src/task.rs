@@ -558,6 +558,7 @@ mod tests {
         let tasks_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("..")
+            .join("data")
             .join("tasks");
         if !tasks_dir.exists() {
             // 在 cargo workspace 外运行测试时跳过（不强制）
@@ -567,7 +568,7 @@ mod tests {
         let tasks = load_tasks(&tasks_dir).expect("加载 tasks/ 目录失败");
         assert!(
             tasks.len() >= 18,
-            "tasks/ 目录至少应有 18 个任务（tier1-6 各 3-4 个），实际 {}",
+            "data/tasks/ 目录至少应有 18 个任务（tier1-6 各 3-4 个），实际 {}",
             tasks.len()
         );
         // 校验每个任务的基本字段

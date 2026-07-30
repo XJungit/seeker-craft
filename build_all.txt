@@ -1,0 +1,24 @@
+warning: crates\craft-agent-viewer\Cargo.toml: file `D:\Craft-Agent\crates\craft-agent-viewer\src\main.rs` found to be present in multiple build targets:
+  * `bin` target `craft-agent-viewer`
+  * `bin` target `craft-agent-viewer-next`
+warning: `craft-agent-viewer` (manifest) generated 1 warning
+warning: unused variable: `turn`
+   --> crates\craft-agent\src\agent\mod.rs:620:46
+    |
+620 |     fn auto_check_task_completion(&mut self, turn: u32) {
+    |                                              ^^^^ help: if this is intentional, prefix it with an underscore: `_turn`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `craft-agent` (lib) generated 1 warning (run `cargo fix --lib -p craft-agent` to apply 1 suggestion)
+warning: unused variable: `stall`
+   --> crates\craft-agent-minecraft\src\azalea\mod.rs:872:54
+    |
+872 | ...                   let (lx, ly, lz, stall) = *wd;
+    |                                        ^^^^^ help: if this is intentional, prefix it with an underscore: `_stall`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `craft-agent-minecraft` (lib) generated 1 warning (run `cargo fix --lib -p craft-agent-minecraft` to apply 1 suggestion)
+   Compiling craft-agent-viewer v0.1.0 (D:\Craft-Agent\crates\craft-agent-viewer)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 26.55s

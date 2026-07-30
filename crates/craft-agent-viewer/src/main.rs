@@ -59,11 +59,12 @@ async fn main() -> anyhow::Result<()> {
     let mut port: u16 = 8080;
     let mut goal = "收集木头做工作台".to_string();
     let mut max_steps: u32 = 0; // 0 = 无限循环，仅手动停止才退出
-    let mut config_path = "config/agent.toml".to_string();
+    let mut config_path = "data/config/agent.toml".to_string();
     let mut mc_addr = "localhost:4444".to_string();
     let mut username = String::new();
     let mut mode_profile: Option<String> = None;
     let mut individual_profile: Option<String> = None;
+    let mut rollover_session = false;
 
     let mut i = 1;
     while i < args.len() {
@@ -132,6 +133,10 @@ async fn main() -> anyhow::Result<()> {
                 }
                 i += if has_inline { 1 } else { 2 };
             }
+            "--rollover-session" => {
+                rollover_session = true;
+                i += 1;
+            }
             _ => i += 1,
         }
     }
@@ -140,6 +145,7 @@ async fn main() -> anyhow::Result<()> {
     let mut controller = AgentController::new(goal, max_steps, session_path.display().to_string());
     controller.mode_profile = mode_profile;
     controller.individual_profile = individual_profile;
+    controller.rollover_session = rollover_session;
     let controller = Arc::new(controller);
 
     let state = Arc::new(AppState {
@@ -204,10 +210,24 @@ async fn api_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     axum::Json(state.controller.get_status())
 }
 
-async fn api_start(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+async fn api_start(
+    State(state): State<Arc<AppState>>,
+    body: Option<axum::Json<serde_json::Value>>,
+) -> impl IntoResponse {
     let _ = state.event_tx.send(AgentEvent::Log {
         text: "[DEBUG] api_start 被调用".into(),
     });
+    let body = body.map(|json| json.0).unwrap_or_default();
+    let goal = body
+        .get("goal")
+        .and_then(|value| value.as_str())
+        .filter(|goal| !goal.trim().is_empty())
+        .map(str::to_string);
+    let max_steps = body
+        .get("max_steps")
+        .and_then(|value| value.as_u64())
+        .and_then(|value| u32::try_from(value).ok());
+    state.controller.configure_start(goal, max_steps);
     let result = spawn_agent_loop(
         state.controller.clone(),
         state.model_config_path.clone(),

@@ -45,7 +45,12 @@ references/
 compile-log.txt
 
 # 运行产物（viewer session JSONL）
+/sessions/
+/scripts/logs/
 /tools/sessions/
 
 # 快捷方式（机器相关，非源码）
 *.lnk
+
+# 工作流状态
+.workflow_state.json

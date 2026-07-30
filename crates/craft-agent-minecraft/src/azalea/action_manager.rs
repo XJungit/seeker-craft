@@ -235,6 +235,7 @@ pub fn timeout_ticks(cmd: &BotCommand) -> u64 {
         BotCommand::Smelt { .. } => 2400,   // 120s（含放炉+开炉+熔炼+收炉；熔炼 10 个铁锭需 ~100s）
         // 采集（多轮渐扩半径，最慢；24 轮 × 10s/轮 = 240s 理论上限，给 120s 余量）
         BotCommand::Gather { .. } => 2400, // 120s
+        BotCommand::MakeObsidian { .. } => 1600, // 80s（含多次放水+等待+挖取）
         // 放置/开容器
         BotCommand::Place { .. } => 100,         // 5s
         BotCommand::OpenContainer { .. } => 100, // 5s
@@ -285,6 +286,7 @@ pub fn cmd_signature(cmd: &BotCommand) -> String {
             ..
         } => format!("smelt({output},{fuel},{count})"),
         BotCommand::Gather { item, count } => format!("gather({item},{count})"),
+        BotCommand::MakeObsidian { count } => format!("make_obsidian({count})"),
         BotCommand::Place { item, .. } => format!("place({item},#,#,#)"),
         BotCommand::OpenContainer { .. } => "open_container(#,#,#)".to_string(),
         BotCommand::AutoCraft { item, count } => format!("auto_craft({item},{count})"),

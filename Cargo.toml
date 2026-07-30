@@ -11,7 +11,7 @@ members = [
     "crates/craft-agent-model",       # 模型客户端层：VLM(vision) + LLM(decision)，OpenAI 兼容多后端
     "crates/craft-agent-minecraft",   # MC 适配器：mod TCP 桥接（精确状态）+ 可选 VLM 视觉补充
     "crates/craft-agent-viewer",      # 运行可视化：把 session JSONL 渲染成 Web 仪表盘（对话历史 + 工具调用）
-    "crates/craft-agent-test-harness", # 全自动测试工具链：程序化测试运行、失败分析、自动修复
+     # 全自动测试工具链：程序化测试运行、失败分析、自动修复
     "crates/craft-agent-autopilot",   # 全自动化自进化主循环：无人值守连续运行直至通关
 ]
 

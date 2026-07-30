@@ -22,7 +22,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
-use std::fs::File;
+use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -181,6 +181,39 @@ pub struct CustomEntry {
     pub timestamp: String,
     pub custom_type: String,
     pub data: Value,
+}
+
+pub const SESSION_ROLLOVER_CUSTOM_TYPE: &str = "session_rollover";
+
+/// Runtime state carried into a compact replacement session.
+#[derive(Debug, Clone)]
+pub struct SessionRolloverContext {
+    pub recovery_summary: String,
+    pub current_goal: Option<String>,
+    pub position: Option<[f64; 3]>,
+    pub health: Option<f32>,
+    pub hunger: Option<u32>,
+}
+
+/// Audit link from a compact active session to its exact archived predecessor.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionRolloverMetadata {
+    pub archive_path: String,
+    pub archived_session_id: String,
+    pub archived_leaf_id: Option<String>,
+    pub archived_at: String,
+    pub current_goal: Option<String>,
+    pub position: Option<[f64; 3]>,
+    pub health: Option<f32>,
+    pub hunger: Option<u32>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionRolloverResult {
+    pub archive_path: PathBuf,
+    pub archived_session_id: String,
+    pub archived_leaf_id: Option<String>,
+    pub active_session_id: String,
 }
 
 /// WorldInfo 知识库变更 entry（Agent 长期知识持久化，跨重启保留）
@@ -367,6 +400,95 @@ impl Session {
         self.full_rewrite(path)
     }
 
+    /// Archive an existing session byte-for-byte and atomically replace it with
+    /// a compact recovery session. This must run while no Session writer exists.
+    pub fn rollover_to(
+        path: &Path,
+        archive_dir: &Path,
+        context: SessionRolloverContext,
+    ) -> Result<Option<SessionRolloverResult>> {
+        if !path.exists() || path.metadata()?.len() == 0 {
+            return Ok(None);
+        }
+
+        // Parse before publishing files. Header corruption must leave the active
+        // session untouched rather than silently discarding history.
+        let old = Self::open(path)?;
+        let original = std::fs::read(path)?;
+        let archived_session_id = old.header.id.clone();
+        let archived_leaf_id = old.current_leaf().map(str::to_string);
+        let archived_at = now_ms();
+
+        std::fs::create_dir_all(archive_dir)?;
+        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("session");
+        let archive_path = unique_archive_path(
+            archive_dir,
+            &format!("{stem}.{archived_session_id}.{archived_at}"),
+        );
+        let archive_tmp = tempfile_path(&archive_path);
+        write_new_synced(&archive_tmp, &original)?;
+        if let Err(err) = std::fs::rename(&archive_tmp, &archive_path) {
+            let _ = std::fs::remove_file(&archive_tmp);
+            return Err(err.into());
+        }
+
+        let metadata = SessionRolloverMetadata {
+            archive_path: archive_path.display().to_string(),
+            archived_session_id: archived_session_id.clone(),
+            archived_leaf_id: archived_leaf_id.clone(),
+            archived_at,
+            current_goal: context.current_goal,
+            position: context.position,
+            health: context.health,
+            hunger: context.hunger,
+        };
+        let current_path = old.entries_for_current_path();
+        let latest_memory = current_path.iter().rev().find_map(|entry| match entry {
+            SessionEntry::Memory(memory) => Some(memory.snapshot.clone()),
+            _ => None,
+        });
+        let world_info: Vec<WorldInfoEntry> = current_path
+            .iter()
+            .filter_map(|entry| match entry {
+                SessionEntry::WorldInfo(info) => Some(info.clone()),
+                _ => None,
+            })
+            .collect();
+
+        let mut compact = Self::new(&old.header.game);
+        compact.header.knowledge_bootstrapped = old.header.knowledge_bootstrapped;
+        compact.append_custom(SESSION_ROLLOVER_CUSTOM_TYPE, serde_json::to_value(metadata)?);
+        compact.append_message(Message::user(context.recovery_summary));
+        // Preserve WorldInfo operations in order so with_session rebuilds the
+        // same effective library without retaining unrelated conversation.
+        for info in world_info {
+            compact.append_world_info(
+                &info.action,
+                info.info,
+                info.remove_id,
+                info.remove_keys,
+            );
+        }
+        if let Some(snapshot) = latest_memory {
+            compact.append_memory(&snapshot);
+        }
+
+        let active_session_id = compact.header.id.clone();
+        let active_tmp = tempfile_path(path);
+        compact.full_rewrite(&active_tmp)?;
+        if let Err(err) = replace_file(&active_tmp, path) {
+            let _ = std::fs::remove_file(&active_tmp);
+            return Err(err);
+        }
+
+        Ok(Some(SessionRolloverResult {
+            archive_path,
+            archived_session_id,
+            archived_leaf_id,
+            active_session_id,
+        }))
+    }
+
     /// 全量重写：临时文件写 header + 全部 entries，再 rename 原子替换（pi save_jsonl_full_rewrite_blocking）
     fn full_rewrite(&mut self, path: &Path) -> Result<()> {
         if let Some(parent) = path.parent() {
@@ -383,6 +505,7 @@ impl Session {
                 w.write_all(b"\n")?;
             }
             w.flush()?;
+            w.into_inner().map_err(|e| e.into_error())?.sync_all()?;
         }
         replace_file(&tmp, path)?;
         self.persisted_count = self.entries.len();
@@ -677,6 +800,24 @@ fn tempfile_path(target: &Path) -> PathBuf {
     p
 }
 
+fn unique_archive_path(dir: &Path, base: &str) -> PathBuf {
+    let mut candidate = dir.join(format!("{base}.jsonl"));
+    let mut suffix = 1u32;
+    while candidate.exists() {
+        candidate = dir.join(format!("{base}.{suffix}.jsonl"));
+        suffix += 1;
+    }
+    candidate
+}
+
+fn write_new_synced(path: &Path, bytes: &[u8]) -> Result<()> {
+    let mut file = OpenOptions::new().write(true).create_new(true).open(path)?;
+    file.write_all(bytes)?;
+    file.flush()?;
+    file.sync_all()?;
+    Ok(())
+}
+
 /// 跨平台替换目标文件。Windows 的 rename 不能覆盖已有目标，因此先把旧文件改名为
 /// backup，再把 tmp 提升为目标；失败时恢复 backup。成功后删除 backup。
 fn replace_file(tmp: &Path, target: &Path) -> Result<()> {
@@ -805,6 +946,127 @@ mod tests {
         assert!(second_size > first_size, "增量 append 应使文件变大");
         let reloaded = Session::open(&path).unwrap();
         assert_eq!(reloaded.messages_for_current_path().len(), 3);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    fn rollover_context(summary: &str) -> SessionRolloverContext {
+        SessionRolloverContext {
+            recovery_summary: summary.into(),
+            current_goal: Some("find food".into()),
+            position: Some([1.0, 2.0, 3.0]),
+            health: Some(20.0),
+            hunger: Some(10),
+        }
+    }
+
+    #[test]
+    fn rollover_archives_exact_original_and_creates_compact_session() {
+        let path = tmp_path("rollover");
+        let archive_dir = path.with_extension("archive");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&archive_dir);
+        let mut old = Session::new("minecraft");
+        old.header.knowledge_bootstrapped = true;
+        old.append_message(Message::user("large old history"));
+        old.append_memory(r#"{"cells":["latest"]}"#);
+        old.save_to(&path).unwrap();
+        let original = std::fs::read(&path).unwrap();
+        let old_id = old.header.id.clone();
+
+        let result = Session::rollover_to(&path, &archive_dir, rollover_context("recover"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(std::fs::read(&result.archive_path).unwrap(), original);
+        assert_eq!(result.archived_session_id, old_id);
+
+        let compact = Session::open(&path).unwrap();
+        assert_ne!(compact.header.id, old_id);
+        assert!(compact.header.knowledge_bootstrapped);
+        assert!(compact.is_linear());
+        assert_eq!(compact.entries_for_current_path().len(), 3);
+        assert!(matches!(
+            &compact.messages_for_current_path()[0],
+            Message::User(user) if user.content == "recover"
+        ));
+        assert_eq!(compact.current_leaf(), compact.header.current_leaf.as_deref());
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&archive_dir);
+    }
+
+    #[test]
+    fn rollover_uses_latest_memory_on_selected_branch() {
+        let path = tmp_path("rollover_branch");
+        let archive_dir = path.with_extension("archive");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&archive_dir);
+        let mut old = Session::new("minecraft");
+        let branch_point = old.append_message(Message::user("root"));
+        old.append_memory("abandoned");
+        old.branch_from(&branch_point).unwrap();
+        old.append_memory("selected");
+        old.save_to(&path).unwrap();
+
+        Session::rollover_to(&path, &archive_dir, rollover_context("recover")).unwrap();
+        let compact = Session::open(&path).unwrap();
+        let memories: Vec<&str> = compact
+            .entries_for_current_path()
+            .into_iter()
+            .filter_map(|entry| match entry {
+                SessionEntry::Memory(memory) => Some(memory.snapshot.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(memories, vec!["selected"]);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&archive_dir);
+    }
+
+    #[test]
+    fn rollover_metadata_links_archive_and_goal() {
+        let path = tmp_path("rollover_metadata");
+        let archive_dir = path.with_extension("archive");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&archive_dir);
+        let mut old = Session::new("minecraft");
+        old.append_message(Message::user("old"));
+        old.save_to(&path).unwrap();
+        let old_leaf = old.current_leaf().map(str::to_string);
+
+        let result = Session::rollover_to(&path, &archive_dir, rollover_context("recover"))
+            .unwrap()
+            .unwrap();
+        let compact = Session::open(&path).unwrap();
+        let metadata = compact
+            .entries_for_current_path()
+            .into_iter()
+            .find_map(|entry| match entry {
+                SessionEntry::Custom(custom)
+                    if custom.custom_type == SESSION_ROLLOVER_CUSTOM_TYPE =>
+                {
+                    serde_json::from_value::<SessionRolloverMetadata>(custom.data.clone()).ok()
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(metadata.archived_leaf_id, old_leaf);
+        assert_eq!(metadata.current_goal.as_deref(), Some("find food"));
+        assert_eq!(Path::new(&metadata.archive_path), result.archive_path);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&archive_dir);
+    }
+
+    #[test]
+    fn corrupt_session_rollover_does_not_touch_active_file() {
+        let path = tmp_path("rollover_corrupt");
+        let archive_dir = path.with_extension("archive");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&archive_dir);
+        let corrupt = b"not a session\n";
+        std::fs::write(&path, corrupt).unwrap();
+
+        assert!(Session::rollover_to(&path, &archive_dir, rollover_context("recover")).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), corrupt);
+        assert!(!archive_dir.exists());
         let _ = std::fs::remove_file(&path);
     }
 }

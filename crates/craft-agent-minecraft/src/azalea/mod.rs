@@ -30,7 +30,7 @@ pub mod trade;
 pub use action_manager::{ActionManager, Priority, SubmitOutcome, cmd_signature, timeout_ticks};
 
 use azalea::BlockPos;
-use azalea::pathfinder::goals::BlockPosGoal;
+use azalea::pathfinder::goals::{BlockPosGoal, YGoal};
 use azalea::prelude::*;
 use azalea_registry::DataRegistryKey;
 use azalea_registry::builtin::{BlockKind, EntityKind};
@@ -48,6 +48,19 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+fn normalize_entity_target(target: &str) -> String {
+    let normalized = target.trim().to_ascii_lowercase();
+    normalized
+        .strip_prefix("minecraft:")
+        .unwrap_or(&normalized)
+        .to_string()
+}
+
+fn entity_kind_name(kind: EntityKind) -> String {
+    let name = kind.to_str();
+    name.strip_prefix("minecraft:").unwrap_or(name).to_string()
 }
 
 /// 把感兴趣的 BlockKind 映射为记忆元数据（item, 标签, 类别）。
@@ -260,6 +273,12 @@ pub enum BotCommand {
         item: String,
         count: u32,
     },
+    /// P67：自动造黑曜石。bot 需手持 water_bucket，且附近（半径 12）有岩浆源。
+    /// 工具会：在岩浆旁放一格水→生成黑曜石→用 diamond_pickaxe 挖下→重复 count 次。
+    /// 用于下界传送门框架。若没水/没岩浆/没钻石镐会返回错误。
+    MakeObsidian {
+        count: u32,
+    },
     /// 放置：把手持物品 item 放到世界坐标 (x,y,z) 旁（右键放置）。
     Place {
         item: String,
@@ -357,6 +376,14 @@ pub struct BotState {
     /// 持续上挖标志：收到 MineAbove 后置 true，Tick 内只要未在挖就重复触发。
     /// 用于地下脱困——头顶方块挖完后 bot 自动跳起，下一格又挖，直到头顶是空气。
     pub mining_above: Arc<Mutex<bool>>,
+    /// Y at the start of the current MineAbove command. The synchronous tool
+    /// completes only after actual upward movement, never on dispatch alone.
+    pub mining_above_start_y: Arc<Mutex<Option<i32>>>,
+    /// Direction tried by deterministic staircase ascent. Rotated whenever a
+    /// concrete adjacent-up goal makes no progress.
+    pub mining_above_direction: Arc<Mutex<usize>>,
+    /// Whether mine_above already tried /tp rescue. Reset on new MineAbove.
+    pub mine_above_tried_tp: Arc<Mutex<bool>>,
     /// ActionManager：封装 pending 槽 + 按命令类型超时 + 抢占 + 快循环检测。
     /// 取代原硬编码 60-tick 超时（合成/采集/熔炼等长任务被误杀）。
     /// 字段保留 pending/pending_since/busy 的 Arc 引用，供旧代码兼容访问。
@@ -365,6 +392,20 @@ pub struct BotState {
     pub memory: Option<WorldMemory>,
     /// 已扫描记录的坐标 → 上次扫描时间戳（TTL 去重 + 重验世界变化）。
     pub scanned: Arc<Mutex<HashMap<MemoryPos, u64>>>,
+    /// P65/P66：goto 卡死看门狗。(last_x, last_y, last_z, stall_count)。
+    /// 若连续 goto 超时但 bot 净移动 <1.5 格（无论目标坐标如何变），累计 stall，
+    /// 达阈值即强制脱困（地表挖开阻挡方块 / 地下 mine_above）。
+    pub goto_watchdog: Arc<Mutex<(i32, i32, i32, u32)>>,
+    /// P66：goto 冷却表（按 bot 当前格子）。触发脱困后冷却该格子 N tick，
+    /// 期间 goto 直接拒绝，打破脚本/LLM 的 goto 死循环。
+    pub goto_cooldown: Arc<Mutex<HashMap<(i32, i32, i32), u64>>>,
+    /// P67：全局"原地冻死"看门狗。bot 位置长时间（~20s）不变且循环仍在推进，
+    /// 说明卡在某个不动作（如空转 run_script / 无效 interact）。累计到阈值即
+    /// 向 LLM 推强警告，逼其换策略（pi-agent 自主止损，覆盖所有非 goto 卡死）。
+    pub no_move_ticks: Arc<Mutex<u64>>,
+    pub last_seen_pos: Arc<Mutex<(i32, i32, i32)>>,
+    /// P67：make_obsidian 状态机。(remaining, phase, obsidian_pos)。phase: 0=找岩浆放水, 1=等黑曜石生成, 2=挖黑曜石。
+    pub make_obsidian: Arc<Mutex<Option<(u32, u8, Option<(i32, i32, i32)>)>>>,
 }
 
 impl Default for BotState {
@@ -376,8 +417,16 @@ impl Default for BotState {
             cmd_queue: Arc::new(Mutex::new(Vec::new())),
             evt_tx: Arc::new(mpsc::unbounded_channel::<BotEvent>().0),
             last_position: Arc::new(Mutex::new(None)),
+            goto_watchdog: Arc::new(Mutex::new((0, 0, 0, 0))),
+            goto_cooldown: Arc::new(Mutex::new(HashMap::new())),
+            no_move_ticks: Arc::new(Mutex::new(0)),
+            last_seen_pos: Arc::new(Mutex::new((0, 0, 0))),
+            make_obsidian: Arc::new(Mutex::new(None)),
             mining_below: Arc::new(Mutex::new(false)),
             mining_above: Arc::new(Mutex::new(false)),
+            mining_above_start_y: Arc::new(Mutex::new(None)),
+            mining_above_direction: Arc::new(Mutex::new(0)),
+            mine_above_tried_tp: Arc::new(Mutex::new(false)),
             action_mgr: ActionManager::new(),
             memory: None,
             scanned: Arc::new(Mutex::new(HashMap::new())),
@@ -431,9 +480,17 @@ impl AzaleaBot {
             last_position: last_position.clone(),
             mining_below: Arc::new(Mutex::new(false)),
             mining_above: Arc::new(Mutex::new(false)),
+            mining_above_start_y: Arc::new(Mutex::new(None)),
+            mining_above_direction: Arc::new(Mutex::new(0)),
+            mine_above_tried_tp: Arc::new(Mutex::new(false)),
             action_mgr: ActionManager::new(),
             memory: memory,
             scanned: Arc::new(Mutex::new(HashMap::new())),
+            goto_watchdog: Arc::new(Mutex::new((0, 0, 0, 0))),
+            goto_cooldown: Arc::new(Mutex::new(HashMap::new())),
+            no_move_ticks: Arc::new(Mutex::new(0)),
+            last_seen_pos: Arc::new(Mutex::new((0, 0, 0))),
+            make_obsidian: Arc::new(Mutex::new(None)),
         };
 
         let addr = address.to_string();
@@ -651,6 +708,33 @@ impl AzaleaBot {
             Event::Tick => {
                 if let Ok(p) = bot.position() {
                     *lp.lock().unwrap() = Some(p);
+                    // P67：全局"原地冻死"看门狗。每 tick 比对上次记录位置，
+                    // 若净移动 <1 格则累加 no_move_ticks，否则清零。
+                    // 累计达 400 tick(20s) 且循环仍活跃（有 pending 或队列非空）→
+                    // 向 LLM 推强警告，逼其换策略（覆盖 goto 之外的所有卡死：空转脚本/无效 interact 等）。
+                    {
+                        let cur = (p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
+                        let mut last = state.last_seen_pos.lock().unwrap();
+                        let moved = (cur.0 - last.0).abs() > 1
+                            || (cur.1 - last.1).abs() > 1
+                            || (cur.2 - last.2).abs() > 1;
+                        if moved {
+                            *last = cur;
+                            *state.no_move_ticks.lock().unwrap() = 0;
+                        } else {
+                            *state.no_move_ticks.lock().unwrap() += 1;
+                        }
+                        let nmt = *state.no_move_ticks.lock().unwrap();
+                        if nmt == 400 {
+                            let queue_len = state.cmd_queue.lock().unwrap().len();
+                            let pending = state.action_mgr.is_idle();
+                            if queue_len > 0 || !pending {
+                                let _ = evt_tx.send(BotEvent::Chat {
+                                    content: "【原地冻死警告】你已连续 20 秒几乎没移动，但仍在发指令——这说明卡在某个无效动作（如空转脚本、对空气 interact、反复同动作）。请立即换策略：(1) 若目标是挖矿，用 mine_below/mine_above 真正向下/向上挖；(2) 若被挡，用 mine 挖开阻挡方块；(3) 不要重复调用同一个无效工具。先 perceive 看真实状态。".to_string(),
+                                });
+                            }
+                        }
+                    }
                 }
                 // 串行消费命令队列：每 tick 最多推进「一条」命令，等它完成才取下一条。
                 // ActionManager 管理单槽 pending + 按命令类型超时 + 抢占 + 快循环检测。
@@ -703,7 +787,16 @@ impl AzaleaBot {
                                 }
                             }
                             BotCommand::MineBelow => false,
-                            BotCommand::MineAbove => false,
+                            BotCommand::MakeObsidian { .. } => false,
+                            BotCommand::MineAbove => {
+                                let start_y = *state.mining_above_start_y.lock().unwrap();
+                                bot.position()
+                                    .ok()
+                                    .zip(start_y)
+                                    .is_some_and(|(position, start)| {
+                                        position.y.floor() as i32 > start
+                                    })
+                            }
                             // 非轮询命令（Equip/Craft/Gather/Place/...）由下方执行块处理，
                             // 这里不能标记 done=true——否则会在执行前就清空 pending，
                             // 导致 do_equip/do_craft 等从未运行（bug 表现：equip 返回"命令完成"但主手没变）。
@@ -712,7 +805,47 @@ impl AzaleaBot {
                         // 按命令类型超时（取代原硬编码 60 tick）
                         let timed_out_cmd = state.action_mgr.check_timeout(tick_now);
                         let timed_out = timed_out_cmd.is_some();
-                        if done || timed_out {
+                        // P65：goto 伪到达看门狗。当 goto 目标其实是脚下实心方块，
+                        // bot 原地判"到达"(distance<1.5) 却从未真正移动 → 反复重发相同 goto 死循环。
+                        // 检测：同一目标"done"了 2 次但 bot 实际位置(从 last_position)未变 → 强制 mine_above 脱困。
+                        let mut unstick_now = false;
+                        if done && matches!(&qc.cmd, BotCommand::Goto { .. }) {
+                            if let BotCommand::Goto { x, y, z } = &qc.cmd {
+                                let mut wd = state.goto_watchdog.lock().unwrap();
+                                let moved = state.last_position.lock().unwrap().map_or(true, |lp| {
+                                    (lp.x - *x as f64).abs() > 1.0
+                                        || (lp.y - *y as f64).abs() > 1.0
+                                        || (lp.z - *z as f64).abs() > 1.0
+                                });
+                                if !moved && *x == wd.0 && *y == wd.1 && *z == wd.2 {
+                                    wd.3 += 1;
+                                } else {
+                                    *wd = (*x, *y, *z, 0);
+                                }
+                                if wd.3 >= 2 {
+                                    *wd = (0, 0, 0, 0);
+                                    // 地下 → 自动转 mine_above；地表 → 也强制上挖一层绕开实心目标
+                                    if bot.position().map_or(true, |p| (p.y.floor() as i32) < 62) {
+                                        *state.mining_above.lock().unwrap() = true;
+                                        *state.mining_above_start_y.lock().unwrap() =
+                                            Some(bot.position().map_or(0, |p| p.y.floor() as i32));
+                                        *state.mining_above_direction.lock().unwrap() = 0;
+                                        *state.mine_above_tried_tp.lock().unwrap() = false;
+                                        bot.force_stop_pathfinding();
+                                        if let Some(tx) = &qc.result_tx {
+                                            let _ = tx.send(
+                                                "Action output:\ngoto 反复'到达'但 bot 未移动（目标可能是脚下实心方块）。已自动转 mine_above 向上挖出脱困。".to_string(),
+                                            );
+                                        }
+                                        state.action_mgr.clear_pending();
+                                        unstick_now = true;
+                                    }
+                                }
+                            }
+                        }
+                        if unstick_now {
+                            // 已自行处理：强制脱困并清空 pending，跳过下方 result_msg 生成。
+                        } else if done || timed_out {
                             // 统一用 Mindcraft 风格 "Action output:\n..." 让 LLM 看到一致的反馈。
                             let result_msg = match &qc.cmd {
                                 BotCommand::Goto { x, y, z } if done => {
@@ -731,10 +864,85 @@ impl AzaleaBot {
                                     )
                                 }
                                 BotCommand::Goto { x, y, z } => {
-                                    format!(
-                                        "Action output:\ngoto ({},{},{}) 超时——路径被阻或目标不可达。可能在地下：先用 perceive 确认位置，若 Y<62 说明在地下，需用 mine_above 挖回地表再用 goto。",
-                                        x, y, z
-                                    )
+                                    // P66 修复：bot 反复 goto 相邻空气块却都 empty path 超时——
+                                    // 无论目标坐标怎么变（LLM 每次微调），本质都是"原地导航失败"。
+                                    // 改用"净移动"判定：连续 goto 超时且 bot 净移动 <1.5 格即累计 stall，
+                                    // 达 3 次强制脱困 + 冷却当前格子，彻底打破 goto 洪泛（pi-agent 自主止损）。
+                                    let mut wd = state.goto_watchdog.lock().unwrap();
+                                    let (lx, ly, lz, stall) = *wd;
+                                    let cur = bot.position().ok().map(|p| (p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32));
+                                    let moved = cur.map_or(true, |(cx, cy, cz)| {
+                                        ((cx - lx).abs() as f64 > 1.5)
+                                            || ((cy - ly).abs() as f64 > 1.5)
+                                            || ((cz - lz).abs() as f64 > 1.5)
+                                    });
+                                    if moved {
+                                        *wd = (cur.unwrap_or((0, 0, 0)).0, cur.unwrap_or((0, 0, 0)).1, cur.unwrap_or((0, 0, 0)).2, 0);
+                                    } else {
+                                        wd.3 += 1;
+                                    }
+                                    let stall_count = wd.3;
+                                    drop(wd);
+                                    if stall_count >= 3 {
+                                        // 重置并冷却当前格子 15s（300 tick）：期间任何 goto 直接拒绝。
+                                        *state.goto_watchdog.lock().unwrap() = (0, 0, 0, 0);
+                                        if let Some((cx, cy, cz)) = cur {
+                                            state
+                                                .goto_cooldown
+                                                .lock()
+                                                .unwrap()
+                                                .insert((cx, cy, cz), bot.ticks_connected() as u64 + 300);
+                                        }
+                                        // 脱困：地下→mine_above；地表→挖开目标阻挡方块（若 solid）或向上挖一层
+                                        if let Ok(p) = bot.position() {
+                                            if (p.y.floor() as i32) < 62 {
+                                                *state.mining_above.lock().unwrap() = true;
+                                                *state.mining_above_start_y.lock().unwrap() = Some(p.y.floor() as i32);
+                                                *state.mining_above_direction.lock().unwrap() = 0;
+                                                *state.mine_above_tried_tp.lock().unwrap() = false;
+                                            } else if let Ok(world) = bot.world() {
+                                                let world = world.read();
+                                                // 挖开目标方块（若非空气）和脚下/身旁可能阻挡的方块
+                                                for (bx, by, bz) in [(*x, *y, *z), (*x, *y - 1, *z), (*x, *y + 1, *z)] {
+                                                    if let Some(bs) = world.get_block_state(BlockPos::new(bx, by, bz)) {
+                                                        if !bs.is_air() {
+                                                            bot.start_mining(BlockPos::new(bx, by, bz));
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        bot.force_stop_pathfinding();
+                                        format!(
+                                            "Action output:\ngoto 已连续 {} 次超时且你几乎没移动——这是导航死循环！已强制停止并冷却当前位置 15s。\
+                                             请：1) perceive 看清四周，用 mine 挖开挡路的实心方块再走；\
+                                             2) 或 mine_above 上到地表开阔处再 goto；3) 不要重复 goto 旁边同一片区域。",
+                                            stall_count
+                                        )
+                                    } else if let Ok(p) = bot.position() {
+                                        if (p.y.floor() as i32) < 62 {
+                                            *state.mining_above.lock().unwrap() = true;
+                                            *state.mining_above_start_y.lock().unwrap() =
+                                                Some(p.y.floor() as i32);
+                                            *state.mining_above_direction.lock().unwrap() = 0;
+                                            *state.mine_above_tried_tp.lock().unwrap() = false;
+                                            bot.force_stop_pathfinding();
+                                            format!(
+                                                "Action output:\ngoto ({},{},{}) 超时——bot 在地下口袋里被挡住（Y={:.0}）。已自动转为 mine_above 向上挖出脱困，到地表后请用 goto 重试目标。",
+                                                x, y, z, p.y
+                                            )
+                                        } else {
+                                            format!(
+                                                "Action output:\ngoto ({},{},{}) 超时——路径被阻或目标不可达（地表）。perceive 确认位置后改用更近的中间点重试（已第 {} 次净不动，连 3 次将强制停止并挖开阻挡）。",
+                                                x, y, z, stall_count
+                                            )
+                                        }
+                                    } else {
+                                        format!(
+                                            "Action output:\ngoto ({},{},{}) 超时——路径被阻或目标不可达。",
+                                            x, y, z
+                                        )
+                                    }
                                 }
                                 BotCommand::Mine { x, y, z } if done => {
                                     let (cx, cy, cz) = bot
@@ -752,6 +960,23 @@ impl AzaleaBot {
                                         "Action output:\nmine ({},{},{}) 超时——可能方块太硬（需更高品质镐）或距离太远。建议 gather(item=..., count=...) 自动寻路挖掘。",
                                         x, y, z
                                     )
+                                }
+                                BotCommand::MineAbove if done => {
+                                    let y = bot
+                                        .position()
+                                        .ok()
+                                        .map(|position| position.y.floor() as i32)
+                                        .unwrap_or_default();
+                                    format!(
+                                        "Action output:\nMineAbove progressed to Y={y}. Call mine_above again to continue toward the surface."
+                                    )
+                                }
+                                BotCommand::MineAbove => {
+                                    *state.mining_above.lock().unwrap() = false;
+                                    *state.mining_above_start_y.lock().unwrap() = None;
+                                    bot.force_stop_pathfinding();
+                                    "Action output:\nmine_above failed: Y did not increase within 10 seconds. The ascent path is blocked; perceive and clear a horizontal staircase before retrying."
+                                        .to_string()
                                 }
                                 BotCommand::Gather { item, .. } => {
                                     // P3：gather 超时时，采集 future 仍在后台运行（无法取消），
@@ -780,6 +1005,9 @@ impl AzaleaBot {
                             };
                             if let Some(tx) = &qc.result_tx {
                                 let _ = tx.send(result_msg);
+                            }
+                            if matches!(&qc.cmd, BotCommand::MineAbove) {
+                                *state.mining_above_start_y.lock().unwrap() = None;
                             }
                             state.action_mgr.clear_pending();
                         }
@@ -816,11 +1044,34 @@ impl AzaleaBot {
                     match cmd {
                         BotCommand::Goto { x, y, z } => {
                             *state.mining_below.lock().unwrap() = false;
+                            // P66：冷却拦截。按 bot 当前格子检查冷却（而非目标坐标，
+                            // 因为 LLM 会微调目标逃避同一坐标冷却）。在冷却期内任何 goto 直接拒绝，
+                            // 强制 LLM/脚本换策略（挖开阻挡或上地表），打破 goto 洪泛。
+                            {
+                                if let Ok(p) = bot.position() {
+                                    let cell = (p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
+                                    let cd = state.goto_cooldown.lock().unwrap();
+                                    if let Some(&until) = cd.get(&cell) {
+                                        if until > bot.ticks_connected() as u64 {
+                                            if let Some(tx) = &result_tx {
+                                                let _ = tx.send(format!(
+                                                    "Action output:\ngoto ({},{},{}) 被拒绝——你当前位置仍在导航冷却中（之前连续 goto 超时且没移动）。\
+                                                     请改用 mine 挖开挡路方块，或 mine_above 上到地表开阔处，不要继续 goto 旁边区域。",
+                                                    x, y, z
+                                                ));
+                                            }
+                                            state.action_mgr.clear_pending();
+                                            return bot;
+                                        }
+                                    }
+                                }
+                            }
                             // 距离限制：>32 格的 goto 拒绝执行，让 LLM 拆成多段。
                             // 原因：azalea pathfinder 的 A* 在长距离/复杂地形上计算量大，
                             // 每 tick 发 MovePlayerPos+PlayerInput 包会拖死 vanilla 服 TPS，
                             // 导致同服真实玩家 WASD 输入丢失（服务器来不及处理）。
-                            if let Ok(p) = bot.position() {
+                            let p = bot.position().ok();
+                            if let Some(p) = p {
                                 let dist = ((p.x - x as f64).powi(2)
                                     + (p.y - y as f64).powi(2)
                                     + (p.z - z as f64).powi(2))
@@ -832,6 +1083,36 @@ impl AzaleaBot {
                                          请拆成多段：先 goto 中间点（距当前 16-24m），到达后再 goto 目标。",
                                         x, y, z, dist
                                     ));
+                                    }
+                                    state.action_mgr.clear_pending();
+                                    return bot;
+                                }
+                                // P65 修复：goto 目标是实心方块（脚下/身旁矿脉）时，bot 站旁边即被判
+                                // "到达"(distance<1.5) 却永远挖不进/进不去 → 反复 goto 同一坐标死循环。
+                                // 检测目标方块是否 solid：solid 则直接拒绝并（地下时）自动 mine_above 脱困。
+                                let target_solid = if let Ok(world) = bot.world() {
+                                    let world = world.read();
+                                    world
+                                        .get_block_state(BlockPos::new(x, y, z))
+                                        .map(|b| !b.is_air())
+                                        .unwrap_or(false)
+                                } else {
+                                    false
+                                };
+                                if target_solid {
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!(
+                                            "Action output:\ngoto ({},{},{}) 失败——目标方块是实心方块（不能站在里面）。请改用附近的空气方块坐标，或若在地下请用 mine_above 向上挖出脱困。",
+                                            x, y, z
+                                        ));
+                                    }
+                                    if (p.y as i32) < 62 {
+                                        *state.mining_above.lock().unwrap() = true;
+                                        *state.mining_above_start_y.lock().unwrap() =
+                                            Some(p.y.floor() as i32);
+                                        *state.mining_above_direction.lock().unwrap() = 0;
+                                        *state.mine_above_tried_tp.lock().unwrap() = false;
+                                        bot.force_stop_pathfinding();
                                     }
                                     state.action_mgr.clear_pending();
                                     return bot;
@@ -979,6 +1260,21 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             }
                             state.action_mgr.clear_pending();
                         }
+                        BotCommand::MakeObsidian { count } => {
+                            // P67：初始化造黑曜石状态机 (remaining, phase, obsidian_pos)。
+                            // 注意：tick handler 内严禁 await（会冻结整个事件循环导致 120s 超时）。
+                            // 装备 bucket / 装水 / 找岩浆全部在状态机内每 tick 同步推进，不做任何 .await。
+                            *state.make_obsidian.lock().unwrap() =
+                                Some((count.max(1), 0, None));
+                            // 立即回报"已开始"，让工具层不阻塞等待（真正的完成由状态机结束帧回报）。
+                            if let Some(tx) = &result_tx {
+                                let _ = tx.send(format!(
+                                    "已开始造黑曜石 x{}：状态机会自动装备水桶、找水源装水、再找岩浆造黑曜石。",
+                                    count
+                                ));
+                            }
+                            state.action_mgr.clear_pending();
+                        }
                         BotCommand::MineAbove => {
                             // P5 新增：向上挖脱困。从 bot 头顶逐格挖到空气或达到 64 格上限。
                             // 持续触发模式（同 MineBelow）：mining_above 标志位驱动后续 tick 重复发起。
@@ -993,13 +1289,49 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                     p.z.floor() as i32,
                                 )
                             });
-                            let head_is_hard = head_pos
+                            let head_state = head_pos
                                 .and_then(|pos| {
                                     let world = bot.world().ok()?;
                                     let world = world.read();
-                                    let state = world.get_block_state(pos)?;
-                                    Some(is_hard_block(state))
-                                })
+                                    world.get_block_state(pos)
+                                });
+                            let head_is_air = head_state.is_some_and(|block| block.is_air());
+                            // Surface pre-check: if already on surface (Y>=62 + air column),
+                            // return immediately instead of starting 10s timeout.
+                            if head_is_air {
+                                if let Ok(p) = bot.position() {
+                                    let y = p.y.floor() as i32;
+                                    if y >= 62 {
+                                        if let Ok(world) = bot.world() {
+                                            let cx = p.x.floor() as i32;
+                                            let cz = p.z.floor() as i32;
+                                            let world = world.read();
+                                            let mut five_air = true;
+                                            for dy in 1..=5 {
+                                                let check = BlockPos::new(cx, y + dy, cz);
+                                                let is_air = world.get_block_state(check)
+                                                    .map(|s| s.is_air())
+                                                    .unwrap_or(false);
+                                                if !is_air { five_air = false; break; }
+                                            }
+                                            drop(world);
+                                            if mine_above_reached_surface(y, true, five_air) {
+                                                if let Some(tx) = &result_tx {
+                                                    let _ = tx.send(format!(
+                                                        "Action output:\nMineAbove done at Y={y} (已到地表，头顶是空气)。当前坐标 ({:.0},{y},{:.0})，可继续探索。",
+                                                        p.x, p.z
+                                                    ));
+                                                }
+                                                *state.mining_above.lock().unwrap() = false;
+                                                state.action_mgr.clear_pending();
+                                                return bot;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            let head_is_hard = head_state
+                                .map(is_hard_block)
                                 .unwrap_or(true); // 不确定时按硬方块处理
                             if head_is_hard {
                                 let has_pick = has_any_pickaxe_in_inventory(&bot).await;
@@ -1019,20 +1351,22 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                     return bot;
                                 }
                             }
+                            let was_active = *state.mining_above.lock().unwrap();
                             *state.mining_above.lock().unwrap() = true;
+                            if !was_active
+                                && let Ok(position) = bot.position()
+                            {
+                                *state.mining_above_start_y.lock().unwrap() =
+                                    Some(position.y.floor() as i32);
+                                *state.mining_above_direction.lock().unwrap() = 0;
+                            }
                             let _ = auto_equip_best_pickaxe(&bot).await;
-                            if let Some(pos) = head_pos {
+                            if !head_is_air
+                                && let Some(pos) = head_pos
+                                && !bot.is_mining()
+                            {
                                 bot.start_mining(pos);
                             }
-                            if let Some(tx) = &result_tx {
-                                let note = if head_is_hard {
-                                    ""
-                                } else {
-                                    "（软方块，徒手可挖）"
-                                };
-                                let _ = tx.send(format!("已开始向上挖掘{note}"));
-                            }
-                            state.action_mgr.clear_pending();
                         }
                         BotCommand::BlockInteract { x, y, z } => {
                             *state.mining_below.lock().unwrap() = false;
@@ -1047,26 +1381,48 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                 let _ = tx.send(format!("Action output:\nSent chat: {content}"));
                             }
                         }
-                        BotCommand::Attack { target: _target } => {
+                        BotCommand::Attack { target } => {
                             if let Ok(entities) =
                             bot.nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>()
                         {
                             let self_id = bot.entity().id();
+                            let requested = normalize_entity_target(&target);
                             // 记录攻击前的生命，便于反馈损血
                             let health_before = bot.health().unwrap_or(20.0);
                             let mut hit_kind: Option<String> = None;
+                            let mut nearest_match: Option<(i32, i32, i32, f64)> = None;
                             for e in entities.iter() {
                                 if e.id() == self_id { continue; }
-                                let kind = e.kind().map(|k| {
-                                    // P5 修复：用 to_str() 拿到 snake_case id（如 "zombie"），
-                                    // 原 format!("{k:?}").to_lowercase() 得到 "zombie"（巧合一致），
-                                    // 但对 "Allay".to_lowercase() = "allay" 仍正确，
-                                    // 对 "Mooshroom".to_lowercase() = "mooshroom" 也对——
-                                    // 但对 "ItemFrame".to_lowercase() = "itemframe"（无下划线）错误。
-                                    // 统一用 to_str() 保证 snake_case。
-                                    let s = k.to_str();
-                                    s.strip_prefix("minecraft:").unwrap_or(s).to_string()
-                                }).unwrap_or_else(|_| "entity".to_string());
+                                let Ok(kind) = e.kind() else { continue; };
+                                let kind = entity_kind_name(kind);
+                                if requested != "nearest" && requested != "chat" && kind != requested {
+                                    continue;
+                                }
+                                if matches!(kind.as_str(), "item" | "experience_orb" | "item_frame" | "glow_item_frame") {
+                                    continue;
+                                }
+                                let Ok(distance) = e.distance_to_client() else { continue; };
+                                if nearest_match.is_none()
+                                    && let Ok(position) = e.position()
+                                {
+                                    nearest_match = Some((
+                                        position.x.floor() as i32,
+                                        position.y.floor() as i32,
+                                        position.z.floor() as i32,
+                                        distance,
+                                    ));
+                                }
+                                if distance > 4.5 {
+                                    continue;
+                                }
+                                let indexed = bot
+                                    .query_self::<&azalea::entity::indexing::EntityIdIndex, _>(|index| {
+                                        index.contains_ecs_entity(e.id())
+                                    })
+                                    .unwrap_or(false);
+                                if !indexed {
+                                    continue;
+                                }
                                 e.attack();
                                 hit_kind = Some(kind);
                                 break;
@@ -1081,7 +1437,14 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                         format!("Action output:\nAttacked {k}. Health: {health_after:.0}/20.")
                                     }
                                 }
-                                None => "Action output:\nCould not find any non-player entity nearby to attack.".to_string(),
+                                None => match nearest_match {
+                                    Some((x, y, z, distance)) => format!(
+                                        "Action output:\nCould not attack {requested}: nearest match is {distance:.1} blocks away at ({x},{y},{z}). Use goto(x={x}, y={y}, z={z}) to approach only if safe, then attack again."
+                                    ),
+                                    None => format!(
+                                        "Action output:\nCould not find a valid {requested}. Use perceive to choose another action or flee if unsafe."
+                                    ),
+                                },
                             };
                             if let Some(tx) = &result_tx { let _ = tx.send(msg.clone()); }
                             let _ = evt_tx.send(BotEvent::Chat { content: msg });
@@ -1596,72 +1959,430 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                 // **大 timeout**：挖通深板岩需要计算长路径，默认 5s 不够，改为 30s。
                 if *state.mining_above.lock().unwrap() {
                     if let Ok(p) = bot.position() {
+                        let t = bot.ticks_connected();
                         let y = p.y.floor() as i32;
                         let cx = p.x.floor() as i32;
                         let cz = p.z.floor() as i32;
-                        // P8 修复：用「头顶是空气 + 足够高」判断是否到地表，而非固定 Y≥62。
-                        // 原代码 Y≥62 就停止，但在洞穴中 bot 可能 Y=62 仍在地下（地表 Y=70+）。
-                        // 在洞穴中必须继续向上挖到 Y≥70 才能保证到地表。
-                        let head_pos = BlockPos::new(cx, y + 1, cz);
-                        let head_is_air = bot
-                            .world()
-                            .ok()
-                            .and_then(|w| w.read().get_block_state(head_pos))
-                            .map(|s| s.is_air())
-                            .unwrap_or(false);
-                        // 检查上方 5 格是否都是空气（确认是开放空间而非洞穴小气室）
-                        let mut five_air = true;
-                        for dy in 1..=5 {
-                            let check = BlockPos::new(cx, y + dy, cz);
-                            let is_air = bot
+                        // Throttle surface detection to every 5 ticks to reduce per-tick
+                        // world reads (6 block reads per check) and avoid GameTick lag.
+                        if t % 5 == 0 {
+                            // Air alone only proves that the bot entered a cave. Require a
+                            // plausible overworld surface elevation before ending ascent.
+                            let head_pos = BlockPos::new(cx, y + 1, cz);
+                            let head_is_air = bot
                                 .world()
                                 .ok()
-                                .and_then(|w| w.read().get_block_state(check))
+                                .and_then(|w| w.read().get_block_state(head_pos))
                                 .map(|s| s.is_air())
                                 .unwrap_or(false);
-                            if !is_air {
-                                five_air = false;
-                                break;
+                            // Check an open column so a two-block tunnel at sea level does
+                            // not get reported as the surface.
+                            let mut five_air = true;
+                            for dy in 1..=5 {
+                                let check = BlockPos::new(cx, y + dy, cz);
+                                let is_air = bot
+                                    .world()
+                                    .ok()
+                                    .and_then(|w| w.read().get_block_state(check))
+                                    .map(|s| s.is_air())
+                                    .unwrap_or(false);
+                                if !is_air {
+                                    five_air = false;
+                                    break;
+                                }
                             }
-                        }
-                        // 到达地表条件：头顶是空气 AND (Y≥70 OR 上方5格都是空气)
-                        if head_is_air && (y >= 70 || five_air) {
-                            *state.mining_above.lock().unwrap() = false;
-                            let _ = state.evt_tx.send(BotEvent::Chat {
-                            content: format!(
-                                "Action output:\nMineAbove done at Y={y} (已到地表，头顶是空气)。\
-                                 当前坐标 ({:.0},{y},{:.0})，可继续探索。",
-                                p.x, p.z
-                            ),
-                        });
-                        } else if y >= 320 {
-                            *state.mining_above.lock().unwrap() = false;
-                            let _ = state.evt_tx.send(BotEvent::Chat {
+                            if mine_above_reached_surface(y, head_is_air, five_air) {
+                                *state.mining_above.lock().unwrap() = false;
+                                let _ = state.evt_tx.send(BotEvent::Chat {
                                 content: format!(
-                                    "Action output:\nMineAbove stopped at Y={y} (建筑高度上限)。\
-                                 当前坐标 ({:.0},{y},{:.0})。",
+                                    "Action output:\nMineAbove done at Y={y} (已到地表，头顶是空气)。\
+                                     当前坐标 ({:.0},{y},{:.0})，可继续探索。",
                                     p.x, p.z
                                 ),
                             });
-                        } else {
-                            // 让 pathfinder 自动挖通并 ascend
-                            // YGoal(y+5)：目标到达 y+5 高度（任意 x/z），给 pathfinder 水平自由度
-                            // pathfinder allow_mining=true 会挖通 head + head+1 + 旁边方块让 bot ascend
-                            let target_y = y + 5;
-                            // 装备镐（如果有的话）加速挖掘
+                            } else if y >= 320 {
+                                *state.mining_above.lock().unwrap() = false;
+                                let _ = state.evt_tx.send(BotEvent::Chat {
+                                    content: format!(
+                                        "Action output:\nMineAbove stopped at Y={y} (建筑高度上限)。\
+                                     当前坐标 ({:.0},{y},{:.0})。",
+                                        p.x, p.z
+                                    ),
+                                });
+                            } else {
+                                // Auto-tp rescue: when stuck in a cave air pocket below
+                                // surface, try /tp once to unblock the workflow. If cheats
+                                // are not enabled the staircase attempt below still runs.
+                                if head_is_air
+                                    && y < 62
+                                    && !*state.mine_above_tried_tp.lock().unwrap()
+                                {
+                                    *state.mine_above_tried_tp.lock().unwrap() = true;
+                                    bot.chat(&format!("/tp @s ~ {} ~", 70));
+                                }
+                            }
+                        }
+                        // auto_equip is expensive (inventory scan), throttle to every 20 ticks.
+                        if t % 20 == 0 {
                             let _ = auto_equip_best_pickaxe(&bot).await;
-                            // 只在 pathfinder 空闲时启动新 goto，用大 timeout 让 pathfinder 有时间计算
-                            if bot.is_goto_target_reached() && !bot.is_calculating_path() {
+                        }
+                        // P60b: 强制楼梯脱困。当 bot 在 2 格高空气袋里（头顶是空气），
+                        // pathfinder 用 YGoal 算出的路径"reached"却不会真正上升（因为
+                        // 上方 y+2 是实心方块，bot 无法踏入）。这里每 4 tick 主动挖掉
+                        // 头顶上方那格 (y+2)，打开竖井，让 bot 能站到 y+1；
+                        // 同时发起一个 goto 到自身上方一格，触发真正的上升。
+                        let p60b_head_air = bot
+                            .world()
+                            .ok()
+                            .and_then(|w| w.read().get_block_state(BlockPos::new(cx, y + 1, cz)))
+                            .map(|s| s.is_air())
+                            .unwrap_or(false);
+                        if p60b_head_air {
+                            let above_head =
+                                BlockPos::new(cx, y + 2, cz);
+                            let above_is_solid = bot
+                                .world()
+                                .ok()
+                                .and_then(|w| w.read().get_block_state(above_head))
+                                .map(|s| !s.is_air())
+                                .unwrap_or(false);
+                            if above_is_solid && !bot.is_mining() {
+                                bot.start_mining(above_head);
+                            } else if !above_is_solid && t % 4 == 0 {
+                                // 头顶上方已空：强制走到上方一格，真正上升。
+                                if !bot.is_calculating_path()
+                                    && !bot.is_executing_path()
+                                {
+                                    use azalea::pathfinder::PathfinderOpts;
+                                    use std::time::Duration;
+                                    let opts = PathfinderOpts::new()
+                                        .allow_mining(true)
+                                        .min_timeout(Duration::from_secs(1))
+                                        .max_timeout(Duration::from_secs(10));
+                                    bot.start_goto_with_opts(
+                                        BlockPosGoal(BlockPos::new(cx, y + 1, cz)),
+                                        opts,
+                                    );
+                                }
+                            }
+                        }
+                        // An active goal with no calculation or execution can be
+                        // permanent no-path retry. Reset it periodically instead of
+                        // letting it suppress every future ascent attempt.
+                        if !bot.is_calculating_path()
+                            && !bot.is_executing_path()
+                            && t % 40 == 0
+                        {
+                            use azalea::pathfinder::PathfinderOpts;
+                            use std::time::Duration;
+                            bot.force_stop_pathfinding();
+                            let mut direction = state.mining_above_direction.lock().unwrap();
+                            let directions = [(1, 0), (0, 1), (-1, 0), (0, -1)];
+                            let (dx, dz) = directions[*direction % directions.len()];
+                            *direction = (*direction + 1) % 4;
+                            drop(direction);
+                            // P60 关键修复：1x1 竖井里用 YGoal(y+5) 而不是 BlockPosGoal。
+                            // BlockPosGoal 指向特定侧方方块，pathfinder 在 1x1 竖井里
+                            // 算不出通往该固定坐标的路径（每根柱子都只有 1 格宽），
+                            // 导致"reached end of path"却原地不动、永久卡死。
+                            // YGoal 只要求到达 y+5 任意水平位置，pathfinder 可自由选择
+                            // 最容易挖通的柱子上升，从而真正脱困。
+                            let target = BlockPos::new(cx + dx, y + 5, cz + dz);
+                            let opts = PathfinderOpts::new()
+                                .allow_mining(true)
+                                .min_timeout(Duration::from_secs(2))
+                                .max_timeout(Duration::from_secs(30));
+                            bot.start_goto_with_opts(YGoal::from(target), opts);
+                        }
+                    }
+                }
+                // P67：make_obsidian 状态机。每 tick 推进：
+                //  phase 0：找附近（半径12）岩浆源；装备 water_bucket+diamond_pickaxe；
+                //          在岩浆旁的空气块右键放水（block_interact 手持 water_bucket）→ 生成黑曜石。
+                //  phase 1：等 ~4s（黑曜石生成）。
+                //  phase 2：用 diamond_pickaxe 挖下黑曜石；remaining-1；回 phase 0。
+                //  完成 remaining==0 或找不到岩浆/没水 → 结束并发结果。
+                if let Some((remaining, phase, ob_pos)) =
+                    *state.make_obsidian.lock().unwrap()
+                {
+                    let t = bot.ticks_connected();
+                    match phase {
+                        0 => {
+                            // P67c 同步装备水桶：tick handler 内严禁 await，这里用
+                            // set_selected_hotbar_slot 同步把 bucket 切到主手（不等待服务端轮询）。
+                            // 若 bucket 不在 hotbar，则同步 shift_click 到空 hotbar 槽。
+                            if bot
+                                .get_held_item()
+                                .map(|s| {
+                                    let k: azalea_registry::builtin::ItemKind = s.kind();
+                                    k != azalea_registry::builtin::ItemKind::Bucket
+                                        && k != azalea_registry::builtin::ItemKind::WaterBucket
+                                })
+                                .unwrap_or(true)
+                            {
+                                if let Ok(inv) = bot.get_inventory() {
+                                    if let Some(h) = find_hotbar_slot_for(
+                                        &inv,
+                                        azalea_registry::builtin::ItemKind::Bucket,
+                                    ) {
+                                        bot.set_selected_hotbar_slot(h);
+                                    } else if let Some(srcs) =
+                                        Some(find_item_slots(&inv, azalea_registry::builtin::ItemKind::Bucket))
+                                        && !srcs.is_empty()
+                                    {
+                                        let menu = inv.menu().ok().flatten();
+                                        if let Some(menu) = menu {
+                                            let hotbar_range = menu.hotbar_slots_range();
+                                            if let Some(slots) = inv.slots() {
+                                                let mut placed = false;
+                                                for hb in hotbar_range {
+                                                    if slots.get(hb).map(|s| s.is_empty()).unwrap_or(false)
+                                                    {
+                                                        inv.left_click(*srcs.first().unwrap());
+                                                        inv.left_click(hb);
+                                                        placed = true;
+                                                        break;
+                                                    }
+                                                }
+                                                let _ = placed;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            // 检查手持 water_bucket；没有则自动找水源装水（已装备 bucket）。
+                            let held = bot
+                                .get_held_item()
+                                .map(|s| s.kind().to_string())
+                                .unwrap_or_default();
+                            if !held.contains("water_bucket") {
+                                // 自动装水：扫描半径 16 内水源，对水块 block_interact（持 bucket 右键水→装水）
+                                if let (Ok(p), Ok(world)) = (bot.position(), bot.world()) {
+                                    let wp = p.x.floor() as i32;
+                                    let wy = p.y.floor() as i32;
+                                    let wz = p.z.floor() as i32;
+                                    let world = world.read();
+                                    let mut water: Option<(i32, i32, i32)> = None;
+                                    'wscan: for r in 1..=16i32 {
+                                        for dx in -r..=r {
+                                            for dy in -3..=4i32 {
+                                                for dz in -r..=r {
+                                                    let wx = wp + dx;
+                                                    let wy2 = wy + dy;
+                                                    let wz2 = wz + dz;
+                                                    if let Some(bs) = world
+                                                        .get_block_state(BlockPos::new(wx, wy2, wz2))
+                                                    {
+                                                        let kind: azalea_registry::builtin::BlockKind =
+                                                            bs.into();
+                                                        if kind
+                                                            == azalea_registry::builtin::BlockKind::Water
+                                                        {
+                                                            water = Some((wx, wy2, wz2));
+                                                            break 'wscan;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                    drop(world);
+                                    match water {
+                                        Some((wx, wy2, wz2)) => {
+                                            bot.block_interact(BlockPos::new(wx, wy2, wz2));
+                                            // 装水后下一 tick 再检查手持，进入岩浆逻辑
+                                            *state.make_obsidian.lock().unwrap() =
+                                                Some((remaining, 0, None));
+                                        }
+                                        None => {
+                                            let _ = state.evt_tx.send(BotEvent::Chat {
+                                                content: "Action output:\nmake_obsidian 失败：附近（半径16）未找到水源。请先 goto 到河流/湖泊附近再调用。".to_string(),
+                                            });
+                                            *state.make_obsidian.lock().unwrap() = None;
+                                        }
+                                    }
+                                } else {
+                                    *state.make_obsidian.lock().unwrap() = None;
+                                }
+                            } else if let (Ok(p), Ok(world)) = (bot.position(), bot.world()) {
+                                let wp = p.x.floor() as i32;
+                                let wy = p.y.floor() as i32;
+                                let wz = p.z.floor() as i32;
+                                let world = world.read();
+                                // 扫描半径 12 内岩浆方块（Lava）；视作岩浆源处理。
+                                let mut found: Option<(i32, i32, i32)> = None;
+                                'scan: for r in 1..=12i32 {
+                                    for dx in -r..=r {
+                                        for dy in -2..=4i32 {
+                                            for dz in -r..=r {
+                                                let lx = wp + dx;
+                                                let ly = wy + dy;
+                                                let lz = wz + dz;
+                                                if let Some(bs) =
+                                                    world.get_block_state(BlockPos::new(lx, ly, lz))
+                                                {
+                                                    let kind: azalea_registry::builtin::BlockKind =
+                                                        bs.into();
+                                                    if kind
+                                                        == azalea_registry::builtin::BlockKind::Lava
+                                                    {
+                                                        // 找岩浆旁的空气邻居放水
+                                                        for (nx, ny, nz) in [
+                                                            (lx + 1, ly, lz),
+                                                            (lx - 1, ly, lz),
+                                                            (lx, ly, lz + 1),
+                                                            (lx, ly, lz - 1),
+                                                            (lx, ly + 1, lz),
+                                                        ] {
+                                                            if let Some(nb) = world
+                                                                .get_block_state(BlockPos::new(
+                                                                    nx, ny, nz,
+                                                                ))
+                                                            {
+                                                                if nb.is_air() {
+                                                                    found = Some((nx, ny, nz));
+                                                                    break 'scan;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                drop(world);
+                                match found {
+                                    Some((nx, ny, nz)) => {
+                                        // 右键该空气块放水→黑曜石（需手持 water_bucket，由 LLM 保证）
+                                        bot.block_interact(BlockPos::new(nx, ny, nz));
+                                        *state.make_obsidian.lock().unwrap() =
+                                            Some((remaining, 1, Some((nx, ny, nz))));
+                                    }
+                                    None => {
+                                        let _ = state.evt_tx.send(BotEvent::Chat {
+                                            content: "Action output:\nmake_obsidian 失败：附近（半径12）未找到岩浆源。请先 goto 到岩浆湖附近再调用。".to_string(),
+                                        });
+                                        *state.make_obsidian.lock().unwrap() = None;
+                                    }
+                                }
+                            }
+                        }
+                        1 => {
+                            // 等 ~80 tick(4s) 让水与岩浆反应生成黑曜石。
+                            // 用 ob_pos 记录起始 tick 比较麻烦，这里简单用 ticks%80==0 推进到挖阶段。
+                            if t % 80 == 0 || ob_pos.is_none() {
+                                if let Some((_nx, _ny, _nz)) = ob_pos {
+                                    *state.make_obsidian.lock().unwrap() =
+                                        Some((remaining, 2, ob_pos));
+                                } else {
+                                    *state.make_obsidian.lock().unwrap() =
+                                        Some((remaining, 0, None));
+                                }
+                            }
+                        }
+                        2 => {
+                            if let Some((nx, ny, nz)) = ob_pos {
+                                // 黑曜石生成在岩浆源处（邻居的反方向）。尝试挖 (nx, ny-1, nz) 及 ob_pos 自身。
+                                let targets = [(nx, ny - 1, nz), (nx, ny, nz)];
+                                let mut mined = false;
+                                if let Ok(world) = bot.world() {
+                                    let world = world.read();
+                                    for (tx, ty, tz) in targets {
+                                        if let Some(bs) =
+                                            world.get_block_state(BlockPos::new(tx, ty, tz))
+                                        {
+                                            let kind: azalea_registry::builtin::BlockKind = bs.into();
+                                            if kind
+                                                == azalea_registry::builtin::BlockKind::Obsidian
+                                            {
+                                                bot.start_mining(BlockPos::new(tx, ty, tz));
+                                                mined = true;
+                                                break;
+                                            }
+                                        }
+                                    }
+                                }
+                                if mined {
+                                    let _ = state.evt_tx.send(BotEvent::Chat {
+                                        content: format!(
+                                            "[造黑曜石] 已挖下 1 块黑曜石，剩余 {}",
+                                            remaining.saturating_sub(1)
+                                        ),
+                                    });
+                                    let left = remaining.saturating_sub(1);
+                                    if left == 0 {
+                                        let _ = state.evt_tx.send(BotEvent::Chat {
+                                            content: "Action output:\nmake_obsidian 完成：已收集所需黑曜石。可用于搭建下界传送门框架。".to_string(),
+                                        });
+                                        *state.make_obsidian.lock().unwrap() = None;
+                                    } else {
+                                        *state.make_obsidian.lock().unwrap() =
+                                            Some((left, 0, None));
+                                    }
+                                } else {
+                                    // 没生成黑曜石（可能水没流到岩浆），重试
+                                    *state.make_obsidian.lock().unwrap() =
+                                        Some((remaining, 0, None));
+                                }
+                            } else {
+                                *state.make_obsidian.lock().unwrap() = Some((remaining, 0, None));
+                            }
+                        }
+                        _ => {
+                            *state.make_obsidian.lock().unwrap() = None;
+                        }
+                    }
+                }
+                // P60c: 地下强制楼梯脱困（无条件运行，不依赖 LLM 是否调用 mine_above）。
+                // 当 bot 在地下 (Y<62) 且头顶是空气（处于 2 格高空气袋），持续挖掉头顶上方
+                // 那格并走到上方一格，保证 bot 真正上升——即使 LLM 反复下发无效的地下
+                // goto/mine，bot 也能稳定爬出竖井，避免永久困死在 Y=12。
+                if let Ok(p) = bot.position() {
+                    let y = p.y.floor() as i32;
+                    if y < 62 {
+                        let cx = p.x.floor() as i32;
+                        let cz = p.z.floor() as i32;
+                        let head_air = bot
+                            .world()
+                            .ok()
+                            .and_then(|w| w.read().get_block_state(BlockPos::new(cx, y + 1, cz)))
+                            .map(|s| s.is_air())
+                            .unwrap_or(false);
+                        if head_air && !bot.is_executing_path() && !bot.is_calculating_path() {
+                            let above_head = BlockPos::new(cx, y + 2, cz);
+                            let above_is_solid = bot
+                                .world()
+                                .ok()
+                                .and_then(|w| w.read().get_block_state(above_head))
+                                .map(|s| !s.is_air())
+                                .unwrap_or(false);
+                            if above_is_solid && !bot.is_mining() {
+                                bot.start_mining(above_head);
+                            } else if !above_is_solid {
+                                // 头顶上方已空：直接走上去一格，真正上升。
                                 use azalea::pathfinder::PathfinderOpts;
-                                use azalea::pathfinder::goals::YGoal;
                                 use std::time::Duration;
                                 let opts = PathfinderOpts::new()
                                     .allow_mining(true)
-                                    .min_timeout(Duration::from_secs(2))
-                                    .max_timeout(Duration::from_secs(30));
-                                bot.start_goto_with_opts(YGoal { y: target_y }, opts);
-                                let _ = (cx, cz); // 调试用坐标
+                                    .min_timeout(Duration::from_secs(1))
+                                    .max_timeout(Duration::from_secs(10));
+                                bot.start_goto_with_opts(
+                                    BlockPosGoal(BlockPos::new(cx, y + 1, cz)),
+                                    opts,
+                                );
                             }
+                        }
+                        // 看门狗：完全卡死（头顶是实心、无法 ascent）时退回 mining_above 模式。
+                        if !head_air
+                            && !*state.mining_above.lock().unwrap()
+                            && !bot.is_mining()
+                            && bot.ticks_connected() % 20 == 0
+                        {
+                            *state.mining_above.lock().unwrap() = true;
+                            *state.mining_above_start_y.lock().unwrap() = Some(y);
+                            *state.mining_above_direction.lock().unwrap() = 0;
+                            *state.mine_above_tried_tp.lock().unwrap() = false;
                         }
                     }
                 }
@@ -2125,7 +2846,12 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                 };
                                 if !in_range { continue; }
                                 // 攻击前检查实体是否存活（get_component 失败说明已消失）
-                                if e.get_component::<azalea::entity::EntityKindComponent>().is_some() {
+                                let indexed = bot
+                                    .query_self::<&azalea::entity::indexing::EntityIdIndex, _>(|index| {
+                                        index.contains_ecs_entity(e.id())
+                                    })
+                                    .unwrap_or(false);
+                                if indexed && e.get_component::<azalea::entity::EntityKindComponent>().is_some() {
                                     e.attack();
                                     attacked = true;
                                     let _ = evt_tx.send(BotEvent::Chat {
@@ -2281,6 +3007,22 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
             }
             Err(e) => Err(anyhow::anyhow!("命令结果通道错误: {}", e)),
         }
+    }
+}
+
+#[cfg(test)]
+mod entity_target_tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_namespaced_entity_target() {
+        assert_eq!(normalize_entity_target(" minecraft:COW "), "cow");
+        assert_eq!(normalize_entity_target(" COW "), "cow");
+    }
+
+    #[test]
+    fn entity_kind_name_uses_registry_snake_case() {
+        assert_eq!(entity_kind_name(EntityKind::CaveSpider), "cave_spider");
     }
 }
 
@@ -2586,6 +3328,10 @@ pub(crate) fn is_hard_block(state: azalea::block::BlockState) -> bool {
             | B::SmoothStoneSlab
             | B::StoneSlab
     )
+}
+
+fn mine_above_reached_surface(y: i32, head_is_air: bool, five_air: bool) -> bool {
+    y >= 62 && head_is_air && five_air
 }
 
 /// 返回镐的品质等级（用于判断能否挖某种方块）。
@@ -3340,6 +4086,13 @@ mod tests {
         assert_eq!(pickaxe_tier(IK::WoodenAxe), 0);
         assert_eq!(pickaxe_tier(IK::Stick), 0);
         assert_eq!(pickaxe_tier(IK::Air), 0);
+    }
+
+    #[test]
+    fn mine_above_does_not_treat_deep_cave_as_surface() {
+        assert!(!mine_above_reached_surface(-16, true, true));
+        assert!(!mine_above_reached_surface(62, true, false));
+        assert!(mine_above_reached_surface(62, true, true));
     }
 
     /// 验证 block_required_pickaxe_tier 返回正确的需求等级。

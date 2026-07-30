@@ -372,6 +372,7 @@ impl MinecraftAzaleaAdapter {
 /// 成功消息（"Successfully" / "Placed" / "Opened" / "已装备" / "已开始" 等）不含这些词。
 fn is_failure_detail(msg: &str) -> bool {
     msg.contains("Failed to ")
+        || msg.contains("Could not ")
         || msg.contains(" failed: ")
         || msg.contains("Pickup failed")
         || msg.contains("失败")
@@ -391,6 +392,18 @@ fn is_failure_detail(msg: &str) -> bool {
         || msg.contains("not found")
         || msg.contains("not have")
         || msg.contains("insufficient")
+}
+
+#[cfg(test)]
+mod failure_detail_tests {
+    use super::is_failure_detail;
+
+    #[test]
+    fn missing_attack_target_is_a_failure() {
+        assert!(is_failure_detail(
+            "Action output:\nCould not find a valid cow within 4.5 blocks."
+        ));
+    }
 }
 
 /// 将 MinecraftAction 转换为 BotCommand（供 push_cmd_and_wait 使用）。
@@ -425,6 +438,7 @@ fn mc_to_cmd(mc: MinecraftAction) -> BotCommand {
             table_pos,
         },
         MinecraftAction::Gather { item, count } => BotCommand::Gather { item, count },
+        MinecraftAction::MakeObsidian { count } => BotCommand::MakeObsidian { count },
         MinecraftAction::Place { item, x, y, z } => BotCommand::Place { item, x, y, z },
         MinecraftAction::OpenContainer { x, y, z } => BotCommand::OpenContainer { x, y, z },
         MinecraftAction::AutoCraft { item, count } => BotCommand::AutoCraft { item, count },

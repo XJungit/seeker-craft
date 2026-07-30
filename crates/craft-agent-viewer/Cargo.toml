@@ -7,6 +7,10 @@ edition = "2024"
 name = "craft-agent-viewer"
 path = "src/main.rs"
 
+[[bin]]
+name = "craft-agent-viewer-next"
+path = "src/main.rs"
+
 [dependencies]
 craft-agent         = { workspace = true }
 craft-agent-minecraft = { workspace = true, features = ["azalea-bot"] }

@@ -1,170 +1,172 @@
-//! Session analyzer - analyze LLM behavior from session JSONL
+//! Derives verified progress signals from the persisted session JSONL.
 
 use serde_json::Value;
 use std::path::Path;
 
 #[derive(Debug, Default)]
 pub struct SessionAnalysis {
-    pub total_steps: u32,
+    pub assistant_steps: u32,
     pub tool_calls: u32,
     pub errors: u32,
-    pub gathers: u32,
-    pub crafts: u32,
-    pub mines: u32,
-    pub gotes: u32,
-    pub attacks: u32,
-    pub perceives: u32,
+    pub successful_productive_tools: u32,
     pub position_changes: u32,
     pub last_position: Option<(i32, i32, i32)>,
-    pub inventory_items: Vec<String>,
-    pub is_making_progress: bool,
-    pub is_stuck: bool,
+    pub last_inventory: Option<String>,
     pub summary: String,
+}
+
+impl SessionAnalysis {
+    pub fn has_progress_since(&self, previous: &Self) -> bool {
+        self.position_changes > previous.position_changes
+            || (self.last_inventory.is_some() && self.last_inventory != previous.last_inventory)
+    }
+
+    pub fn delta_summary(&self, previous: &Self) -> String {
+        format!(
+            "steps=+{} productive=+{} moves=+{} inventory_changed={}",
+            self.assistant_steps.saturating_sub(previous.assistant_steps),
+            self.successful_productive_tools
+                .saturating_sub(previous.successful_productive_tools),
+            self.position_changes.saturating_sub(previous.position_changes),
+            self.last_inventory != previous.last_inventory,
+        )
+    }
 }
 
 pub fn analyze_session(session_path: &Path) -> SessionAnalysis {
     let mut analysis = SessionAnalysis::default();
-
-    let content = match std::fs::read_to_string(session_path) {
-        Ok(c) => c,
-        Err(_) => return analysis,
+    let Ok(content) = std::fs::read_to_string(session_path) else {
+        return analysis;
     };
 
     for line in content.lines() {
-        let val: Value = match serde_json::from_str(line) {
-            Ok(v) => v,
-            Err(_) => continue,
+        let Ok(entry) = serde_json::from_str::<Value>(line) else {
+            continue;
         };
-
-        if val["type"] != "message" {
+        if entry["type"] != "message" {
             continue;
         }
 
-        let msg = &val["message"];
-        let role = msg["role"].as_str().unwrap_or("");
-
-        match role {
+        let message = &entry["message"];
+        match message["role"].as_str().unwrap_or_default() {
             "assistant" => {
-                analysis.total_steps += 1;
-                if let Some(calls) = msg["tool_calls"].as_array() {
-                    for call in calls {
-                        let name = call["name"].as_str().unwrap_or("");
-                        analysis.tool_calls += 1;
-                        match name {
-                            "gather" => analysis.gathers += 1,
-                            "craft" | "craft_3x3" => analysis.crafts += 1,
-                            "mine" | "mine_below" | "mine_above" => analysis.mines += 1,
-                            "goto" | "go" => analysis.gotes += 1,
-                            "attack" => analysis.attacks += 1,
-                            "perceive" => analysis.perceives += 1,
-                            _ => {}
-                        }
-                    }
-                }
+                analysis.assistant_steps += 1;
+                analysis.tool_calls += message["tool_calls"]
+                    .as_array()
+                    .map_or(0, |calls| calls.len() as u32);
             }
-            "toolresult" => {
-                let is_err = msg["is_error"].as_bool().unwrap_or(false);
-                if is_err {
-                    analysis.errors += 1;
-                }
-
-                // Extract position from perceive results
-                let content_str = msg["content"].as_str().unwrap_or("");
-                if content_str.contains("位置:") || content_str.contains("position:") {
-                    // Parse position
-                    if let Some(pos) = parse_position(content_str) {
-                        if analysis.last_position != Some(pos) {
-                            analysis.position_changes += 1;
-                        }
-                        analysis.last_position = Some(pos);
-                    }
-                }
-
-                // Extract inventory
-                if content_str.contains("背包:") || content_str.contains("Inventory:") {
-                    for item in extract_inventory_items(content_str) {
-                        if !analysis.inventory_items.contains(&item) {
-                            analysis.inventory_items.push(item);
-                        }
-                    }
-                }
-            }
+            "toolresult" => analyze_tool_result(message, &mut analysis),
             _ => {}
         }
     }
 
-    // Determine if making progress
-    analysis.is_making_progress = analysis.gathers > 0
-        || analysis.crafts > 0
-        || analysis.mines > 0
-        || analysis.position_changes > 2;
-
-    // Determine if stuck
-    analysis.is_stuck = analysis.errors > 5
-        || (analysis.gotes > 3 && analysis.position_changes < 2)
-        || (analysis.total_steps > 10 && analysis.gathers == 0 && analysis.crafts == 0);
-
     analysis.summary = format!(
-        "steps={} tools={} errors={} gather={} craft={} mine={} goto={} pos_changes={} stuck={} progress={}",
-        analysis.total_steps,
+        "steps={} tools={} errors={} productive={} moves={} position={:?}",
+        analysis.assistant_steps,
         analysis.tool_calls,
         analysis.errors,
-        analysis.gathers,
-        analysis.crafts,
-        analysis.mines,
-        analysis.gotes,
+        analysis.successful_productive_tools,
         analysis.position_changes,
-        analysis.is_stuck,
-        analysis.is_making_progress,
+        analysis.last_position,
     );
-
     analysis
 }
 
-fn parse_position(content: &str) -> Option<(i32, i32, i32)> {
-    // Match "位置: (x, y, z)" or "position: (x, y, z)"
-    let markers = ["位置:", "position:"];
-    for marker in &markers {
-        if let Some(pos) = content.find(marker) {
-            let after = &content[pos + marker.len()..];
-            if let Some(start) = after.find('(') {
-                let rest = &after[start + 1..];
-                if let Some(end) = rest.find(')') {
-                    let coords = &rest[..end];
-                    let parts: Vec<&str> = coords.split(',').collect();
-                    if parts.len() == 3 {
-                        if let (Ok(x), Ok(y), Ok(z)) = (
-                            parts[0].trim().parse::<i32>(),
-                            parts[1].trim().parse::<i32>(),
-                            parts[2].trim().parse::<i32>(),
-                        ) {
-                            return Some((x, y, z));
-                        }
-                    }
-                }
-            }
-        }
+fn analyze_tool_result(message: &Value, analysis: &mut SessionAnalysis) {
+    let is_error = message["is_error"].as_bool().unwrap_or(false);
+    if is_error {
+        analysis.errors += 1;
+    } else if matches!(
+        message["tool_name"].as_str().unwrap_or_default(),
+        "gather"
+            | "craft"
+            | "craft_3x3"
+            | "auto_craft"
+            | "smelt"
+            | "mine"
+            | "mine_below"
+            | "mine_above"
+            | "pickup"
+            | "place"
+            | "build"
+            | "attack"
+            | "trade"
+            | "enchant"
+    ) {
+        analysis.successful_productive_tools += 1;
     }
-    None
+
+    let content = message["content"].as_str().unwrap_or_default();
+    if let Some(position) = parse_position(content) {
+        if analysis.last_position.is_some() && analysis.last_position != Some(position) {
+            analysis.position_changes += 1;
+        }
+        analysis.last_position = Some(position);
+    }
+    if let Some(inventory) = extract_inventory(content) {
+        analysis.last_inventory = Some(inventory);
+    }
 }
 
-fn extract_inventory_items(content: &str) -> Vec<String> {
-    let mut items = vec![];
-    // Match "背包: item:count, item:count"
-    if let Some(pos) = content.find("背包:") {
-        let inv = &content[pos + 3..];
-        if let Some(end) = inv.find('\n') {
-            let inv = &inv[..end];
-            for part in inv.split(',') {
-                let part = part.trim();
-                if let Some(colon) = part.find(':') {
-                    let item = part[..colon].trim().to_string();
-                    if !item.is_empty() {
-                        items.push(item);
-                    }
-                }
-            }
-        }
+fn parse_position(content: &str) -> Option<(i32, i32, i32)> {
+    let after_marker = ["位置:", "position:"]
+        .iter()
+        .find_map(|marker| content.split_once(marker).map(|(_, after)| after))?;
+    let coordinates = after_marker.split_once('(')?.1.split_once(')')?.0;
+    let mut parts = coordinates.split(',').map(str::trim);
+    let x = parts.next()?.parse::<f64>().ok()?.round() as i32;
+    let y = parts.next()?.parse::<f64>().ok()?.round() as i32;
+    let z = parts.next()?.parse::<f64>().ok()?.round() as i32;
+    Some((x, y, z))
+}
+
+fn extract_inventory(content: &str) -> Option<String> {
+    let after_marker = ["背包:", "Inventory:"]
+        .iter()
+        .find_map(|marker| content.split_once(marker).map(|(_, after)| after))?;
+    let line = after_marker.lines().next()?.trim();
+    (!line.is_empty()).then(|| line.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_real_perception_format() {
+        let content = "位置: (-478.4, 28, -177.6)\n背包: [cobblestone:259, coal:11]";
+        assert_eq!(parse_position(content), Some((-478, 28, -178)));
+        assert_eq!(
+            extract_inventory(content).as_deref(),
+            Some("[cobblestone:259, coal:11]")
+        );
     }
-    items
+
+    #[test]
+    fn successful_tool_without_state_change_is_not_progress() {
+        let previous = SessionAnalysis {
+            successful_productive_tools: 4,
+            ..SessionAnalysis::default()
+        };
+        let current = SessionAnalysis {
+            successful_productive_tools: 5,
+            ..SessionAnalysis::default()
+        };
+
+        assert!(!current.has_progress_since(&previous));
+    }
+
+    #[test]
+    fn inventory_change_is_progress() {
+        let previous = SessionAnalysis {
+            last_inventory: Some("[iron_pickaxe:1]".into()),
+            ..SessionAnalysis::default()
+        };
+        let current = SessionAnalysis {
+            last_inventory: Some("[iron_pickaxe:1, diamond:3]".into()),
+            ..SessionAnalysis::default()
+        };
+
+        assert!(current.has_progress_since(&previous));
+    }
 }

@@ -149,6 +149,8 @@ pub enum MinecraftAction {
     },
     /// 采集最近的指定方块（如 "oak_log" / "stone" / "coal_ore"）并挖掘，直到背包有 count 个。
     Gather { item: String, count: u32 },
+    /// 自动造黑曜石（P67）：bot 需手持 water_bucket 且附近有岩浆源；自动放水生成黑曜石并挖下 count 块。
+    MakeObsidian { count: u32 },
     /// 放置：把手持物品 item 放到世界坐标 (x,y,z) 旁（右键放置）。
     Place {
         item: String,

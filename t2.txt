@@ -1,0 +1,152 @@
+warning: crates\craft-agent-viewer\Cargo.toml: file `D:\Craft-Agent\crates\craft-agent-viewer\src\main.rs` found to be present in multiple build targets:
+  * `bin` target `craft-agent-viewer`
+  * `bin` target `craft-agent-viewer-next`
+warning: `craft-agent-viewer` (manifest) generated 1 warning
+warning: unused variable: `turn`
+   --> crates\craft-agent\src\agent\mod.rs:620:46
+    |
+620 |     fn auto_check_task_completion(&mut self, turn: u32) {
+    |                                              ^^^^ help: if this is intentional, prefix it with an underscore: `_turn`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `craft-agent` (lib) generated 1 warning (run `cargo fix --lib -p craft-agent` to apply 1 suggestion)
+   Compiling craft-agent-minecraft v0.1.0 (D:\Craft-Agent\crates\craft-agent-minecraft)
+warning: unused variable: `stall`
+   --> crates\craft-agent-minecraft\src\azalea\mod.rs:872:54
+    |
+872 | ...                   let (lx, ly, lz, stall) = *wd;
+    |                                        ^^^^^ help: if this is intentional, prefix it with an underscore: `_stall`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: `craft-agent-minecraft` (lib test) generated 1 warning (run `cargo fix --lib -p craft-agent-minecraft --tests` to apply 1 suggestion)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 19.21s
+     Running unittests src\lib.rs (target\debug\deps\craft_agent_minecraft-d58a0e2a0cbcbd51.exe)
+
+running 122 tests
+test action_lib::tests::is_valid_name_accepts_legal_identifiers ... ok
+test action_lib::tests::list_summary_handles_empty ... ok
+test action_lib::tests::is_valid_name_rejects_illegal ... ok
+test adapter_azalea::failure_detail_tests::missing_attack_target_is_a_failure ... ok
+test azalea::action_manager::tests::test_check_timeout_not_triggered_for_long_command ... ok
+test azalea::action_manager::tests::test_check_timeout_uses_per_command_threshold ... ok
+test azalea::action_manager::tests::test_high_priority_preempts_normal ... ok
+test azalea::action_manager::tests::test_loop_detection_after_3_repeats ... ok
+test azalea::action_manager::tests::test_signature_normalizes_coords ... ok
+test azalea::action_manager::tests::test_signature_preserves_item ... ok
+test azalea::action_manager::tests::test_submit_queues_when_busy ... ok
+test azalea::action_manager::tests::test_submit_runs_when_idle ... ok
+test azalea::action_manager::tests::test_timeout_long_for_autocraft ... ok
+test azalea::action_manager::tests::test_timeout_long_for_gather ... ok
+test azalea::action_manager::tests::test_timeout_short_for_chat ... ok
+test azalea::craft::tests::p54_craft_3x3_furnace_recipe_shape ... ok
+test azalea::craft::tests::p54_craft_3x3_inventory_full ... ok
+test azalea::craft::tests::p54_craft_3x3_missing_ingredient_iron ... ok
+test azalea::craft::tests::p54_craft_3x3_missing_ingredient_stick ... ok
+test azalea::craft::tests::p54_craft_3x3_multi_craft_ingredient_count ... ok
+test azalea::craft::tests::p54_craft_3x3_proceed_when_all_gates_pass ... ok
+test azalea::craft::tests::p54_craft_3x3_recipe_not_found ... ok
+test azalea::craft::tests::p54_craft_round_both_collection_methods_fail ... ok
+test action_lib::tests::save_rejects_invalid_name ... ok
+test azalea::craft::tests::p54_craft_round_left_click_fallback ... ok
+test azalea::craft::tests::p54_craft_round_no_empty_slot ... ok
+test azalea::craft::tests::p54_craft_round_shift_click_success ... ok
+test azalea::craft::tests::p54_integration_inventory_full_partial_collection ... ok
+test azalea::craft::tests::p54_integration_multiple_failure_modes ... ok
+test azalea::craft::tests::p54_integration_smelt_full_flow ... ok
+test azalea::craft::tests::p54_minecraft_align_craft_ingredient_count_scales ... ok
+test azalea::craft::tests::p54_minecraft_align_fuel_efficiency ... ok
+test azalea::craft::tests::p54_minecraft_align_furnace_occupied_check ... ok
+test azalea::craft::tests::p54_minecraft_align_input_count_check ... ok
+test azalea::craft::tests::p54_minecraft_align_is_smeltable_gate ... ok
+test azalea::craft::tests::p54_minecraft_align_no_auto_craft_table ... ok
+test azalea::craft::tests::p54_minecraft_align_recycle_remaining ... ok
+test azalea::craft::tests::p54_minecraft_align_take_output_verification ... ok
+test azalea::craft::tests::p54_minecraft_align_takeoutput_loop_timeout ... ok
+test azalea::craft::tests::p54_smelt_clamped_by_actual_input ... ok
+test azalea::craft::tests::p54_smelt_coal_block_fuel_efficiency ... ok
+test azalea::craft::tests::p54_smelt_coal_fuel_efficiency ... ok
+test azalea::craft::tests::p54_smelt_fuel_fallback_to_log ... ok
+test azalea::craft::tests::p54_smelt_fuel_needed_ceil_division ... ok
+test azalea::craft::tests::p54_smelt_furnace_occupied_with_different_item ... ok
+test action_lib::tests::library_load_dir_loads_rhai_json_files ... ok
+test azalea::craft::tests::p54_smelt_furnace_same_item_passes_gate2 ... ok
+test azalea::craft::tests::p54_smelt_no_fuel_in_inventory ... ok
+test azalea::craft::tests::p54_smelt_no_input_in_inventory ... ok
+test action_lib::tests::save_writes_file_and_inserts_into_memory ... ok
+test azalea::craft::tests::p54_smelt_picks_ore_when_only_ore_available ... ok
+test azalea::craft::tests::p54_smelt_picks_raw_when_only_raw_available ... ok
+test azalea::craft::tests::p54_smelt_supported_output_passes_gate1 ... ok
+test azalea::craft::tests::p54_smelt_unsupported_output ... ok
+test azalea::craft::tests::p54_takeoutput_full_success ... ok
+test azalea::craft::tests::p54_takeoutput_intermittent_collection_failure ... ok
+test azalea::craft::tests::p54_takeoutput_inventory_full_all_collection_fails ... ok
+test azalea::craft::tests::p54_takeoutput_left_click_fallback_succeeds ... ok
+test azalea::craft::tests::p54_takeoutput_partial_success_due_to_timeout ... ok
+test azalea::craft::tests::p54_takeoutput_target_reached_early ... ok
+test azalea::craft::tests::p54_takeoutput_total_failure_no_arrivals ... ok
+test azalea::craft::tests::regression_crafts_needed_ceil_division ... ok
+test azalea::craft::tests::p57_batch_smelt_9_splits_to_8 ... ok
+test azalea::craft::tests::p57_batch_smelt_exactly_8_no_split ... ok
+test azalea::craft::tests::p57_batch_smelt_caps_at_8_to_avoid_120s_timeout ... ok
+test azalea::craft::tests::regression_furnace_recipe_is_8_cobblestone_ring ... ok
+test azalea::craft::tests::regression_iron_pickaxe_recipe_is_vanilla_shape ... ok
+test azalea::craft::tests::regression_lookup_recipe_finds_basic_2x2 ... ok
+test azalea::craft::tests::regression_lookup_shaped_2x2_returns_vertical_recipes ... ok
+test azalea::craft::tests::regression_lookup_shaped_finds_pickaxe_recipes ... ok
+test azalea::craft::tests::regression_lookup_shaped_pickaxe_shape_is_vanilla_correct ... ok
+test azalea::craft::tests::regression_lookup_smelt_all_finds_iron_ingot ... ok
+test azalea::craft::tests::regression_p47_fuel_needed_calculation ... ok
+test azalea::craft::tests::regression_p47_fuel_per_item_calculation ... ok
+test azalea::craft::tests::regression_p47_furnace_occupied_check ... ok
+test azalea::craft::tests::regression_p47_smelt_count_clamped_by_input ... ok
+test azalea::craft::tests::regression_p47_smelt_return_paths ... ok
+test azalea::craft::tests::regression_p47_takeoutput_timeout_logic ... ok
+test azalea::craft::tests::regression_p48_recipe_lookup_priority ... ok
+test azalea::craft::tests::regression_p49_left_click_fallback_when_inventory_full ... ok
+test azalea::craft::tests::regression_p49_no_count_on_collect_failure ... ok
+test azalea::craft::tests::regression_planks_plan_for_all_wood_types ... ok
+test azalea::craft::tests::regression_smelt_returns_both_ore_and_raw_candidates ... ok
+test azalea::entity_target_tests::entity_kind_name_uses_registry_snake_case ... ok
+test azalea::entity_target_tests::normalizes_namespaced_entity_target ... ok
+test azalea::smart_actions::tests::test_compute_place_offset_east ... ok
+test azalea::smart_actions::tests::test_compute_place_offset_north ... ok
+test azalea::smart_actions::tests::test_expand_block_aliases_oak_log ... ok
+test azalea::smart_actions::tests::test_expand_block_aliases_ore_no_expand ... ok
+test azalea::smart_actions::tests::test_expand_block_aliases_stone ... ok
+test azalea::tests::block_required_pickaxe_tier_correct_for_each_category ... ok
+test azalea::tests::iron_pickaxe_can_mine_diamond_ore ... ok
+test azalea::tests::mine_above_does_not_treat_deep_cave_as_surface ... ok
+test action_lib::tests::bump_call_count_increments_and_persists ... ok
+test azalea::tests::pickaxe_tier_name_returns_correct_names ... ok
+test azalea::tests::pickaxe_tier_returns_correct_levels ... ok
+test azalea::tests::pickaxe_to_craft_for_tier_returns_correct_recipe_hints ... ok
+test azalea::tests::regression_block_drops_item_returns_vanilla_correct_drops ... ok
+test action_lib::tests::library_load_dir_ignores_plain_json ... ok
+test azalea::tests::regression_gather_iron_ore_must_count_raw_iron ... ok
+test azalea::tests::stone_pickaxe_can_mine_iron_ore ... ok
+test azalea::tests::stone_pickaxe_cannot_mine_diamond_ore ... ok
+test azalea::tests::wooden_pickaxe_cannot_mine_iron_ore ... ok
+test blueprint::tests::bounds_returns_min_max ... ok
+test blueprint::tests::empty_bounds_returns_zeros ... ok
+test blueprint::tests::library_list_summary_handles_empty ... ok
+test blueprint::tests::instantiate_translates_to_absolute_coords ... ok
+test blueprint::tests::material_list_counts_correctly ... ok
+test blueprint::tests::material_summary_sorts_by_count_desc ... ok
+test tools_azalea::run_script_tests::lint_action_allows_break_controlled_loops ... ok
+test tools_azalea::run_script_tests::lint_action_allows_call_action_keyword ... ok
+test tools_azalea::run_script_tests::lint_action_rejects_forbidden_keywords ... ok
+test tools_azalea::run_script_tests::lint_action_rejects_infinite_loops ... ok
+test tools_azalea::run_script_tests::lint_action_rejects_too_long ... ok
+test tools_azalea::run_script_tests::lint_allows_normal_scripts ... ok
+test tools_azalea::run_script_tests::lint_rejects_forbidden_keywords ... ok
+test tools_azalea::run_script_tests::lint_rejects_while_true_no_break ... ok
+test tools_azalea::run_script_tests::lint_rejects_too_long_script ... ok
+test blueprint::tests::library_load_dir_loads_json_files ... ok
+test tools_azalea::run_script_tests::rhai_go_is_reserved_keyword_confirmed ... ok
+test tools_azalea::run_script_tests::rhai_unit_return_does_not_error ... ok
+test tools_azalea::run_script_tests::rhai_walk_to_is_not_reserved_keyword ... ok
+
+test result: ok. 122 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s
+

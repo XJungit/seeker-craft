@@ -14,9 +14,10 @@ mod session;
 use crate::core::message::{Message, Usage, now_ms};
 use crate::core::prompt::{WorldInfoLib, default_mc_world_info};
 use crate::core::memory::WorldMemory;
-use crate::core::session::Session;
+use crate::core::session::{Session, SessionRolloverContext};
 use crate::core::skill::SkillLibrary;
 use crate::core::tool::{ToolEffects, ToolRegistry, ToolResult, plan_tool_effect_batches};
+use crate::task::TaskManager;
 use crate::profile::Modes;
 use anyhow::Result;
 use serde::Serialize;
@@ -25,7 +26,9 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-const MAX_AGENT_MESSAGES: usize = 10_000;
+// P63: pi-agent 级内存上限。原 10_000 条无界 Vec 会在长时运行下 OOM。
+// 改为 60 条硬上限 + 每轮 hard_truncate 环形缓冲，内存峰值恒定。
+const MAX_AGENT_MESSAGES: usize = 60;
 
 pub use compaction::is_obs_tool;
 
@@ -234,6 +237,13 @@ fn detect_alternating_pattern(
         return Some((a.to_string(), b.to_string(), cycles));
     }
     None
+}
+
+fn is_incremental_excavation(calls: &[crate::core::message::ToolCall]) -> bool {
+    !calls.is_empty()
+        && calls
+            .iter()
+            .all(|tc| matches!(tc.name.as_str(), "mine_above" | "mine_below"))
 }
 
 /// P2 改进7: 从 perceive 文本中提取位置键（用于位置卡死检测）
@@ -592,6 +602,8 @@ pub struct Agent {
     position_stale_turns: u32,
     /// 任务完成标志：tool 调用 task_complete 后置 true，下一轮停止循环。
     task_complete_verified: bool,
+    /// 任务管理器：加载 tasks/ 目录 + 跟踪完成进度。
+    task_manager: TaskManager,
 }
 impl Agent {
     pub fn abort(&self) {
@@ -601,6 +613,56 @@ impl Agent {
     /// 标记任务完成（由 TaskCompleteTool 调用）。
     pub fn mark_task_complete(&mut self) {
         self.task_complete_verified = true;
+    }
+
+    /// Auto-check task completion using the latest perceive text.
+    /// If the current task is complete, auto-advance to the next pending task.
+    fn auto_check_task_completion(&mut self, turn: u32) {
+        if self.task_manager.tasks.is_empty() || self.task_manager.current.is_none() {
+            return;
+        }
+        let perceive_text = self.messages.iter().rev().find_map(|m| {
+            if let Message::User(u) = m {
+                if u.content.starts_with("【当前游戏状态（自动注入）】") {
+                    return Some(u.content.clone());
+                }
+            }
+            None
+        });
+        let Some(text) = perceive_text else {
+            return;
+        };
+        let now_ms = now_ms() as u64;
+        let completed = self.task_manager.check_current(&text, now_ms);
+        match completed {
+            Some(true) => {
+                let task_id = self.task_manager.current.as_ref().map(|c| c.task.id.clone());
+                eprintln!("[task] 任务完成: {:?}", task_id);
+                if let Some(ref id) = task_id {
+                    let current_tier = self.task_manager.tasks.iter()
+                        .find(|t| t.id == *id).map(|t| t.tier).unwrap_or(0);
+                    let next_id = self.task_manager.tasks.iter()
+                        .filter(|t| t.tier >= current_tier && t.id != *id)
+                        .min_by_key(|t| (t.tier, t.id.clone()))
+                        .map(|t| t.id.clone());
+                    if let Some(ref nid) = next_id {
+                        let next_goal = self.task_manager.tasks.iter()
+                            .find(|t| t.id == *nid).map(|t| t.goal.clone()).unwrap_or_default();
+                        let _ = self.task_manager.start_task(nid, now_ms);
+                        self.set_self_prompt(next_goal);
+                        eprintln!("[task] 自动推进到下一任务: {}", nid);
+                    }
+                }
+            }
+            Some(false) => {
+                let reason = self.task_manager.current.as_ref()
+                    .map(|c| format!("任务 {} 失败", c.task.id))
+                    .unwrap_or_default();
+                eprintln!("[task] 任务失败: {}", reason);
+                self.task_manager.end_current();
+            }
+            None => {}
+        }
     }
 
     /// 返回知识字符串（工具参考自动从 ToolRegistry 生成），缓存复用保 prefix-cache 稳定
@@ -654,6 +716,18 @@ impl Agent {
             last_position_key: None,
             position_stale_turns: 0,
             task_complete_verified: false,
+            task_manager: {
+                let mut tm = TaskManager::new();
+                let tasks_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("..")
+                    .join("..")
+                    .join("data")
+                    .join("tasks");
+                if tasks_dir.exists() {
+                    let _ = tm.load_from_dir(&tasks_dir);
+                }
+                tm
+            },
         }
     }
 
@@ -661,6 +735,60 @@ impl Agent {
     pub fn with_world_memory(mut self, mem: WorldMemory) -> Self {
         self.world_memory = mem;
         self
+    }
+
+    /// P62: 原地会话滚动（防 OOM）。归档当前会话文件到 archive/，写回一个仅含
+    /// 恢复摘要的极简会话，并重置内存中的 messages / session / turn，
+    /// 同时保留 world_memory（bot 的空间记忆不丢失）、adapter（bot 连接不断）。
+    /// 这样 viewer 进程可长期运行而不因消息历史无限增长被系统 OOM kill。
+    /// 返回是否成功执行了滚动。
+    pub fn rollover_in_place(&mut self, session_path: &str, goal: &str) -> bool {
+        let path = std::path::Path::new(session_path);
+        if !path.exists() {
+            return false;
+        }
+        let pos = self.world_memory.anchors().into_iter().next();
+        let (px, py, pz) = match pos {
+            Some(a) => match a.pos {
+                Some(p) => (p.x as f64, p.y as f64, p.z as f64),
+                None => (0.0, 0.0, 0.0),
+            },
+            None => (0.0, 0.0, 0.0),
+        };
+        let ctx = SessionRolloverContext {
+            recovery_summary: format!(
+                "【自动滚动恢复】会话过大已自动归档。当前目标：{goal}。bot 保持原连接与世界记忆，继续推进。"
+            ),
+            current_goal: Some(goal.to_string()),
+            position: Some([px, py, pz]),
+            health: None,
+            hunger: None,
+        };
+        let archive_dir = path.parent().unwrap_or(std::path::Path::new(".")).join("archive");
+        match Session::rollover_to(path, &archive_dir, ctx) {
+            Ok(Some(_)) => {
+                // 重置内存态（保留 world_memory / tools / provider）
+                self.messages.clear();
+                self.session_entries.clear();
+                self.session_msg_offset = 0;
+                self.turn = 0;
+                self.text_only_count = 0;
+                self.fake_completion_count = 0;
+                self.consecutive_failures = 0;
+                self.previous_summary = None;
+                self.last_compaction = None;
+                self.pending_compaction = None;
+                self.task_complete_verified = false;
+                // 用极简摘要重启会话对象
+                let mut fresh = Session::new("minecraft");
+                fresh.append_message(Message::user(
+                    "【自动滚动恢复】会话已归档重启。继续推进当前目标。".to_string(),
+                ));
+                self.session = Some(fresh);
+                true
+            }
+            _ => false,
+        }
     }
 
     // ── Queues ──
@@ -716,6 +844,14 @@ impl Agent {
                 paused_since: self.turn,
                 auto_paused,
             };
+        }
+    }
+    /// P62: 返回当前目标快照（用于会话滚动时保留目标上下文）。
+    pub fn current_goal_snapshot(&self) -> &str {
+        match &self.prompt_state {
+            PromptState::Active { goal, .. } => goal,
+            PromptState::Paused { goal, .. } => goal,
+            PromptState::Stopped => "",
         }
     }
     /// 恢复目标（Paused → Active）。Stopped/Active 时无操作。
@@ -841,15 +977,20 @@ impl Agent {
         self.events.push(AgentEvent::TurnStart { turn });
         self.drain_queues();
 
-        // Compaction if message limit exceeded OR token budget exceeded.
-        // 两条触发条件合并为一次压缩（#14 修复：避免一回合压缩两次浪费 LLM 调用）。
+        // P63: pi-agent 级内存管控。
+        // 1) 每轮无条件硬截断（环形缓冲）：保证内存峰值恒定，绝不无限增长。
+        // 2) 更早触发压缩：token 超过预算 60% 即压缩（不等地到 100% 才压，
+        //    避免大 perceive 字符串把堆撑爆）。
+        // 3) 消息数硬上限 60 兜底（MAX_AGENT_MESSAGES）。
+        self.hard_truncate();
         let budget = self
             .config
             .compaction
             .context_window
             .saturating_sub(self.config.compaction.reserve);
         let over_messages = self.messages.len() >= MAX_AGENT_MESSAGES;
-        let over_tokens = self.estimate_tokens() > budget;
+        let est = self.estimate_tokens();
+        let over_tokens = est > budget * 3 / 5; // 预算 60% 即触发，提前压缩
         if over_messages || over_tokens {
             if over_messages {
                 log.push(format!(
@@ -902,6 +1043,7 @@ impl Agent {
                 Message::User(u) => {
                     !(u.content.starts_with("【当前游戏状态（自动注入）】")
                         || u.content.starts_with("【邻近世界记忆】")
+                        || u.content.starts_with("【任务进度】")
                         || u.content.starts_with("[当前目标]"))
                 }
                 _ => true,
@@ -1001,6 +1143,19 @@ impl Agent {
             self.messages
                 .push(Message::user(format!("[当前目标] {goal}")));
         }
+
+        // Task progress: inject completed/pending tasks when tasks are loaded.
+        let task_progress = self.build_task_progress_msg();
+        if !task_progress.is_empty() {
+            self.messages.push(Message::user(format!(
+                "【任务进度】\n{}",
+                task_progress
+            )));
+        }
+
+        // Auto-check task completion using the latest perceive text.
+        // If the current task is complete, auto-advance to the next pending task.
+        self.auto_check_task_completion(turn);
 
         // Dynamic context (WorldInfo + Skill)
         if (self.config.enable_world_info || self.config.enable_skill)
@@ -1319,26 +1474,13 @@ impl Agent {
         let mut loop_nudge: Option<String> = None;
         // P53：错误驱动重规划 nudge（同 loop_nudge 一样，必须延迟到 tool result 之后注入）
         let mut error_suggestion: Option<String> = None;
-        if repeat_count >= 4 {
+        let incremental_excavation = is_incremental_excavation(&calls);
+        if repeat_count >= 4 && !incremental_excavation {
             // P12 修复（2026-07-26）：针对 mine_below 的死循环给出具体建议。
             // mine_below 无参数，连续调用签名必然相同，但 bot 实际在向下挖。
             // 真正的问题是 LLM 不知道何时停止 mine_below（应该 perceive 检查 Y 坐标和背包）。
             let tool_names: Vec<&str> = calls.iter().map(|tc| tc.name.as_str()).collect();
-            let specific_hint = if tool_names.iter().any(|n| *n == "mine_below") {
-                "你在不断 mine_below 向下挖。问题：mine_below 没有终点反馈，你需要：\n\
-                 1. **立即调用 perceive** 查看当前 Y 坐标、背包、附近方块\n\
-                 2. 如果 Y 已到目标深度（如煤矿 Y=15-0、铁矿 Y=15-(-30)、钻石 Y=-59），停止 mine_below\n\
-                 3. 改用 mine 挖指定坐标的目标矿石，或 gather 让 bot 自动找矿\n\
-                 4. 如果挖到基岩（Y=-64），立即 mine_above 向上脱困\n\
-                 5. 如果背包已有目标矿石，直接 craft/equip 后继续任务，不要再挖"
-            } else if tool_names.iter().any(|n| *n == "mine_above") {
-                "你在不断 mine_above 向上挖脱困。问题：可能卡在 1x1 竖井里出不来。你需要：\n\
-                 1. **立即调用 perceive** 查看当前 Y 坐标和周围方块\n\
-                 2. 如果已到地表（头顶是空气），停止 mine_above，改用 goto 走到目标位置\n\
-                 3. 如果还在地下，尝试 goto 走出竖井（先 mine 挖水平方向拓宽）\n\
-                 4. 如果背包有方块，可以 place 在脚下垫高（向上搭方块）脱困\n\
-                 5. 实在出不来用 chat('/tp @s ~ 70 ~') 传送到地表"
-            } else if tool_names.iter().any(|n| *n == "gather") {
+            let specific_hint = if tool_names.iter().any(|n| *n == "gather") {
                 "你在反复 gather 同一物品但失败。问题可能是：\n\
                  1. 没装备镐（先 equip wooden_pickaxe/stone_pickaxe/iron_pickaxe）\n\
                  2. 附近没有该方块（先 perceive 看资源标签，或 goto 换区域）\n\
@@ -1435,17 +1577,27 @@ impl Agent {
                         let args = tc.arguments.clone();
                         let tools_ref = &self.tools;
                         let handle = s.spawn(move || {
-                            let result = match tools_ref.get(&tool_name) {
-                                Some(tool) => tool.execute(&call_id, args, None),
-                                None => Ok(ToolResult {
-                                    message: format!("Unknown tool: {}", tool_name),
-                                    is_error: true,
-                                    images: vec![],
-                                }),
-                            };
-                            let (msg, is_err) = match result {
-                                Ok(r) => (r.message, r.is_error),
-                                Err(e) => (format!("Error: {e}"), true),
+                            // P60: 工具执行必须吞掉 panic，否则单个工具崩溃会
+                            // 经 join().unwrap() 杀掉整个 agent 主循环（之前 YGoal
+                            // 修复后 bot 已脱困，但某工具内部 unwrap 触发 panic，
+                            // 导致 turn loop 直接退出、running=false）。
+                            let output = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                match tools_ref.get(&tool_name) {
+                                    Some(tool) => tool.execute(&call_id, args, None),
+                                    None => Ok(ToolResult {
+                                        message: format!("Unknown tool: {}", tool_name),
+                                        is_error: true,
+                                        images: vec![],
+                                    }),
+                                }
+                            }));
+                            let (msg, is_err) = match output {
+                                Ok(Ok(r)) => (r.message, r.is_error),
+                                Ok(Err(e)) => (format!("Error: {e}"), true),
+                                Err(_) => (
+                                    format!("[工具 {tool_name} 内部 panic，已隔离。请换一种方法继续。]"),
+                                    true,
+                                ),
                             };
                             (idx, msg, is_err, call_id, tool_name)
                         });
@@ -1867,6 +2019,24 @@ mod tests {
             .count()
             >= 4;
         assert!(nudge_found, "死循环检测应识别 4+ 次重复调用");
+    }
+
+    #[test]
+    fn repeated_incremental_excavation_is_not_a_dead_loop() {
+        let mine_above = vec![ToolCall {
+            id: "1".into(),
+            name: "mine_above".into(),
+            arguments: serde_json::json!({}),
+        }];
+        let mine_below = vec![ToolCall {
+            id: "2".into(),
+            name: "mine_below".into(),
+            arguments: serde_json::json!({}),
+        }];
+
+        assert!(super::is_incremental_excavation(&mine_above));
+        assert!(super::is_incremental_excavation(&mine_below));
+        assert!(!super::is_incremental_excavation(&[]));
     }
 
     // ── 回归：死循环检测对"每次换不同坐标的重复 move_to"也能触发（#15 修复）──

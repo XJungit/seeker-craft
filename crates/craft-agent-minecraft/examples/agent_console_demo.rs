@@ -44,7 +44,7 @@ fn main() -> anyhow::Result<()> {
     println!("User: {username}");
 
     // 构建 LLM 客户端
-    let model_cfg = ModelConfig::load("config/agent.toml")?;
+    let model_cfg = ModelConfig::load("data/config/agent.toml")?;
     let llm_group = model_cfg.llm.as_ref().ok_or_else(|| anyhow::anyhow!("缺少 [llm]"))?;
     let llm_backend = llm_group.active_backend()?;
     let llm = Arc::new(OpenAiLlmClient::from_config(llm_backend)?);
@@ -65,8 +65,8 @@ fn main() -> anyhow::Result<()> {
     };
 
     // 注册工具
-    let blueprints = BlueprintLibrary::load_dir(std::path::Path::new("blueprints"));
-    let actions = ActionLibrary::load_dir(std::path::Path::new("actions"));
+    let blueprints = BlueprintLibrary::load_dir(std::path::Path::new("data/blueprints"));
+    let actions = ActionLibrary::load_dir(std::path::Path::new("data/actions"));
     let mut registry = ToolRegistry::new();
     for tool in create_mc_azalea_tools_full(adapter, world_mem.clone(), blueprints, actions) {
         registry.register(tool);

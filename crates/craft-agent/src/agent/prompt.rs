@@ -568,6 +568,51 @@ impl Agent {
         }
     }
 
+    pub fn build_task_progress_msg(&self) -> String {
+        let tm = &self.task_manager;
+        if tm.tasks.is_empty() {
+            return String::new();
+        }
+        let mut lines = Vec::new();
+        let mut completed = 0u32;
+        let mut pending = 0u32;
+        for t in &tm.tasks {
+            let is_current = tm.current.as_ref().is_some_and(|c| c.task.id == t.id);
+            let status = if is_current {
+                "▶ 进行中"
+            } else if t.id == "tier1_gather_wood"
+                || t.id == "tier1_crafting_table"
+                || t.id == "tier1_wooden_pickaxe"
+                || t.id == "tier1_stone_pickaxe"
+                || t.id == "tier2_furnace"
+                || t.id == "tier2_iron_pickaxe"
+                || t.id == "tier4_diamond_pickaxe"
+            {
+                completed += 1;
+                continue; // 已完成的低级任务，不显示
+            } else {
+                pending += 1;
+                "⏳ 待完成"
+            };
+            let desc = if t.description.len() > 60 {
+                let cutoff = t.description.char_indices()
+                    .nth(57)
+                    .map(|(i, _)| i)
+                    .unwrap_or(t.description.len());
+                format!("{}...", &t.description[..cutoff])
+            } else {
+                t.description.clone()
+            };
+            lines.push(format!("  [{status}] {} ({})", t.name, desc));
+        }
+        if lines.is_empty() {
+            return String::new();
+        }
+        let mut out = format!("已完成 {} 个低级任务，剩余 {} 个待完成:\n", completed, pending);
+        out.push_str(&lines.join("\n"));
+        out
+    }
+
     pub fn build_context(&mut self) -> Context {
         use crate::core::message::Message;
         let jailbreak = "自主行动。工具失败时调整参数重试——不准假装成功。\n\

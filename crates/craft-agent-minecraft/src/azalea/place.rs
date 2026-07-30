@@ -541,24 +541,30 @@ async fn do_open_container_inner(
     // ContainerHandle 的 Drop 会调用 close() 发送关闭包，使得后续工具调用
     // （如 craft_3x3）无法找到已打开的容器。用 std::mem::forget 阻止 Drop，
     // 容器由调用方（close_container_if_open 或新的 ensure_table_open）负责关闭。
-    let handle = bot
-        .open_container_at(effective_pos)
-        .await
-        .map_err(|e| format!("打开容器失败: {e:?}"))?;
-    match handle {
-        Some(h) => {
-            std::mem::forget(h);
-            Ok(format!(
+    // `open_container_at` starts a BlockPosGoal even when already in reach. A
+    // container block is not standable, so tight caves can produce an endless
+    // empty-path loop. Interact directly and verify the menu instead.
+    bot.look_at(azalea::Vec3::new(
+        effective_pos.x as f64 + 0.5,
+        effective_pos.y as f64 + 0.5,
+        effective_pos.z as f64 + 0.5,
+    ));
+    sleep(Duration::from_millis(100)).await;
+    bot.block_interact(effective_pos);
+    for _ in 0..40 {
+        if crate::azalea::table_flow::is_container_open(bot) {
+            return Ok(format!(
                 "已打开容器 ({},{},{}){note}",
                 effective_pos.x, effective_pos.y, effective_pos.z
-            ))
+            ));
         }
-        None => Err(format!(
-            "({},{},{}) 处虽有容器方块但 open_container_at 返回 None——可能 bot 视线被阻挡或服务端拒绝。{note}\
-             建议：goto 到容器旁换个角度再 open。",
-            effective_pos.x, effective_pos.y, effective_pos.z
-        )),
+        sleep(Duration::from_millis(50)).await;
     }
+    Err(format!(
+        "({},{},{}) 处虽有容器方块，但直接交互后 2 秒内菜单未打开——可能视线被阻挡或服务端拒绝。{note}\
+         建议：移动到容器相邻的可站立方块并清理视线后重试。",
+        effective_pos.x, effective_pos.y, effective_pos.z
+    ))
 }
 
 /// 判断方块是否为容器（可被 open_container_at 打开）。

@@ -1,7 +1,9 @@
 use crate::core::message::Message;
 use crate::core::prompt::WorldInfo;
 use crate::core::session::SessionEntry as SessionFileEntry;
-use crate::core::session::{AgentSnapshot, Session};
+use crate::core::session::{
+    AgentSnapshot, SESSION_ROLLOVER_CUSTOM_TYPE, Session, SessionRolloverMetadata,
+};
 
 use super::Agent;
 
@@ -24,6 +26,20 @@ impl Agent {
                         serde_json::from_str::<crate::core::skill::SkillLibrary>(skills_json)
                 {
                     self.skill_lib = skill_lib;
+                }
+                break;
+            }
+        }
+
+        // A rollover intentionally discards conversation history, but its goal
+        // remains active across process recovery.
+        for e in path.iter().rev() {
+            if let SessionFileEntry::Custom(custom) = e
+                && custom.custom_type == SESSION_ROLLOVER_CUSTOM_TYPE
+                && let Ok(metadata) = serde_json::from_value::<SessionRolloverMetadata>(custom.data.clone())
+            {
+                if let Some(goal) = metadata.current_goal {
+                    self.set_goal(goal);
                 }
                 break;
             }

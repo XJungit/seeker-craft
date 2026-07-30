@@ -6,7 +6,8 @@
 
 use craft_agent::agent::{Agent, AgentConfig, CompactionConfig, LlmProvider, RetryConfig};
 use craft_agent::core::message::AssistantResponse;
-use craft_agent::core::session::Session;
+use craft_agent::core::session::{Session, SessionRolloverContext};
+use craft_agent::core::types::WorldState;
 use craft_agent::core::tool::ToolRegistry;
 use craft_agent_minecraft::action_lib::ActionLibrary;
 use craft_agent_minecraft::adapter_azalea::ArcAzaleaAdapter;
@@ -77,6 +78,9 @@ pub struct AgentController {
     /// Shared with agent.retry_abort — set by stop button to cancel LLM retries instantly.
     pub abort: Arc<AtomicBool>,
     pub running: Arc<AtomicBool>,
+    /// Azalea may leave reconnect tasks alive after the Agent thread exits.
+    /// Never create a second client in the same Viewer process.
+    started_once: AtomicBool,
     pub status: std::sync::Mutex<Status>,
     goal_queue: std::sync::Mutex<VecDeque<String>>,
     /// 共享的 azalea 适配器引用（agent 启动后填充，viewer 从中读取游戏状态）。
@@ -87,6 +91,8 @@ pub struct AgentController {
     /// 个体 profile 名（如 "deepseek" / "claude" / "gpt"）。
     /// 加载 `profiles/{individual}.json` 叠加到 _default + mode 之上。
     pub individual_profile: Option<String>,
+    /// Rotate the existing JSONL once, before attaching it to an Agent writer.
+    pub rollover_session: bool,
 }
 
 impl AgentController {
@@ -96,6 +102,7 @@ impl AgentController {
             stop: Arc::new(AtomicBool::new(false)),
             abort: Arc::new(AtomicBool::new(false)),
             running: Arc::new(AtomicBool::new(false)),
+            started_once: AtomicBool::new(false),
             status: std::sync::Mutex::new(Status {
                 running: false,
                 paused: false,
@@ -108,6 +115,7 @@ impl AgentController {
             game_adapter: Arc::new(RwLock::new(None)),
             mode_profile: None,
             individual_profile: None,
+            rollover_session: false,
         }
     }
 
@@ -122,6 +130,17 @@ impl AgentController {
     pub fn push_goal(&self, new_goal: String) {
         self.goal_queue.lock().unwrap().push_back(new_goal.clone());
         self.status.lock().unwrap().goal = new_goal;
+    }
+
+    /// Update launch configuration without queuing a duplicate runtime steering message.
+    pub fn configure_start(&self, goal: Option<String>, max_steps: Option<u32>) {
+        let mut status = self.status.lock().unwrap();
+        if let Some(goal) = goal {
+            status.goal = goal;
+        }
+        if let Some(max_steps) = max_steps {
+            status.max_steps = max_steps;
+        }
     }
 
     /// Agent 循环取走待注入的目标（每步检查一次）。
@@ -150,11 +169,16 @@ pub fn spawn_agent_loop(
     mc_addr: String,
     username: String,
 ) -> anyhow::Result<()> {
+    if controller.started_once.swap(true, Ordering::SeqCst) {
+        anyhow::bail!(
+            "Agent 已在此 Viewer 进程启动过；为避免 CraftAgent duplicate_login，必须重启 Viewer 后再启动"
+        );
+    }
     if controller.running.swap(true, Ordering::Relaxed) {
         let _ = event_tx.send(AgentEvent::Error {
             message: "Agent 已在运行中".into(),
         });
-        return Ok(());
+        anyhow::bail!("Agent 已在运行中");
     }
 
     // 重置控制标志
@@ -301,11 +325,44 @@ fn run_agent(
     };
     *ctrl.game_adapter.write().unwrap() = Some(adapter.clone());
 
+    if ctrl.rollover_session {
+        let path = Path::new(session_path);
+        let archive_dir = path.parent().unwrap_or(Path::new(".")).join("archive");
+        let mut state = adapter.perceive_shared()?;
+        for _ in 0..30 {
+            if state.health.is_some() && state.position.as_ref().is_some_and(|p| p.len() >= 3) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            state = adapter.perceive_shared()?;
+        }
+        let context = SessionRolloverContext {
+            recovery_summary: format_recovery_summary(goal, &state),
+            current_goal: Some(goal.to_string()),
+            position: state.position.as_deref().and_then(|p| match p {
+                [x, y, z, ..] => Some([*x, *y, *z]),
+                _ => None,
+            }),
+            health: state.health,
+            hunger: state.hunger,
+        };
+        if let Some(result) = Session::rollover_to(path, &archive_dir, context)? {
+            let _ = event_tx.send(AgentEvent::Log {
+                text: format!(
+                    "Session rollover: {} -> {} (archive {})",
+                    result.archived_session_id,
+                    result.active_session_id,
+                    result.archive_path.display()
+                ),
+            });
+        }
+    }
+
     let mut registry = ToolRegistry::new();
     // 加载蓝图库 + LLM 自定义动作库（P2-1 + P2-4）：
     // 优先从工作目录的 blueprints/ 与 actions/ 子目录载入；缺失时退化为空库。
-    let blueprints = BlueprintLibrary::load_dir(Path::new("blueprints"));
-    let actions = ActionLibrary::load_dir(Path::new("actions"));
+    let blueprints = BlueprintLibrary::load_dir(Path::new("data/blueprints"));
+    let actions = ActionLibrary::load_dir(Path::new("data/actions"));
     eprintln!(
         "[agent_loop] 加载蓝图 {} 个，自定义动作 {} 个",
         blueprints.len(),
@@ -380,7 +437,7 @@ fn run_agent(
     // CLI 参数 --mode 可指定模式 profile 名（如 survival/creative/assistant/god_mode）。
     // 都不指定时只加载 _default.json。
     //
-    // 路径解析顺序：$CRAFT_AGENT_PROFILES_DIR → cwd/profiles → exe 父目录向上查找 profiles/
+    // 路径解析顺序：$CRAFT_AGENT_PROFILES_DIR → cwd/data/profiles → exe 父目录向上查找 data/profiles/
     // （这样从任何 cwd 启动 viewer 都能找到项目根的 profiles/）。
     let profiles_path = resolve_profiles_path();
     let profile = craft_agent::profile::Profile::load(
@@ -591,21 +648,22 @@ fn run_agent(
         let step_result = agent.step();
         step_stop.store(true, Ordering::Relaxed);
         let _ = progress_handle.join();
-        let (step_log, should_continue) = step_result?;
+        // P61: 永不因单步错误/目标完成而退出全局循环。
+        // 原代码 `step_result?` 会把 agent.step() 的 Err 直接 propagate，
+        // 导致整个 agent 线程结束（running=false），bot 失去自主决策。
+        // 自主通关任务要求 loop 持续运行，因此：Err 只记录并跳过本轮；
+        // should_continue=false（task_complete / AgentEnd）也只记录并继续循环。
+        let (step_log, _should_continue) = match step_result {
+            Ok(v) => v,
+            Err(e) => {
+                let _ = event_tx.send(AgentEvent::Error {
+                    message: format!("单步执行出错（已跳过本轮，循环继续）: {e}"),
+                });
+                continue;
+            }
+        };
         for line in &step_log {
             let _ = event_tx.send(AgentEvent::Log { text: line.clone() });
-        }
-
-        // 检查任务完成停止标志
-        if let Ok(adapter_guard) = ctrl.game_adapter.read() {
-            if let Some(adapter) = adapter_guard.as_ref() {
-                if adapter.0.lock().unwrap().should_stop.load(Ordering::Relaxed) {
-                    let _ = event_tx.send(AgentEvent::Done {
-                        reason: "任务完成（task_complete 验证通过）".into(),
-                    });
-                    break;
-                }
-            }
         }
 
         // 实时推送 perceive 状态给前端（LLM 当前看到的游戏世界）
@@ -641,11 +699,28 @@ fn run_agent(
             }
         }
 
-        if !should_continue {
-            let _ = event_tx.send(AgentEvent::Done {
-                reason: "目标达成或达到最大步数".into(),
+        // P62: 防 OOM 自动滚动。每 40 步或会话文件 > 12MB 时，原地归档并重置
+        // 内存消息历史（保留 world_memory 与 bot 连接），避免长时间运行被系统
+        // OOM kill。滚动后 bot 继续推进当前目标。
+        let session_too_big = std::fs::metadata(session_path)
+            .map(|m| m.len() > 12 * 1024 * 1024)
+            .unwrap_or(false);
+        if step % 40 == 0 || session_too_big {
+            let goal_snapshot = agent.current_goal_snapshot().to_string();
+            let did = agent.rollover_in_place(session_path, &goal_snapshot);
+            if did {
+                let _ = event_tx.send(AgentEvent::Log {
+                    text: format!("♻️ 会话自动滚动（防 OOM）：已归档并重置内存历史，bot 继续运行。"),
+                });
+            }
+        }
+
+        if !_should_continue {
+            // P61: 原逻辑在此 break 退出循环，但自主通关任务要求 loop 永不停。
+            // task_complete / AgentEnd 现在只记录，不退出——继续推进下一轮。
+            let _ = event_tx.send(AgentEvent::Log {
+                text: "🎯 目标达成信号（task_complete），但自主循环继续运行以推进下一阶段任务。".into(),
             });
-            break;
         }
 
         // 空闲自提示循环：有目标时自动持续推进，无需用户输入
@@ -655,6 +730,45 @@ fn run_agent(
         }
     }
     Ok(())
+}
+
+fn format_recovery_summary(goal: &str, state: &WorldState) -> String {
+    let position = state
+        .position
+        .as_deref()
+        .and_then(|p| match p {
+            [x, y, z, ..] => Some(format!("({x:.1}, {y:.1}, {z:.1})")),
+            _ => None,
+        })
+        .unwrap_or_else(|| "unknown".into());
+    let inventory = state
+        .inventory
+        .as_ref()
+        .map(|items| {
+            items
+                .iter()
+                .take(36)
+                .map(|item| {
+                    let name = item["item"]
+                        .as_str()
+                        .or_else(|| item["name"].as_str())
+                        .or_else(|| item["id"].as_str())
+                        .unwrap_or("unknown");
+                    let count = item["count"].as_u64().unwrap_or(1);
+                    format!("{name} x{count}")
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".into());
+    format!(
+        "[Session recovery]\nCurrent goal: {goal}\nLive survival state: health={:?}, hunger={:?}, position={position}, biome={}, held_item={}\nInventory: {inventory}\nContinue from this server-side state. Do not repeat completed milestones; verify state before acting.",
+        state.health,
+        state.hunger,
+        state.biome.as_deref().unwrap_or("unknown"),
+        state.held_item.as_deref().unwrap_or("unknown"),
+    )
 }
 
 /// 解析 profiles/ 目录路径。
@@ -675,8 +789,8 @@ fn resolve_profiles_path() -> PathBuf {
         }
     }
 
-    // 2. cwd/profiles
-    let cwd_profiles = PathBuf::from("profiles");
+    // 2. cwd/data/profiles
+    let cwd_profiles = PathBuf::from("data/profiles");
     if cwd_profiles.join("_default.json").exists() {
         return cwd_profiles;
     }
@@ -685,7 +799,7 @@ fn resolve_profiles_path() -> PathBuf {
     if let Ok(exe) = std::env::current_exe() {
         let mut dir = exe.parent().map(|p| p.to_path_buf());
         while let Some(d) = dir {
-            let candidate = d.join("profiles");
+            let candidate = d.join("data").join("profiles");
             if candidate.join("_default.json").exists() {
                 return candidate;
             }

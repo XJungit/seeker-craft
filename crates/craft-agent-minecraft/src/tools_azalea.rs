@@ -16,7 +16,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::action_lib::{ActionLibrary, LlmAction};
 use crate::blueprint::BlueprintLibrary;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
 
 /// 工具上下文：持有共享的 azalea adapter、世界记忆库、蓝图库与 LLM 自定义动作库。
 pub struct AzaleaToolCtx {
@@ -228,9 +228,9 @@ impl GameTool for MineAboveTool {
             .ctx
             .adapter
             .execute_shared(Action::Minecraft(MinecraftAction::MineAbove))?;
-        // 行动回写：仅当挖掘成功时才从世界记忆移除头前方块。
+        // 行动回写：只有实际向上移动后才从世界记忆移除头前方块。
         // P5 修复：原代码无条件 forget_pos，挖掘失败时记忆也被清空。
-        if r.ok {
+        if r.ok && r.detail.contains("MineAbove progressed") {
             if let Some(p) = self.ctx.memory.find_anchor("__self__").and_then(|a| a.pos) {
                 self.ctx
                     .memory
@@ -417,7 +417,7 @@ impl GameTool for InteractBlockTool {
     }
 }
 
-/// 攻击最近的生物（自卫/狩猎）。target 预留为实体种类关键词（当前实现攻击最近非玩家实体）。
+/// 攻击最近的指定种类生物（自卫/狩猎）。
 pub struct AttackTool {
     ctx: Arc<AzaleaToolCtx>,
 }
@@ -431,14 +431,15 @@ impl GameTool for AttackTool {
         "attack"
     }
     fn description(&self) -> &str {
-        "攻击最近的生物（自卫/狩猎）。无参数（当前总是攻击最近的「非玩家」实体）。bot 会持续攻击直到目标消失。"
+        "攻击近战距离内最近的指定生物。target 必填，如 cow、zombie、creeper。若目标不在近战距离，先 goto 接近或撤退。"
     }
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "target": { "type": "string", "description": "预留：实体种类关键词（如 zombie）。当前忽略，总是攻击最近非玩家实体" }
-            }
+                "target": { "type": "string", "description": "实体种类 id，如 cow、zombie、creeper" }
+            },
+            "required": ["target"]
         })
     }
     fn effects(&self) -> ToolEffects {
@@ -723,6 +724,60 @@ impl GameTool for GatherTool {
             .ctx
             .adapter
             .execute_shared(Action::Minecraft(MinecraftAction::Gather { item, count }))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}
+
+/// 自动造黑曜石（P67）：bot 需手持 water_bucket，且附近（半径12）有岩浆源。
+/// 工具自动在岩浆旁放水→生成黑曜石→用钻石镐挖下，重复 count 次。用于下界传送门框架。
+pub struct MakeObsidianTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl MakeObsidianTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for MakeObsidianTool {
+    fn name(&self) -> &str {
+        "make_obsidian"
+    }
+    fn description(&self) -> &str {
+        "自动制造黑曜石（用于下界传送门框架）。\n\
+         **前置条件**：bot 必须手持 water_bucket（先到水源 interact 装满水），且附近（半径12）有岩浆源。\n\
+         - 工具会自动：在岩浆旁放一格水→生成黑曜石→用钻石镐挖下→重复 count 次。\n\
+         - 若没水/没岩浆/没钻石镐会返回错误。\n\
+         count 为期望黑曜石数量（默认 10，传送门框架需 10 块）。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "count": { "type": "integer", "description": "黑曜石数量（默认 10）" }
+            },
+            "required": []
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let count = args.get("count").and_then(|v| v.as_u64()).unwrap_or(10) as u32;
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::MakeObsidian {
+                count,
+            }))?;
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,
@@ -2715,6 +2770,7 @@ pub fn create_mc_azalea_tools_full(
         Box::new(Craft3x3Tool::new(ctx.clone())),
         Box::new(SmeltTool::new(ctx.clone())),
         Box::new(GatherTool::new(ctx.clone())),
+        Box::new(MakeObsidianTool::new(ctx.clone())),
         Box::new(PlaceTool::new(ctx.clone())),
         Box::new(OpenContainerTool::new(ctx.clone())),
         Box::new(AutoCraftTool::new(ctx.clone())),
@@ -2743,14 +2799,13 @@ pub fn create_mc_azalea_tools_full(
         // P2-4: LLM 代码生成（newAction 等价物）
         Box::new(NewActionTool::new(ctx.clone())),
         Box::new(ListActionsTool::new(ctx.clone())),
-        // 任务完成工具：agent 调用此工具声明任务完成，系统验证后停止
+        // 阶段完成工具：记录里程碑，但不终止长期生存目标。
         Box::new(TaskCompleteTool::new(ctx)),
     ]
 }
 
-/// 任务完成工具：agent 调用此工具声明任务完成。
-/// 系统根据当前目标验证是否真正完成（检查背包/位置/状态），
-/// 若完成则停止 agent loop，否则告知还差什么。
+/// 阶段完成工具：agent 调用此工具声明当前里程碑完成。
+/// 长期生存流程必须继续推进，不能由一个局部任务停止 agent loop。
 pub struct TaskCompleteTool {
     ctx: Arc<AzaleaToolCtx>,
 }
@@ -2764,8 +2819,8 @@ impl GameTool for TaskCompleteTool {
         "task_complete"
     }
     fn description(&self) -> &str {
-        "声明任务完成。当你认为目标已达成时调用此工具，系统会验证是否真正完成。\
-         若验证通过则停止运行；若未通过，会告知你还差什么。\
+        "声明当前阶段里程碑完成。系统记录声明后继续运行，你必须推进总体目标的下一阶段。\
+         仅在世界状态可验证里程碑时调用，不要对同一里程碑重复调用。\
          参数 reason: 完成原因简述（必填）。"
     }
     fn parameters(&self) -> Value {
@@ -2790,23 +2845,22 @@ impl GameTool for TaskCompleteTool {
             .get("reason")
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        // 读取当前 perceive 状态
+        // Require a real perception snapshot, but never convert a local milestone into
+        // a process-wide stop. The long-running Agent owns progression and termination.
         let state = self.ctx.adapter.perceive_shared()?;
-        // 简单验证：检查背包是否有物品（更复杂的验证可由 LLM 判断）
-        let has_items = state.self_hint.contains("背包:") && !state.self_hint.contains("背包: []");
-        if has_items || !state.self_hint.is_empty() {
-            // 验证通过，设置停止标志
-            if let Ok(adapter) = self.ctx.adapter.0.lock() {
-                adapter.should_stop.store(true, Ordering::Relaxed);
-            }
+        if !state.self_hint.is_empty() {
             Ok(ToolResult {
-                message: format!("任务完成声明已接收（原因: {reason}）。系统验证通过，停止运行。"),
+                message: format!(
+                    "阶段里程碑声明已接收（原因: {reason}）。继续运行并立即推进总体目标的下一阶段。"
+                ),
                 is_error: false,
                 images: vec![],
             })
         } else {
             Ok(ToolResult {
-                message: format!("任务完成声明已接收（原因: {reason}）。但系统验证未通过：背包为空或无有效状态。请继续行动。"),
+                message: format!(
+                    "阶段里程碑声明已接收（原因: {reason}）。但系统验证未通过：无有效状态。请继续行动。"
+                ),
                 is_error: true,
                 images: vec![],
             })

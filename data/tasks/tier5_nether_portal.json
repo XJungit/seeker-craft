@@ -5,9 +5,11 @@
     "goal": "放置 10 块黑曜石构成 4×5 传送门框架。步骤：1) 用钻石镐 gather(item=\"obsidian\", count=10) 挖黑曜石（或人工浇岩浆+水生成）；2) craft(item=\"flint_and_steel\", count=1) 准备打火石（1 铁锭 + 1 燧石）；3) build_blueprint 蓝图框架：4 高 × 3 宽（外框 14 块，去四角 10 块）；4) place(item=\"obsidian\") 按 4×5 框架放置（两列 4 高 + 顶底各 3）；5) interact_block 用打火石点燃框架内部激活传送门。",
     "tier": 5,
     "success": {
-        "type": "Placed",
-        "block": "obsidian",
-        "count": 10
+        "type": "All",
+        "conditions": [
+            {"type": "InventoryHas", "item": "obsidian", "count": 10},
+            {"type": "InventoryHas", "item": "flint_and_steel", "count": 1}
+        ]
     },
     "timeout_secs": 720,
     "reward": "解锁下界：可获取烈焰棒/下界疣/下界合金碎片/石英"

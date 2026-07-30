@@ -254,7 +254,9 @@ pub async fn ensure_table_open(
     // P40 修 auto_craft 的 ensure(furnace) → ensure(crafting_table) → ensure(oak_log) 链；
     // P41 修 craft_3x3/smelt 工具直接调用的 ensure_table_open。
     // 两者互补，共同消除"地下缺 oak_log 无法合成桌/炉"的死循环。
-    if hint_pos.is_none() {
+    // Prefer the table carried in inventory. Chasing an older table through
+    // solid cave walls is slower and less reliable than placing it locally.
+    if hint_pos.is_none() && count_in_inventory(bot, item_id) == 0 {
         let expected_block = table_block_kind(table_kind);
         // 从 bot.position() 算 BlockPos 作为扫描中心
         let center = bot
@@ -1018,7 +1020,7 @@ async fn excavate_placement_spot(bot: &Client) -> Option<BlockPos> {
 
     // 按距离排序：距离 1 优先（紧邻 bot，挖完直接放）
     candidates.sort_by_key(|(d, _)| *d);
-    candidates.truncate(5); // 最多尝试 5 个候选
+    candidates.truncate(2); // Keep the operation within the outer tool timeout.
 
     // 装备镐（挖石头/矿石类需要镐）
     let _ = crate::azalea::auto_equip_best_pickaxe(bot).await;
@@ -1037,9 +1039,10 @@ async fn excavate_placement_spot(bot: &Client) -> Option<BlockPos> {
         // 开始挖
         bot.start_mining(*pos);
 
-        // 等待方块变空气（最多 4s）
+        // Stone takes about 7.5s to break by hand. This path is specifically
+        // needed to escape the no-pickaxe/no-space crafting deadlock.
         let mut broken = false;
-        for _ in 0..40 {
+        for _ in 0..100 {
             sleep(Duration::from_millis(100)).await;
             let still_there = bot
                 .world()
