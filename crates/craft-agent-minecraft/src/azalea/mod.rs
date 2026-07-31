@@ -4136,19 +4136,22 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
             let srcs = find_item_slots(&inv, kind);
             if let Some(src) = srcs.first() {
                 inv.shift_click(*src);
-                sleep(Duration::from_millis(150)).await;
-                // P5 修复：验证盔甲槽是否真的装上了——shift_click 可能被服务端拒绝
-                // （如该槽已有其他盔甲，或物品不是对应种类的盔甲）。
                 drop(inv);
-                return match verify_armor_slot(bot, armor_slot_idx, kind).await {
-                    true => format!("已装备 {item} 到 {slot_norm}（shift_click 槽 {src}）"),
-                    false => format!(
-                        "装备 {item} 到 {slot_norm} 失败：shift_click 后该盔甲槽未持有 {item}。\
-                         可能原因：1) 该槽已有其他盔甲（需先 discard 旧盔甲）；\
-                         2) {item} 不是 {slot_norm} 类型的盔甲；3) 服务端同步延迟。\
-                         建议：用 perceive 查看当前盔甲槽状态，或换一个空槽位。"
-                    ),
-                };
+                // P53 修复：shift_click 后轮询验证（最多 2s），覆盖服务端同步延迟。
+                // 背景：azalea quick_move_stack 本地模拟把盔甲移到 hotbar/主背包，
+                // 而服务端 QuickMove 实际会穿甲；150ms 单次验证经常读到旧状态误报失败。
+                for _ in 0..20u8 {
+                    sleep(Duration::from_millis(100)).await;
+                    if verify_armor_slot(bot, armor_slot_idx, kind).await {
+                        return format!("已装备 {item} 到 {slot_norm}（shift_click 槽 {src}）");
+                    }
+                }
+                return format!(
+                    "装备 {item} 到 {slot_norm} 失败：shift_click 后轮询 2s，盔甲槽仍未持有 {item}。\
+                     可能原因：1) 该槽已有其他盔甲（需先 discard 旧盔甲）；\
+                     2) {item} 不是 {slot_norm} 类型的盔甲；3) 服务端同步延迟。\
+                     建议：用 perceive 查看当前盔甲槽状态，或换一个空槽位。"
+                );
             }
             format!("背包未持有 {item}")
         }
@@ -4269,7 +4272,54 @@ pub async fn do_discard(bot: &Client, item: &str, count: u32) -> String {
         }
     }
     if count == 0 {
-        format!("已丢弃全部 {item}（共 {dropped} 个）")
+        // 扔出后有 ~2s pickup delay，随后 1.5m 内会被服务端自动拾回。
+        // 必须立即走开 3+ 格，否则刚丢的掉落物会被吸回背包（LLM 看到"丢不掉"死循环）。
+        // 依次尝试 4 个方向各走 4 格，覆盖 2s 延迟窗口。
+        let start_pos = bot.position().ok();
+        let dirs = [(1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0)];
+        for (dx, dz) in dirs {
+            if let Ok(p) = bot.position() {
+                bot.start_goto(BlockPosGoal(BlockPos::new(
+                    (p.x + dx * 4.0).floor() as i32,
+                    p.y.floor() as i32,
+                    (p.z + dz * 4.0).floor() as i32,
+                )));
+                sleep(Duration::from_millis(1300)).await;
+            }
+        }
+        bot.stop_pathfinding();
+        // 验证是否真的走开（若原地打转则物品会被吸回）
+        let moved_away = match (start_pos, bot.position().ok()) {
+            (Some(s), Some(p)) => {
+                (p.x - s.x).abs() > 2.0 || (p.z - s.z).abs() > 2.0
+            }
+            _ => true,
+        };
+        // 验证物品是否还在背包（吸回检测）
+        let still_held = bot
+            .get_inventory()
+            .ok()
+            .and_then(|inv| {
+                let slots = inv.slots()?;
+                Some(
+                    slots
+                        .iter()
+                        .filter(|st| !st.is_empty() && st.kind() == kind)
+                        .map(|st| st.count() as u32)
+                        .sum::<u32>(),
+                )
+            })
+            .unwrap_or(0);
+        if still_held > 0 {
+            format!(
+                "已丢弃 {item}（共 {dropped} 个），但扔出的掉落物被 1.5m 自动拾取吸回，背包仍剩 {still_held} 个。\
+                 可能原因：走开失败（被卡住/路径不可达）。请先换个开阔平坦的位置，再重试 discard。"
+            )
+        } else if moved_away {
+            format!("已丢弃全部 {item}（共 {dropped} 个），已走开避免吸回")
+        } else {
+            format!("已丢弃全部 {item}（共 {dropped} 个）")
+        }
     } else {
         format!("已丢弃 {dropped} 个 {item}")
     }
