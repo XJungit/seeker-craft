@@ -69,7 +69,7 @@ impl GameTool for PerceiveTool {
         "perceive"
     }
     fn description(&self) -> &str {
-        "读取当前世界结构化状态：玩家坐标、背包前5格、附近玩家数。返回文本描述，供决策使用。无参数。"
+        "读取当前世界结构化状态：坐标、维度、生命/饥饿、背包、附近方块/实体、激活传送门和服务端击杀统计。返回文本描述，供决策使用。无参数。"
     }
     fn parameters(&self) -> Value {
         serde_json::json!({})
@@ -775,9 +775,7 @@ impl GameTool for MakeObsidianTool {
         let r = self
             .ctx
             .adapter
-            .execute_shared(Action::Minecraft(MinecraftAction::MakeObsidian {
-                count,
-            }))?;
+            .execute_shared(Action::Minecraft(MinecraftAction::MakeObsidian { count }))?;
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,
@@ -2804,6 +2802,7 @@ pub fn create_mc_azalea_tools_full(
         Box::new(ListActionsTool::new(ctx.clone())),
         // 阶段完成工具：记录里程碑，但不终止长期生存目标。
         Box::new(TaskCompleteTool::new(ctx)),
+        Box::new(TaskRetryTool),
     ]
 }
 
@@ -2844,10 +2843,7 @@ impl GameTool for TaskCompleteTool {
         args: Value,
         _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
     ) -> anyhow::Result<ToolResult> {
-        let reason = args
-            .get("reason")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        let reason = args.get("reason").and_then(|v| v.as_str()).unwrap_or("");
         // Require a real perception snapshot, but never convert a local milestone into
         // a process-wide stop. The long-running Agent owns progression and termination.
         let state = self.ctx.adapter.perceive_shared()?;
@@ -2868,6 +2864,49 @@ impl GameTool for TaskCompleteTool {
                 images: vec![],
             })
         }
+    }
+}
+
+/// Request a retry of the current failed task. The core Agent validates the
+/// task status and performs the restart; this tool only provides the stable
+/// function-calling surface to the LLM.
+pub struct TaskRetryTool;
+
+impl GameTool for TaskRetryTool {
+    fn name(&self) -> &str {
+        "task_retry"
+    }
+
+    fn description(&self) -> &str {
+        "重试当前失败的任务。只有任务状态为 Failed 时有效；先解决失败原因，再传入 reason。"
+    }
+
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "reason": { "type": "string", "description": "已解决的失败原因" }
+            },
+            "required": ["reason"]
+        })
+    }
+
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let reason = args.get("reason").and_then(Value::as_str).unwrap_or("");
+        Ok(ToolResult {
+            message: format!("已收到任务重试请求（原因: {reason}）。由 Agent 校验失败状态后重启。"),
+            is_error: false,
+            images: vec![],
+        })
     }
 }
 
@@ -3231,9 +3270,14 @@ impl GameTool for GiveTool {
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string());
-        let r = self.ctx.adapter.execute_shared(Action::Minecraft(
-            MinecraftAction::Give { item, count, target },
-        ))?;
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::Give {
+                item,
+                count,
+                target,
+            }))?;
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,

@@ -59,7 +59,7 @@ cargo run -p craft-agent-viewer -- --goal "收集木头做工作台" --steps 40 
 
 - [`docs/README.md`](./docs/README.md)：文档总览（含教程、设计归档、crate 文档链接）
 - [`docs/tutorials/INDEX.md`](./docs/tutorials/INDEX.md)：教程索引（推荐阅读顺序）
-- [`ARCHITECTURE.md`](./ARCHITECTURE.md)：分层架构、13 步主循环、37 工具、P56-P58 治理
+- [`ARCHITECTURE.md`](./ARCHITECTURE.md)：分层架构、13 步主循环、44 工具、P56-P58 治理
 - [`PLAN.md`](./PLAN.md)：项目计划（azalea-bot 路线 + 通关路径 + 自动化测试协议）
 - [`AGENTS.md`](./AGENTS.md)：全自动工作流手册（含 9-bis 节 Mindcraft 哲学约束）
 - [`docs/CHANGELOG.md`](./docs/CHANGELOG.md)：变更日志（P55-P58 最新修复）

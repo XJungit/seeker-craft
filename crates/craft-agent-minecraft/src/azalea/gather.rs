@@ -565,4 +565,3 @@ fn normalize_item(item: &str) -> String {
         format!("minecraft:{item}")
     }
 }
-

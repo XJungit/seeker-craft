@@ -1,7 +1,7 @@
 //! Minecraft azalea 客户端协议层适配器（仅 `azalea-bot` 特性编译）。
 //!
 //! 实现 `craft_agent::core::adapter::GameAdapter`：
-//! - [`perceive`]：直接读 azalea 结构化状态（坐标/背包/附近玩家），
+//! - [`perceive`]：直接读 azalea 结构化状态（坐标/维度/背包/附近玩家/传送门/击杀统计），
 //!   构建 `WorldState` 喂给决策层，**不依赖 VLM/截图**。
 //! - [`execute`]：把 `Action::Minecraft(...)` 翻译成 `AzaleaBot` 命令。
 //! - [`capture`]：azalea 路线无窗口截图，返回空占位（viewer 用 debug 渲染）。
@@ -201,28 +201,57 @@ impl MinecraftAzaleaAdapter {
                             } else {
                                 format!("\n特殊方块: [{}]", compressed_blocks)
                             };
+                            let dimension = game_state["dimension"]
+                                .as_str()
+                                .unwrap_or("unknown")
+                                .to_string();
+                            let portal_active =
+                                game_state["portal_active"].as_bool().unwrap_or(false);
+                            let kill_counts = game_state["kill_counts"]
+                                .as_object()
+                                .map(|counts| {
+                                    let mut entries: Vec<_> = counts
+                                        .iter()
+                                        .filter_map(|(kind, count)| {
+                                            count.as_u64().map(|value| format!("{kind}:{value}"))
+                                        })
+                                        .collect();
+                                    entries.sort();
+                                    entries.join(", ")
+                                })
+                                .unwrap_or_default();
                             let scene = format!(
                                 "位置: ({:.0}, {:.0}, {:.0})\n\
-                                 生命: {:.0}/20  饱食: {}/20  主手: {}\n\
-                                 群系: {}  脚下: {}  前方: {}\n\
-                                 附近: [{}]\n\
-                                 资源: {}{}\n\
-                                 实体: [{}]\n\
-                                 背包: [{}]\n\
-                                 玩家: {}{}",
+                                  生命: {:.0}/20  饱食: {}/20  主手: {}\n\
+                                  维度: {}\n\
+                                  群系: {}  脚下: {}  前方: {}\n\
+                                  传送门: {}\n\
+                                  附近: [{}]\n\
+                                  资源: {}{}\n\
+                                  实体: [{}]\n\
+                                  击杀统计: [{}]\n\
+                                  背包: [{}]\n\
+                                  玩家: {}{}",
                                 position.x,
                                 position.y,
                                 position.z,
                                 health,
                                 food,
                                 held_item,
+                                dimension,
                                 biome,
                                 block_under,
                                 block_ahead,
+                                if portal_active {
+                                    "已激活"
+                                } else {
+                                    "未检测到"
+                                },
                                 nearby,
                                 resource_summary,
                                 blocks_line,
                                 nearby_entities,
+                                kill_counts,
                                 inventory,
                                 player_count,
                                 stuck_hint
@@ -246,6 +275,16 @@ impl MinecraftAzaleaAdapter {
                                 pitch: Some(pitch),
                                 biome: Some(biome),
                                 gamemode: Some("survival".to_string()),
+                                dimension: Some(dimension),
+                                portal_active: Some(portal_active),
+                                kill_counts: game_state["kill_counts"].as_object().map(|counts| {
+                                    counts
+                                        .iter()
+                                        .filter_map(|(kind, count)| {
+                                            count.as_u64().map(|value| (kind.clone(), value as u32))
+                                        })
+                                        .collect()
+                                }),
                                 inventory: game_state["inventory"].as_array().cloned(),
                                 held_item: Some(held_item),
                                 selected_slot: game_state["selected_slot"]
@@ -290,6 +329,9 @@ impl MinecraftAzaleaAdapter {
                 pitch: None,
                 biome: None,
                 gamemode: None,
+                dimension: None,
+                portal_active: None,
+                kill_counts: None,
                 inventory: None,
                 held_item: None,
                 selected_slot: None,

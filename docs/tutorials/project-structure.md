@@ -18,7 +18,7 @@ This guide explains the main directories and crates in Craft-Agent.
 - `craft-agent` — generic game agent runtime: Agent main loop (13 steps),
   tool registry, session, compaction, prompt assembly, modes, WorldMemory.
 - `craft-agent-model` — LLM/VLM clients and config model.
-- `craft-agent-minecraft` — Minecraft adapter and 37 LLM tools (azalea-bot route).
+- `craft-agent-minecraft` — Minecraft adapter and 44 LLM tools (azalea-bot route).
 - `craft-agent-viewer` — Axum + SSE Web dashboard for runtime visualization.
 
 ## Removed Directories

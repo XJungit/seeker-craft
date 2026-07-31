@@ -13,7 +13,7 @@ Minecraft 游戏适配器与工具集（Azalea 客户端路线）。
 craft-agent-minecraft = { features = ["azalea-bot"] }
 ```
 
-## 37 个 LLM 工具
+## 44 个 LLM 工具
 
 工具注册于 `create_mc_azalea_tools`，按副作用分组并行执行（READ 同批、NETWORK+READ 同批、
 WRITE/APPEND/PROCESS 各自单独一批，BARRIER 切批）。
@@ -22,8 +22,8 @@ WRITE/APPEND/PROCESS 各自单独一批，BARRIER 切批）。
 |------|------|--------|
 | 感知 | `perceive` | READ |
 | 记忆 | `memory` (save/anchor/query/forget) | READ/WRITE |
-| 移动 | `go` | WRITE |
-| 挖掘 | `mine` / `mine_below` | WRITE |
+| 移动 | `goto` / `mine_below` / `mine_above` / `pickup` / `follow` / `stop_follow` | WRITE |
+| 挖掘 | `mine` / `make_obsidian` | WRITE |
 | 交互方块 | `interact_block` | WRITE |
 | 战斗 | `attack` / `defend` | WRITE |
 | 合成 | `craft` (2×2) / `craft_3x3` | WRITE |
@@ -44,13 +44,15 @@ WRITE/APPEND/PROCESS 各自单独一批，BARRIER 切批）。
 | 复合脚本 | `run_script` | WRITE (rhai) |
 | 自定义动作 | `new_action` / `list_actions` | WRITE (持久化) |
 | 知识搜索 | `search_wiki` | NETWORK |
+| 社交 | `give` | WRITE |
+| 任务链 | `task_complete` / `task_retry` | WRITE |
 
 ## 关键模块
 
 | 模块 | 作用 |
 |------|------|
 | `adapter_azalea.rs` | `GameAdapter` 实现：perceive / execute / state snapshot |
-| `tools_azalea.rs` | 37 个 LLM 工具定义 |
+| `tools_azalea.rs` | 44 个 LLM 工具定义 |
 | `azalea/mod.rs` | `AzaleaBot` + handler + 两层 modes 反应系统（Handler 层） |
 | `azalea/craft.rs` | 合成/熔炼/附魔/切石机（含 mock 容器测试，对齐 mindcraft skills.js） |
 | `azalea/gather.rs` | 自动采集：寻路+挖+掉落物统计（P55 部分成功返回 Ok） |
@@ -75,7 +77,7 @@ bot 工具只做能做的，做不了就 return Err 让 LLM 决策。详见 [`AG
 # 不需要 MC server 的 mock 容器集成测试
 cargo test -p craft-agent-minecraft --features azalea-bot --lib
 
-# 118 个测试覆盖：
+# 130 个测试覆盖：
 #   - do_smelt / do_craft_3x3 状态机
 #   - mindcraft skills.js 所有边界条件（背包满/原料不足/燃料不够/炉子被占用）
 #   - P57 分批熔炼（15→8, 8→8, 9→8）

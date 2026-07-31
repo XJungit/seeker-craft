@@ -2,7 +2,7 @@
 
 > 当前路线：**azalea-bot**（Rust 全栈客户端 bot，直连 MC 服务器，原生支持 MC 26.2）。
 > 旧 Java Mod 路线（GoalEngine 在 Java 侧自动分解目标）已废弃——见 [docs/adr.md](./docs/adr.md) ADR-004。
-> 当前架构：LLM 通过 37 个工具直接控制 bot，bot 工具只做原子动作，做不了的返回 Err 让 LLM 决策（Mindcraft 哲学）。
+> 当前架构：LLM 通过 44 个工具直接控制 bot，bot 工具只做原子动作，做不了的返回 Err 让 LLM 决策（Mindcraft 哲学）。
 
 ---
 
@@ -26,7 +26,7 @@ LLM 大模型控制 bot 通过 Minecraft（抵达末地 + 击败末影龙）。
 ### 已完成
 
 - **架构落地**：三层 crate（craft-agent / craft-agent-minecraft / craft-agent-model / craft-agent-viewer）
-- **37 个 LLM 工具**：覆盖感知/记忆/移动/挖掘/战斗/合成/熔炼/采集/放置/容器/装备/交易/建造/计划/脚本/自定义动作/知识搜索
+- **44 个 LLM 工具**：覆盖感知/记忆/移动/挖掘/战斗/合成/熔炼/采集/放置/容器/装备/交易/给予/跟随/建造/计划/脚本/自定义动作/任务链/知识搜索
 - **Agent 主循环 13 步**：drain_queues → 压缩检查 → 易变注入清理 → auto_perceive → modes 反应 → SelfPrompter → 动态上下文 → WorldMemory → LLM → 纯文字检测 → 死循环检测 → 并行执行 → 技能抽取
 - **两层 modes 反应系统**：Agent 层注入提示 + Handler 层直接执行（火/岩浆脱困、自动反击）
 - **WorldMemory 空间记忆**：坐标主键 + 分块索引 + 6 种记忆类型 + 每 20 tick 扫描
@@ -149,6 +149,6 @@ bot 工具只做能做的，做不了就 return Err 让 LLM 决策。
 ## 结论
 
 不再追求"LLM 只发目标，Mod 全自动执行"的旧设计（已废弃，见 ADR-004）。
-当前架构：**LLM 通过 37 个工具直接控制 bot，bot 工具是原子操作，做不了的返回 Err 让 LLM 决策**。
+当前架构：**LLM 通过 44 个工具直接控制 bot，bot 工具是原子操作，做不了的返回 Err 让 LLM 决策**。
 
 这是超越 Mindcraft 的路径——azalea 协议层 + Rust 全栈 + Mindcraft 哲学对齐 + 全自动化测试工具链。

@@ -4,6 +4,7 @@
     "description": "铁甲能显著降低受到的伤害，全套铁甲提供 15 点护甲值（减伤 60%）。穿上全套铁甲后可安全探索洞穴、夜行和下界外围，是中后期生存的基石。",
     "goal": "合成全套铁甲（头盔/胸甲/护腿/靴子）。步骤：1) 用石镐 gather(item=\"iron_ore\", count=24) 收集足够铁矿（头盔5+胸甲8+护腿7+靴子4=24 锭）；2) smelt(output=\"iron_ingot\", fuel=\"coal\", count=24) 批量熔炼；3) craft(item=\"stick\", count=0) 确认无需木棍；4) 依次 craft_3x3(item=\"iron_helmet\", count=1)、craft_3x3(item=\"iron_chestplate\", count=1)、craft_3x3(item=\"iron_leggings\", count=1)、craft_3x3(item=\"iron_boots\", count=1)。",
     "tier": 3,
+    "order": 4,
     "success": {
         "type": "All",
         "conditions": [

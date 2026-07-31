@@ -4,6 +4,7 @@ use crate::core::session::SessionEntry as SessionFileEntry;
 use crate::core::session::{
     AgentSnapshot, SESSION_ROLLOVER_CUSTOM_TYPE, Session, SessionRolloverMetadata,
 };
+use crate::task::TASK_STATE_CUSTOM_TYPE;
 
 use super::Agent;
 
@@ -36,11 +37,25 @@ impl Agent {
         for e in path.iter().rev() {
             if let SessionFileEntry::Custom(custom) = e
                 && custom.custom_type == SESSION_ROLLOVER_CUSTOM_TYPE
-                && let Ok(metadata) = serde_json::from_value::<SessionRolloverMetadata>(custom.data.clone())
+                && let Ok(metadata) =
+                    serde_json::from_value::<SessionRolloverMetadata>(custom.data.clone())
             {
                 if let Some(goal) = metadata.current_goal {
                     self.set_goal(goal);
                 }
+                break;
+            }
+        }
+
+        // Restore deterministic task-chain progress after the session has
+        // loaded its message history. Unknown task ids are ignored by the
+        // TaskManager so task files can evolve across releases.
+        for e in path.iter().rev() {
+            if let SessionFileEntry::Custom(custom) = e
+                && custom.custom_type == TASK_STATE_CUSTOM_TYPE
+            {
+                self.task_manager.restore_snapshot(&custom.data);
+                self.persisted_task_snapshot = Some(custom.data.to_string());
                 break;
             }
         }
@@ -76,6 +91,7 @@ impl Agent {
     }
 
     pub fn persist_turn(&mut self) -> anyhow::Result<()> {
+        self.persist_task_state();
         let Some(sess) = &mut self.session else {
             return Ok(());
         };

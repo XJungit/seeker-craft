@@ -14,8 +14,13 @@
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+use std::collections::HashMap;
 use std::path::Path;
 use std::path::PathBuf;
+
+/// Session custom-entry type used to persist task progress across restarts.
+pub use crate::core::session::TASK_STATE_CUSTOM_TYPE;
 
 /// 单个完成条件（结构化，非代码）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -29,7 +34,11 @@ pub enum SuccessCondition {
     AtPosition { x: i32, y: i32, z: i32, radius: u32 },
     /// 已挖到指定 Y 坐标以下
     BelowY { y: i32 },
-    /// 已击杀指定数量实体（统计用，需外部回填）
+    /// 当前所在维度（如 minecraft:the_nether）。
+    InDimension { dimension: String },
+    /// 感知范围内存在已激活的下界传送门。
+    PortalActive,
+    /// 已击杀指定数量实体（来自服务端累计击杀统计）
     Killed { entity_kind: String, count: u32 },
     /// 已合成指定物品 ≥ count（与 InventoryHas 类似但语义是"造出来过"）
     Crafted { item: String, count: u32 },
@@ -54,6 +63,9 @@ pub struct Task {
     pub goal: String,
     /// 任务难度 tier（1-6，对齐 Mindcraft 的 6 tier）
     pub tier: u32,
+    /// 同一 tier 内的执行顺序。任务文件名不承载依赖关系，因此由数据显式声明。
+    #[serde(default)]
+    pub order: u32,
     /// 完成条件（结构化）
     pub success: SuccessCondition,
     /// 可选：任务失败条件（如生命归零/掉出世界）
@@ -119,8 +131,14 @@ pub fn load_tasks(dir: &Path) -> Result<Vec<Task>> {
             }
         }
     }
-    // 按 tier 升序、id 字母序排序
-    tasks.sort_by(|a, b| a.tier.cmp(&b.tier).then_with(|| a.id.cmp(&b.id)));
+    // 按 tier 升序、里程碑顺序、id 字母序排序。
+    // order 让任务链遵循实际依赖（先木头，再工作台，再工具），而不是文件名排序。
+    tasks.sort_by(|a, b| {
+        a.tier
+            .cmp(&b.tier)
+            .then_with(|| a.order.cmp(&b.order))
+            .then_with(|| a.id.cmp(&b.id))
+    });
     Ok(tasks)
 }
 
@@ -139,6 +157,7 @@ pub fn load_task_file(path: &Path) -> Result<Task> {
 /// - 不直接访问 bot，由调用方传入 perceive 文本 + 可选背包快照
 /// - inventory_has 通过 perceive 文本中的"背包: [...]"行解析
 /// - at_position 通过 perceive 文本中的"位置: (x, y, z)"行解析
+/// - dimension/portal/killed 通过结构化状态渲染行解析
 /// - 复合条件递归判断
 pub struct TaskChecker;
 
@@ -174,9 +193,15 @@ impl TaskChecker {
                     false
                 }
             }
-            SuccessCondition::Killed { .. }
-            | SuccessCondition::Crafted { .. }
-            | SuccessCondition::Placed { .. } => {
+            SuccessCondition::InDimension { dimension } => parse_dimension(perceive_text)
+                .is_some_and(|actual| {
+                    normalize_identifier(actual) == normalize_identifier(dimension)
+                }),
+            SuccessCondition::PortalActive => parse_portal_active(perceive_text),
+            SuccessCondition::Killed { entity_kind, count } => {
+                parse_kill_count(perceive_text, entity_kind) >= *count
+            }
+            SuccessCondition::Crafted { .. } | SuccessCondition::Placed { .. } => {
                 // 这些需要外部统计回填，perceive 文本无法直接判断
                 // 调用方应在外部记录并转换为 InventoryHas 检查
                 false
@@ -191,39 +216,60 @@ impl TaskChecker {
     }
 }
 
+fn normalize_identifier(value: &str) -> String {
+    let lower = value.trim().to_ascii_lowercase();
+    lower
+        .strip_prefix("minecraft:")
+        .unwrap_or(&lower)
+        .to_string()
+}
+
+fn parse_dimension(perceive: &str) -> Option<&str> {
+    perceive.lines().find_map(|line| {
+        line.trim()
+            .strip_prefix("维度:")
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    })
+}
+
+fn parse_portal_active(perceive: &str) -> bool {
+    perceive.lines().any(|line| {
+        let Some(value) = line.trim().strip_prefix("传送门:") else {
+            return false;
+        };
+        let active = matches!(value.trim(), "已激活" | "active" | "true" | "True");
+        active
+    })
+}
+
+fn parse_kill_count(perceive: &str, entity_kind: &str) -> u32 {
+    parse_count_line(perceive, "击杀统计:", entity_kind)
+}
+
 /// 从 perceive 文本解析背包中指定物品的数量。
 ///
 /// perceive 文本中背包行格式：`背包: [oak_log:8, stick:4, ...]`
 /// 物品 id 可能带或不带 minecraft: 前缀，统一 strip 后比较。
 fn parse_inventory_count(perceive: &str, item: &str) -> u32 {
-    let item_norm = item.strip_prefix("minecraft:").unwrap_or(item);
+    parse_count_line(perceive, "背包:", item)
+}
+
+fn parse_count_line(perceive: &str, prefix: &str, wanted: &str) -> u32 {
+    let wanted_norm = normalize_identifier(wanted);
     for line in perceive.lines() {
         let trimmed = line.trim();
-        if !trimmed.starts_with("背包:") {
+        let Some(rest) = trimmed.strip_prefix(prefix) else {
             continue;
-        }
-        // 提取方括号内的内容
-        if let Some(start) = trimmed.find('[') {
-            if let Some(end) = trimmed.find(']').or(Some(trimmed.len())) {
-                let inner = &trimmed[start + 1..end];
-                for entry in inner.split(',') {
-                    let entry = entry.trim();
-                    // 格式 "oak_log:8" 或 "minecraft:oak_log:8"
-                    let mut parts = entry.split(':');
-                    // 处理 minecraft: 前缀：split(':') 会产生 ["minecraft", "oak_log", "8"]
-                    let parts_vec: Vec<&str> = parts.by_ref().collect();
-                    if parts_vec.len() < 2 {
-                        continue;
-                    }
-                    // 最后一个是 count，前面拼起来是 item id
-                    let count_str = parts_vec.last().unwrap();
-                    let item_id = parts_vec[..parts_vec.len() - 1].join(":");
-                    let item_id_norm = item_id.strip_prefix("minecraft:").unwrap_or(&item_id);
-                    if item_id_norm == item_norm {
-                        if let Ok(n) = count_str.trim().parse::<u32>() {
-                            return n;
-                        }
-                    }
+        };
+        let inner = rest.trim().trim_start_matches('[').trim_end_matches(']');
+        for entry in inner.split(',') {
+            let Some((item_id, count_str)) = entry.trim().rsplit_once(':') else {
+                continue;
+            };
+            if normalize_identifier(item_id) == wanted_norm {
+                if let Ok(n) = count_str.trim().parse::<u32>() {
+                    return n;
                 }
             }
         }
@@ -264,6 +310,7 @@ pub struct TaskManager {
     pub tasks: Vec<Task>,
     pub current: Option<TaskInstance>,
     pub tasks_dir: Option<PathBuf>,
+    statuses: HashMap<String, TaskStatus>,
 }
 
 impl TaskManager {
@@ -273,6 +320,7 @@ impl TaskManager {
             tasks: vec![],
             current: None,
             tasks_dir: None,
+            statuses: HashMap::new(),
         }
     }
 
@@ -283,6 +331,45 @@ impl TaskManager {
         Ok(())
     }
 
+    /// Start the first task that has not already been completed.
+    ///
+    /// The task files are intentionally ordered by tier/order/id, so this gives a
+    /// deterministic starting point without making the LLM choose the first
+    /// milestone itself.
+    pub fn start_first_pending(&mut self, now_ms: u64) -> Option<String> {
+        if let Some(current) = &self.current {
+            match current.status {
+                TaskStatus::Running { .. } | TaskStatus::Failed { .. } => {
+                    return Some(current.task.id.clone());
+                }
+                TaskStatus::Pending => {
+                    let id = current.task.id.clone();
+                    self.start_task(&id, now_ms).ok()?;
+                    return Some(id);
+                }
+                TaskStatus::Completed { .. } => {
+                    if let Some(id) = self.next_task_id(&current.task.id) {
+                        self.start_task(&id, now_ms).ok()?;
+                        return Some(id);
+                    }
+                    return None;
+                }
+            }
+        }
+        let id = self
+            .tasks
+            .iter()
+            .find(|task| {
+                matches!(
+                    self.statuses.get(&task.id),
+                    None | Some(TaskStatus::Pending)
+                )
+            })
+            .map(|task| task.id.clone())?;
+        self.start_task(&id, now_ms).ok()?;
+        Some(id)
+    }
+
     /// 按 id 选择任务开始。
     pub fn start_task(&mut self, task_id: &str, now_ms: u64) -> Result<()> {
         let task = self
@@ -291,19 +378,35 @@ impl TaskManager {
             .find(|t| t.id == task_id)
             .cloned()
             .ok_or_else(|| anyhow::anyhow!("任务不存在: {task_id}"))?;
-        self.current = Some(TaskInstance {
-            task,
-            status: TaskStatus::Running { started_at: now_ms },
-        });
+        let status = TaskStatus::Running { started_at: now_ms };
+        self.statuses.insert(task.id.clone(), status.clone());
+        self.current = Some(TaskInstance { task, status });
         Ok(())
+    }
+
+    /// Return the next task after `task_id` that is not the current task.
+    ///
+    /// Tasks are already ordered by tier/order/id, and statuses prevent a
+    /// completed milestone from being selected again after a restart.
+    pub fn next_task_id(&self, task_id: &str) -> Option<String> {
+        let current_index = self.tasks.iter().position(|task| task.id == task_id)?;
+        self.tasks
+            .iter()
+            .skip(current_index + 1)
+            .find(|task| {
+                matches!(
+                    self.statuses.get(&task.id),
+                    None | Some(TaskStatus::Pending)
+                )
+            })
+            .map(|task| task.id.clone())
     }
 
     /// 直接用任务定义开始（不依赖加载的清单，用于运行时动态注入）。
     pub fn start_task_direct(&mut self, task: Task, now_ms: u64) {
-        self.current = Some(TaskInstance {
-            task,
-            status: TaskStatus::Running { started_at: now_ms },
-        });
+        let status = TaskStatus::Running { started_at: now_ms };
+        self.statuses.insert(task.id.clone(), status.clone());
+        self.current = Some(TaskInstance { task, status });
     }
 
     /// 每轮调用：用 perceive 文本判定当前任务是否完成。
@@ -313,40 +416,48 @@ impl TaskManager {
     /// - `Some(false)`：任务失败（status 已更新为 Failed）
     /// - `None`：任务进行中
     pub fn check_current(&mut self, perceive_text: &str, now_ms: u64) -> Option<bool> {
-        let inst = self.current.as_mut()?;
-        if !matches!(inst.status, TaskStatus::Running { .. }) {
-            return None;
-        }
-        // 检查超时
-        if let Some(timeout) = inst.task.timeout_secs {
-            if let TaskStatus::Running { started_at } = inst.status {
-                if now_ms.saturating_sub(started_at) > timeout * 1000 {
-                    inst.status = TaskStatus::Failed {
-                        reason: format!("超时 {}s", timeout),
-                        finished_at: now_ms,
-                    };
-                    return Some(false);
-                }
+        let (task_id, task, started_at) = {
+            let inst = self.current.as_ref()?;
+            let TaskStatus::Running { started_at } = inst.status else {
+                return None;
+            };
+            (inst.task.id.clone(), inst.task.clone(), started_at)
+        };
+
+        let next_status = if let Some(timeout) = task.timeout_secs {
+            if now_ms.saturating_sub(started_at) > timeout * 1000 {
+                Some(TaskStatus::Failed {
+                    reason: format!("超时 {}s", timeout),
+                    finished_at: now_ms,
+                })
+            } else {
+                None
             }
-        }
-        // 检查失败条件
-        if let Some(failure) = &inst.task.failure {
-            if TaskChecker::check(failure, perceive_text) {
-                inst.status = TaskStatus::Failed {
+        } else {
+            None
+        };
+        let next_status = next_status.or_else(|| {
+            task.failure.as_ref().and_then(|failure| {
+                TaskChecker::check(failure, perceive_text).then_some(TaskStatus::Failed {
                     reason: "失败条件触发".to_string(),
                     finished_at: now_ms,
-                };
-                return Some(false);
-            }
-        }
-        // 检查成功条件
-        if TaskChecker::check(&inst.task.success, perceive_text) {
-            inst.status = TaskStatus::Completed {
+                })
+            })
+        });
+        let next_status = next_status.or_else(|| {
+            TaskChecker::check(&task.success, perceive_text).then_some(TaskStatus::Completed {
                 finished_at: now_ms,
-            };
-            return Some(true);
+            })
+        });
+        let Some(status) = next_status else {
+            return None;
+        };
+        let completed = matches!(status, TaskStatus::Completed { .. });
+        if let Some(inst) = self.current.as_mut() {
+            inst.status = status.clone();
         }
-        None
+        self.statuses.insert(task_id, status);
+        Some(completed)
     }
 
     /// 取当前任务的 goal（给 LLM 的 self_prompt）。
@@ -357,6 +468,71 @@ impl TaskManager {
     /// 当前任务状态。
     pub fn current_status(&self) -> Option<&TaskStatus> {
         self.current.as_ref().map(|i| &i.status)
+    }
+
+    pub fn status_for(&self, task_id: &str) -> Option<&TaskStatus> {
+        self.statuses.get(task_id)
+    }
+
+    /// Restart the current task after a timeout/failure without changing its
+    /// position in the deterministic chain.
+    pub fn restart_current(&mut self, now_ms: u64) -> Option<String> {
+        let instance = self.current.as_ref()?.clone();
+        let id = instance.task.id.clone();
+        if self.tasks.iter().any(|task| task.id == id) {
+            self.start_task(&id, now_ms).ok()?;
+        } else {
+            self.start_task_direct(instance.task, now_ms);
+        }
+        Some(id)
+    }
+
+    /// Check the current success condition without changing its status.
+    pub fn current_success(&self, perceive_text: &str) -> bool {
+        self.current
+            .as_ref()
+            .is_some_and(|instance| TaskChecker::check(&instance.task.success, perceive_text))
+    }
+
+    /// Return a JSON snapshot suitable for the session custom entry.
+    pub fn snapshot(&self) -> Value {
+        serde_json::json!({
+            "current_id": self.current.as_ref().map(|instance| instance.task.id.clone()),
+            "statuses": &self.statuses,
+        })
+    }
+
+    /// Restore task progress from a previous session. Unknown task ids are
+    /// ignored so adding/removing task files does not make old sessions unloadable.
+    pub fn restore_snapshot(&mut self, snapshot: &Value) {
+        let Some(statuses) = snapshot.get("statuses").and_then(Value::as_object) else {
+            return;
+        };
+        self.statuses.clear();
+        for (id, value) in statuses {
+            if self.tasks.iter().any(|task| task.id == *id) {
+                if let Ok(status) = serde_json::from_value::<TaskStatus>(value.clone()) {
+                    self.statuses.insert(id.clone(), status);
+                }
+            }
+        }
+        let Some(current_id) = snapshot.get("current_id").and_then(Value::as_str) else {
+            return;
+        };
+        let Some(task) = self
+            .tasks
+            .iter()
+            .find(|task| task.id == current_id)
+            .cloned()
+        else {
+            return;
+        };
+        let status = self
+            .statuses
+            .get(current_id)
+            .cloned()
+            .unwrap_or(TaskStatus::Pending);
+        self.current = Some(TaskInstance { task, status });
     }
 
     /// 结束当前任务（不管是否完成）。
@@ -406,6 +582,40 @@ mod tests {
         let perceive_fail = "背包: [oak_log:2]";
         assert!(TaskChecker::check(&cond, perceive_ok));
         assert!(!TaskChecker::check(&cond, perceive_fail));
+    }
+
+    #[test]
+    fn test_check_dimension_portal_and_kill_stats() {
+        let perceive =
+            "维度: minecraft:the_nether\n传送门: 已激活\n击杀统计: [minecraft:ender_dragon:1]";
+        assert!(TaskChecker::check(
+            &SuccessCondition::InDimension {
+                dimension: "the_nether".into(),
+            },
+            perceive
+        ));
+        assert!(TaskChecker::check(
+            &SuccessCondition::PortalActive,
+            perceive
+        ));
+        assert!(TaskChecker::check(
+            &SuccessCondition::Killed {
+                entity_kind: "ender_dragon".into(),
+                count: 1,
+            },
+            perceive
+        ));
+        assert!(!TaskChecker::check(
+            &SuccessCondition::Killed {
+                entity_kind: "ender_dragon".into(),
+                count: 2,
+            },
+            perceive
+        ));
+        assert!(!TaskChecker::check(
+            &SuccessCondition::PortalActive,
+            "维度: minecraft:overworld\n传送门: 未检测到"
+        ));
     }
 
     #[test]
@@ -472,6 +682,7 @@ mod tests {
                 "description": "测试用",
                 "goal": "做工作台",
                 "tier": 1,
+                "order": 1,
                 "success": {"type": "InventoryHas", "item": "crafting_table", "count": 1}
             }"#,
         )
@@ -486,6 +697,58 @@ mod tests {
     }
 
     #[test]
+    fn regression_task_chain_uses_explicit_milestone_order() {
+        let tasks_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("data")
+            .join("tasks");
+        let tasks = load_tasks(&tasks_dir).unwrap();
+        let first: Vec<_> = tasks.iter().take(4).map(|task| task.id.as_str()).collect();
+        assert_eq!(
+            first,
+            vec![
+                "tier1_gather_wood",
+                "tier1_crafting_table",
+                "tier1_wooden_pickaxe",
+                "tier1_stone_pickaxe",
+            ]
+        );
+        let tier6: Vec<_> = tasks
+            .iter()
+            .filter(|task| task.tier == 6)
+            .map(|task| task.id.as_str())
+            .collect();
+        assert_eq!(
+            tier6,
+            vec![
+                "tier6_netherite_ingot",
+                "tier6_netherite_pickaxe",
+                "tier6_shulker_box",
+                "tier6_ender_dragon",
+                "tier6_elytra",
+            ]
+        );
+
+        let portal = tasks
+            .iter()
+            .find(|task| task.id == "tier5_nether_portal")
+            .expect("tier5_nether_portal task missing");
+        assert!(matches!(
+            &portal.success,
+            SuccessCondition::All { conditions }
+                if conditions.iter().any(|condition| matches!(
+                    condition,
+                    SuccessCondition::PortalActive
+                ))
+                && !conditions.iter().any(|condition| matches!(
+                    condition,
+                    SuccessCondition::InventoryHas { item, .. } if item == "obsidian"
+                ))
+        ));
+    }
+
+    #[test]
     fn test_task_manager_lifecycle() {
         let mut tm = TaskManager::new();
         let task = Task {
@@ -494,6 +757,7 @@ mod tests {
             description: "测试任务".into(),
             goal: "收集 4 个原木".into(),
             tier: 1,
+            order: 1,
             success: SuccessCondition::InventoryHas {
                 item: "oak_log".into(),
                 count: 4,
@@ -530,6 +794,7 @@ mod tests {
             description: "测试任务".into(),
             goal: "收集 4 个原木".into(),
             tier: 1,
+            order: 1,
             success: SuccessCondition::InventoryHas {
                 item: "oak_log".into(),
                 count: 4,
@@ -548,6 +813,95 @@ mod tests {
         assert!(matches!(
             tm.current_status(),
             Some(TaskStatus::Failed { .. })
+        ));
+    }
+
+    #[test]
+    fn task_manager_advances_and_restores_snapshot() {
+        let first = Task {
+            id: "first".into(),
+            name: "第一步".into(),
+            description: String::new(),
+            goal: "收集木头".into(),
+            tier: 1,
+            order: 1,
+            success: SuccessCondition::InventoryHas {
+                item: "oak_log".into(),
+                count: 1,
+            },
+            failure: None,
+            timeout_secs: None,
+            reward: None,
+        };
+        let second = Task {
+            id: "second".into(),
+            name: "第二步".into(),
+            description: String::new(),
+            goal: "制作工作台".into(),
+            tier: 1,
+            order: 2,
+            success: SuccessCondition::InventoryHas {
+                item: "crafting_table".into(),
+                count: 1,
+            },
+            failure: None,
+            timeout_secs: None,
+            reward: None,
+        };
+        let mut manager = TaskManager::new();
+        manager.tasks = vec![first.clone(), second.clone()];
+        assert_eq!(manager.start_first_pending(0).as_deref(), Some("first"));
+        assert_eq!(manager.check_current("背包: [oak_log:1]", 1), Some(true));
+        assert_eq!(manager.next_task_id("first").as_deref(), Some("second"));
+        manager.start_task("second", 2).unwrap();
+
+        let snapshot = manager.snapshot();
+        let mut restored = TaskManager::new();
+        restored.tasks = vec![first, second];
+        restored.restore_snapshot(&snapshot);
+        assert_eq!(
+            restored
+                .current
+                .as_ref()
+                .map(|instance| instance.task.id.as_str()),
+            Some("second")
+        );
+        assert!(matches!(
+            restored.status_for("first"),
+            Some(TaskStatus::Completed { .. })
+        ));
+        assert!(matches!(
+            restored.current_status(),
+            Some(TaskStatus::Running { .. })
+        ));
+    }
+
+    #[test]
+    fn failed_task_can_be_restarted_without_skipping() {
+        let mut manager = TaskManager::new();
+        manager.start_task_direct(
+            Task {
+                id: "retry-me".into(),
+                name: "重试".into(),
+                description: String::new(),
+                goal: "收集木头".into(),
+                tier: 1,
+                order: 1,
+                success: SuccessCondition::InventoryHas {
+                    item: "oak_log".into(),
+                    count: 2,
+                },
+                failure: None,
+                timeout_secs: Some(1),
+                reward: None,
+            },
+            0,
+        );
+        assert_eq!(manager.check_current("背包: []", 2_000), Some(false));
+        assert_eq!(manager.restart_current(3_000).as_deref(), Some("retry-me"));
+        assert!(matches!(
+            manager.current_status(),
+            Some(TaskStatus::Running { started_at: 3_000 })
         ));
     }
 

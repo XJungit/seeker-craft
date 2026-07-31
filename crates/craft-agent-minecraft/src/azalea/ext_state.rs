@@ -6,7 +6,9 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use azalea_client::packet::game::ReceiveGamePacketEvent;
-use azalea_protocol::packets::game::{ClientboundGamePacket, ClientboundMerchantOffers};
+use azalea_protocol::packets::game::{
+    ClientboundAwardStats, ClientboundGamePacket, ClientboundMerchantOffers, c_award_stats::Stat,
+};
 use azalea_registry::builtin::EntityKind;
 use bevy_app::{App, Plugin, Update};
 use bevy_ecs::message::MessageReader;
@@ -23,6 +25,8 @@ pub struct BotExtState {
     pub recipes: RecipeBook,
     /// 附近实体缓存（kind 便于交互时筛选村民/动物）。
     pub entities: HashMap<Entity, EntityKind>,
+    /// 服务端累计实体击杀统计。
+    pub kill_counts: HashMap<String, u32>,
 }
 
 /// 村民交易报价快照（去掉了 Derive 负担，仅保留交易所需）。
@@ -105,7 +109,52 @@ fn read_game_packets(mut events: MessageReader<ReceiveGamePacketEvent>, ext: Res
                     store_recipe_book_entry(&mut g.recipes, e);
                 }
             }
+            ClientboundGamePacket::AwardStats(p) => {
+                record_kill_stats(&mut ext.0.lock().unwrap(), p);
+            }
             _ => {}
         }
+    }
+}
+
+fn record_kill_stats(state: &mut BotExtState, packet: &ClientboundAwardStats) {
+    for (stat, value) in &packet.stats {
+        let Stat::Killed(kind) = stat else {
+            continue;
+        };
+        let full_name = kind.to_str();
+        let name = full_name
+            .strip_prefix("minecraft:")
+            .unwrap_or(full_name)
+            .to_string();
+        let count = (*value).max(0) as u32;
+        state
+            .kill_counts
+            .entry(name)
+            .and_modify(|current| *current = (*current).max(count))
+            .or_insert(count);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn kill_stats_keep_the_highest_cumulative_value() {
+        let mut state = BotExtState::default();
+        let mut first = HashMap::new();
+        first.insert(Stat::Killed(EntityKind::EnderDragon), 1);
+        record_kill_stats(&mut state, &ClientboundAwardStats { stats: first });
+
+        let mut lower = HashMap::new();
+        lower.insert(Stat::Killed(EntityKind::EnderDragon), 0);
+        record_kill_stats(&mut state, &ClientboundAwardStats { stats: lower });
+
+        let mut higher = HashMap::new();
+        higher.insert(Stat::Killed(EntityKind::EnderDragon), 2);
+        record_kill_stats(&mut state, &ClientboundAwardStats { stats: higher });
+
+        assert_eq!(state.kill_counts.get("ender_dragon"), Some(&2));
     }
 }

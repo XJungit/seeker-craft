@@ -69,6 +69,15 @@ pub struct WorldState {
     pub biome: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gamemode: Option<String>,
+    /// 当前维度，如 `minecraft:overworld` / `minecraft:the_nether` / `minecraft:the_end`。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dimension: Option<String>,
+    /// 感知范围内是否存在已激活的下界传送门方块。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub portal_active: Option<bool>,
+    /// 服务端累计实体击杀统计，键为实体 id。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kill_counts: Option<Vec<(String, u32)>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inventory: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]

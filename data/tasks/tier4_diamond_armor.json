@@ -4,6 +4,7 @@
     "description": "钻石甲提供 20 点护甲值（满护甲），全套耐久度极高，是末地和下界探险的标准配置。共需 24 颗钻石（头盔5+胸甲8+护腿7+靴子4）。",
     "goal": "合成全套钻石甲。步骤：1) 装备铁镐 mine_below(y=-59) 在深层挖钻石矿，gather(item=\"diamond_ore\", count=24)（建议用附魔时运镐提升掉落）；2) 依次放置工作台后 craft_3x3(item=\"diamond_helmet\", count=1)、craft_3x3(item=\"diamond_chestplate\", count=1)、craft_3x3(item=\"diamond_leggings\", count=1)、craft_3x3(item=\"diamond_boots\", count=1)；3) 钻石矿脉通常 2-8 个一组，需要挖掘多个矿脉。",
     "tier": 4,
+    "order": 4,
     "success": {
         "type": "All",
         "conditions": [

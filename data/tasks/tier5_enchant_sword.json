@@ -4,6 +4,7 @@
     "description": "通过附魔台或铁砧给剑附魔，获得锋利/火焰附加/横扫之刃/抢夺等强力属性。附魔书也可从地牢/要塞宝箱获取，或用经验在附魔台生成。enchanted_book 是附魔流程的核心中间品。",
     "goal": "获取 1 本附魔书并准备附魔剑。步骤：1) 放置附魔台 place(item=\"enchanting_table\")；2) 通过附魔台 enchant 工具或探索地牢/要塞/末地城宝箱获取 enchanted_book；3) gather(item=\"diamond_ore\", count=2) 准备钻石剑 craft_3x3(item=\"diamond_sword\", count=1) 作为附魔底材；4) 在铁砧上结合 enchanted_book 与剑（interact_block 铁砧）。本任务以持有 enchanted_book:1 为成功条件。",
     "tier": 5,
+    "order": 4,
     "success": {
         "type": "InventoryHas",
         "item": "enchanted_book",

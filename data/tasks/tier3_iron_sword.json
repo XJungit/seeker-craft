@@ -4,6 +4,7 @@
     "description": "有了铁镐之后，下一步是制作铁剑用于战斗。铁剑伤害比石剑高，是对付僵尸/骷髅/苦力怕的可靠武器，也是探索洞穴和夜间的安全保障。",
     "goal": "合成 1 把铁剑。步骤：1) 用石镐 gather(item=\"iron_ore\", count=2) 挖铁矿；2) 放置熔炉后 smelt(output=\"iron_ingot\", fuel=\"coal\", count=2) 熔炼铁锭；3) craft(item=\"stick\", count=1) 准备木棍；4) 放置工作台后 craft_3x3(item=\"iron_sword\", count=1)。",
     "tier": 3,
+    "order": 2,
     "success": {
         "type": "InventoryHas",
         "item": "iron_sword",

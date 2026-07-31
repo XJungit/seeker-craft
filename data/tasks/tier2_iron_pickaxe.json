@@ -4,6 +4,7 @@
     "description": "挖 3 个铁矿，熔炼成铁锭，合成铁镐。铁镐可挖钻石/绿宝石/金矿，是进阶必备。",
     "goal": "合成 1 把铁镐。步骤：1) 用石镐 gather(item=\"iron_ore\", count=3)；2) craft(item=\"furnace\", count=1) 造熔炉；3) 放置熔炉后 smelt(output=\"iron_ingot\", fuel=\"coal\", count=3)；4) craft_3x3(item=\"iron_pickaxe\", count=1)。",
     "tier": 2,
+    "order": 2,
     "success": {
         "type": "InventoryHas",
         "item": "iron_pickaxe",

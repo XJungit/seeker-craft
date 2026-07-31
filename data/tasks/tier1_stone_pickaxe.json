@@ -4,6 +4,7 @@
     "description": "用木镐挖 3 个圆石，再合成石镐。石镐比木镐快，可挖铁/金/钻石矿。",
     "goal": "合成 1 把石镐。步骤：1) 装备木镐后 mine_below 或 mine 附近的石头；2) gather(item=\"stone\", count=3) 自动挖圆石；3) craft_3x3(item=\"stone_pickaxe\", count=1)。",
     "tier": 1,
+    "order": 4,
     "success": {
         "type": "InventoryHas",
         "item": "stone_pickaxe",

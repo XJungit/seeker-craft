@@ -4,6 +4,7 @@
     "description": "开局第一件事：徒手砍附近的原木。原木是一切合成的基础（木板→工作台→木镐→石头工具）。",
     "goal": "收集 8 个原木（任意种类：oak/birch/spruce/jungle/acacia/dark_oak/mangrove/cherry）。用 gather(item=\"oak_log\", count=8) 自动寻路挖掘。",
     "tier": 1,
+    "order": 1,
     "success": {
         "type": "Any",
         "conditions": [

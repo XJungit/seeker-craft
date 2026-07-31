@@ -33,13 +33,13 @@ cargo run -p craft-agent-viewer
 cargo run -p craft-agent-minecraft --example agent_azalea_demo --features azalea-bot -- --goal="挖矿下探" --steps=20
 ```
 
-## Architecture (4 crates)
+## Architecture (5 crates)
 
 ```
 craft-agent              Core agent framework (~5000 lines)
   agent/                 run_one_turn (2164 lines), compaction, prompt, modes, session
   core/                  types (MinecraftAction), GameTool trait, ToolRegistry, memory (WorldMemory), skill
-  task.rs                Task system: 22 tier1-6 tasks, structured success conditions
+  task.rs                Task system: 23 tier1-6 tasks, structured success conditions
   profile.rs             3-layer prompt merging (_default → defaults/{mode} → {individual})
 
 craft-agent-minecraft    MC adapter (azalea protocol, ~12000+ lines)
@@ -52,7 +52,7 @@ craft-agent-minecraft    MC adapter (azalea protocol, ~12000+ lines)
   azalea/perception.rs   Position reading
   azalea/actions.rs      Basic bot actions (goto/mine/chat)
   adapter_azalea.rs      GameAdapter impl, perceive format, execute
-  tools_azalea.rs        37 LLM tools (3532 lines)
+  tools_azalea.rs        44 LLM tools (3866 lines)
   action_lib.rs          LLM-defined rhai scripts (338 lines)
   blueprint.rs           Blueprint library (310 lines)
 
@@ -63,23 +63,25 @@ craft-agent-model        LLM client (OpenAI-compatible)
 
 craft-agent-viewer       Web dashboard (Axum + SSE)
   agent_loop.rs          Main loop: agent.step() → chat drain → idle loop
+
+craft-agent-autopilot    Autonomous test loop (build/test → anomaly → RCA → commit)
 ```
 
-## 37 LLM Tools
+## 44 LLM Tools
 
 | Category | Tools |
 |---|---|
 | Perception | `perceive`, `memory`, `search_wiki` |
-| Movement | `goto`, `mine_below`, `mine_above`, `pickup` |
-| Mining | `mine` |
+| Movement | `goto`, `mine_below`, `mine_above`, `pickup`, `follow`, `stop_follow` |
+| Mining | `mine`, `make_obsidian` |
 | Interaction | `interact_block`, `interact_entity`, `attack`, `defend` |
 | Crafting | `craft`, `craft_3x3`, `smelt`, `auto_craft`, `enchant` |
 | Gathering | `gather` |
 | Placement | `place`, `build`, `build_blueprint`, `list_blueprints` |
 | Container | `open`, `chest_view`, `chest_withdraw`, `chest_deposit` |
 | Inventory | `equip`, `discard`, `consume` |
-| NPC | `trade` |
-| Meta | `chat`, `set_goal`, `run_plan`, `run_script`, `new_action`, `list_actions`, `pause_goal`, `resume_goal` |
+| NPC / Social | `trade`, `give` |
+| Meta | `chat`, `set_goal`, `run_plan`, `run_script`, `new_action`, `list_actions`, `pause_goal`, `resume_goal`, `task_complete`, `task_retry` |
 
 ## Agent Loop (run_one_turn, 13 steps)
 
@@ -102,7 +104,7 @@ craft-agent-viewer       Web dashboard (Axum + SSE)
 ## Project Files
 
 ```
-tasks/                   22 task JSONs (tier1-6: crafting_table → netherite → shulker_box)
+tasks/                   23 task JSONs (tier1-6: crafting_table → netherite → ender_dragon → elytra)
 profiles/                3-layer prompt templates
   _default.json          Base prompt
   defaults/{mode}.json   Mode overrides
@@ -110,19 +112,22 @@ profiles/                3-layer prompt templates
 blueprints/              4 blueprint JSONs (farm_plot, small_shelter, storage_corner, torch_pillar)
 actions/                 LLM-defined rhai scripts (*.rhai.json)
 sessions/                Runtime session JSONL files
-tools/                   Debug/diagnostic shell scripts
+scripts/                 Debug/diagnostic shell scripts
 .github/workflows/ci.yml CI config
-config/agent.toml        Multi-backend LLM/VLM config
+data/config/agent.toml   Multi-backend LLM/VLM config
 ```
 
 ## Task System (task.rs)
 
-22 structured tasks with completion conditions:
+23 structured tasks with completion conditions:
 - `InventoryHas { item, count }` — backpack has item ≥ count
 - `AtPosition { x, y, z, radius }` — bot within radius of position
 - `BelowY { y }` — below Y coordinate
+- `InDimension { dimension }` — currently in the specified dimension
+- `PortalActive` — an active Nether portal is present in scan range
+- `Killed { entity_kind, count }` — server-reported cumulative entity kills
 - `All/Any { conditions }` — composite conditions
-- Tasks loaded from `tasks/*.json`, sorted by tier then id
+- Tasks loaded from `tasks/*.json`, sorted by tier, explicit order, then id
 
 ## Profile System (profile.rs)
 

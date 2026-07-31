@@ -4,6 +4,7 @@
     "description": "钻石镐是唯一能挖黑曜石的工具，也是开启下界和附魔台合成的钥匙。3 颗钻石 + 2 根木棍即可合成，钻石矿需在 Y=-60 左右深层挖掘，必须用铁镐采集。",
     "goal": "合成 1 把钻石镐。步骤：1) 装备铁镐后 mine_below(y=-58) 或在深板岩层 mine(item=\"diamond_ore\", count=3) 挖钻石矿（推荐 Y=-59）；2) 放置熔炉不需要——钻石矿直接掉落钻石；3) craft(item=\"stick\", count=2) 准备木棍；4) 放置工作台后 craft_3x3(item=\"diamond_pickaxe\", count=1)。",
     "tier": 4,
+    "order": 2,
     "success": {
         "type": "InventoryHas",
         "item": "diamond_pickaxe",

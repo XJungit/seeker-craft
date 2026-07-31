@@ -4,6 +4,7 @@
     "description": "酿造台是酿造药水的核心设备，可制作治疗/力量/抗火/夜视/隐身等药水。合成需要 3 个圆石 + 1 根烈焰棒。烈焰棒需进入下界击杀烈焰人获取。",
     "goal": "合成 1 个酿造台。步骤：1) 先建造下界传送门并进入下界；2) 攻击烈焰人 attack(item=\"blaze\") 击杀获取 blaze_rod（需 1 根）；3) 返回主世界 gather(item=\"stone\", count=3) 挖圆石；4) 放置工作台后 craft_3x3(item=\"brewing_stand\", count=1)。",
     "tier": 5,
+    "order": 2,
     "success": {
         "type": "InventoryHas",
         "item": "brewing_stand",

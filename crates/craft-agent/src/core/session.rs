@@ -184,6 +184,9 @@ pub struct CustomEntry {
 }
 
 pub const SESSION_ROLLOVER_CUSTOM_TYPE: &str = "session_rollover";
+/// Custom entry type used by the deterministic Minecraft task chain.
+/// Session rollover preserves it without depending on the task module.
+pub const TASK_STATE_CUSTOM_TYPE: &str = "task_manager_state";
 
 /// Runtime state carried into a compact replacement session.
 #[derive(Debug, Clone)]
@@ -420,7 +423,10 @@ impl Session {
         let archived_at = now_ms();
 
         std::fs::create_dir_all(archive_dir)?;
-        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("session");
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("session");
         let archive_path = unique_archive_path(
             archive_dir,
             &format!("{stem}.{archived_session_id}.{archived_at}"),
@@ -447,6 +453,12 @@ impl Session {
             SessionEntry::Memory(memory) => Some(memory.snapshot.clone()),
             _ => None,
         });
+        let latest_task_state = current_path.iter().rev().find_map(|entry| match entry {
+            SessionEntry::Custom(custom) if custom.custom_type == TASK_STATE_CUSTOM_TYPE => {
+                Some(custom.data.clone())
+            }
+            _ => None,
+        });
         let world_info: Vec<WorldInfoEntry> = current_path
             .iter()
             .filter_map(|entry| match entry {
@@ -457,17 +469,18 @@ impl Session {
 
         let mut compact = Self::new(&old.header.game);
         compact.header.knowledge_bootstrapped = old.header.knowledge_bootstrapped;
-        compact.append_custom(SESSION_ROLLOVER_CUSTOM_TYPE, serde_json::to_value(metadata)?);
+        compact.append_custom(
+            SESSION_ROLLOVER_CUSTOM_TYPE,
+            serde_json::to_value(metadata)?,
+        );
         compact.append_message(Message::user(context.recovery_summary));
+        if let Some(task_state) = latest_task_state {
+            compact.append_custom(TASK_STATE_CUSTOM_TYPE, task_state);
+        }
         // Preserve WorldInfo operations in order so with_session rebuilds the
         // same effective library without retaining unrelated conversation.
         for info in world_info {
-            compact.append_world_info(
-                &info.action,
-                info.info,
-                info.remove_id,
-                info.remove_keys,
-            );
+            compact.append_world_info(&info.action, info.info, info.remove_id, info.remove_keys);
         }
         if let Some(snapshot) = latest_memory {
             compact.append_memory(&snapshot);
@@ -988,7 +1001,10 @@ mod tests {
             &compact.messages_for_current_path()[0],
             Message::User(user) if user.content == "recover"
         ));
-        assert_eq!(compact.current_leaf(), compact.header.current_leaf.as_deref());
+        assert_eq!(
+            compact.current_leaf(),
+            compact.header.current_leaf.as_deref()
+        );
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir_all(&archive_dir);
     }
@@ -1017,6 +1033,45 @@ mod tests {
             })
             .collect();
         assert_eq!(memories, vec!["selected"]);
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&archive_dir);
+    }
+
+    #[test]
+    fn rollover_preserves_latest_task_state() {
+        let path = tmp_path("rollover_task_state");
+        let archive_dir = path.with_extension("archive");
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_dir_all(&archive_dir);
+        let mut old = Session::new("minecraft");
+        old.append_custom(
+            TASK_STATE_CUSTOM_TYPE,
+            serde_json::json!({
+                "current_id": "tier1_crafting_table",
+                "statuses": {
+                    "tier1_gather_wood": {"Completed": {"finished_at": 42}}
+                }
+            }),
+        );
+        old.save_to(&path).unwrap();
+
+        Session::rollover_to(&path, &archive_dir, rollover_context("recover")).unwrap();
+        let compact = Session::open(&path).unwrap();
+        let state = compact
+            .entries_for_current_path()
+            .into_iter()
+            .find_map(|entry| match entry {
+                SessionEntry::Custom(custom) if custom.custom_type == TASK_STATE_CUSTOM_TYPE => {
+                    Some(custom.data.clone())
+                }
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(state["current_id"].as_str(), Some("tier1_crafting_table"));
+        assert_eq!(
+            state["statuses"]["tier1_gather_wood"]["Completed"]["finished_at"],
+            serde_json::json!(42)
+        );
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_dir_all(&archive_dir);
     }

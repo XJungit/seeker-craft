@@ -40,7 +40,7 @@ This directory tracks important architecture decisions.
   - Status: accepted
   - Context: Original PLAN.md proposed "LLM sends goals, Java Mod auto-decomposes".
     This required a Java mod (deleted in ADR-001) and removed LLM agency.
-  - Decision: LLM directly controls the bot via 37 atomic tools. Bot tools
+  - Decision: LLM directly controls the bot via 44 atomic tools. Bot tools
     only do what they can; failures return `Err` with resolution steps for
     the LLM to plan around (Mindcraft philosophy).
   - Consequences: No goal decomposition engine needed. LLM plans multi-step

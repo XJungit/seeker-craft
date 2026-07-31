@@ -4,6 +4,7 @@
     "description": "盾牌可格挡近战攻击和投射物（骷髅箭、苦力怕爆炸、恶魂火球等），是性价比极高的防御工具。合成需要 6 个木板和 1 个铁锭。",
     "goal": "合成 1 面盾牌。步骤：1) craft(item=\"oak_planks\", count=6) 准备木板（若无原木先 gather oak_log）；2) gather(item=\"iron_ore\", count=1) 并 smelt(output=\"iron_ingot\", fuel=\"coal\", count=1) 取 1 铁锭；3) 放置工作台后 craft_3x3(item=\"shield\", count=1)。",
     "tier": 3,
+    "order": 3,
     "success": {
         "type": "InventoryHas",
         "item": "shield",

@@ -1,0 +1,15 @@
+{
+    "id": "tier6_ender_dragon",
+    "name": "击败末影龙",
+    "description": "末影龙是生存通关的最终战斗目标。必须真实进入末地，并由服务端击杀统计确认末影龙已被击败，不能只依赖 LLM 的文字声明或附近实体消失。",
+    "goal": "进入末地并击败末影龙。步骤：1) 准备末影之眼并找到要塞；2) 激活末地传送门并进入末地；3) 先用弓或安全路线摧毁末影水晶；4) 在末影龙降落时使用弓、剑或安全的床爆战术持续攻击；5) 用 perceive 确认维度为 minecraft:the_end 且击杀统计出现 ender_dragon:1 后再调用 task_complete。",
+    "tier": 6,
+    "order": 4,
+    "success": {
+        "type": "Killed",
+        "entity_kind": "ender_dragon",
+        "count": 1
+    },
+    "timeout_secs": 1800,
+    "reward": "已完成生存通关核心目标：末影龙确认击败"
+}

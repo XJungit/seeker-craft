@@ -7,8 +7,8 @@
 use craft_agent::agent::{Agent, AgentConfig, CompactionConfig, LlmProvider, RetryConfig};
 use craft_agent::core::message::AssistantResponse;
 use craft_agent::core::session::{Session, SessionRolloverContext};
-use craft_agent::core::types::WorldState;
 use craft_agent::core::tool::ToolRegistry;
+use craft_agent::core::types::WorldState;
 use craft_agent_minecraft::action_lib::ActionLibrary;
 use craft_agent_minecraft::adapter_azalea::ArcAzaleaAdapter;
 use craft_agent_minecraft::blueprint::BlueprintLibrary;
@@ -305,7 +305,11 @@ fn run_agent(
         });
     }
 
-    let bot_username = if username.is_empty() { "CraftAgent".to_string() } else { username.to_string() };
+    let bot_username = if username.is_empty() {
+        "CraftAgent".to_string()
+    } else {
+        username.to_string()
+    };
     // 连接 azalea adapter：azalea 内部用独立 OS 线程跑自己的 runtime，
     // 此处仅用一次性局部 runtime 把 async connect 跑完，拿到句柄后立即 drop。
     let adapter = {
@@ -492,7 +496,8 @@ fn run_agent(
         // MC_KNOWLEDGE_BASE 仍关闭（azalea 路线用 perceive 结构化数据 + 上方 mc_knowledge 替代）。
         .with_knowledge_base(None)
         .with_knowledge_tool(false)
-        .with_modes_config(profile.modes);
+        .with_modes_config(profile.modes)
+        .with_task_chain(true);
 
     let mut agent = {
         let path = Path::new(session_path);
@@ -715,7 +720,9 @@ fn run_agent(
             let did = agent.rollover_in_place(session_path, &goal_snapshot);
             if did {
                 let _ = event_tx.send(AgentEvent::Log {
-                    text: format!("♻️ 会话自动滚动（防 OOM）：已归档并重置内存历史，bot 继续运行。"),
+                    text: format!(
+                        "♻️ 会话自动滚动（防 OOM）：已归档并重置内存历史，bot 继续运行。"
+                    ),
                 });
             }
         }
@@ -724,7 +731,8 @@ fn run_agent(
             // P61: 原逻辑在此 break 退出循环，但自主通关任务要求 loop 永不停。
             // task_complete / AgentEnd 现在只记录，不退出——继续推进下一轮。
             let _ = event_tx.send(AgentEvent::Log {
-                text: "🎯 目标达成信号（task_complete），但自主循环继续运行以推进下一阶段任务。".into(),
+                text: "🎯 目标达成信号（task_complete），但自主循环继续运行以推进下一阶段任务。"
+                    .into(),
             });
         }
 

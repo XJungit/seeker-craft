@@ -79,14 +79,14 @@ Handler Layer (azalea/mod.rs Tick)
   queries, 6 types (Resource/Structure/Container/Entity/Hazard/Portal/Note),
   TTL 30s dedup, 64-block radius rendered each turn.
 
-## 37 LLM Tools
+## 44 LLM Tools
 
 | Category | Tools | Side Effect |
 |---|---|---|
 | Perception | `perceive` | READ |
 | Memory | `memory` (save/anchor/query/forget) | READ/WRITE |
-| Movement | `go` | WRITE |
-| Mining | `mine` / `mine_below` | WRITE |
+| Movement | `goto` / `mine_below` / `mine_above` / `pickup` / `follow` / `stop_follow` | WRITE |
+| Mining | `mine` / `make_obsidian` | WRITE |
 | Block Interaction | `interact_block` | WRITE |
 | Combat | `attack` / `defend` | WRITE |
 | Crafting | `craft` (2×2) / `craft_3x3` | WRITE |
@@ -107,6 +107,8 @@ Handler Layer (azalea/mod.rs Tick)
 | Scripting | `run_script` | WRITE (rhai) |
 | Custom Action | `new_action` / `list_actions` | WRITE (persist) |
 | Knowledge | `search_wiki` | NETWORK |
+| Social | `give` | WRITE |
+| Task chain | `task_complete` / `task_retry` | WRITE |
 
 ## Critical Constraints
 

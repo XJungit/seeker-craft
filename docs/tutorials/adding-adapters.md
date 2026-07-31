@@ -16,7 +16,7 @@ Implement `GameAdapter` with:
 The only supported runtime is **azalea-bot**:
 
 - Adapter: `MinecraftAzaleaAdapter` in `crates/craft-agent-minecraft/src/adapter_azalea.rs`
-- Tools: 37 LLM tools registered in `create_mc_azalea_tools()` in `tools_azalea.rs`
+- Tools: 44 LLM tools registered in `create_mc_azalea_tools()` in `tools_azalea.rs`
 - Bot runtime: `AzaleaBot` in `crates/craft-agent-minecraft/src/azalea/mod.rs`
 
 The old `mod-bridge` (Fabric mod TCP bridge) and `real` (VLM + enigo) routes have

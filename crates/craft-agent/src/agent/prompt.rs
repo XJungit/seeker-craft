@@ -8,7 +8,7 @@ use super::{Agent, Context, MANAGE_KNOWLEDGE_TOOL};
 ///
 /// **重要约束**（务必保持，否则 LLM 会抄错签名）：
 /// - 工具调用以 OpenAI tool_calls 形式呈现（assistant 调用 → system 返回结果）
-/// - 工具名必须与 `tools_azalea.rs::create_mc_azalea_tools_full` 注册的 37 个工具 100% 一致
+/// - 工具名必须与 `tools_azalea.rs::create_mc_azalea_tools_full` 注册的 44 个工具 100% 一致
 /// - 参数名必须与各工具的 `parameters()` schema 一致（如 gather 用 item/count，
 ///   goto 用 x/y/z，attack 用 target 字符串，非位置参数）
 /// - 不要用假坐标 (10,64,20) — 用占位变量或感知真实坐标
@@ -569,6 +569,9 @@ impl Agent {
     }
 
     pub fn build_task_progress_msg(&self) -> String {
+        if !self.config.enable_task_chain {
+            return String::new();
+        }
         let tm = &self.task_manager;
         if tm.tasks.is_empty() {
             return String::new();
@@ -579,15 +582,17 @@ impl Agent {
         for t in &tm.tasks {
             let is_current = tm.current.as_ref().is_some_and(|c| c.task.id == t.id);
             let status = if is_current {
-                "▶ 进行中"
-            } else if t.id == "tier1_gather_wood"
-                || t.id == "tier1_crafting_table"
-                || t.id == "tier1_wooden_pickaxe"
-                || t.id == "tier1_stone_pickaxe"
-                || t.id == "tier2_furnace"
-                || t.id == "tier2_iron_pickaxe"
-                || t.id == "tier4_diamond_pickaxe"
-            {
+                match tm.current_status() {
+                    Some(crate::task::TaskStatus::Failed { .. }) => {
+                        pending += 1;
+                        "✖ 失败"
+                    }
+                    _ => "▶ 进行中",
+                }
+            } else if matches!(
+                tm.status_for(&t.id),
+                Some(crate::task::TaskStatus::Completed { .. })
+            ) {
                 completed += 1;
                 continue; // 已完成的低级任务，不显示
             } else {
@@ -595,7 +600,9 @@ impl Agent {
                 "⏳ 待完成"
             };
             let desc = if t.description.len() > 60 {
-                let cutoff = t.description.char_indices()
+                let cutoff = t
+                    .description
+                    .char_indices()
                     .nth(57)
                     .map(|(i, _)| i)
                     .unwrap_or(t.description.len());
@@ -608,7 +615,10 @@ impl Agent {
         if lines.is_empty() {
             return String::new();
         }
-        let mut out = format!("已完成 {} 个低级任务，剩余 {} 个待完成:\n", completed, pending);
+        let mut out = format!(
+            "已完成 {} 个低级任务，剩余 {} 个待完成:\n",
+            completed, pending
+        );
         out.push_str(&lines.join("\n"));
         out
     }

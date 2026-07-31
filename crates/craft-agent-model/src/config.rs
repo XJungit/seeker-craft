@@ -4,7 +4,7 @@
 //! 改这一份 TOML 即可换后端（Agnes ↔ MiniCPM ↔ 任意 OpenAI 兼容服务），
 //! **无需改动或重编译 Rust 代码**。
 //!
-//! 示例见项目根 `config/agent.toml`。
+//! 示例见项目根 `data/config/agent.toml`。
 //!
 //! ```toml
 //! [vlm]
