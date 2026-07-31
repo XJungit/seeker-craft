@@ -3003,15 +3003,20 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             }
                             lines.join("\n")
                         };
-                        // 附近实体列表：按类型分组计数
+                        // 附近实体列表：按类型分组计数 + 最小距离（仅感知半径内，避免 LLM 追逐远处实体）
                         let nearby_entities = {
-                            let mut kinds: HashMap<String, u32> = HashMap::new();
+                            const PERCEPTION_RADIUS: f64 = 24.0;
+                            let mut kinds: HashMap<String, (u32, f64)> = HashMap::new();
                             if let Ok(entities) = bot.nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>() {
                             let self_id = bot.entity().id();
                             for e in entities.iter() {
                                 if e.id() == self_id { continue; }
-                                let name = format!("{:?}", e.kind().unwrap_or(EntityKind::Pig)).to_lowercase();
-                                *kinds.entry(name).or_insert(0) += 1;
+                                let Ok(distance) = e.distance_to_client() else { continue; };
+                                if distance > PERCEPTION_RADIUS { continue; }
+                                let name = entity_kind_name(e.kind().unwrap_or(EntityKind::Pig));
+                                let entry = kinds.entry(name).or_insert((0, distance));
+                                entry.0 += 1;
+                                entry.1 = entry.1.min(distance);
                             }
                         }
                             // 玩家分开计数
@@ -3021,10 +3026,10 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                 parts.push(format!("player:{}", player_count));
                             }
                             let mut items: Vec<_> = kinds.into_iter().collect();
-                            items.sort_by(|a, b| b.1.cmp(&a.1));
-                            for (k, v) in items {
+                            items.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+                            for (k, (v, d)) in items {
                                 if v > 0 {
-                                    parts.push(format!("{k}:{v}"));
+                                    parts.push(format!("{k}:{v}@{d:.0}m"));
                                 }
                             }
                             if parts.is_empty() {
