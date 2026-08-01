@@ -180,6 +180,56 @@ impl Agent {
             });
         }
 
+        // unstuck(工具失效型)：连续 3+ 次工具调用失败/无进展。
+        // 有工具调用 ≠ 有进展——无效调用同样会死循环（如反复 goto 超时/挖空气）。
+        let mut fail_streak = 0u32;
+        for m in self.messages.iter().rev() {
+            match m {
+                Message::ToolResult(t) => {
+                    let bad = t.is_error
+                        || [
+                            "失败",
+                            "超时",
+                            "无法",
+                            "不存在",
+                            "未知工具",
+                            "错误",
+                            "卡住",
+                            "不能",
+                            "failed",
+                            "timeout",
+                            "unknown tool",
+                            "invalid",
+                        ]
+                        .iter()
+                        .any(|k| t.content.to_lowercase().contains(k));
+                    if bad {
+                        fail_streak += 1;
+                    } else {
+                        break;
+                    }
+                }
+                Message::Assistant(_) => continue,
+                _ => break,
+            }
+        }
+        if fail_streak >= 3 && self.config.modes.unstuck && self.last_mode_trigger != 7 {
+            self.last_mode_trigger = 7;
+            return Some(ModeReaction {
+                prompt: Some(format!(
+                    "[MODE: unstuck] 连续 {} 次工具调用失败/无进展！立即更换策略，禁止重试相同动作：\n\
+                     1. 若位置多轮未变（疑似被困洞穴/墙角）：先连续调用 mine_above 向上挖到空气，\
+                     回地表后再 gather/找村庄，不要在地底继续尝试。\n\
+                     2. 若 gather/mine 报\"目标不存在\"：该资源不在当前位置，换方向 goto 探索\
+                     （找草地/森林/村庄/动物）。\n\
+                     3. 有记忆锚点（工作台/箱子/家）时回据点补给，不要空手硬闯。",
+                    fail_streak
+                )),
+                force_reprompt: fail_streak >= 5,
+                mode_id: 7,
+            });
+        }
+
         self.last_mode_trigger = 0;
         None
     }
@@ -369,6 +419,78 @@ mod tests {
         agent.obs_streak = 3;
         let r = agent.check_modes();
         assert!(r.is_none(), "obs_streak=3 should not trigger unstuck");
+    }
+
+    // ── unstuck(工具失效型)：连续失败工具调用 ──
+
+    fn push_fail_tool_result(agent: &mut Agent, content: &str) {
+        agent.messages.push(Message::assistant_text("ok"));
+        agent
+            .messages
+            .push(Message::tool_result("call_1", "mine", content));
+    }
+
+    #[test]
+    fn mode_unstuck_fail_streak_3_triggers() {
+        let mut agent = make_agent("生命: 20/20  位置: 0,64,0  群系: biome: plains");
+        push_fail_tool_result(&mut agent, "Action output:\ngoto (0,70,0) 超时，路径阻塞");
+        push_fail_tool_result(&mut agent, "Action output:\nmine (0,64,0): 目标方块不存在");
+        push_fail_tool_result(
+            &mut agent,
+            "Action output:\ngather wheat 失败：附近没有小麦",
+        );
+        let r = agent
+            .check_modes()
+            .expect("3 consecutive failures should trigger");
+        let prompt = r.prompt.unwrap();
+        assert!(prompt.contains("unstuck"), "should mention unstuck mode");
+        assert!(prompt.contains("mine_above"), "should suggest mine_above");
+        assert_eq!(r.mode_id, 7);
+    }
+
+    #[test]
+    fn mode_unstuck_fail_streak_5_force_reprompt() {
+        let mut agent = make_agent("生命: 20/20  位置: 0,64,0");
+        for i in 0..5 {
+            push_fail_tool_result(&mut agent, &format!("Action output:\nmine 失败 #{i}"));
+        }
+        let r = agent.check_modes().expect("should trigger unstuck");
+        assert!(r.force_reprompt, "fail_streak>=5 should force reprompt");
+    }
+
+    #[test]
+    fn mode_unstuck_fail_streak_2_skips() {
+        let mut agent = make_agent("生命: 20/20  位置: 0,64,0");
+        push_fail_tool_result(&mut agent, "Action output:\nmine 失败");
+        push_fail_tool_result(&mut agent, "Action output:\nmine 失败");
+        let r = agent.check_modes();
+        assert!(r.is_none(), "2 failures should not trigger unstuck");
+    }
+
+    #[test]
+    fn mode_unstuck_success_resets_fail_streak() {
+        let mut agent = make_agent("生命: 20/20  位置: 0,64,0");
+        push_fail_tool_result(&mut agent, "Action output:\nmine 失败");
+        push_fail_tool_result(&mut agent, "Action output:\n采集到 8 个 oak_log");
+        push_fail_tool_result(&mut agent, "Action output:\nmine 失败");
+        push_fail_tool_result(&mut agent, "Action output:\nmine 失败");
+        let r = agent.check_modes();
+        assert!(
+            r.is_none(),
+            "successful call should reset the failure streak"
+        );
+    }
+
+    #[test]
+    fn mode_unstuck_fail_streak_dedup() {
+        let mut agent = make_agent("生命: 20/20  位置: 0,64,0");
+        push_fail_tool_result(&mut agent, "Action output:\nmine 失败");
+        push_fail_tool_result(&mut agent, "Action output:\nmine 失败");
+        push_fail_tool_result(&mut agent, "Action output:\nmine 失败");
+        let r1 = agent.check_modes();
+        assert!(r1.is_some(), "first trigger should fire");
+        let r2 = agent.check_modes();
+        assert!(r2.is_none(), "same mode should not retrigger consecutively");
     }
 
     // ── 去重机制 ──
