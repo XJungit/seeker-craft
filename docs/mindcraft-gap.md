@@ -68,7 +68,7 @@
 | cowardice（16m 无条件逃） | ✅ 20m/hp<10 | ✅ | 保留 hp 门槛（取舍） |
 | self_defense（8m） | ✅ 8m | ✅ | P77 |
 | hunting（8m 动物） | ✅ 8m+拾取 | ✅ | P77 |
-| item_collecting（8m 物品） | 🟡 hunting 拾取窗 | ❌ | 无独立物品拾取模式（LLM pickup 工具在） |
+| item_collecting（8m 物品） | item_collecting（P80） | ✅ | 200 tick + 空位保护 |
 | torch_placing | ✅ | ✅ | |
 | elbow_room | ✅ | ✅ | |
 | idle_staring | ✅ | ✅ | |
@@ -88,10 +88,10 @@
 ## 优先级队列（按主线收益排序）
 
 1. ❌ goToPlayer / goToSurface——树冠/找队友场景
-2. 🟡 item_collecting 独立化——hunting 拾取窗只覆盖打猎
-3. ❌ tillAndSow 种植——食物农场（蓝图已有 farm_plot）
-4. ❌ goToBed 睡觉——跳夜
-5. 🟡 pvp 走位（strafe）——creeper 规避已有，正面对砍补进退
-6. 🟡 自动穿甲已上线（P79）——待实机验证损坏甲/新甲替换
+2. ❌ tillAndSow 种植——食物农场（蓝图已有 farm_plot）
+3. ❌ goToBed 睡觉——跳夜
+4. 🟡 pvp 走位（strafe）——creeper 规避已有，正面对砍补进退
+5. 🟡 自动穿甲（P79）待实机验证损坏甲/新甲替换
+6. 🟡 item_collecting（P80）待实机验证挖矿掉落物自动拾取
 
 > 更新规则：每次实现/新增能力后更新本表状态；每次迭代开始先看"优先级队列"。

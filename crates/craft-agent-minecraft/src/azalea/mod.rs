@@ -3592,6 +3592,62 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                         *state.hunt_pickup_until.lock().unwrap() = 0;
                     }
                 }
+                // item_collecting：自动拾取附近掉落物（P80，Mindcraft 移植）。
+                // Mindcraft modes.js item_collecting: 8m 内 item 实体 + 空闲 + 背包有空位
+                // → pickupNearbyItems。此前只有 hunting 后 5s 窗口 + LLM pickup 工具
+                // （30-60s/回合注意不到地上 raw_iron/diamond——实测 item:6@5m 无人捡）。
+                // 每 200 tick（~10s）：空闲时 8m 内有 item 实体 → 自动拾取。
+                // 背包空位保护：空槽 <2 时跳过（避免捡垃圾占满背包）。
+                if bot.ticks_connected() % 200 == 0
+                    && state.action_mgr.is_idle()
+                    && !*state.mining_below.lock().unwrap()
+                {
+                    let has_item_near = bot
+                        .nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>()
+                        .map(|entities| {
+                            let self_id = bot.entity().id();
+                            let self_pos = bot.position().ok();
+                            entities.iter().any(|e| {
+                                if e.id() == self_id {
+                                    return false;
+                                }
+                                if let Ok(kind) = e.kind() {
+                                    if kind != EntityKind::Item {
+                                        return false;
+                                    }
+                                    if let (Some(sp), Ok(ep)) = (self_pos, e.position()) {
+                                        let d = ((sp.x - ep.x).powi(2)
+                                            + (sp.y - ep.y).powi(2)
+                                            + (sp.z - ep.z).powi(2))
+                                            .sqrt();
+                                        return d <= 8.0;
+                                    }
+                                }
+                                false
+                            })
+                        })
+                        .unwrap_or(false);
+                    if has_item_near {
+                        let free_slots = bot
+                            .get_inventory()
+                            .ok()
+                            .and_then(|inv| {
+                                inv.menu().ok().flatten().and_then(|m| {
+                                    inv.slots().map(|slots| {
+                                        m.player_slots_range()
+                                            .filter(|&s| {
+                                                slots.get(s).map(|st| st.is_empty()).unwrap_or(false)
+                                            })
+                                            .count()
+                                    })
+                                })
+                            })
+                            .unwrap_or(9);
+                        if free_slots >= 2 {
+                            let _ = crate::azalea::smart_actions::pickup_nearby_items(&bot).await;
+                        }
+                    }
+                }
                 // auto_armor：自动穿甲（P79，对齐 Mindcraft armorManager.equipAll()）。
                 // 实机高频问题：装备持续退化（头盔/靴子缺失、甲损坏），LLM 回合
                 // 30-60s 管不过来；且 P56 后 do_equip 幂等（目标槽同款直接成功）。
