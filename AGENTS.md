@@ -27,7 +27,8 @@ cargo test -p craft-agent --lib
 cargo test -p craft-agent-minecraft --features azalea-bot --lib
 
 # Run viewer
-cargo run -p craft-agent-viewer
+# 注意：craft-agent-viewer 包有两个 bin（viewer / viewer-next），必须用 --bin 指定
+cargo run -p craft-agent-viewer --bin craft-agent-viewer
 
 # Run azalea bot demo
 cargo run -p craft-agent-minecraft --example agent_azalea_demo --features azalea-bot -- --goal="挖矿下探" --steps=20

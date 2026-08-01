@@ -250,7 +250,10 @@ pub async fn do_gather(bot: &Client, item: &str, count: u32) -> Result<String, S
                     "采集 {item} 失败：背包最好的镐等级不足（{} tier {} < 需要 tier {}）。\n\
                      vanilla 规则：等级不足的镐挖该方块时方块会消失但**不掉落物品**，\n\
                      这会导致 gather 误判为「方块被挖掉但未掉落物品（缺工具）」死循环。\n\
-                     建议：先 craft 3x3 合成一把 {}，equip 装备主手后再 gather。",
+                     建议：先 craft 3x3 合成一把 {}，equip 装备主手后再 gather。\n\
+                     耐久提醒：镐会磨损——stone_pickaxe 耐久 131、iron_pickaxe 耐久 250。\n\
+                     连续下挖/挖矿 100+ 格后镐可能爆掉消失（背包列表里就没有镐了）。\n\
+                     若频繁下挖，建议：1) 一次合成 2 把；2) 尽早升级铁镐；3) 挖矿后定期 perceive 检查背包是否还有镐。",
                     pickaxe_tier_name(best_tier),
                     best_tier,
                     required_tier,

@@ -4129,35 +4129,103 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
             };
             // P11 修复：原代码 inv 在函数顶部声明，重构后移入 for 循环——
             // 此处需独立读取一次 inv。
-            let inv = match bot.get_inventory() {
-                Ok(i) => i,
-                Err(e) => return format!("获取背包失败: {e:?}"),
-            };
-            let srcs = find_item_slots(&inv, kind);
-            if let Some(src) = srcs.first() {
+            // P55 修复：armor 分支原只读一次背包，刚 craft/移动后服务端同步延迟
+            // 会导致"背包未持有"误报（实测 perceive 有铁甲但 equip 报未持有）。
+            // 与 hand 分支的 P11 一致：最多重试 3 次（每次间隔 200ms）。
+            let mut found_src: Option<usize> = None;
+            for attempt in 0..3u8 {
+                let inv = match bot.get_inventory() {
+                    Ok(i) => i,
+                    Err(e) => return format!("获取背包失败: {e:?}"),
+                };
+                let srcs = find_item_slots(&inv, kind);
+                if let Some(src) = srcs.first() {
+                    found_src = Some(*src);
+                    drop(inv);
+                    break;
+                }
+                drop(inv);
+                if attempt < 2 {
+                    sleep(Duration::from_millis(200)).await;
+                }
+            }
+            if let Some(src) = found_src {
                 // P54 修复：不用 shift_click 穿甲。azalea quick_move_stack 对 Player 菜单
                 // 的 armor 处理是 TODO（只模拟 hotbar/inventory 互移），本地状态与服务端
                 // QuickMove 行为不一致，且服务端可能拒绝（实测 2s 轮询仍穿不上）。
                 // 改用最基础的 Pickup 点击：left_click 拿起 → left_click 盔甲槽放下。
-                inv.left_click(*src);
-                sleep(Duration::from_millis(120)).await;
-                inv.left_click(armor_slot_idx);
-                drop(inv);
-                // 轮询验证（最多 2s），覆盖服务端同步延迟。
-                for _ in 0..20u8 {
-                    sleep(Duration::from_millis(100)).await;
+                // P55 追加：放下前先 left_click 目标盔甲槽清空旧盔甲（若已有其他盔甲，
+                // 直接 left_click 放置会与光标物品交换/失败）。
+                let mut placed = false;
+                for click_round in 0..3u8 {
                     if verify_armor_slot(bot, armor_slot_idx, kind).await {
-                        return format!("已装备 {item} 到 {slot_norm}（left_click 槽 {src}→{armor_slot_idx}）");
+                        placed = true;
+                        break;
                     }
+                    let inv = match bot.get_inventory() {
+                        Ok(i) => i,
+                        Err(e) => return format!("获取背包失败: {e:?}"),
+                    };
+                    // 目标槽已有其他物品 → 先拿起（放到光标）
+                    let target_occupied = match inv.slots() {
+                        Some(s) => s.get(armor_slot_idx).map(|st| !st.is_empty()).unwrap_or(false),
+                        None => false,
+                    };
+                    if target_occupied {
+                        inv.left_click(armor_slot_idx);
+                        sleep(Duration::from_millis(120)).await;
+                    }
+                    let inv2 = match bot.get_inventory() {
+                        Ok(i) => i,
+                        Err(e) => return format!("获取背包失败: {e:?}"),
+                    };
+                    let srcs = find_item_slots(&inv2, kind);
+                    let src = match srcs.first() {
+                        Some(s) => *s,
+                        None => {
+                            // 背包里也没有（可能刚放上去了）→ 验证一次再决定
+                            drop(inv2);
+                            sleep(Duration::from_millis(100)).await;
+                            if verify_armor_slot(bot, armor_slot_idx, kind).await {
+                                placed = true;
+                            }
+                            break;
+                        }
+                    };
+                    inv2.left_click(src);
+                    sleep(Duration::from_millis(120)).await;
+                    inv2.left_click(armor_slot_idx);
+                    drop(inv2);
+                    // 轮询验证（每次点击轮 2s），覆盖服务端同步延迟。
+                    for _ in 0..20u8 {
+                        sleep(Duration::from_millis(100)).await;
+                        if verify_armor_slot(bot, armor_slot_idx, kind).await {
+                            placed = true;
+                            break;
+                        }
+                    }
+                    if placed {
+                        break;
+                    }
+                    eprintln!(
+                        "[equip] armor click_round {} failed for {item}, retrying",
+                        click_round + 1
+                    );
+                }
+                if placed {
+                    return format!("已装备 {item} 到 {slot_norm}（left_click 槽 {src}→{armor_slot_idx}）");
                 }
                 return format!(
-                    "装备 {item} 到 {slot_norm} 失败：left_click 后轮询 2s，盔甲槽仍未持有 {item}。\
-                     可能原因：1) 该槽已有其他盔甲（需先 discard 旧盔甲）；\
-                     2) {item} 不是 {slot_norm} 类型的盔甲；3) 服务端同步延迟。\
-                     建议：用 perceive 查看当前盔甲槽状态，或换一个空槽位。"
+                    "装备 {item} 到 {slot_norm} 失败：left_click 后轮询 2s×3，盔甲槽仍未持有 {item}。\
+                     可能原因：1) {item} 不是 {slot_norm} 类型的盔甲（如 leggings 放 helmet 槽）；\
+                     2) 服务端同步持续延迟。建议：用 perceive 查看当前盔甲槽状态。"
                 );
             }
-            format!("背包未持有 {item}")
+            format!(
+                "背包未持有 {item}（重试 3 次后仍找不到）。\
+                 可能原因：1) 物品名称错误（用 perceive 查看背包实际物品名）；\
+                 2) 服务端长时间未同步背包。"
+            )
         }
         other => format!("不支持的槽位 {other}（可选：hand/helmet/chestplate/leggings/boots）"),
     }
