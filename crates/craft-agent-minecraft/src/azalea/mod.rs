@@ -1866,9 +1866,37 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                     }
                                 }
                                 None => match nearest_match {
-                                    Some((x, y, z, distance)) => format!(
-                                        "Action output:\nCould not attack {requested}: nearest match is {distance:.1} blocks away at ({x},{y},{z}). Use goto(x={x}, y={y}, z={z}) to approach only if safe, then attack again."
-                                    ),
+                                    Some((x, y, z, distance)) => {
+                                        // P76：远处实体攻击失败时按类型引导——LLM 曾连续 3+ 回合
+                                        // 在树冠上追远处僵尸（11-22m），全 wasted（每回合 30-60s）。
+                                        let is_hostile = matches!(
+                                            requested,
+                                            "zombie"
+                                                | "skeleton"
+                                                | "creeper"
+                                                | "spider"
+                                                | "cave_spider"
+                                                | "enderman"
+                                                | "pillager"
+                                                | "phantom"
+                                                | "witch"
+                                                | "drowned"
+                                                | "husk"
+                                                | "stray"
+                                        );
+                                        let guidance = if is_hostile {
+                                            format!(
+                                                "不要追击远处{requested}——追击引怪且浪费回合；远离它继续主线（如采集/合成/挖矿），它进入 4 格内时系统会自动反击。"
+                                            )
+                                        } else {
+                                            format!(
+                                                "动物在 {distance:.0}m 外：goto({x},{y},{z}) 靠近到 4 格内再 attack；动物会逃跑，靠近后立即攻击。"
+                                            )
+                                        };
+                                        format!(
+                                            "Action output:\nCould not attack {requested}: nearest match is {distance:.1} blocks away at ({x},{y},{z}). {guidance}"
+                                        )
+                                    }
                                     None => format!(
                                         "Action output:\nCould not find a valid {requested}. Use perceive to choose another action or flee if unsafe."
                                     ),
