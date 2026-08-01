@@ -523,6 +523,7 @@ fn mc_to_cmd(mc: MinecraftAction) -> BotCommand {
         MinecraftAction::InteractBlock { x, y, z } => BotCommand::BlockInteract { x, y, z },
         MinecraftAction::TillAndSow { x, y, z, seed } => BotCommand::TillAndSow { x, y, z, seed },
         MinecraftAction::Sleep => BotCommand::Sleep,
+        MinecraftAction::Harvest => BotCommand::Harvest,
         MinecraftAction::Chat { content } => BotCommand::Chat { content },
         MinecraftAction::Attack { target } => BotCommand::Attack { target },
         MinecraftAction::Craft { item, count } => BotCommand::Craft2x2 { item, count },

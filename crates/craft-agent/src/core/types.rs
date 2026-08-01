@@ -142,6 +142,8 @@ pub enum MinecraftAction {
     },
     /// 睡觉跳夜（P85）：找附近床 → 靠近 → 空主手 → 右键上床 → 睡到自然醒。
     Sleep,
+    /// 收割成熟作物（P86）：自动扫描附近成熟小麦/胡萝卜/土豆/甜菜/下界疣并挖取。
+    Harvest,
     /// 发送聊天消息（也用作 LLM 指令回显）。
     Chat { content: String },
     /// 攻击最近的生物（用于自卫/狩猎）。target 为 "nearest" 或实体种类关键词（如 "zombie"）。

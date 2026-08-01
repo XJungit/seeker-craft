@@ -1,0 +1,6 @@
+{"between_delay_ms": 2500, "steps": [
+  {"cmd": "harvest"},
+  {"cmd": "chat /setblock -489 97 -150 minecraft:wheat[age=7]"},
+  {"cmd": "harvest"},
+  {"state": true}
+]}

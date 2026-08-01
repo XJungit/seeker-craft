@@ -17,6 +17,7 @@ pub mod chest;
 pub mod craft;
 pub mod ext_state;
 pub mod gather;
+pub mod harvest;
 pub mod place;
 pub mod recipe_book;
 pub mod recipes;
@@ -287,6 +288,9 @@ pub enum BotCommand {
     /// P85：睡觉跳夜（参考 Mindcraft goToBed）。找附近床 → 靠近 → 空主手 →
     /// 右键上床 → 验证入睡 → 睡到自然醒。白天/附近有怪物会失败。
     Sleep,
+    /// P86：收割成熟作物（参考 Mindcraft collectBlock 作物分支）。自动扫描
+    /// 附近成熟的小麦/胡萝卜/土豆/甜菜/下界疣并徒手挖取，掉落物自动拾取。
+    Harvest,
     Chat {
         content: String,
     },
@@ -673,6 +677,9 @@ pub fn parse_chat_command(content: &str) -> Option<BotCommand> {
             parts.next()?.to_string(),
         );
         return Some(BotCommand::TillAndSow { x, y, z, seed });
+    }
+    if content == "harvest" {
+        return Some(BotCommand::Harvest);
     }
     if content == "follow" {
         return Some(BotCommand::Follow { target: None });
@@ -1920,6 +1927,25 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                 }
                                 Err(e) => {
                                     let chat = format!("[睡觉失败] {e}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!("Action output:\n❌ {e}"));
+                                    }
+                                }
+                            }
+                        }
+                        BotCommand::Harvest => {
+                            *state.mining_below.lock().unwrap() = false;
+                            match crate::azalea::harvest::do_harvest(&bot, 24).await {
+                                Ok(msg) => {
+                                    let chat = format!("[收割] {msg}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!("Action output:\n{msg}"));
+                                    }
+                                }
+                                Err(e) => {
+                                    let chat = format!("[收割失败] {e}");
                                     let _ = evt_tx.send(BotEvent::Chat { content: chat });
                                     if let Some(tx) = &result_tx {
                                         let _ = tx.send(format!("Action output:\n❌ {e}"));
@@ -4338,6 +4364,8 @@ mod entity_target_tests {
             parse_chat_command("chat hello"),
             Some(BotCommand::Chat { content }) if content == "hello"
         ));
+        assert!(matches!(parse_chat_command("harvest"), Some(BotCommand::Harvest)));
+        assert!(parse_chat_command("harvest 3").is_none());
         assert!(parse_chat_command("tillandsow 1 2").is_none());
     }
 }

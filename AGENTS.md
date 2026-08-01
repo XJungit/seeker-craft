@@ -98,7 +98,7 @@ craft-agent-autopilot    Autonomous test loop (build/test → anomaly → RCA �
 | Mining | `mine`, `make_obsidian` |
 | Interaction | `interact_block`, `interact_entity`, `attack`, `defend` |
 | Crafting | `craft`, `craft_3x3`, `smelt`, `auto_craft`, `enchant` |
-| Gathering | `gather`, `till_and_sow` |
+| Gathering | `gather`, `till_and_sow`, `harvest` |
 | Placement | `place`, `build`, `build_blueprint`, `list_blueprints` |
 | Container | `open`, `chest_view`, `chest_withdraw`, `chest_deposit` |
 | Inventory | `equip`, `discard`, `consume` |
@@ -216,7 +216,7 @@ DeepSeek prefix cache requires system prompt to be identical every call.
 ## Code Execution
 
 - **`run_script`** → rhai engine (embedded, Rust-native, safe)
-  - Functions: goto, mine, mine_below, mine_above, gather, craft, craft_3x3, place, open, chest_view, chat, attack, defend, smelt, interact, interact_entity, enchant, auto_craft, trade, equip, discard, consume, pickup, make_obsidian, follow, stop_follow, give, till_and_sow, sleep, print
+  - Functions: goto, mine, mine_below, mine_above, gather, craft, craft_3x3, place, open, chest_view, chat, attack, defend, smelt, interact, interact_entity, enchant, auto_craft, trade, equip, discard, consume, pickup, make_obsidian, follow, stop_follow, give, till_and_sow, harvest, sleep, print
 - **`run_plan`** → JSON multi-step plan (sequential, synchronous)
 - **`new_action`** → save named rhai script to `actions/<name>.rhai.json`, reusable across sessions
 
@@ -309,7 +309,7 @@ cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot 
 probe bot 名 `craftbot_probe`，与 agent bot 共存不冲突。命令文本见
 `parse_chat_command`（azalea/mod.rs:508，支持 goto/mine x y z/minebelow/mineabove/attack/gather/
 craft/craft3/smelt/autocraft/place/open/enchant/trade/interact/interactblock x y z/tillandsow x y z seed/chat/chat 消息/
-follow/give/equip/discard/consume/chestview/chestwithdraw/chestdeposit/makeobsidian/pickup/defend/sleep）。
+follow/give/equip/discard/consume/chestview/chestwithdraw/chestdeposit/makeobsidian/pickup/defend/sleep/harvest）。
 需要 LLM 决策的测试（策略/规划/目标分解）才开 viewer+agent。
 
 新增工具命令时必须同时更新 `parse_chat_command`，否则 probe 无法驱动。

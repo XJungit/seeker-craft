@@ -524,9 +524,48 @@ impl GameTool for SleepTool {
     }
 }
 
-/// 攻击最近的指定种类生物（自卫/狩猎）。
-pub struct AttackTool {
+/// 收割成熟作物：扫描附近成熟小麦/胡萝卜/土豆/甜菜/下界疣并挖取。
+pub struct HarvestTool {
     ctx: Arc<AzaleaToolCtx>,
+}
+impl HarvestTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for HarvestTool {
+    fn name(&self) -> &str {
+        "harvest"
+    }
+    fn description(&self) -> &str {
+        "收割附近 32m 内所有成熟的农作物（小麦/胡萝卜/土豆/甜菜/下界疣），自动走到并徒手挖取，掉落物自动拾取。未成熟的作物不会掉落，需要等待。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({ "type": "object", "properties": {}, "required": [] })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        _args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::Harvest))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}
+
+/// 攻击最近的指定种类生物（自卫/狩猎）。
+pub struct AttackTool {    ctx: Arc<AzaleaToolCtx>,
 }impl AttackTool {
     pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
         Self { ctx }
@@ -1606,6 +1645,7 @@ fn parse_step(action: &str, step: &serde_json::Value) -> anyhow::Result<Minecraf
             seed: str("seed").ok_or_else(|| anyhow::anyhow!("till_and_sow 缺少 seed"))?,
         }),
         "sleep" => Ok(MinecraftAction::Sleep),
+        "harvest" => Ok(MinecraftAction::Harvest),
         "chat" => Ok(MinecraftAction::Chat {
             content: str("content").ok_or_else(|| anyhow::anyhow!("chat 缺少 content"))?,
         }),
@@ -2382,6 +2422,10 @@ fn build_rhai_engine(ctx: &Arc<AzaleaToolCtx>) -> rhai::Engine {
         let capped = ms.clamp(0, 10_000) as u64;
         std::thread::sleep(std::time::Duration::from_millis(capped));
     });
+    let a_harvest = adapter.clone();
+    engine.register_fn("harvest", move || -> String {
+        _exec_action(&a_harvest, MinecraftAction::Harvest)
+    });
     engine.register_fn("print", |msg: String| -> String {
         println!("[bot] {msg}");
         msg
@@ -2848,6 +2892,7 @@ pub fn create_mc_azalea_tools_full(
         Box::new(InteractBlockTool::new(ctx.clone())),
         Box::new(TillAndSowTool::new(ctx.clone())),
         Box::new(SleepTool::new(ctx.clone())),
+        Box::new(HarvestTool::new(ctx.clone())),
         Box::new(AttackTool::new(ctx.clone())),
         Box::new(CraftTool::new(ctx.clone())),
         Box::new(Craft3x3Tool::new(ctx.clone())),
