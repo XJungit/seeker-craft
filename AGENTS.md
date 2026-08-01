@@ -25,6 +25,12 @@ Autonomously optimize and maintain this project. Authority: **full decision powe
 > 禁止跳过第 1 步直接修 bug——被动修补（P57-P76 模式）是流程缺陷，
 > 主动差距分析（P77 起）是 Mission 第一优先级的正确执行方式。
 
+### Git 推送策略（2026-08-01 起，用户指令）
+- **本地提交**：每个工作单元完成后 `git add -A && git commit`（必须，保障可回滚）
+- **推送 GitHub**：仅当某一功能/方面**确切完善**（实机验证通过、CI 门槛全绿、gap 回填完成）才 `git push origin main`
+- 中间过程的小修复/实验/未验证改动：只本地提交，不推送（避免 CI 噪音与历史垃圾）
+- 推送前自检：`git log origin/main..HEAD --oneline` 确认待推提交都是"完善"级
+
 ## Build & Run
 
 ```bash
