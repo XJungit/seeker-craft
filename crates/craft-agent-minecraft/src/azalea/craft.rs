@@ -2150,6 +2150,57 @@ const SMELT_RECIPES: &[(&'static str, SmeltRecipe)] = &[
             output_per_craft: 1,
         },
     ),
+    // P78：熟肉熔炼（LLM 杀了羊想烤 cooked_mutton 被拒——SMELT_RECIPES 缺全部食物。
+    // 食物保障主线核心：生肉→熟肉 +3 饥饿/+3 饱和度（直接吃生肉回 3 但掉饱食/中毒）。
+    (
+        "cooked_beef",
+        SmeltRecipe {
+            input: "beef",
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "cooked_porkchop",
+        SmeltRecipe {
+            input: "porkchop",
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "cooked_chicken",
+        SmeltRecipe {
+            input: "chicken",
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "cooked_mutton",
+        SmeltRecipe {
+            input: "mutton",
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "cooked_rabbit",
+        SmeltRecipe {
+            input: "rabbit",
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "cooked_cod",
+        SmeltRecipe {
+            input: "cod",
+            output_per_craft: 1,
+        },
+    ),
+    (
+        "cooked_salmon",
+        SmeltRecipe {
+            input: "salmon",
+            output_per_craft: 1,
+        },
+    ),
 ];
 
 fn lookup_smelt_all(output: &str) -> Vec<SmeltRecipe> {
