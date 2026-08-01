@@ -143,6 +143,7 @@ impl MinecraftAzaleaAdapter {
                         if let BotEvent::State {
                             position,
                             inventory,
+                            armor,
                             player_count,
                             yaw,
                             pitch,
@@ -230,6 +231,7 @@ impl MinecraftAzaleaAdapter {
                                   资源: {}{}\n\
                                   实体: [{}]\n\
                                   击杀统计: [{}]\n\
+                                  装备: [{}]\n\
                                   背包: [{}]\n\
                                   玩家: {}{}",
                                 position.x,
@@ -252,6 +254,7 @@ impl MinecraftAzaleaAdapter {
                                 blocks_line,
                                 nearby_entities,
                                 kill_counts,
+                                armor,
                                 inventory,
                                 player_count,
                                 stuck_hint

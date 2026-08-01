@@ -212,6 +212,8 @@ pub enum BotEvent {
         position: azalea::Vec3,
         /// 全量非空格：格式 `oak_log:3, cobblestone:64, wooden_pickaxe:1`
         inventory: String,
+        /// 已穿戴盔甲摘要：`头盔: iron_helmet, 胸甲: 无, 护腿: 无, 靴子: 无`（P56 新增）
+        armor: String,
         player_count: usize,
         /// 朝向（yaw 度数，0=+Z 南，-90=+X 东，90=-X 西，±180=-Z 北）。
         yaw: f64,
@@ -2743,12 +2745,26 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                         // 全量背包：列出所有非空格，**按物品 ID 聚合后输出**（旧版每个槽位单独
                         // 输出，导致 `dirt:46, dirt:64, leaflitter:64, leaflitter:26` 这种重复条目，
                         // LLM 困惑且浪费 token）。聚合后输出 `dirt:110, leaflitter:90`。
-                        let inventory = match bot.get_inventory() {
+                        let (inventory, armor_str) = match bot.get_inventory() {
                             Ok(inv) => match inv.slots() {
                                 Some(slots) => {
+                                    // P56：Player 菜单槽位布局（azalea declare_menus!）：
+                                    // 0=craft_result, 1-4=craft, 5-8=armor(helmet/chestplate/
+                                    // leggings/boots), 9-44=inventory, 45=offhand。
+                                    // 原实现把 armor 槽混入"背包"聚合 → LLM 以为甲还在背包，
+                                    // 反复 equip 又因 find_item_slots(9-44) 找不到而报"背包未持有"
+                                    // → 死循环（实测甲已上身仍被反复驱赶）。现跳过 armor 槽并
+                                    // 单独产出装备摘要行。仅 Player 菜单布局固定，容器菜单跳过。
+                                    let is_player_menu = inv
+                                        .menu()
+                                        .ok()
+                                        .flatten()
+                                        .map(|m| matches!(m, azalea::inventory::Menu::Player(_)))
+                                        .unwrap_or(false);
                                     let mut agg: std::collections::HashMap<String, u32> =
                                         std::collections::HashMap::new();
-                                    for s in slots.iter() {
+                                    let mut armor: [String; 4] = Default::default();
+                                    for (idx, s) in slots.iter().enumerate() {
                                         if s.is_empty() {
                                             continue;
                                         }
@@ -2763,9 +2779,13 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                             .strip_prefix("minecraft:")
                                             .unwrap_or(kind_full);
                                         let cnt = s.count() as u32;
-                                        *agg.entry(kind.to_string()).or_insert(0) += cnt;
+                                        if is_player_menu && (5..=8).contains(&idx) {
+                                            armor[idx - 5] = kind.to_string();
+                                        } else {
+                                            *agg.entry(kind.to_string()).or_insert(0) += cnt;
+                                        }
                                     }
-                                    if agg.is_empty() {
+                                    let inv_str = if agg.is_empty() {
                                         "空背包".to_string()
                                     } else {
                                         // 按数量降序输出（多的在前，LLM 重点看前几个）
@@ -2777,11 +2797,32 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                             .map(|(k, c)| format!("{k}:{c}"))
                                             .collect::<Vec<_>>()
                                             .join(", ")
-                                    }
+                                    };
+                                    let display = |s: &String| {
+                                        if s.is_empty() {
+                                            "无".to_string()
+                                        } else {
+                                            s.clone()
+                                        }
+                                    };
+                                    let armor_summary = format!(
+                                        "头盔: {}, 胸甲: {}, 护腿: {}, 靴子: {}",
+                                        display(&armor[0]),
+                                        display(&armor[1]),
+                                        display(&armor[2]),
+                                        display(&armor[3])
+                                    );
+                                    (inv_str, armor_summary)
                                 }
-                                None => "slots=None".to_string(),
+                                None => (
+                                    "slots=None".to_string(),
+                                    "头盔: 无, 胸甲: 无, 护腿: 无, 靴子: 无".to_string(),
+                                ),
                             },
-                            Err(_) => "获取失败".to_string(),
+                            Err(_) => (
+                                "获取失败".to_string(),
+                                "头盔: 无, 胸甲: 无, 护腿: 无, 靴子: 无".to_string(),
+                            ),
                         };
                         let player_count = bot.nearby_players().map(|pp| pp.len()).unwrap_or(0);
                         // 朝向（yaw/pitch，度数）：从 LookDirection 的 Debug 输出解析（azalea 字段为私有，不改动库）。
@@ -2954,6 +2995,17 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                 .clone();
                             serde_json::json!({
                                 "inventory": inv_slots,
+                                // P56：盔甲槽位（Player 菜单 5-8）单独列出，与背包区分。
+                                "armor": inv_slots
+                                    .iter()
+                                    .filter(|s| {
+                                        s.get("slot")
+                                            .and_then(|v| v.as_u64())
+                                            .map(|i| (5..=8).contains(&i))
+                                            .unwrap_or(false)
+                                    })
+                                    .cloned()
+                                    .collect::<Vec<_>>(),
                                 "experience_level": xp.as_ref().map(|e| e.level).unwrap_or(0),
                                 "experience_progress": xp.as_ref().map(|e| e.progress).unwrap_or(0.0),
                                 "held_item": held_item,
@@ -3115,6 +3167,7 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                         let _ = evt_tx.send(BotEvent::State {
                             position: p,
                             inventory,
+                            armor: armor_str,
                             player_count,
                             yaw,
                             pitch,
@@ -4206,6 +4259,13 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
             // P55 修复：armor 分支原只读一次背包，刚 craft/移动后服务端同步延迟
             // 会导致"背包未持有"误报（实测 perceive 有铁甲但 equip 报未持有）。
             // 与 hand 分支的 P11 一致：最多重试 3 次（每次间隔 200ms）。
+            // P56 修复：目标 armor 槽已装备同款甲 → 直接幂等返回成功。
+            // 根因：find_item_slots 只搜 player_slots_range（menu 槽 9-44），
+            // 而 azalea Player 菜单 armor 槽是 5-8——甲已穿上后重试 equip 必报
+            // "背包未持有"，LLM 反复重穿死循环（实测 11:32 甲已上身仍被反复驱赶）。
+            if verify_armor_slot(bot, armor_slot_idx, kind).await {
+                return format!("已装备 {item} 到 {slot_norm}（目标槽已是该物品，无需重穿）");
+            }
             let mut found_src: Option<usize> = None;
             for attempt in 0..3u8 {
                 let inv = match bot.get_inventory() {
