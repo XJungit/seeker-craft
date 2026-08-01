@@ -12,7 +12,7 @@ use std::process::{Child, Command};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const MONITOR_INTERVAL: Duration = Duration::from_secs(10);
-const STALL_TIMEOUT: Duration = Duration::from_secs(180);
+const STALL_TIMEOUT: Duration = Duration::from_secs(240);
 const MAX_STATUS_FAILURES: u32 = 3;
 const MIN_PROGRESS_DISTANCE: f64 = 2.0;
 
@@ -211,6 +211,12 @@ fn game_state_changed(previous: &Value, current: &Value) -> bool {
         || previous.get("inventory") != current.get("inventory")
         || previous.get("experience_level") != current.get("experience_level")
         || previous.get("gamemode") != current.get("gamemode")
+        // P72: scene_desc 全文变化也算进展——inventory 顶层字段经常为 None
+        // （BotEvent::State 不含背包），bot 小范围挖矿位置变化 <2m 时被误判停滞，
+        // 导致 autopilot 每 3 分钟注入一次 steering goal 打断 LLM 节奏（实测 42 次）。
+        // scene_desc 含"位置/背包/附近"实时行，任何实质变化都说明 LLM 在推进。
+        // 误报（蝙蝠飞过也算）无害——只是不判停滞。
+        || previous.get("scene_desc") != current.get("scene_desc")
 }
 
 fn position_changed(previous: &Value, current: &Value) -> bool {
