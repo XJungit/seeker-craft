@@ -1870,7 +1870,7 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                         // P76：远处实体攻击失败时按类型引导——LLM 曾连续 3+ 回合
                                         // 在树冠上追远处僵尸（11-22m），全 wasted（每回合 30-60s）。
                                         let is_hostile = matches!(
-                                            requested,
+                                            requested.as_str(),
                                             "zombie"
                                                 | "skeleton"
                                                 | "creeper"
