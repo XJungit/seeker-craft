@@ -64,7 +64,7 @@
 | Mindcraft 模式 | 我们 | 状态 | 备注 |
 |---|---|---|---|
 | self_preservation（水/火/低血/流沙） | ✅ 火/岩浆 | 🟡 | 落水跳、低血逃跑无（cowardice 补） |
-| unstuck | ✅ 三看门狗 | ✅ | P65/66/67 更强 |
+| unstuck | ✅ 三看门狗 | ✅ | P65/66/67 更强 + P81 连续失败工具调用检测 |
 | cowardice（16m 无条件逃） | ✅ 20m/hp<10 | ✅ | 保留 hp 门槛（取舍） |
 | self_defense（8m） | ✅ 8m | ✅ | P77 |
 | hunting（8m 动物） | ✅ 8m+拾取 | ✅ | P77 |
@@ -87,11 +87,19 @@
 
 ## 优先级队列（按主线收益排序）
 
-1. ❌ goToPlayer / goToSurface——树冠/找队友场景
-2. ❌ tillAndSow 种植——食物农场（蓝图已有 farm_plot）
+1. ❌ tillAndSow 种植——食物农场（蓝图已有 farm_plot）【实机确认 2026-08-01：bot 捡到 wheat_seeds 因无法种植而 discard】
+2. ❌ goToPlayer / goToSurface——树冠/找队友场景
 3. ❌ goToBed 睡觉——跳夜
 4. 🟡 pvp 走位（strafe）——creeper 规避已有，正面对砍补进退
 5. 🟡 自动穿甲（P79）待实机验证损坏甲/新甲替换
 6. 🟡 item_collecting（P80）待实机验证挖矿掉落物自动拾取
 
 > 更新规则：每次实现/新增能力后更新本表状态；每次迭代开始先看"优先级队列"。
+
+## 最近修复记录（2026-08-01）
+
+- P81 unstuck 增强：连续 3+ 次失败/无效工具调用（goto 超时/挖空气/gather 无资源）触发 mode_id=7 提示（mine_above 回地表/换方向/回据点），5+ 强制重 prompt。原 obs_streak 只认纯观察轮，"有工具调用但无进展"的死循环检测不到。
+- P82 hotbar 缓存过期兜底：find_hotbar_slot 命中但 set_selected_hotbar_slot 后主手不对（本地 slots 缓存滞后服务端）→ force_hold_in_hotbar 强制 shift_click 归位重试，接入 do_equip/do_place。
+- 接线补齐：probe 命令 mineabove/interactblock（interact 变体名 Bug 修复）；run_plan parse_step +10 action；rhai +4 函数（make_obsidian/follow/stop_follow/give）。
+- 死代码清理：actions.rs/client.rs/perception.rs（假 ticks() 返回 0）、check_modes_legacy。
+- 实机观察：bot 卡 tier3_bread（地下无小麦），捡到 wheat_seeds 因无种植能力丢弃；red_mushroom+bowl 可做蘑菇炖菜但 LLM 未识别（策略层知识注入待补）。
