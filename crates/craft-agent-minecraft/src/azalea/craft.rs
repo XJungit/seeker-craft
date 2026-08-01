@@ -26,12 +26,17 @@ struct CraftPlan {
     output_per_craft: u32,
 }
 
+/// 顺序填充配方（单原料）条目：(目标, 原料列表, 每次产出数)
+type RecipeEntry = (&'static str, &'static [(&'static str, u32)], u32);
+/// 2×2 形状配方条目：(目标, (槽位, 原料) 列表, 每次产出数)
+type ShapedEntry = (&'static str, &'static [(usize, &'static str)], u32);
+
 /// 静态配方表：目标物品 -> (原料 id 列表, 每次产出数)。
 /// 原料 id 用 `minecraft:` 命名空间，可省略前缀。
 /// 注意：此表只描述「需要哪些原料、各多少个」，不描述网格形状。
 /// 顺序填充（slot1, slot2, slot3, slot4）只对单原料配方（如 planks）正确；
 /// 竖直配方（stick/torch）必须走 SHAPED_2X2，否则横放导致服务端配方不匹配。
-const RECIPES: &[(&str, &[(&str, u32)], u32)] = &[
+const RECIPES: &[RecipeEntry] = &[
     ("oak_planks", &[("oak_log", 1)], 4),
     ("stick", &[("oak_planks", 2)], 4),
     ("crafting_table", &[("oak_planks", 4)], 1),
@@ -49,7 +54,7 @@ const RECIPES: &[(&str, &[(&str, u32)], u32)] = &[
 /// 改用显式 (slot, ingredient) 映射，把原料放在正确竖列上。
 ///
 /// 同一目标可有多个候选（如 torch 同时支持 coal/charcoal），按表中顺序尝试。
-const SHAPED_2X2: &[(&str, &[(usize, &str)], u32)] = &[
+const SHAPED_2X2: &[ShapedEntry] = &[
     // stick: 2 planks 竖直（左列）—— vanilla shape ["P","P"]
     ("stick", &[(1, "oak_planks"), (3, "oak_planks")], 4),
     // torch (coal 变体): coal 在上, stick 在下 —— vanilla shape ["C","S"]
@@ -2410,25 +2415,16 @@ pub async fn do_smelt(
     //   log = 15s → 1.5 个（取 1）/ planks = 15s → 1.5 个（取 1）/ stick = 5s → 0.5 个（取 1，2 个 stick 炼 1 个）
     let (fuel_per_item, _fuel_burn_seconds) = fuel_candidates
         .iter()
-        .find_map(|&fk| {
+        .map(|&fk| {
             let name = fk.to_str();
-            let burns: u32 = if name.contains("coal_block") { 80 } else { 0 };
             let per_item: u32 = if name.contains("coal") && !name.contains("block") {
                 8 // coal/charcoal: 80s / 10s = 8
-            } else if name.contains("log") {
-                1 // log: 15s → 1 个（向下取整，剩余 5s 浪费）
-            } else if name.contains("planks") {
-                1 // planks: 15s → 1 个
-            } else if name == "minecraft:stick" {
-                1 // stick: 5s → 0.5 个，但放 2 个 stick 炼 1 个
-            } else if name.contains("coal_block") {
-                80
             } else {
                 1
             };
-            let _ = burns;
-            Some((per_item, 0))
+            (per_item, 0)
         })
+        .next()
         .unwrap_or((1, 0));
 
     // 清理熔炉槽位 + 光标（P32 保留）
@@ -3208,12 +3204,6 @@ mod tests {
         fn calc_fuel_per_item(fuel_name: &str) -> u32 {
             if fuel_name.contains("coal") && !fuel_name.contains("block") {
                 8 // coal/charcoal: 80s / 10s = 8
-            } else if fuel_name.contains("log") {
-                1
-            } else if fuel_name.contains("planks") {
-                1
-            } else if fuel_name == "minecraft:stick" {
-                1
             } else if fuel_name.contains("coal_block") {
                 80
             } else {
@@ -3625,12 +3615,6 @@ mod tests {
             80
         } else if fuel_kind.contains("coal") {
             8
-        } else if fuel_kind.contains("log") {
-            1
-        } else if fuel_kind.contains("planks") {
-            1
-        } else if fuel_kind == "minecraft:stick" || fuel_kind == "stick" {
-            1
         } else {
             1
         };
@@ -3689,9 +3673,7 @@ mod tests {
                 continue;
             }
             // 有产物，尝试收集
-            let collected = if shift_click_succeeds(round) {
-                arrival
-            } else if left_click_succeeds(round) {
+            let collected = if shift_click_succeeds(round) || left_click_succeeds(round) {
                 arrival
             } else {
                 0 // 都失败，不计数

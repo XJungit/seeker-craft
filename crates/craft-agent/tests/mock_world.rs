@@ -1,5 +1,6 @@
 //! Mock world for testing tool logic without a real MC server.
 //! Implements just enough of azalea's World interface for tool tests.
+#![allow(dead_code)]
 
 use std::collections::HashMap;
 
@@ -86,6 +87,7 @@ impl MockWorld {
         self.blocks.insert((pos.x, pos.y, pos.z), kind);
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn set_range(
         &mut self,
         x1: i32,

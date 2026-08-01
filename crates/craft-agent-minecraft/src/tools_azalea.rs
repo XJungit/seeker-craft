@@ -2791,8 +2791,6 @@ impl GameTool for TaskRetryTool {
 }
 
 /// 捡起附近掉落物。学习自 Mindcraft pickupNearbyItems。
-
-/// 捡起附近掉落物。学习自 Mindcraft pickupNearbyItems。
 /// bot 挖矿/战斗后掉落物散落，调用此工具走一圈吸取。
 pub struct PickupTool {
     ctx: Arc<AzaleaToolCtx>,

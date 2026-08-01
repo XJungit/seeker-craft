@@ -4,6 +4,11 @@ on:
   push:
     branches: [main, master]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -15,24 +20,23 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install nightly-2026-07-21 toolchain
+      - name: Install nightly toolchain (from rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "nightly-2026-07-21"
-          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
       - name: cargo fmt (check)
         run: cargo fmt --all -- --check
-      - name: cargo clippy
-        run: cargo clippy --workspace --all-targets
+      - name: cargo clippy (strict, incl. azalea-bot)
+        run: cargo clippy --workspace --all-targets --features craft-agent-minecraft/azalea-bot -- -D warnings
 
   test:
     name: test
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install nightly-2026-07-21 toolchain
+      - name: Install nightly toolchain (from rust-toolchain.toml)
         uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "nightly-2026-07-21"
-      - name: cargo test
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test (default features)
         run: cargo test --workspace --no-fail-fast
+      - name: cargo test (azalea-bot)
+        run: cargo test -p craft-agent-minecraft --features azalea-bot --lib

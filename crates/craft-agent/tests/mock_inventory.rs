@@ -1,4 +1,5 @@
 //! Mock inventory for testing tool logic without a real MC server.
+#![allow(dead_code)]
 
 use std::collections::HashMap;
 

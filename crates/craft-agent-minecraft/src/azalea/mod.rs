@@ -42,6 +42,13 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
+/// 整数方块坐标（watchdog / 冷却表用）。
+pub type ChunkPos = (i32, i32, i32);
+/// make_obsidian 状态机：(剩余数, 阶段, 黑曜石坐标)。
+pub type ObsidianTask = Option<(u32, u8, Option<ChunkPos>)>;
+/// 感知聚合：(实体名, (数量, 最近距离, 坐标))。
+pub type EntityAgg = HashMap<String, (u32, f64, ChunkPos)>;
+
 /// 当前毫秒时间戳（扫描 TTL 用）。
 fn now_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -200,6 +207,7 @@ fn record_surroundings(
 
 /// 转发给外部的 bot 事件（供 harness / LLM 消费）。
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)] // State 携带完整快照，装箱使所有调用点解包，收益低
 pub enum BotEvent {
     /// 连入世界成功。
     Spawn { position: azalea::Vec3 },
@@ -436,14 +444,14 @@ pub struct BotState {
     pub goto_watchdog: Arc<Mutex<(i32, i32, i32, u32)>>,
     /// P66：goto 冷却表（按 bot 当前格子）。触发脱困后冷却该格子 N tick，
     /// 期间 goto 直接拒绝，打破脚本/LLM 的 goto 死循环。
-    pub goto_cooldown: Arc<Mutex<HashMap<(i32, i32, i32), u64>>>,
+    pub goto_cooldown: Arc<Mutex<HashMap<ChunkPos, u64>>>,
     /// P67：全局"原地冻死"看门狗。bot 位置长时间（~20s）不变且循环仍在推进，
     /// 说明卡在某个不动作（如空转 run_script / 无效 interact）。累计到阈值即
     /// 向 LLM 推强警告，逼其换策略（pi-agent 自主止损，覆盖所有非 goto 卡死）。
     pub no_move_ticks: Arc<Mutex<u64>>,
-    pub last_seen_pos: Arc<Mutex<(i32, i32, i32)>>,
+    pub last_seen_pos: Arc<Mutex<ChunkPos>>,
     /// P67：make_obsidian 状态机。(remaining, phase, obsidian_pos)。phase: 0=找岩浆放水, 1=等黑曜石生成, 2=挖黑曜石。
-    pub make_obsidian: Arc<Mutex<Option<(u32, u8, Option<(i32, i32, i32)>)>>>,
+    pub make_obsidian: Arc<Mutex<ObsidianTask>>,
     /// P68：跟随模式。Some(target) 表示正在跟随该玩家（None 名=跟随最近玩家）；
     /// None 表示未跟随。handler 每 tick 读取目标坐标 goto。
     pub follow_target: Arc<Mutex<Option<Option<String>>>>,
@@ -3028,7 +3036,7 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                 } else {
                                     // 按数量降序输出（多的在前，LLM 重点看前几个）
                                     let mut items: Vec<(String, u32)> = agg.into_iter().collect();
-                                    items.sort_by(|a, b| b.1.cmp(&a.1));
+                                    items.sort_by_key(|x| std::cmp::Reverse(x.1));
                                     items
                                         .iter()
                                         .map(|(k, c)| format!("{k}:{c}"))
@@ -3289,7 +3297,7 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             }
                         }
                         let mut items: Vec<_> = counts.into_iter().collect();
-                        items.sort_by(|a, b| b.1.cmp(&a.1));
+                        items.sort_by_key(|x| std::cmp::Reverse(x.1));
                         items
                             .iter()
                             .map(|(k, v)| format!("{k}:{v}"))
@@ -3369,8 +3377,7 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                     // 此前只有距离没有方向（实测 LLM 在树冠上找不到食物来源）。
                     let nearby_entities = {
                         const PERCEPTION_RADIUS: f64 = 24.0;
-                        let mut kinds: HashMap<String, (u32, f64, (i32, i32, i32))> =
-                            HashMap::new();
+                        let mut kinds: EntityAgg = HashMap::new();
                         if let Ok(entities) = bot.nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>() {
                             let self_id = bot.entity().id();
                             for e in entities.iter() {
@@ -3396,7 +3403,7 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             parts.push(format!("player:{}", player_count));
                         }
                         let mut items: Vec<_> = kinds.into_iter().collect();
-                        items.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+                        items.sort_by_key(|x| std::cmp::Reverse(x.1.0));
                         for (k, (v, d, pos)) in items {
                             if v > 0 {
                                 parts.push(format!("{k}:{v}@{d:.0}m@{pos:?}"));
@@ -3883,7 +3890,6 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                     let self_id = bot.entity().id();
                     let self_pos = bot.position().ok();
                     let mut attacked = false;
-                    let mut creeper_evaded = false;
                     for e in entities.iter() {
                         if e.id() == self_id { continue; }
                         if attacked { break; }
@@ -3925,8 +3931,6 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                             let _ = evt_tx.send(BotEvent::Chat {
                                                 content: format!("[MODE] creeper {d:.1}m 内即将爆炸，自动撤离 ({tx},{ty},{tz})"),
                                             });
-                                            creeper_evaded = true;
-                                            attacked = true;
                                             break;
                                         }
                                     }

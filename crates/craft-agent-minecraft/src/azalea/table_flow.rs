@@ -888,9 +888,7 @@ fn find_table_block_nearby(
     expected: Option<azalea_registry::builtin::BlockKind>,
     radius: i32,
 ) -> Option<BlockPos> {
-    let Some(expected_kind) = expected else {
-        return None;
-    };
+    let expected_kind = expected?;
     let world = bot.world().ok()?;
     let world = world.read();
     let mut best: Option<(BlockPos, i32)> = None;

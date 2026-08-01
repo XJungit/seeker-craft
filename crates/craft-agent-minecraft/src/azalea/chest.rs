@@ -79,7 +79,7 @@ fn summarize_container(inv: &ContainerHandleRef) -> Option<String> {
         return Some("空容器".to_string());
     }
     let mut items: Vec<(String, u32)> = agg.into_iter().collect();
-    items.sort_by(|a, b| b.1.cmp(&a.1));
+    items.sort_by_key(|x| std::cmp::Reverse(x.1));
     Some(
         items
             .iter()

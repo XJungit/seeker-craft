@@ -101,7 +101,6 @@ async fn main() {
                     println!("[probe] 断开: {reason}");
                     break;
                 }
-                _ => {}
             }
         }
     });

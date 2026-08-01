@@ -6,9 +6,6 @@
 use azalea::BlockPos;
 use azalea::prelude::*;
 
-/// 寻路目标：出生点附近偏移，验证 azalea pathfinder 在 26.2 能用。
-const TARGET: BlockPos = BlockPos::new(10, 83, 10);
-
 #[tokio::main]
 async fn main() {
     let account = Account::offline("craftbot");
