@@ -348,7 +348,9 @@ fn extract_error_suggestion(err_msg: &str) -> Option<String> {
 /// - `Active`：目标激活，每轮注入 [当前目标]，agent 持续朝目标行动
 /// - `Paused`：目标暂停，不注入但保留 goal；紧急情况结束后自动/手动恢复
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Default)]
 pub enum PromptState {
+    #[default]
     Stopped,
     Active {
         goal: String,
@@ -384,11 +386,6 @@ impl PromptState {
     }
 }
 
-impl Default for PromptState {
-    fn default() -> Self {
-        PromptState::Stopped
-    }
-}
 
 pub struct AgentConfig {
     pub prompt: String,
@@ -750,11 +747,10 @@ impl Agent {
             return;
         }
         let perceive_text = self.messages.iter().rev().find_map(|m| {
-            if let Message::User(u) = m {
-                if u.content.starts_with("【当前游戏状态（自动注入）】") {
+            if let Message::User(u) = m
+                && u.content.starts_with("【当前游戏状态（自动注入）】") {
                     return Some(u.content.clone());
                 }
-            }
             None
         });
         let Some(text) = perceive_text else {
@@ -1057,11 +1053,9 @@ impl Agent {
         if let PromptState::Paused {
             auto_paused: true, ..
         } = self.prompt_state
-        {
-            if self.turns_since_mode >= 2 {
+            && self.turns_since_mode >= 2 {
                 self.resume_goal();
             }
-        }
     }
 }
 
@@ -1315,12 +1309,11 @@ impl Agent {
             // 无 mode 触发：累加计数 + 检查自动恢复
             self.turns_since_mode = self.turns_since_mode.saturating_add(1);
             self.maybe_auto_resume();
-            if let PromptState::Active { goal, .. } = &self.prompt_state {
-                if self.turn > 0 && self.turns_since_mode == 2 {
+            if let PromptState::Active { goal, .. } = &self.prompt_state
+                && self.turn > 0 && self.turns_since_mode == 2 {
                     // 刚从 auto_paused 恢复（maybe_auto_resume 已切换为 Active）
                     log.push(format!("[t{turn}] 紧急情况结束，自动恢复目标注入：{goal}"));
                 }
-            }
         }
 
         // SelfPrompter：仅 Active 态注入目标（Paused/Stopped 不注入）
@@ -1482,7 +1475,7 @@ impl Agent {
                 && response
                     .reasoning
                     .as_deref()
-                    .map_or(false, |r| !r.is_empty());
+                    .is_some_and(|r| !r.is_empty());
             // P12 + P56 修复（2026-07-26/27）：过早宣告任务完成检测。
             // LLM 在纯文字回复里宣告"任务完成/目标完成"但未实际验证，
             // 此时目标仍在 Active 态，应强制 perceive 验证而非停止行动。
@@ -1552,7 +1545,8 @@ impl Agent {
                 // P31 加强：用 fake_completion_count 计数，连续多次假完成时注入更强 nudge。
                 self.fake_completion_count = self.fake_completion_count.saturating_add(1);
                 let goal = self.current_goal().unwrap_or("");
-                let nudge = if self.fake_completion_count >= 3 {
+                
+                if self.fake_completion_count >= 3 {
                     // 连续 3+ 次假完成：最后通牒
                     format!(
                         "{goal_hint}【最后通牒】你已连续 {} 次宣告「任务完成」，但目标仍在执行中：{goal}\n\
@@ -1578,8 +1572,7 @@ impl Agent {
                      确认目标物品在背包/目标位置已到达，才算真正完成。\n\
                      请立即调用 perceive 验证当前状态，不要只用文字说完成了。"
                     )
-                };
-                nudge
+                }
             } else if self.text_only_count >= 2 {
                 // 连续 2+ 次纯文字：列出可用工具强制行动
                 let tool_list: Vec<&str> = self.tools.tools().iter().map(|t| t.name()).collect();
@@ -1703,7 +1696,7 @@ impl Agent {
             // mine_below 无参数，连续调用签名必然相同，但 bot 实际在向下挖。
             // 真正的问题是 LLM 不知道何时停止 mine_below（应该 perceive 检查 Y 坐标和背包）。
             let tool_names: Vec<&str> = calls.iter().map(|tc| tc.name.as_str()).collect();
-            let specific_hint = if tool_names.iter().any(|n| *n == "gather") {
+            let specific_hint = if tool_names.contains(&"gather") {
                 "你在反复 gather 同一物品但失败。问题可能是：\n\
                  1. 没装备镐（先 equip wooden_pickaxe/stone_pickaxe/iron_pickaxe）\n\
                  2. 附近没有该方块（先 perceive 看资源标签，或 goto 换区域）\n\
@@ -2646,9 +2639,9 @@ mod tests {
                     stop_reason: StopReason::Stop,
                 }));
             agent.messages.push(Message::tool_result(
-                &format!("c{i}"),
+                format!("c{i}"),
                 "mine",
-                &"x".repeat(200),
+                "x".repeat(200),
             ));
         }
         agent.messages.push(Message::user(

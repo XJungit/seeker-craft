@@ -333,7 +333,7 @@ pub mod real {
                 .unwrap_or_else(|_| "https://api.agnes-ai.cn/v1".to_string());
             let endpoint = format!("{}/chat/completions", base.trim_end_matches('/'));
             let model =
-                std::env::var("LLM_MODEL")            .unwrap_or_else(|_| "agnes-2.5-flash".to_string());
+                std::env::var("LLM_MODEL").unwrap_or_else(|_| "agnes-2.5-flash".to_string());
             Ok(Self::new(endpoint, model, api_key))
         }
 

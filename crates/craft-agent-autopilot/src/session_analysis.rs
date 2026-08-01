@@ -24,10 +24,12 @@ impl SessionAnalysis {
     pub fn delta_summary(&self, previous: &Self) -> String {
         format!(
             "steps=+{} productive=+{} moves=+{} inventory_changed={}",
-            self.assistant_steps.saturating_sub(previous.assistant_steps),
+            self.assistant_steps
+                .saturating_sub(previous.assistant_steps),
             self.successful_productive_tools
                 .saturating_sub(previous.successful_productive_tools),
-            self.position_changes.saturating_sub(previous.position_changes),
+            self.position_changes
+                .saturating_sub(previous.position_changes),
             self.last_inventory != previous.last_inventory,
         )
     }

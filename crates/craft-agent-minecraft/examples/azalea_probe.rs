@@ -30,15 +30,12 @@
 
 use std::sync::{Arc, Mutex};
 
-use craft_agent_minecraft::azalea::{parse_chat_command, AzaleaBot, BotEvent};
+use craft_agent_minecraft::azalea::{AzaleaBot, BotEvent, parse_chat_command};
 
 #[tokio::main]
 async fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let port = args
-        .first()
-        .cloned()
-        .unwrap_or_else(|| "4444".to_string());
+    let port = args.first().cloned().unwrap_or_else(|| "4444".to_string());
     let addr = format!("localhost:{port}");
 
     let (script_path, cmd_text) = if let Some(i) = args.iter().position(|a| a == "--script") {
@@ -64,7 +61,10 @@ async fn main() {
         while let Some(ev) = bot_ev.next_event().await {
             match ev {
                 BotEvent::Spawn { position } => {
-                    println!("[probe] 出生: ({:.1},{:.1},{:.1})", position.x, position.y, position.z);
+                    println!(
+                        "[probe] 出生: ({:.1},{:.1},{:.1})",
+                        position.x, position.y, position.z
+                    );
                 }
                 BotEvent::Chat { content } => {
                     println!("[probe] chat: {content}");
@@ -82,7 +82,16 @@ async fn main() {
                 } => {
                     let snapshot = format!(
                         "pos=({:.1},{:.1},{:.1}) hp={:.1}/20 food={}/20 held={} biome={} nearby=[{}] inv=[{}] players={}",
-                        position.x, position.y, position.z, health, food, held_item, biome, nearby, inventory, player_count
+                        position.x,
+                        position.y,
+                        position.z,
+                        health,
+                        food,
+                        held_item,
+                        biome,
+                        nearby,
+                        inventory,
+                        player_count
                     );
                     if let Ok(mut g) = latest_state_task.lock() {
                         *g = Some(snapshot.clone());
@@ -118,7 +127,10 @@ async fn main() {
             .get("between_delay_ms")
             .and_then(|v| v.as_u64())
             .unwrap_or(between_delay_ms);
-        timeout_ms = json.get("timeout_ms").and_then(|v| v.as_u64()).unwrap_or(timeout_ms);
+        timeout_ms = json
+            .get("timeout_ms")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(timeout_ms);
         let arr = json
             .get("steps")
             .and_then(|v| v.as_array())

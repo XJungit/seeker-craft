@@ -17,19 +17,16 @@ use std::sync::{Arc, Mutex};
 
 /// 命令优先级。高优先级可抢占低优先级 pending。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default)]
 pub enum Priority {
     /// 普通命令（LLM 工具调用产生）。FIFO 排队。
+    #[default]
     Normal,
     /// 高优先级（self_preservation / self_defense 等 mode 产生）。
     /// 若 pending 是 Normal，抢占之；若 pending 也是 High，则排队等。
     High,
 }
 
-impl Default for Priority {
-    fn default() -> Self {
-        Priority::Normal
-    }
-}
 
 /// 快循环检测阈值：最近 10 条命令中相同签名出现 N 次即视为循环。
 const LOOP_DETECT_THRESHOLD: usize = 3;
@@ -127,19 +124,19 @@ impl ActionManager {
                 *pending = Some(qc);
                 *self.pending_since.lock().unwrap() = Some(current_tick);
                 *self.busy.lock().unwrap() = false; // 重置 busy 让新命令能进入
-                return SubmitOutcome::Preempted(old.cmd);
+                SubmitOutcome::Preempted(old.cmd)
             } else {
                 // Normal 命令排队
                 let mut q = cmd_queue.lock().unwrap();
                 q.push(qc);
                 *pending = Some(old);
-                return SubmitOutcome::Queued;
+                SubmitOutcome::Queued
             }
         } else {
             // pending 空，直接占槽
             *pending = Some(qc);
             *self.pending_since.lock().unwrap() = Some(current_tick);
-            return SubmitOutcome::Running;
+            SubmitOutcome::Running
         }
     }
 
@@ -225,7 +222,7 @@ pub fn timeout_ticks(cmd: &BotCommand) -> u64 {
         BotCommand::Attack { .. } => 60,        // 3s
         BotCommand::BlockInteract { .. } => 60, // 3s
         // 寻路/挖掘
-        BotCommand::Goto { .. } => 30,  // 1.5s（长距离由 32m 限制拦截；无路径时快速失败）
+        BotCommand::Goto { .. } => 30, // 1.5s（长距离由 32m 限制拦截；无路径时快速失败）
         BotCommand::Mine { .. } => 200, // 10s（深板岩/黑曜石等硬方块可能慢；wooden_pickaxe 挖 deepslate ~4.5s）
         BotCommand::MineBelow => 200,   // 10s（持续下挖，由 Y≤-61 停止）
         BotCommand::MineAbove => 200,   // 10s（持续上挖，由头顶空气/Y≥320 停止）
@@ -234,7 +231,7 @@ pub fn timeout_ticks(cmd: &BotCommand) -> u64 {
         BotCommand::Craft3x3 { .. } => 500, // 25s（含放桌+开桌+合成+收桌，P1-4）
         BotCommand::Smelt { .. } => 2400,   // 120s（含放炉+开炉+熔炼+收炉；熔炼 10 个铁锭需 ~100s）
         // 采集（多轮渐扩半径，最慢；24 轮 × 10s/轮 = 240s 理论上限，给 120s 余量）
-        BotCommand::Gather { .. } => 2400, // 120s
+        BotCommand::Gather { .. } => 2400,       // 120s
         BotCommand::MakeObsidian { .. } => 1600, // 80s（含多次放水+等待+挖取）
         // 放置/开容器
         BotCommand::Place { .. } => 100,         // 5s
@@ -523,7 +520,12 @@ mod tests {
     #[test]
     fn test_signature_follow_give() {
         // P68：新增命令的签名应唯一且不 panic。
-        assert_eq!(cmd_signature(&BotCommand::Follow { target: Some("steve".into()) }), "follow");
+        assert_eq!(
+            cmd_signature(&BotCommand::Follow {
+                target: Some("steve".into())
+            }),
+            "follow"
+        );
         assert_eq!(cmd_signature(&BotCommand::StopFollow), "stop_follow");
         assert_eq!(
             cmd_signature(&BotCommand::Give {

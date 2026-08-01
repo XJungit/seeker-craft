@@ -39,11 +39,10 @@ fn normalize_item_id(item: &str) -> String {
 
 /// 当前是否已打开非 Player 菜单（即任意容器）。
 pub fn is_container_open(bot: &Client) -> bool {
-    if let Ok(inv) = bot.get_inventory() {
-        if let Ok(Some(menu)) = inv.menu() {
+    if let Ok(inv) = bot.get_inventory()
+        && let Ok(Some(menu)) = inv.menu() {
             return !matches!(menu, azalea::inventory::Menu::Player(_));
         }
-    }
     false
 }
 
@@ -142,11 +141,10 @@ fn count_in_inventory(bot: &Client, item: &str) -> u32 {
     };
     let mut total = 0u32;
     for s in range {
-        if let Some(st) = slots.get(s) {
-            if !st.is_empty() && st.kind() == kind {
+        if let Some(st) = slots.get(s)
+            && !st.is_empty() && st.kind() == kind {
                 total += st.count().max(0) as u32;
             }
-        }
     }
     total
 }
@@ -276,27 +274,24 @@ pub async fn ensure_table_open(
                 for _attempt in 0..3u8 {
                     walk_to_reach(bot, placed_pos).await;
                     sleep(Duration::from_millis(150)).await;
-                    match bot.open_container_at(placed_pos).await {
-                        Ok(Some(h)) => {
-                            std::mem::forget(h);
-                            let mut opened = false;
-                            for _ in 0..20 {
-                                if is_container_open(bot) {
-                                    opened = true;
-                                    break;
-                                }
-                                sleep(Duration::from_millis(50)).await;
+                    if let Ok(Some(h)) = bot.open_container_at(placed_pos).await {
+                        std::mem::forget(h);
+                        let mut opened = false;
+                        for _ in 0..20 {
+                            if is_container_open(bot) {
+                                opened = true;
+                                break;
                             }
-                            if opened {
-                                sleep(Duration::from_millis(300)).await;
-                                if is_container_open(bot) {
-                                    sleep(Duration::from_millis(100)).await;
-                                    reuse_ok = true;
-                                    break;
-                                }
+                            sleep(Duration::from_millis(50)).await;
+                        }
+                        if opened {
+                            sleep(Duration::from_millis(300)).await;
+                            if is_container_open(bot) {
+                                sleep(Duration::from_millis(100)).await;
+                                reuse_ok = true;
+                                break;
                             }
                         }
-                        _ => {}
                     }
                     sleep(Duration::from_millis(200)).await;
                 }
@@ -448,18 +443,15 @@ pub async fn ensure_table_open(
                                         for _retry in 0..2u8 {
                                             walk_to_reach(bot, new_pos).await;
                                             sleep(Duration::from_millis(150)).await;
-                                            match bot.open_container_at(new_pos).await {
-                                                Ok(Some(h)) => {
-                                                    std::mem::forget(h);
-                                                    for _ in 0..20 {
-                                                        if is_container_open(bot) {
-                                                            sleep(Duration::from_millis(80)).await;
-                                                            return Ok(new_pos);
-                                                        }
-                                                        sleep(Duration::from_millis(50)).await;
+                                            if let Ok(Some(h)) = bot.open_container_at(new_pos).await {
+                                                std::mem::forget(h);
+                                                for _ in 0..20 {
+                                                    if is_container_open(bot) {
+                                                        sleep(Duration::from_millis(80)).await;
+                                                        return Ok(new_pos);
                                                     }
+                                                    sleep(Duration::from_millis(50)).await;
                                                 }
-                                                _ => {}
                                             }
                                             sleep(Duration::from_millis(300)).await;
                                         }
@@ -502,22 +494,19 @@ pub async fn ensure_table_open(
                                                 for _retry in 0..2u8 {
                                                     walk_to_reach(bot, dug_pos).await;
                                                     sleep(Duration::from_millis(150)).await;
-                                                    match bot.open_container_at(dug_pos).await {
-                                                        Ok(Some(h)) => {
-                                                            std::mem::forget(h);
-                                                            for _ in 0..20 {
-                                                                if is_container_open(bot) {
-                                                                    sleep(Duration::from_millis(
-                                                                        80,
-                                                                    ))
-                                                                    .await;
-                                                                    return Ok(dug_pos);
-                                                                }
-                                                                sleep(Duration::from_millis(50))
-                                                                    .await;
+                                                    if let Ok(Some(h)) = bot.open_container_at(dug_pos).await {
+                                                        std::mem::forget(h);
+                                                        for _ in 0..20 {
+                                                            if is_container_open(bot) {
+                                                                sleep(Duration::from_millis(
+                                                                    80,
+                                                                ))
+                                                                .await;
+                                                                return Ok(dug_pos);
                                                             }
+                                                            sleep(Duration::from_millis(50))
+                                                                .await;
                                                         }
-                                                        _ => {}
                                                     }
                                                     sleep(Duration::from_millis(300)).await;
                                                 }
@@ -609,12 +598,11 @@ pub async fn ensure_table_open(
                         inv.slots()
                             .map(|slots| {
                                 for s in range {
-                                    if let Some(st) = slots.get(s) {
-                                        if !st.is_empty() && st.kind().to_str().ends_with("_planks")
+                                    if let Some(st) = slots.get(s)
+                                        && !st.is_empty() && st.kind().to_str().ends_with("_planks")
                                         {
                                             return true;
                                         }
-                                    }
                                 }
                                 false
                             })
@@ -640,15 +628,14 @@ pub async fn ensure_table_open(
                             inv.slots()
                                 .map(|slots| {
                                     for s in range {
-                                        if let Some(st) = slots.get(s) {
-                                            if !st.is_empty() {
+                                        if let Some(st) = slots.get(s)
+                                            && !st.is_empty() {
                                                 let kind = st.kind().to_str();
                                                 if kind.ends_with("_log") || kind.ends_with("_stem")
                                                 {
                                                     return true;
                                                 }
                                             }
-                                        }
                                     }
                                     false
                                 })
@@ -670,8 +657,8 @@ pub async fn ensure_table_open(
                                 let range = m.player_slots_range();
                                 inv.slots().and_then(|slots| {
                                     for s in range {
-                                        if let Some(st) = slots.get(s) {
-                                            if !st.is_empty() {
+                                        if let Some(st) = slots.get(s)
+                                            && !st.is_empty() {
                                                 let kind = st.kind().to_str();
                                                 let bare_kind =
                                                     kind.strip_prefix("minecraft:").unwrap_or(kind);
@@ -688,7 +675,6 @@ pub async fn ensure_table_open(
                                                     return Some(format!("{}_planks", wood));
                                                 }
                                             }
-                                        }
                                     }
                                     None
                                 })
@@ -910,7 +896,7 @@ fn find_table_block_nearby(
                     let kind: BlockKind = state.into();
                     if kind == expected_kind {
                         let dist = dx * dx + dy * dy + dz * dz;
-                        if best.map_or(true, |(_, d)| dist < d) {
+                        if best.is_none_or(|(_, d)| dist < d) {
                             best = Some((pos, dist));
                         }
                     }
@@ -930,13 +916,12 @@ fn find_hotbar_slot(inv: &ContainerHandleRef, kind: ItemKind) -> Option<u8> {
     let hotbar_start = *hotbar_range.start();
     let slots = inv.slots()?;
     for s in hotbar_range {
-        if let Some(stack) = slots.get(s) {
-            if !stack.is_empty() && stack.kind() == kind {
+        if let Some(stack) = slots.get(s)
+            && !stack.is_empty() && stack.kind() == kind {
                 let idx = (s - hotbar_start) as u8;
                 debug_assert!(idx <= 8, "hotbar idx out of range: {idx}");
                 return Some(idx);
             }
-        }
     }
     None
 }

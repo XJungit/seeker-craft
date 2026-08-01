@@ -169,7 +169,7 @@ pub fn scan_blocks_multi(
                     let bk: BlockKind = state.into();
                     if kinds.contains(&bk) {
                         let dist = dx * dx + dy * dy + dz * dz;
-                        if best.map_or(true, |(_, d)| dist < d) {
+                        if best.is_none_or(|(_, d)| dist < d) {
                             best = Some((pos, dist));
                         }
                     }
@@ -705,12 +705,12 @@ pub async fn collect_block_smart(bot: &Client, item: &str, count: u32) -> Result
         let before: u32 = bot
             .get_inventory()
             .ok()
-            .and_then(|inv| {
+            .map(|inv| {
                 let mut total = 0u32;
                 for k in &item_kinds {
                     total += count_item_kind(&inv, *k);
                 }
-                Some(total)
+                total
             })
             .unwrap_or(0);
 
@@ -719,7 +719,7 @@ pub async fn collect_block_smart(bot: &Client, item: &str, count: u32) -> Result
             // P5 修复：原代码这里直接 break，最后返回"采集 X 完成（背包 N 个）"，
             // 让 LLM 误以为新采集了 N 个。实际是背包本来就有 N 个（含别名变体）。
             // 现在明确报告"无需新采集"+ 各变体的明细，避免 LLM 困惑。
-            let breakdown = format_item_breakdown(&bot, &item_kinds).await;
+            let breakdown = format_item_breakdown(bot, &item_kinds).await;
             return Ok(format!(
                 "背包已有 {before} 个 {item}（含别名变体）≥ 需求 {need}，无需新采集。明细: {breakdown}。\
                  注意：若你需要的是「{item}」这一具体种类而非别名变体，请检查背包明细——\
@@ -770,12 +770,12 @@ pub async fn collect_block_smart(bot: &Client, item: &str, count: u32) -> Result
             let now: u32 = bot
                 .get_inventory()
                 .ok()
-                .and_then(|inv| {
+                .map(|inv| {
                     let mut total = 0u32;
                     for k in &item_kinds {
                         total += count_item_kind(&inv, *k);
                     }
-                    Some(total)
+                    total
                 })
                 .unwrap_or(0);
             if now > before {
@@ -805,12 +805,12 @@ pub async fn collect_block_smart(bot: &Client, item: &str, count: u32) -> Result
                 let now: u32 = bot
                     .get_inventory()
                     .ok()
-                    .and_then(|inv| {
+                    .map(|inv| {
                         let mut total = 0u32;
                         for k in &item_kinds {
                             total += count_item_kind(&inv, *k);
                         }
-                        Some(total)
+                        total
                     })
                     .unwrap_or(0);
                 if now > before {
@@ -824,7 +824,7 @@ pub async fn collect_block_smart(bot: &Client, item: &str, count: u32) -> Result
             // 实际挖到了，报告增量
             let delta = new_count - before;
             gathered = new_count;
-            let breakdown = format_item_breakdown(&bot, &item_kinds).await;
+            let breakdown = format_item_breakdown(bot, &item_kinds).await;
             // 继续下一轮（若还不足 need 会再找下一个目标）
             let _ = delta; // 调试用
             let _ = breakdown; // 详细breakdown在最终返回里给
@@ -842,7 +842,7 @@ pub async fn collect_block_smart(bot: &Client, item: &str, count: u32) -> Result
                     s.strip_prefix("minecraft:").unwrap_or(s).to_string()
                 })
                 .unwrap_or_else(|| "(空手)".to_string());
-            let held_tier = held_kind.map(|k| pickaxe_tier(k)).unwrap_or(0);
+            let held_tier = held_kind.map(pickaxe_tier).unwrap_or(0);
 
             if matches!(tool_need, ToolNeed::Pickaxe) {
                 let required_tier = block_required_pickaxe_tier(block_kinds[0]);
@@ -898,7 +898,7 @@ pub async fn collect_block_smart(bot: &Client, item: &str, count: u32) -> Result
 
     if gathered >= need {
         // P5 修复：返回消息区分"实际新挖到"vs"已有足够数量"
-        let breakdown = format_item_breakdown(&bot, &item_kinds).await;
+        let breakdown = format_item_breakdown(bot, &item_kinds).await;
         Ok(format!(
             "采集 {item} 完成（背包现有 {gathered} 个，含别名变体）。明细: {breakdown}"
         ))
@@ -958,11 +958,10 @@ fn count_item_kind(inv: &azalea::container::ContainerHandleRef, kind: ItemKind) 
     };
     let mut total = 0u32;
     for s in range {
-        if let Some(stack) = slots.get(s) {
-            if !stack.is_empty() && stack.kind() == kind {
+        if let Some(stack) = slots.get(s)
+            && !stack.is_empty() && stack.kind() == kind {
                 total += stack.count().max(0) as u32;
             }
-        }
     }
     total
 }
@@ -1018,11 +1017,10 @@ fn total_inventory_count(bot: &Client) -> u32 {
             let slots = inv.slots()?;
             let mut total = 0u32;
             for s in range {
-                if let Some(stack) = slots.get(s) {
-                    if !stack.is_empty() {
+                if let Some(stack) = slots.get(s)
+                    && !stack.is_empty() {
                         total += stack.count().max(0) as u32;
                     }
-                }
             }
             Some(total)
         })
@@ -1244,11 +1242,10 @@ async fn count_items_in_inventory(bot: &Client, kinds: &[ItemKind]) -> u32 {
     let range = menu.player_slots_range();
     let mut total = 0u32;
     for s in range {
-        if let Some(st) = slots.get(s) {
-            if !st.is_empty() && kinds.contains(&st.kind()) {
+        if let Some(st) = slots.get(s)
+            && !st.is_empty() && kinds.contains(&st.kind()) {
                 total += st.count() as u32;
             }
-        }
     }
     total
 }

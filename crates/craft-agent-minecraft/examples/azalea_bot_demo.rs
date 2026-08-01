@@ -67,16 +67,14 @@ async fn main() {
                 game_state: _,
             } => {
                 println!(
-                    "[demo] 状态: pos=({:.1},{:.1},{:.1}) yaw={:.0} pitch={:.0} hp={:.1}/{} food={}/{} held={} biome={} under={} ahead={} nearby=[{}] inv=[{}] players={}",
+                    "[demo] 状态: pos=({:.1},{:.1},{:.1}) yaw={:.0} pitch={:.0} hp={:.1}/20 food={}/20 held={} biome={} under={} ahead={} nearby=[{}] inv=[{}] players={}",
                     position.x,
                     position.y,
                     position.z,
                     yaw,
                     pitch,
                     health,
-                    "20",
                     food,
-                    "20",
                     held_item,
                     biome,
                     block_under,

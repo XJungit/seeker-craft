@@ -5,7 +5,7 @@ mod mock_inventory;
 mod mock_world;
 
 use mock_inventory::{ItemKind, MockInventory};
-use mock_world::{BlockKind, MockWorld, BlockPos};
+use mock_world::{BlockKind, BlockPos, MockWorld};
 
 // ============================================================
 // Recipe Lookup Tests
@@ -16,7 +16,7 @@ use mock_world::{BlockKind, MockWorld, BlockPos};
 #[test]
 fn recipe_oak_planks_from_oak_log() {
     // 1 oak_log → 4 oak_planks
-    let ingredients = vec![(ItemKind::OakLog, 1)];
+    let ingredients = [(ItemKind::OakLog, 1)];
     let output_per_craft = 4;
 
     // To get 16 planks, need 4 logs
@@ -31,7 +31,7 @@ fn recipe_oak_planks_from_oak_log() {
 #[test]
 fn recipe_stick_from_planks() {
     // 2 oak_planks → 4 sticks
-    let ingredients = vec![(ItemKind::OakPlanks, 2)];
+    let ingredients = [(ItemKind::OakPlanks, 2)];
     let output_per_craft = 4;
 
     // To get 8 sticks, need 2 crafts = 4 planks
@@ -46,7 +46,7 @@ fn recipe_stick_from_planks() {
 #[test]
 fn recipe_crafting_table() {
     // 4 oak_planks → 1 crafting_table
-    let ingredients = vec![(ItemKind::OakPlanks, 4)];
+    let ingredients = [(ItemKind::OakPlanks, 4)];
     let output_per_craft = 1;
 
     let target_count = 1;
@@ -156,7 +156,10 @@ fn scan_no_blocks_found() {
 fn tool_selection_for_stone() {
     let block = BlockKind::Stone;
     // Stone needs a pickaxe
-    let needs_pickaxe = matches!(block, BlockKind::Stone | BlockKind::IronOre | BlockKind::DiamondOre | BlockKind::CoalOre);
+    let needs_pickaxe = matches!(
+        block,
+        BlockKind::Stone | BlockKind::IronOre | BlockKind::DiamondOre | BlockKind::CoalOre
+    );
     assert!(needs_pickaxe);
 }
 
@@ -164,7 +167,10 @@ fn tool_selection_for_stone() {
 fn tool_selection_for_wood() {
     let block = BlockKind::OakLog;
     // Wood needs an axe (or can be mined by hand, just slower)
-    let needs_axe = matches!(block, BlockKind::OakLog | BlockKind::BirchLog | BlockKind::SpruceLog | BlockKind::DarkOakLog);
+    let needs_axe = matches!(
+        block,
+        BlockKind::OakLog | BlockKind::BirchLog | BlockKind::SpruceLog | BlockKind::DarkOakLog
+    );
     assert!(needs_axe);
 }
 
@@ -172,7 +178,10 @@ fn tool_selection_for_wood() {
 fn tool_selection_for_dirt() {
     let block = BlockKind::Dirt;
     // Dirt can be mined by hand (or shovel for speed)
-    let needs_tool = matches!(block, BlockKind::Stone | BlockKind::IronOre | BlockKind::DiamondOre);
+    let needs_tool = matches!(
+        block,
+        BlockKind::Stone | BlockKind::IronOre | BlockKind::DiamondOre
+    );
     assert!(!needs_tool);
 }
 

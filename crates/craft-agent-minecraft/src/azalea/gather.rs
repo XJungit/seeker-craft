@@ -65,11 +65,10 @@ fn count_item(inv: &ContainerHandleRef, kind: ItemKind) -> u32 {
     };
     let mut total = 0u32;
     for s in range {
-        if let Some(stack) = slots.get(s) {
-            if !stack.is_empty() && stack.kind() == kind {
+        if let Some(stack) = slots.get(s)
+            && !stack.is_empty() && stack.kind() == kind {
                 total += stack.count().max(0) as u32;
             }
-        }
     }
     total
 }
@@ -99,7 +98,12 @@ fn tool_need_for_block(world: &azalea_world::World, pos: BlockPos) -> ToolNeed {
 
 pub async fn do_gather(bot: &Client, item: &str, count: u32) -> Result<String, String> {
     // P61: auto-equip best tool before gathering
-    if item.ends_with("_ore") || item == "ancient_debris" || item == "stone" || item == "cobblestone" || item == "deepslate" {
+    if item.ends_with("_ore")
+        || item == "ancient_debris"
+        || item == "stone"
+        || item == "cobblestone"
+        || item == "deepslate"
+    {
         let _ = super::auto_equip_best_pickaxe(bot).await;
     } else if item.ends_with("_log") || item.ends_with("_stem") {
         let _ = super::auto_equip_best_axe(bot).await;
@@ -397,7 +401,7 @@ pub async fn do_gather(bot: &Client, item: &str, count: u32) -> Result<String, S
                 .and_then(|s| if s.is_empty() { None } else { Some(s.kind()) });
             let required_tier = block_required_pickaxe_tier(block_kind);
             let held_tier = held_kind
-                .map(|k| crate::azalea::pickaxe_tier(k))
+                .map(crate::azalea::pickaxe_tier)
                 .unwrap_or(0);
             let best_tier = best_pickaxe_tier_in_inventory(bot).await;
 

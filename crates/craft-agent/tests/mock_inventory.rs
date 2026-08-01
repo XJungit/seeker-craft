@@ -138,7 +138,7 @@ impl MockInventory {
     /// Add `count` of `kind` to inventory. Returns true if successful.
     pub fn add(&mut self, kind: ItemKind, count: u32) -> bool {
         // Try to stack first
-        for (_, item) in self.slots.iter_mut() {
+        for item in self.slots.values_mut() {
             if item.kind == kind {
                 item.count += count;
                 return true;
@@ -146,8 +146,8 @@ impl MockInventory {
         }
         // Find empty slot
         for slot in 0..self.size {
-            if !self.slots.contains_key(&slot) {
-                self.slots.insert(slot, ItemStack::new(kind, count));
+            if let std::collections::hash_map::Entry::Vacant(e) = self.slots.entry(slot) {
+                e.insert(ItemStack::new(kind, count));
                 return true;
             }
         }
@@ -193,10 +193,8 @@ mod tests {
 
     #[test]
     fn mock_inventory_consume() {
-        let mut inv = MockInventory::with_items(vec![
-            (0, ItemKind::OakLog, 4),
-            (5, ItemKind::OakLog, 2),
-        ]);
+        let mut inv =
+            MockInventory::with_items(vec![(0, ItemKind::OakLog, 4), (5, ItemKind::OakLog, 2)]);
         assert!(inv.consume(ItemKind::OakLog, 5));
         assert_eq!(inv.count_item(ItemKind::OakLog), 1);
         assert!(!inv.consume(ItemKind::OakLog, 5)); // Not enough
@@ -222,9 +220,7 @@ mod tests {
 
     #[test]
     fn mock_inventory_has_item() {
-        let inv = MockInventory::with_items(vec![
-            (0, ItemKind::OakLog, 4),
-        ]);
+        let inv = MockInventory::with_items(vec![(0, ItemKind::OakLog, 4)]);
         assert!(inv.has_item(ItemKind::OakLog, 4));
         assert!(!inv.has_item(ItemKind::OakLog, 5));
         assert!(!inv.has_item(ItemKind::Stick, 1));

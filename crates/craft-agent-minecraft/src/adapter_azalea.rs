@@ -362,7 +362,7 @@ impl MinecraftAzaleaAdapter {
     /// 覆盖 WorldState.position 和 scene_desc 中的"位置: (x, y, z)"行。
     /// 同时刷新 scene_desc 中的位置行，确保 LLM 看到的文本与 position 字段一致。
     fn refresh_position(&self, mut st: WorldState) -> WorldState {
-        if let Some(real_pos) = self.bot.last_position.lock().unwrap().clone() {
+        if let Some(real_pos) = *self.bot.last_position.lock().unwrap() {
             // 覆盖结构化 position 字段
             st.position = Some(vec![real_pos.x, real_pos.y, real_pos.z]);
             // 覆盖 scene_desc 中的"位置: (x, y, z)"行
@@ -460,7 +460,9 @@ mod p68_follow_give_tests {
     #[test]
     fn action_follow_maps_to_botcmd() {
         assert!(matches!(
-            mc_to_cmd(MinecraftAction::Follow { target: Some("steve".into()) }),
+            mc_to_cmd(MinecraftAction::Follow {
+                target: Some("steve".into())
+            }),
             BotCommand::Follow { target: Some(_) }
         ));
         assert!(matches!(
@@ -484,7 +486,11 @@ mod p68_follow_give_tests {
             count: 3,
             target: None,
         }) {
-            BotCommand::Give { item, count, target } => {
+            BotCommand::Give {
+                item,
+                count,
+                target,
+            } => {
                 assert_eq!(item, "cooked_beef");
                 assert_eq!(count, 3);
                 assert!(target.is_none());
@@ -567,7 +573,11 @@ fn mc_to_cmd(mc: MinecraftAction) -> BotCommand {
         },
         MinecraftAction::Follow { target } => BotCommand::Follow { target },
         MinecraftAction::StopFollow => BotCommand::StopFollow,
-        MinecraftAction::Give { item, count, target } => BotCommand::Give {
+        MinecraftAction::Give {
+            item,
+            count,
+            target,
+        } => BotCommand::Give {
             item,
             count,
             target,

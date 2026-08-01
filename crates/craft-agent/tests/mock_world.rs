@@ -86,7 +86,16 @@ impl MockWorld {
         self.blocks.insert((pos.x, pos.y, pos.z), kind);
     }
 
-    pub fn set_range(&mut self, x1: i32, y1: i32, z1: i32, x2: i32, y2: i32, z2: i32, kind: BlockKind) {
+    pub fn set_range(
+        &mut self,
+        x1: i32,
+        y1: i32,
+        z1: i32,
+        x2: i32,
+        y2: i32,
+        z2: i32,
+        kind: BlockKind,
+    ) {
         for x in x1..=x2 {
             for y in y1..=y2 {
                 for z in z1..=z2 {
@@ -97,7 +106,11 @@ impl MockWorld {
     }
 
     pub fn get_block_state(&self, pos: BlockPos) -> Option<BlockState> {
-        let kind = self.blocks.get(&(pos.x, pos.y, pos.z)).copied().unwrap_or(self.default);
+        let kind = self
+            .blocks
+            .get(&(pos.x, pos.y, pos.z))
+            .copied()
+            .unwrap_or(self.default);
         Some(BlockState::new(kind))
     }
 
@@ -125,6 +138,12 @@ impl MockWorld {
             (p.x - center.x).pow(2) + (p.y - center.y).pow(2) + (p.z - center.z).pow(2)
         });
         found
+    }
+}
+
+impl Default for MockWorld {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

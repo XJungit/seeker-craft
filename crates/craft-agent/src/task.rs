@@ -267,11 +267,10 @@ fn parse_count_line(perceive: &str, prefix: &str, wanted: &str) -> u32 {
             let Some((item_id, count_str)) = entry.trim().rsplit_once(':') else {
                 continue;
             };
-            if normalize_identifier(item_id) == wanted_norm {
-                if let Ok(n) = count_str.trim().parse::<u32>() {
+            if normalize_identifier(item_id) == wanted_norm
+                && let Ok(n) = count_str.trim().parse::<u32>() {
                     return n;
                 }
-            }
         }
         break;
     }
@@ -288,8 +287,8 @@ fn parse_position(perceive: &str) -> Option<(f64, f64, f64)> {
             continue;
         }
         // 提取括号内数字
-        if let Some(start) = trimmed.find('(') {
-            if let Some(end) = trimmed.find(')') {
+        if let Some(start) = trimmed.find('(')
+            && let Some(end) = trimmed.find(')') {
                 let inner = &trimmed[start + 1..end];
                 let parts: Vec<&str> = inner.split(',').map(|s| s.trim()).collect();
                 if parts.len() == 3 {
@@ -299,7 +298,6 @@ fn parse_position(perceive: &str) -> Option<(f64, f64, f64)> {
                     return Some((x, y, z));
                 }
             }
-        }
         break;
     }
     None
@@ -449,9 +447,7 @@ impl TaskManager {
                 finished_at: now_ms,
             })
         });
-        let Some(status) = next_status else {
-            return None;
-        };
+        let status = next_status?;
         let completed = matches!(status, TaskStatus::Completed { .. });
         if let Some(inst) = self.current.as_mut() {
             inst.status = status.clone();
@@ -510,11 +506,10 @@ impl TaskManager {
         };
         self.statuses.clear();
         for (id, value) in statuses {
-            if self.tasks.iter().any(|task| task.id == *id) {
-                if let Ok(status) = serde_json::from_value::<TaskStatus>(value.clone()) {
+            if self.tasks.iter().any(|task| task.id == *id)
+                && let Ok(status) = serde_json::from_value::<TaskStatus>(value.clone()) {
                     self.statuses.insert(id.clone(), status);
                 }
-            }
         }
         let Some(current_id) = snapshot.get("current_id").and_then(Value::as_str) else {
             return;
@@ -941,7 +936,7 @@ mod tests {
             // timeout_secs 应当合理（10s ~ 1h）
             if let Some(to) = t.timeout_secs {
                 assert!(
-                    to >= 10 && to <= 3600,
+                    (10..=3600).contains(&to),
                     "任务 {} 的 timeout {} 异常",
                     t.id,
                     to

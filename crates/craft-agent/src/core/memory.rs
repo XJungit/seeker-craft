@@ -345,8 +345,8 @@ impl WorldMemory {
         let g = self.inner.lock().unwrap();
         g.cells
             .values()
-            .filter(|c| kind.map_or(true, |k| c.kind == k))
-            .filter(|c| item.map_or(true, |i| c.item.as_deref() == Some(i)))
+            .filter(|c| kind.is_none_or(|k| c.kind == k))
+            .filter(|c| item.is_none_or(|i| c.item.as_deref() == Some(i)))
             .cloned()
             .collect()
     }

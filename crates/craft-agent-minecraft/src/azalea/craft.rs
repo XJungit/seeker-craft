@@ -31,7 +31,7 @@ struct CraftPlan {
 /// 注意：此表只描述「需要哪些原料、各多少个」，不描述网格形状。
 /// 顺序填充（slot1, slot2, slot3, slot4）只对单原料配方（如 planks）正确；
 /// 竖直配方（stick/torch）必须走 SHAPED_2X2，否则横放导致服务端配方不匹配。
-const RECIPES: &[(&'static str, &'static [(&'static str, u32)], u32)] = &[
+const RECIPES: &[(&str, &[(&str, u32)], u32)] = &[
     ("oak_planks", &[("oak_log", 1)], 4),
     ("stick", &[("oak_planks", 2)], 4),
     ("crafting_table", &[("oak_planks", 4)], 1),
@@ -49,7 +49,7 @@ const RECIPES: &[(&'static str, &'static [(&'static str, u32)], u32)] = &[
 /// 改用显式 (slot, ingredient) 映射，把原料放在正确竖列上。
 ///
 /// 同一目标可有多个候选（如 torch 同时支持 coal/charcoal），按表中顺序尝试。
-const SHAPED_2X2: &[(&'static str, &'static [(usize, &'static str)], u32)] = &[
+const SHAPED_2X2: &[(&str, &[(usize, &str)], u32)] = &[
     // stick: 2 planks 竖直（左列）—— vanilla shape ["P","P"]
     ("stick", &[(1, "oak_planks"), (3, "oak_planks")], 4),
     // torch (coal 变体): coal 在上, stick 在下 —— vanilla shape ["C","S"]
@@ -126,11 +126,10 @@ fn find_source_slot(inv: &ContainerHandleRef, kind: ItemKind) -> Option<usize> {
     let slots = inv.slots()?;
     let range = menu.player_slots_range();
     for s in range {
-        if let Some(stack) = slots.get(s) {
-            if !stack.is_empty() && stack.kind() == kind {
+        if let Some(stack) = slots.get(s)
+            && !stack.is_empty() && stack.kind() == kind {
                 return Some(s);
             }
-        }
     }
     None
 }
@@ -191,11 +190,10 @@ fn find_empty_player_slot(inv: &ContainerHandleRef) -> Option<usize> {
     let slots = inv.slots()?;
     let range = menu.player_slots_range();
     for s in range {
-        if let Some(st) = slots.get(s) {
-            if st.is_empty() {
+        if let Some(st) = slots.get(s)
+            && st.is_empty() {
                 return Some(s);
             }
-        }
     }
     None
 }
@@ -212,8 +210,8 @@ fn dump_player_inventory(inv: &ContainerHandleRef) -> String {
     let mut items: Vec<String> = Vec::new();
     let mut count = 0;
     for s in range {
-        if let Some(st) = slots.get(s) {
-            if !st.is_empty() {
+        if let Some(st) = slots.get(s)
+            && !st.is_empty() {
                 let k = st.kind().to_str();
                 let bare = k.strip_prefix("minecraft:").unwrap_or(k);
                 items.push(format!("slot{s}={bare}x{}", st.count()));
@@ -222,7 +220,6 @@ fn dump_player_inventory(inv: &ContainerHandleRef) -> String {
                     break;
                 }
             }
-        }
     }
     if items.is_empty() {
         "(空背包)".into()
@@ -338,11 +335,10 @@ async fn auto_discard_junk(bot: &Client) -> (String, u32) {
         // 收集所有该类物品的 (slot, count)
         let mut stacks: Vec<(usize, u32)> = Vec::new();
         for s in range {
-            if let Some(st) = slots.get(s) {
-                if !st.is_empty() && st.kind() == kind {
+            if let Some(st) = slots.get(s)
+                && !st.is_empty() && st.kind() == kind {
                     stacks.push((s, st.count() as u32));
                 }
-            }
         }
         if stacks.is_empty() {
             continue;
@@ -417,11 +413,10 @@ fn find_ingredient_slot(
     // 兜底：网格里可能有上次残留的同种原料
     let slots = inv.slots()?;
     for s in grid_slots.clone() {
-        if let Some(stack) = slots.get(s) {
-            if !stack.is_empty() && stack.kind() == kind {
+        if let Some(stack) = slots.get(s)
+            && !stack.is_empty() && stack.kind() == kind {
                 return Some(s);
             }
-        }
     }
     // P23: 别名替换——找不到精确 kind 时，尝试同类其他变体
     for alt_kind in expand_ingredient_aliases(kind) {
@@ -437,8 +432,8 @@ fn find_ingredient_slot(
             return Some(s);
         }
         for s in grid_slots.clone() {
-            if let Some(stack) = slots.get(s) {
-                if !stack.is_empty() && stack.kind() == alt_kind {
+            if let Some(stack) = slots.get(s)
+                && !stack.is_empty() && stack.kind() == alt_kind {
                     eprintln!(
                         "[craft] P23 别名替换（网格）：{} -> {}",
                         kind.to_str(),
@@ -446,7 +441,6 @@ fn find_ingredient_slot(
                     );
                     return Some(s);
                 }
-            }
         }
     }
     None
@@ -688,13 +682,11 @@ pub async fn do_craft_2x2(bot: &Client, item: &str, count: u32) -> Result<String
         // 等菜单变回 Player（最多 1s）
         for _ in 0..10 {
             sleep(Duration::from_millis(100)).await;
-            if let Ok(inv) = bot.get_inventory() {
-                if let Ok(Some(menu)) = inv.menu() {
-                    if matches!(menu, azalea::inventory::Menu::Player(_)) {
+            if let Ok(inv) = bot.get_inventory()
+                && let Ok(Some(menu)) = inv.menu()
+                    && matches!(menu, azalea::inventory::Menu::Player(_)) {
                         break;
                     }
-                }
-            }
         }
     }
 
@@ -703,14 +695,13 @@ pub async fn do_craft_2x2(bot: &Client, item: &str, count: u32) -> Result<String
         .map_err(|e| format!("获取背包失败: {e:?}"))?;
 
     // 二次确认：菜单必须是 Player（2×2 网格只在此菜单下有效）
-    if let Ok(Some(menu)) = inv.menu() {
-        if !matches!(menu, azalea::inventory::Menu::Player(_)) {
+    if let Ok(Some(menu)) = inv.menu()
+        && !matches!(menu, azalea::inventory::Menu::Player(_)) {
             return Err(format!(
                 "合成 {item} 失败：当前打开的不是玩家背包（2×2 网格不可用）。\
                  请先关闭已打开的容器再调用 craft。"
             ));
         }
-    }
 
     // 决定 placement：[(slot, ItemKind)] 列表 + output_per_craft
     // 优先级：SHAPED_2X2 候选（含 coal/charcoal 多变体）> 顺序填充（lookup_recipe）
@@ -753,7 +744,7 @@ pub async fn do_craft_2x2(bot: &Client, item: &str, count: u32) -> Result<String
             .map(|(slot, ing_id)| {
                 (
                     *slot,
-                    ItemKind::from_str(&normalize_item(ing_id)).unwrap_or_else(|_| ItemKind::Air),
+                    ItemKind::from_str(&normalize_item(ing_id)).unwrap_or(ItemKind::Air),
                 )
             })
             .collect();
@@ -786,7 +777,7 @@ pub async fn do_craft_2x2(bot: &Client, item: &str, count: u32) -> Result<String
         placement = seq;
     }
 
-    let crafts_needed = (count.max(1) + output - 1) / output;
+    let crafts_needed = count.max(1).div_ceil(output);
     let mut crafted = 0u32;
 
     for round in 0..crafts_needed {
@@ -816,7 +807,7 @@ pub async fn do_craft_2x2(bot: &Client, item: &str, count: u32) -> Result<String
             let r = inv
                 .slots()
                 .as_ref()
-                .and_then(|s| s.get(0))
+                .and_then(|s| s.first())
                 .map(|s| !s.is_empty())
                 .unwrap_or(false);
             if r {
@@ -869,12 +860,12 @@ pub async fn do_craft_2x2(bot: &Client, item: &str, count: u32) -> Result<String
         let actual_kind: Option<ItemKind> = inv
             .slots()
             .as_ref()
-            .and_then(|s| s.get(0))
+            .and_then(|s| s.first())
             .filter(|st| !st.is_empty())
             .map(|st| st.kind());
         let count_kind = actual_kind.unwrap_or(target_kind);
-        if let Some(ak) = actual_kind {
-            if ak != target_kind {
+        if let Some(ak) = actual_kind
+            && ak != target_kind {
                 let ak_name = ak.to_str();
                 let tk_name = target_kind.to_str();
                 eprintln!(
@@ -883,7 +874,6 @@ pub async fn do_craft_2x2(bot: &Client, item: &str, count: u32) -> Result<String
                     tk_name.strip_prefix("minecraft:").unwrap_or(tk_name),
                 );
             }
-        }
         let before_count = count_item_in_player_slots(&inv, count_kind);
 
         // 先尝试 shift_click(0)（如果主背包有空位，这是最快的）
@@ -1020,7 +1010,7 @@ struct ShapedRecipe {
     output_per_craft: u32,
 }
 
-const SHAPED_RECIPES: &[(&'static str, ShapedRecipe)] = &[
+const SHAPED_RECIPES: &[(&str, ShapedRecipe)] = &[
     // P16 修复（2026-07-26）：2×2 配方也加入 3×3 表。
     // vanilla 中这些配方在 2×2 和 3×3 网格中都能合成（形状放在左上角），
     // 但原 lookup_shaped 只查 SHAPED_RECIPES，craft_3x3 对这些物品报
@@ -1470,7 +1460,7 @@ pub async fn do_craft_3x3(
     })?;
 
     let output = recipe.output_per_craft;
-    let crafts_needed = (count.max(1) + output - 1) / output;
+    let crafts_needed = count.max(1).div_ceil(output);
     let mut crafted = 0u32;
 
     // 工作台菜单：slot 0 = 结果，1..=9 = 3×3 网格
@@ -1503,7 +1493,7 @@ pub async fn do_craft_3x3(
             let r = inv
                 .slots()
                 .as_ref()
-                .and_then(|s| s.get(0))
+                .and_then(|s| s.first())
                 .map(|s| !s.is_empty())
                 .unwrap_or(false);
             if r {
@@ -1552,11 +1542,11 @@ pub async fn do_craft_3x3(
         let result_kind = inv
             .slots()
             .as_ref()
-            .and_then(|s| s.get(0))
+            .and_then(|s| s.first())
             .filter(|st| !st.is_empty())
             .map(|st| st.kind());
-        if let Some(rk) = result_kind {
-            if rk != target_kind {
+        if let Some(rk) = result_kind
+            && rk != target_kind {
                 let rk_name = rk.to_str();
                 eprintln!(
                     "[craft 3x3] 警告：result slot 是 {} 而非 {}（网格可能摆错）",
@@ -1564,7 +1554,6 @@ pub async fn do_craft_3x3(
                 );
                 // 不直接报错，继续尝试收集——可能 LLM 指定了别名
             }
-        }
 
         // 先尝试 shift_click(0)（如果主背包有空位，这是最快的）
         let empty_before = count_empty_player_slots(&inv);
@@ -1708,12 +1697,11 @@ pub async fn do_craft_3x3_recipe(
             for r in 0..h {
                 for c in 0..w {
                     let idx = r * w + c;
-                    if let Some(Some(ing)) = grid.get(idx) {
-                        if let Some(k) = ing.items.first() {
+                    if let Some(Some(ing)) = grid.get(idx)
+                        && let Some(k) = ing.items.first() {
                             // 工作台槽位：row*3+col+1
                             placed.push((r * 3 + c + 1, *k));
                         }
-                    }
                 }
             }
             (placed, "shaped")
@@ -1768,7 +1756,7 @@ pub async fn do_craft_3x3_recipe(
             let r = inv
                 .slots()
                 .as_ref()
-                .and_then(|s| s.get(0))
+                .and_then(|s| s.first())
                 .map(|s| !s.is_empty())
                 .unwrap_or(false);
             if r {
@@ -1820,10 +1808,8 @@ pub async fn do_craft_3x3_recipe(
             }
             None => {
                 let _ = clear_grid(&inv2, GRID).await;
-                return Err(format!(
-                    "配方书合成失败：背包完全满，产物无法收集。\
-                     建议：先 discard 丢弃垃圾物品腾出空位后再重试。"
-                ));
+                return Err("配方书合成失败：背包完全满，产物无法收集。\
+                     建议：先 discard 丢弃垃圾物品腾出空位后再重试。".to_string());
             }
         }
         let inv3 = match bot.get_inventory() {
@@ -1838,10 +1824,8 @@ pub async fn do_craft_3x3_recipe(
 
         // 都失败了
         let _ = clear_grid(&inv3, GRID).await;
-        return Err(format!(
-            "配方书合成失败：产物无法从结果槽移入背包（shift_click + left_click 均失败）。\
-             建议：1) 先 discard 腾出空位；2) 关闭工作台再重新打开后重试。"
-        ));
+        return Err("配方书合成失败：产物无法从结果槽移入背包（shift_click + left_click 均失败）。\
+             建议：1) 先 discard 腾出空位；2) 关闭工作台再重新打开后重试。".to_string());
     }
 
     clear_cursor(&inv).await;
@@ -2041,10 +2025,8 @@ pub async fn do_craft_stonecutter(
                 sleep(Duration::from_millis(150)).await;
             }
             None => {
-                return Err(format!(
-                    "切石失败：背包完全满，产物无法收集。\
-                     建议：1) 先 discard 丢弃垃圾物品腾出空位；2) 关闭切石机再重新打开后重试。"
-                ));
+                return Err("切石失败：背包完全满，产物无法收集。\
+                     建议：1) 先 discard 丢弃垃圾物品腾出空位；2) 关闭切石机再重新打开后重试。".to_string());
             }
         }
         let inv3 = match bot.get_inventory() {
@@ -2058,10 +2040,8 @@ pub async fn do_craft_stonecutter(
         }
 
         // 都失败了
-        return Err(format!(
-            "切石失败：产物无法从结果槽移入背包（shift_click + left_click 均失败）。\
-             建议：1) 先 discard 腾出空位；2) 关闭切石机再重新打开后重试。"
-        ));
+        return Err("切石失败：产物无法从结果槽移入背包（shift_click + left_click 均失败）。\
+             建议：1) 先 discard 腾出空位；2) 关闭切石机再重新打开后重试。".to_string());
     }
     Ok(format!("切石合成 x{count} 完成（约 {made} 次）"))
 }
@@ -2072,7 +2052,7 @@ struct SmeltRecipe {
     output_per_craft: u32,
 }
 
-const SMELT_RECIPES: &[(&'static str, SmeltRecipe)] = &[
+const SMELT_RECIPES: &[(&str, SmeltRecipe)] = &[
     (
         "iron_ingot",
         SmeltRecipe {
@@ -2267,15 +2247,15 @@ pub async fn do_smelt(
     let inv_slots = inv.slots();
     let existing_input = inv_slots
         .as_ref()
-        .and_then(|s| s.get(0))
+        .and_then(|s| s.first())
         .filter(|st| !st.is_empty());
     if let Some(existing) = existing_input {
         let input_kind_check = ItemKind::from_str(&normalize_item(
-            &candidates.iter().map(|c| c.input).next().unwrap_or(""),
+            candidates.iter().map(|c| c.input).next().unwrap_or(""),
         ))
         .ok();
-        if let Some(expected) = input_kind_check {
-            if existing.kind() != expected {
+        if let Some(expected) = input_kind_check
+            && existing.kind() != expected {
                 return Err(format!(
                     "熔炉正在炼别的东西（input 槽有 {}x{}，期望 {}）。\
                      不抢占炉子。建议：1) 等当前熔炼完成；2) 打开另一个炉子；3) 关闭炉子取回原料后重试。",
@@ -2284,7 +2264,6 @@ pub async fn do_smelt(
                     expected.to_str()
                 ));
             }
-        }
     }
 
     // 优先选背包里有的原料；若都没有，选第一个候选并报错（列出所有候选原料）
@@ -2351,11 +2330,10 @@ pub async fn do_smelt(
             "coal_block",
         ];
         for f in fallbacks {
-            if let Ok(k) = ItemKind::from_str(&normalize_item(f)) {
-                if !v.contains(&k) {
+            if let Ok(k) = ItemKind::from_str(&normalize_item(f))
+                && !v.contains(&k) {
                     v.push(k);
                 }
-            }
         }
         v
     };
@@ -2467,7 +2445,7 @@ pub async fn do_smelt(
     let fuel_needed = if fuel_per_item == 0 {
         actual_smelt_count
     } else {
-        (actual_smelt_count + fuel_per_item - 1) / fuel_per_item
+        actual_smelt_count.div_ceil(fuel_per_item)
     };
     eprintln!(
         "[smelt] P47: 准备熔炼 {} x{}，燃料 {} 每个炼 {} 个，需要燃料 {} 个",
@@ -2647,7 +2625,7 @@ pub async fn do_smelt(
     let inv_final_slots = inv_final.slots();
     let input_remaining = inv_final_slots
         .as_ref()
-        .and_then(|s| s.get(0))
+        .and_then(|s| s.first())
         .filter(|st| !st.is_empty())
         .map(|st| (st.kind(), st.count()))
         .map(|(k, c)| format!("{}x{}", k.to_str(), c))
@@ -2813,7 +2791,7 @@ pub async fn do_enchant(bot: &Client, item: &str, level: u32) -> Result<String, 
         let slots = inv.slots();
         slots
             .as_ref()
-            .and_then(|s| s.get(0))
+            .and_then(|s| s.first())
             .map(|s| !s.is_empty())
             .unwrap_or(false)
     };
@@ -3089,28 +3067,28 @@ mod tests {
     fn regression_crafts_needed_ceil_division() {
         // output_per=1（如 wooden_pickaxe）：crafts_needed == count
         let output_per = 1u32;
-        assert_eq!((1u32 + output_per - 1) / output_per, 1);
-        assert_eq!((8u32 + output_per - 1) / output_per, 8);
+        assert_eq!(1u32.div_ceil(output_per), 1);
+        assert_eq!(8u32.div_ceil(output_per), 8);
 
         // output_per=4（如 oak_planks）：count=1 → 1 次（产出 4 个），count=4 → 1 次，count=5 → 2 次
         let output_per = 4u32;
         assert_eq!(
-            (1u32 + output_per - 1) / output_per,
+            1u32.div_ceil(output_per),
             1,
             "1 个 planks 请求 → 1 次合成（产出 4）"
         );
         assert_eq!(
-            (4u32 + output_per - 1) / output_per,
+            4u32.div_ceil(output_per),
             1,
             "4 个 planks 请求 → 1 次合成"
         );
         assert_eq!(
-            (5u32 + output_per - 1) / output_per,
+            5u32.div_ceil(output_per),
             2,
             "5 个 planks 请求 → 2 次合成"
         );
         assert_eq!(
-            (8u32 + output_per - 1) / output_per,
+            8u32.div_ceil(output_per),
             2,
             "8 个 planks 请求 → 2 次合成"
         );
@@ -3266,7 +3244,7 @@ mod tests {
             if fuel_per_item == 0 {
                 smelt_count
             } else {
-                (smelt_count + fuel_per_item - 1) / fuel_per_item
+                smelt_count.div_ceil(fuel_per_item)
             }
         }
 
@@ -3654,7 +3632,7 @@ mod tests {
         let fuel_needed = if fuel_per_item == 0 {
             actual_smelt_count
         } else {
-            (actual_smelt_count + fuel_per_item - 1) / fuel_per_item
+            actual_smelt_count.div_ceil(fuel_per_item)
         };
 
         SmeltDecision::Proceed {

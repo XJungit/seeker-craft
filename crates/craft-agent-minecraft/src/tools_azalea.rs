@@ -85,7 +85,7 @@ impl GameTool for PerceiveTool {
     ) -> anyhow::Result<ToolResult> {
         let st = self.ctx.adapter.perceive_shared()?;
         Ok(ToolResult {
-            message: format!("{}", st.self_hint),
+            message: st.self_hint.to_string(),
             is_error: false,
             images: vec![],
         })
@@ -180,13 +180,12 @@ impl GameTool for MineBelowTool {
             .execute_shared(Action::Minecraft(MinecraftAction::MineBelow))?;
         // 行动回写：仅当挖掘成功时才从世界记忆移除脚下方块。
         // P5 修复：原代码无条件 forget_pos，挖掘失败时记忆也被清空。
-        if r.ok {
-            if let Some(p) = self.ctx.memory.find_anchor("__self__").and_then(|a| a.pos) {
+        if r.ok
+            && let Some(p) = self.ctx.memory.find_anchor("__self__").and_then(|a| a.pos) {
                 self.ctx
                     .memory
                     .forget_pos(MemoryPos::new(p.x, p.y - 1, p.z));
             }
-        }
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,
@@ -230,13 +229,12 @@ impl GameTool for MineAboveTool {
             .execute_shared(Action::Minecraft(MinecraftAction::MineAbove))?;
         // 行动回写：只有实际向上移动后才从世界记忆移除头前方块。
         // P5 修复：原代码无条件 forget_pos，挖掘失败时记忆也被清空。
-        if r.ok && r.detail.contains("MineAbove progressed") {
-            if let Some(p) = self.ctx.memory.find_anchor("__self__").and_then(|a| a.pos) {
+        if r.ok && r.detail.contains("MineAbove progressed")
+            && let Some(p) = self.ctx.memory.find_anchor("__self__").and_then(|a| a.pos) {
                 self.ctx
                     .memory
                     .forget_pos(MemoryPos::new(p.x, p.y + 1, p.z));
             }
-        }
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,
@@ -1424,8 +1422,8 @@ impl GameTool for RunPlanTool {
         for (i, step) in steps.iter().enumerate() {
             let action_name = step.get("action").and_then(|v| v.as_str()).unwrap_or("?");
             // 跳过无效 goto：目标是上一步 mine 的位置
-            if action_name == "goto" {
-                if let Some((mx, my, mz)) = last_mined {
+            if action_name == "goto"
+                && let Some((mx, my, mz)) = last_mined {
                     let gx = step.get("x").and_then(|v| v.as_i64()).map(|v| v as i32);
                     let gy = step.get("y").and_then(|v| v.as_i64()).map(|v| v as i32);
                     let gz = step.get("z").and_then(|v| v.as_i64()).map(|v| v as i32);
@@ -1435,7 +1433,6 @@ impl GameTool for RunPlanTool {
                         continue;
                     }
                 }
-            }
             let mc = parse_step(action_name, step)?;
             // 记录 mine 坐标供下一步检测
             if let MinecraftAction::MineBlock { x, y, z } = &mc {
@@ -1505,7 +1502,7 @@ fn parse_step(action: &str, step: &serde_json::Value) -> anyhow::Result<Minecraf
         }),
         "craft_3x3" => {
             let table_pos = match (i64("table_x"), i64("table_y"), i64("table_z")) {
-                (Some(x), Some(y), Some(z)) => Some((x as i32, y as i32, z as i32)),
+                (Some(x), Some(y), Some(z)) => Some((x, y, z)),
                 _ => None,
             };
             Ok(MinecraftAction::Craft3x3 {
@@ -1516,7 +1513,7 @@ fn parse_step(action: &str, step: &serde_json::Value) -> anyhow::Result<Minecraf
         }
         "smelt" => {
             let table_pos = match (i64("table_x"), i64("table_y"), i64("table_z")) {
-                (Some(x), Some(y), Some(z)) => Some((x as i32, y as i32, z as i32)),
+                (Some(x), Some(y), Some(z)) => Some((x, y, z)),
                 _ => None,
             };
             Ok(MinecraftAction::Smelt {
@@ -2063,7 +2060,7 @@ fn build_rhai_engine(ctx: &Arc<AzaleaToolCtx>) -> rhai::Engine {
     // ===== 感知/蓝图（读路径，不经过 BotCommand 队列） =====
     engine.register_fn("perceive", move || -> String {
         match adapter_for_perceive.perceive_shared() {
-            Ok(st) => format!("{}", st.self_hint),
+            Ok(st) => st.self_hint.to_string(),
             Err(e) => format!("perceive 错误: {e}"),
         }
     });
@@ -2299,131 +2296,6 @@ fn lint_script(script: &str) -> Result<(), String> {
         );
     }
     Ok(())
-}
-
-#[cfg(test)]
-mod run_script_tests {
-    use super::*;
-
-    #[test]
-    fn lint_rejects_too_long_script() {
-        let big = "print(\"hi\");".repeat(10_000);
-        let r = lint_script(&big);
-        assert!(r.is_err());
-        assert!(r.unwrap_err().contains("过长"));
-    }
-
-    #[test]
-    fn lint_rejects_forbidden_keywords() {
-        assert!(lint_script("import \"x\";").is_err());
-        assert!(lint_script("eval(\"1+1\");").is_err());
-        assert!(lint_script("Fn(\"x\");").is_err());
-        assert!(lint_script("call(\"foo\");").is_err());
-        assert!(lint_script("read_file(\"x\");").is_err());
-        assert!(lint_script("let s = std::io::print;").is_err());
-    }
-
-    #[test]
-    fn lint_allows_normal_scripts() {
-        assert!(lint_script("let r = go(10, 64, 20); print(r);").is_ok());
-        assert!(lint_script("for i in 0..10 { print(i); }").is_ok());
-        assert!(lint_script("while true { break; }").is_ok());
-        assert!(lint_script("let r = gather(\"oak_log\", 4); craft(\"oak_planks\", 4);").is_ok());
-    }
-
-    #[test]
-    fn lint_rejects_while_true_no_break() {
-        assert!(lint_script("while true { print(\"x\"); }").is_err());
-        assert!(lint_script("loop { print(\"x\"); }").is_err());
-    }
-
-    #[test]
-    fn lint_action_allows_call_action_keyword() {
-        // call_action 是 P2-4 的合法递归调用，不应被 lint 拒绝
-        assert!(lint_action_script("let r = call_action(\"gather_wood\"); print(r);").is_ok());
-    }
-
-    #[test]
-    fn lint_action_rejects_forbidden_keywords() {
-        // 即使允许 call_action，其他禁字仍要拒绝
-        assert!(lint_action_script("import \"x\";").is_err());
-        assert!(lint_action_script("eval(\"1+1\");").is_err());
-        assert!(lint_action_script("Fn(\"x\");").is_err());
-        assert!(lint_action_script("read_file(\"x\");").is_err());
-        assert!(lint_action_script("let s = std::io::print;").is_err());
-    }
-
-    #[test]
-    fn lint_action_rejects_too_long() {
-        let big = "print(\"hi\");".repeat(10_000);
-        assert!(lint_action_script(&big).is_err());
-    }
-
-    #[test]
-    fn lint_action_rejects_infinite_loops() {
-        assert!(lint_action_script("while true { print(\"x\"); }").is_err());
-        assert!(lint_action_script("loop { print(\"x\"); }").is_err());
-    }
-
-    #[test]
-    fn lint_action_allows_break_controlled_loops() {
-        assert!(lint_action_script("while true { break; }").is_ok());
-        assert!(lint_action_script("loop { break; }").is_ok());
-    }
-
-    /// 回归测试：rhai 1.25 把 `go` 列为保留字，`register_fn("go", ...)` 也无法让
-    /// 脚本调用 `go(...)` —— 解析阶段就报 "Syntax error: 'go' is a reserved keyword"。
-    /// 我们改用 `walk_to` 等别名，必须保证这些别名不在保留字列表里。
-    #[test]
-    fn rhai_walk_to_is_not_reserved_keyword() {
-        let mut engine = rhai::Engine::new();
-        // 注册一个简单的 walk_to 函数，确认脚本能解析+执行（不报 reserved keyword）
-        engine.register_fn("walk_to", |x: i64, _y: i64, _z: i64| -> i64 { x });
-        let r: rhai::Dynamic = engine
-            .eval("walk_to(10, 64, 20)")
-            .expect("walk_to 不应被当作保留字");
-        assert_eq!(r.as_int().unwrap(), 10);
-
-        // move_to / step_to 同样不应是保留字
-        engine.register_fn("move_to", |x: i64, _y: i64, _z: i64| -> i64 { x + 1 });
-        let r: rhai::Dynamic = engine
-            .eval("move_to(5, 64, 5)")
-            .expect("move_to 不应被当作保留字");
-        assert_eq!(r.as_int().unwrap(), 6);
-
-        engine.register_fn("step_to", |x: i64, _y: i64, _z: i64| -> i64 { x + 2 });
-        let r: rhai::Dynamic = engine
-            .eval("step_to(0, 64, 0)")
-            .expect("step_to 不应被当作保留字");
-        assert_eq!(r.as_int().unwrap(), 2);
-    }
-
-    /// 回归测试：脚本最后一行以 `;` 结尾时返回 `unit ()`，旧 `eval::<String>()` 报
-    /// "Output type incorrect: () (expecting string)"。改用 `eval::<Dynamic>()` 后
-    /// unit 被识别并转为 "脚本执行完成"。
-    #[test]
-    fn rhai_unit_return_does_not_error() {
-        let engine = rhai::Engine::new();
-        // 脚本末尾是 print(...) 调用以分号结尾 → 返回 ()
-        let script = "print(\"hello\");";
-        let out: rhai::Dynamic = engine.eval(script).expect("unit 返回值不应报错");
-        assert!(out.is_unit(), "脚本以 ; 结尾应返回 unit");
-    }
-
-    /// 回归测试：确认 `go` 确实是 rhai 1.25 的保留字（保证我们不会无意中回退到 go）。
-    #[test]
-    fn rhai_go_is_reserved_keyword_confirmed() {
-        let mut engine = rhai::Engine::new();
-        engine.register_fn("go", |x: i64, _y: i64, _z: i64| -> i64 { x });
-        // 即使注册了，脚本里写 go(...) 也报 reserved keyword
-        let r = engine.eval::<rhai::Dynamic>("go(1, 2, 3)");
-        assert!(r.is_err(), "go 应是 rhai 保留字，预期解析失败");
-        let err = r.unwrap_err().to_string();
-        assert!(
-            err.contains("reserved") || err.contains("'go'"),
-            "错误信息应提到 reserved/go，实际: {err}"
-        );
-    }
 }
 /// 执行蓝图建造：按 JSON 描述的方块列表依次放置。
 /// 格式: {"blocks":[{"x":10,"y":64,"z":20,"block":"oak_planks"}, ...]}
@@ -3866,5 +3738,130 @@ impl GameTool for ListActionsTool {
             is_error: false,
             images: vec![],
         })
+    }
+}
+
+#[cfg(test)]
+mod run_script_tests {
+    use super::*;
+
+    #[test]
+    fn lint_rejects_too_long_script() {
+        let big = "print(\"hi\");".repeat(10_000);
+        let r = lint_script(&big);
+        assert!(r.is_err());
+        assert!(r.unwrap_err().contains("过长"));
+    }
+
+    #[test]
+    fn lint_rejects_forbidden_keywords() {
+        assert!(lint_script("import \"x\";").is_err());
+        assert!(lint_script("eval(\"1+1\");").is_err());
+        assert!(lint_script("Fn(\"x\");").is_err());
+        assert!(lint_script("call(\"foo\");").is_err());
+        assert!(lint_script("read_file(\"x\");").is_err());
+        assert!(lint_script("let s = std::io::print;").is_err());
+    }
+
+    #[test]
+    fn lint_allows_normal_scripts() {
+        assert!(lint_script("let r = go(10, 64, 20); print(r);").is_ok());
+        assert!(lint_script("for i in 0..10 { print(i); }").is_ok());
+        assert!(lint_script("while true { break; }").is_ok());
+        assert!(lint_script("let r = gather(\"oak_log\", 4); craft(\"oak_planks\", 4);").is_ok());
+    }
+
+    #[test]
+    fn lint_rejects_while_true_no_break() {
+        assert!(lint_script("while true { print(\"x\"); }").is_err());
+        assert!(lint_script("loop { print(\"x\"); }").is_err());
+    }
+
+    #[test]
+    fn lint_action_allows_call_action_keyword() {
+        // call_action 是 P2-4 的合法递归调用，不应被 lint 拒绝
+        assert!(lint_action_script("let r = call_action(\"gather_wood\"); print(r);").is_ok());
+    }
+
+    #[test]
+    fn lint_action_rejects_forbidden_keywords() {
+        // 即使允许 call_action，其他禁字仍要拒绝
+        assert!(lint_action_script("import \"x\";").is_err());
+        assert!(lint_action_script("eval(\"1+1\");").is_err());
+        assert!(lint_action_script("Fn(\"x\");").is_err());
+        assert!(lint_action_script("read_file(\"x\");").is_err());
+        assert!(lint_action_script("let s = std::io::print;").is_err());
+    }
+
+    #[test]
+    fn lint_action_rejects_too_long() {
+        let big = "print(\"hi\");".repeat(10_000);
+        assert!(lint_action_script(&big).is_err());
+    }
+
+    #[test]
+    fn lint_action_rejects_infinite_loops() {
+        assert!(lint_action_script("while true { print(\"x\"); }").is_err());
+        assert!(lint_action_script("loop { print(\"x\"); }").is_err());
+    }
+
+    #[test]
+    fn lint_action_allows_break_controlled_loops() {
+        assert!(lint_action_script("while true { break; }").is_ok());
+        assert!(lint_action_script("loop { break; }").is_ok());
+    }
+
+    /// 回归测试：rhai 1.25 把 `go` 列为保留字，`register_fn("go", ...)` 也无法让
+    /// 脚本调用 `go(...)` —— 解析阶段就报 "Syntax error: 'go' is a reserved keyword"。
+    /// 我们改用 `walk_to` 等别名，必须保证这些别名不在保留字列表里。
+    #[test]
+    fn rhai_walk_to_is_not_reserved_keyword() {
+        let mut engine = rhai::Engine::new();
+        // 注册一个简单的 walk_to 函数，确认脚本能解析+执行（不报 reserved keyword）
+        engine.register_fn("walk_to", |x: i64, _y: i64, _z: i64| -> i64 { x });
+        let r: rhai::Dynamic = engine
+            .eval("walk_to(10, 64, 20)")
+            .expect("walk_to 不应被当作保留字");
+        assert_eq!(r.as_int().unwrap(), 10);
+
+        // move_to / step_to 同样不应是保留字
+        engine.register_fn("move_to", |x: i64, _y: i64, _z: i64| -> i64 { x + 1 });
+        let r: rhai::Dynamic = engine
+            .eval("move_to(5, 64, 5)")
+            .expect("move_to 不应被当作保留字");
+        assert_eq!(r.as_int().unwrap(), 6);
+
+        engine.register_fn("step_to", |x: i64, _y: i64, _z: i64| -> i64 { x + 2 });
+        let r: rhai::Dynamic = engine
+            .eval("step_to(0, 64, 0)")
+            .expect("step_to 不应被当作保留字");
+        assert_eq!(r.as_int().unwrap(), 2);
+    }
+
+    /// 回归测试：脚本最后一行以 `;` 结尾时返回 `unit ()`，旧 `eval::<String>()` 报
+    /// "Output type incorrect: () (expecting string)"。改用 `eval::<Dynamic>()` 后
+    /// unit 被识别并转为 "脚本执行完成"。
+    #[test]
+    fn rhai_unit_return_does_not_error() {
+        let engine = rhai::Engine::new();
+        // 脚本末尾是 print(...) 调用以分号结尾 → 返回 ()
+        let script = "print(\"hello\");";
+        let out: rhai::Dynamic = engine.eval(script).expect("unit 返回值不应报错");
+        assert!(out.is_unit(), "脚本以 ; 结尾应返回 unit");
+    }
+
+    /// 回归测试：确认 `go` 确实是 rhai 1.25 的保留字（保证我们不会无意中回退到 go）。
+    #[test]
+    fn rhai_go_is_reserved_keyword_confirmed() {
+        let mut engine = rhai::Engine::new();
+        engine.register_fn("go", |x: i64, _y: i64, _z: i64| -> i64 { x });
+        // 即使注册了，脚本里写 go(...) 也报 reserved keyword
+        let r = engine.eval::<rhai::Dynamic>("go(1, 2, 3)");
+        assert!(r.is_err(), "go 应是 rhai 保留字，预期解析失败");
+        let err = r.unwrap_err().to_string();
+        assert!(
+            err.contains("reserved") || err.contains("'go'"),
+            "错误信息应提到 reserved/go，实际: {err}"
+        );
     }
 }

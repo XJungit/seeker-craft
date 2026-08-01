@@ -40,7 +40,7 @@ async fn main() {
         println!("[place_demo] 背包={:?}", st.scene_desc);
 
         // 若背包前5格有非空前，尝试放置
-        if st.scene_desc.contains("空") == false {
+        if !st.scene_desc.contains("空") {
             println!("[place_demo] 检测到背包有物品，尝试放置...");
             // 需要知道 bot 坐标来算放置点；scene_desc 里含坐标，简单解析
             if let Some(pos) = parse_pos(&st.scene_desc) {

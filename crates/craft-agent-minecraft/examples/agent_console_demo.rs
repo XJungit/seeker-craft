@@ -12,12 +12,12 @@ fn main() -> anyhow::Result<()> {
     use craft_agent::agent::{Agent, AgentConfig, CompactionConfig, LlmProvider};
     use craft_agent::core::message::AssistantResponse;
     use craft_agent::core::tool::ToolRegistry;
+    use craft_agent_minecraft::action_lib::ActionLibrary;
     use craft_agent_minecraft::adapter_azalea::ArcAzaleaAdapter;
+    use craft_agent_minecraft::blueprint::BlueprintLibrary;
     use craft_agent_minecraft::tools_azalea::create_mc_azalea_tools_full;
     use craft_agent_model::config::AgentConfig as ModelConfig;
     use craft_agent_model::decision::real::OpenAiLlmClient;
-    use craft_agent_minecraft::action_lib::ActionLibrary;
-    use craft_agent_minecraft::blueprint::BlueprintLibrary;
     use serde_json::Value;
     use std::sync::Arc;
     use std::time::Duration;
@@ -45,23 +45,35 @@ fn main() -> anyhow::Result<()> {
 
     // 构建 LLM 客户端
     let model_cfg = ModelConfig::load("data/config/agent.toml")?;
-    let llm_group = model_cfg.llm.as_ref().ok_or_else(|| anyhow::anyhow!("缺少 [llm]"))?;
+    let llm_group = model_cfg
+        .llm
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("缺少 [llm]"))?;
     let llm_backend = llm_group.active_backend()?;
     let llm = Arc::new(OpenAiLlmClient::from_config(llm_backend)?);
 
-    struct Lp { llm: Arc<OpenAiLlmClient> }
+    struct Lp {
+        llm: Arc<OpenAiLlmClient>,
+    }
     impl LlmProvider for Lp {
         fn complete(&self, m: &[Value], t: &[Value]) -> anyhow::Result<AssistantResponse> {
-            self.llm.chat_tools(&Value::Array(m.to_vec()), &Value::Array(t.to_vec()))
+            self.llm
+                .chat_tools(&Value::Array(m.to_vec()), &Value::Array(t.to_vec()))
         }
     }
 
     // 连接 azalea adapter
     let world_mem = craft_agent::core::memory::WorldMemory::new();
     let adapter = {
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-        rt.block_on(ArcAzaleaAdapter::connect_with_memory(&mc_addr, &username, world_mem.clone()))
-            .map_err(|e| anyhow::anyhow!("连接失败: {e}"))?
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+        rt.block_on(ArcAzaleaAdapter::connect_with_memory(
+            &mc_addr,
+            &username,
+            world_mem.clone(),
+        ))
+        .map_err(|e| anyhow::anyhow!("连接失败: {e}"))?
     };
 
     // 注册工具
@@ -86,7 +98,8 @@ fn main() -> anyhow::Result<()> {
         可用工具：perceive() 读状态、goto(x,y,z) 导航、mine_below() 下挖、\
         mine(x,y,z) 挖指定方块、gather(item,count) 采集、craft(item,count) 合成、\
         chat(content) 发消息。\
-        任务：用 perceive 确认状态，用工具行动，每步都用 chat 汇报进度。".to_string();
+        任务：用 perceive 确认状态，用工具行动，每步都用 chat 汇报进度。"
+        .to_string();
 
     let cfg = AgentConfig::new(system_prompt, max_steps)
         .with_compaction(compaction)

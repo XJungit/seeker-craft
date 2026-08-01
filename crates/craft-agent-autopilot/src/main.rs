@@ -80,12 +80,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("ok");
 
     let rollover_on_start = std::env::var_os("CRAFT_AGENT_ROLLOVER_SESSION").is_some();
-    let mut viewer = ensure_viewer(
-        &workspace_root,
-        &base_url,
-        viewer_port,
-        rollover_on_start,
-    )?;
+    let mut viewer = ensure_viewer(&workspace_root, &base_url, viewer_port, rollover_on_start)?;
     ensure_agent_started(&client, &base_url)?;
 
     let mut baseline = analyze_session(&session_path);
@@ -295,17 +290,17 @@ fn ensure_viewer(
         .join("craft-agent-viewer.exe");
     let mut command = Command::new(viewer_exe);
     command.args([
-            "--goal",
-            "优先解决食物保障并恢复饥饿，然后继续生存主线，最终击败末影龙",
-            "--steps",
-            "0",
-            "--port",
-            &viewer_port.to_string(),
-            "--mc",
-            "localhost:4444",
-            "--username",
-            "CraftAgent",
-        ]);
+        "--goal",
+        "优先解决食物保障并恢复饥饿，然后继续生存主线，最终击败末影龙",
+        "--steps",
+        "0",
+        "--port",
+        &viewer_port.to_string(),
+        "--mc",
+        "localhost:4444",
+        "--username",
+        "CraftAgent",
+    ]);
     if rollover_session {
         command.arg("--rollover-session");
     }
@@ -362,11 +357,10 @@ fn recover_runtime(
             std::thread::sleep(Duration::from_secs(5));
             continue;
         }
-        match ensure_viewer(workspace_root, base_url, viewer_port, false)
-            .and_then(|child| {
-                *viewer = child;
-                ensure_agent_started(client, base_url)
-            }) {
+        match ensure_viewer(workspace_root, base_url, viewer_port, false).and_then(|child| {
+            *viewer = child;
+            ensure_agent_started(client, base_url)
+        }) {
             Ok(()) => break,
             Err(error) => {
                 supervisor.last_error = Some(format!("runtime recovery retry: {error}"));

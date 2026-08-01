@@ -28,7 +28,12 @@ fn http_get(path: &str) -> Option<serde_json::Value> {
         .timeout(Duration::from_secs(5))
         .build()
         .ok()?;
-    client.get(format!("{BASE_URL}{path}")).send().ok()?.json().ok()
+    client
+        .get(format!("{BASE_URL}{path}"))
+        .send()
+        .ok()?
+        .json()
+        .ok()
 }
 
 fn http_post(path: &str, body: serde_json::Value) -> Option<serde_json::Value> {
@@ -147,10 +152,7 @@ fn cmd_status() {
     } else {
         println!("[status] game-state unavailable");
     }
-    for (name, path) in [
-        ("autopilot", "auto5_out.log"),
-        ("viewer", "viewer_out.log"),
-    ] {
+    for (name, path) in [("autopilot", "auto5_out.log"), ("viewer", "viewer_out.log")] {
         let lines = tail_file(&format!("{LOG_DIR}\\{path}"), 3);
         if !lines.is_empty() {
             println!("[status] --- {name} log tail ---");
@@ -175,12 +177,17 @@ fn cmd_session(n: usize) {
     for (i, l) in lines.iter().enumerate() {
         let o: Option<serde_json::Value> = serde_json::from_str(l).ok();
         let Some(o) = o else { continue };
-        let Some(role) = o["message"]["role"].as_str() else { continue };
+        let Some(role) = o["message"]["role"].as_str() else {
+            continue;
+        };
         if role == "toolresult" {
             let c = o["message"]["content"].as_str().unwrap_or("").to_string();
             buf.push((i, truncate(&c, 150)));
         } else if role == "assistant" {
-            let calls = o["message"]["tool_calls"].as_array().cloned().unwrap_or_default();
+            let calls = o["message"]["tool_calls"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
             for t in &calls {
                 let name = t["function"]["name"].as_str().unwrap_or("?");
                 buf.push((i, format!("CALL {name}")));
@@ -285,7 +292,14 @@ fn cmd_health(max_secs: u64) {
             return;
         }
         if step != last_step {
-            println!("[health] step={step} (+{})", step.saturating_sub(if last_step == u64::MAX { step } else { last_step }));
+            println!(
+                "[health] step={step} (+{})",
+                step.saturating_sub(if last_step == u64::MAX {
+                    step
+                } else {
+                    last_step
+                })
+            );
             last_step = step;
         }
         std::thread::sleep(Duration::from_secs(5));
@@ -303,9 +317,7 @@ fn truncate(s: &str, n: usize) -> String {
 }
 
 fn usage() {
-    println!(
-        "usage: craft-agent-ctl <status|stop|build|deploy|goal|start|session|tail|health>"
-    );
+    println!("usage: craft-agent-ctl <status|stop|build|deploy|goal|start|session|tail|health>");
 }
 
 fn main() {

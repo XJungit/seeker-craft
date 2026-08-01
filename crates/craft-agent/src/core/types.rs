@@ -216,7 +216,11 @@ pub enum MinecraftAction {
     StopFollow,
     /// P68：把物品丢在玩家脚边（给予）。item 为物品 id，count 为数量（0=全部），
     /// target 为玩家名（None=最近的玩家）。
-    Give { item: String, count: u32, target: Option<String> },
+    Give {
+        item: String,
+        count: u32,
+        target: Option<String>,
+    },
 }
 
 /// 动作执行结果

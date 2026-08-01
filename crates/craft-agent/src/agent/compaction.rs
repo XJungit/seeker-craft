@@ -409,7 +409,7 @@ mod tests {
         let tokens = Agent::msg_tokens(&m);
         // "hello world" = 11 chars / 2 = 5 tokens
         assert!(
-            tokens >= 5 && tokens <= 10,
+            (5..=10).contains(&tokens),
             "expected ~5 tokens, got {tokens}"
         );
     }

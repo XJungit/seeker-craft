@@ -4,7 +4,6 @@
 //! 行为：连入 -> 走到目标 -> 到达后挖掉脚下方块 -> 打印挖矿状态。
 
 use azalea::BlockPos;
-use azalea::pathfinder::goals::BlockPosGoal;
 use azalea::prelude::*;
 
 /// 寻路目标：出生点附近偏移，验证 azalea pathfinder 在 26.2 能用。
@@ -36,7 +35,7 @@ async fn main() {
             }
             Event::Tick => {
                 let t = bot.ticks_connected();
-                if t % 20 != 0 {
+                if !t.is_multiple_of(20) {
                     return bot;
                 }
                 if let Ok(p) = bot.position() {
@@ -60,7 +59,7 @@ async fn main() {
                     }
                 }
                 // 每 100 tick 打印一次状态感知（背包 + 附近实体，LLM 决策所需）。
-                if t % 100 == 0 && t > 0 {
+                if t.is_multiple_of(100) && t > 0 {
                     // 背包前 5 格
                     if let Ok(inv) = bot.get_inventory() {
                         if let Some(slots) = inv.slots() {
@@ -100,8 +99,8 @@ async fn main() {
                         Err(e) => println!("[azalea_connect] t={t} nearby_players 失败: {e:?}"),
                     }
                     // 放置验证：每 200 tick 对着脚下方块交互（block_interact，验证 place API 链路）。
-                    if t % 200 == 0 && t > 0 {
-                        if let Ok(p) = bot.position() {
+                    if t.is_multiple_of(200) && t > 0
+                        && let Ok(p) = bot.position() {
                             let foot = BlockPos::new(
                                 p.x.floor() as i32,
                                 (p.y - 1.0).floor() as i32,
@@ -112,7 +111,6 @@ async fn main() {
                             );
                             bot.block_interact(foot);
                         }
-                    }
                 }
             }
             Event::Disconnect(reason) => {

@@ -24,13 +24,12 @@ fn find_hotbar_slot(inv: &ContainerHandleRef, kind: ItemKind) -> Option<u8> {
     let hotbar_start = *hotbar_range.start();
     let slots = inv.slots()?;
     for s in hotbar_range {
-        if let Some(stack) = slots.get(s) {
-            if !stack.is_empty() && stack.kind() == kind {
+        if let Some(stack) = slots.get(s)
+            && !stack.is_empty() && stack.kind() == kind {
                 let idx = (s - hotbar_start) as u8;
                 debug_assert!(idx <= 8, "hotbar idx out of range: {idx}");
                 return Some(idx);
             }
-        }
     }
     None
 }
@@ -53,11 +52,10 @@ fn find_item_slot_in_main_inventory(inv: &ContainerHandleRef, kind: ItemKind) ->
         if hotbar_range.contains(&s) {
             continue; // 跳过 hotbar
         }
-        if let Some(stack) = slots.get(s) {
-            if !stack.is_empty() && stack.kind() == kind {
+        if let Some(stack) = slots.get(s)
+            && !stack.is_empty() && stack.kind() == kind {
                 return Some(s);
             }
-        }
     }
     None
 }
@@ -242,11 +240,11 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
         let held_desc = bot
             .get_held_item()
             .ok()
-            .and_then(|st| {
+            .map(|st| {
                 if st.is_empty() {
-                    Some("空手".to_string())
+                    "空手".to_string()
                 } else {
-                    Some(format!("{}x{}", st.kind().to_str(), st.count()))
+                    format!("{}x{}", st.kind().to_str(), st.count())
                 }
             })
             .unwrap_or_else(|| "无法读取主手".to_string());
@@ -638,13 +636,12 @@ fn find_nearby_container_block(bot: &Client, origin: BlockPos, radius: i32) -> O
                 }
                 let pos = BlockPos::new(origin.x + dx, origin.y + dy, origin.z + dz);
                 let kind = world.get_block_state(pos).map(|s| s.into());
-                if let Some(bk) = kind {
-                    if is_container_block(bk) {
+                if let Some(bk) = kind
+                    && is_container_block(bk) {
                         // 曼哈顿距离作优先级，距离近的优先
                         let dist = dx.abs() + dy.abs() + dz.abs();
                         candidates.push((dist, pos));
                     }
-                }
             }
         }
     }

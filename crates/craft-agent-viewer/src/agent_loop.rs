@@ -715,14 +715,12 @@ fn run_agent(
         let session_too_big = std::fs::metadata(session_path)
             .map(|m| m.len() > 12 * 1024 * 1024)
             .unwrap_or(false);
-        if step % 40 == 0 || session_too_big {
+        if step.is_multiple_of(40) || session_too_big {
             let goal_snapshot = agent.current_goal_snapshot().to_string();
             let did = agent.rollover_in_place(session_path, &goal_snapshot);
             if did {
                 let _ = event_tx.send(AgentEvent::Log {
-                    text: format!(
-                        "♻️ 会话自动滚动（防 OOM）：已归档并重置内存历史，bot 继续运行。"
-                    ),
+                    text: "♻️ 会话自动滚动（防 OOM）：已归档并重置内存历史，bot 继续运行。".to_string(),
                 });
             }
         }
