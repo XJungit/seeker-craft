@@ -1,0 +1,5 @@
+{"between_delay_ms": 2500, "steps": [
+  {"cmd": "chat /time set night"},
+  {"cmd": "sleep"},
+  {"state": true}
+]}

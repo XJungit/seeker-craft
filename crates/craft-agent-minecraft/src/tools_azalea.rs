@@ -484,6 +484,46 @@ impl GameTool for TillAndSowTool {
     }
 }
 
+/// 睡觉跳夜（P85）：夜晚找附近床入睡，跳过夜晚。白天/无床/附近有怪物会失败。
+pub struct SleepTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl SleepTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for SleepTool {
+    fn name(&self) -> &str {
+        "sleep"
+    }
+    fn description(&self) -> &str {
+        "在附近床上睡觉跳过夜晚（夜晚怪物多/等天亮时用）。自动找 32m 内最近的床、走过去并上床。若白天或无床会返回错误。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({ "type": "object", "properties": {}, "required": [] })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        _args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::Sleep))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}
+
 /// 攻击最近的指定种类生物（自卫/狩猎）。
 pub struct AttackTool {
     ctx: Arc<AzaleaToolCtx>,
@@ -1565,6 +1605,7 @@ fn parse_step(action: &str, step: &serde_json::Value) -> anyhow::Result<Minecraf
             z: i64("z").ok_or_else(|| anyhow::anyhow!("till_and_sow 缺少 z"))?,
             seed: str("seed").ok_or_else(|| anyhow::anyhow!("till_and_sow 缺少 seed"))?,
         }),
+        "sleep" => Ok(MinecraftAction::Sleep),
         "chat" => Ok(MinecraftAction::Chat {
             content: str("content").ok_or_else(|| anyhow::anyhow!("chat 缺少 content"))?,
         }),
@@ -2332,6 +2373,10 @@ fn build_rhai_engine(ctx: &Arc<AzaleaToolCtx>) -> rhai::Engine {
     });
 
     // ===== 元：sleep / print =====
+    let a_sleep = adapter.clone();
+    engine.register_fn("sleep", move || -> String {
+        _exec_action(&a_sleep, MinecraftAction::Sleep)
+    });
     engine.register_fn("sleep", |ms: i64| {
         // 上限 10s，避免 LLM 写 sleep(999999) 卡死 bot
         let capped = ms.clamp(0, 10_000) as u64;
@@ -2802,6 +2847,7 @@ pub fn create_mc_azalea_tools_full(
         Box::new(MineTool::new(ctx.clone())),
         Box::new(InteractBlockTool::new(ctx.clone())),
         Box::new(TillAndSowTool::new(ctx.clone())),
+        Box::new(SleepTool::new(ctx.clone())),
         Box::new(AttackTool::new(ctx.clone())),
         Box::new(CraftTool::new(ctx.clone())),
         Box::new(Craft3x3Tool::new(ctx.clone())),

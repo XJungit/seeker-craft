@@ -21,6 +21,7 @@ pub mod place;
 pub mod recipe_book;
 pub mod recipes;
 pub mod smart_actions;
+pub mod sleep;
 pub mod table_flow;
 pub mod till;
 pub mod trade;
@@ -283,6 +284,9 @@ pub enum BotCommand {
         z: i32,
         seed: String,
     },
+    /// P85：睡觉跳夜（参考 Mindcraft goToBed）。找附近床 → 靠近 → 空主手 →
+    /// 右键上床 → 验证入睡 → 睡到自然醒。白天/附近有怪物会失败。
+    Sleep,
     Chat {
         content: String,
     },
@@ -616,6 +620,9 @@ pub fn parse_chat_command(content: &str) -> Option<BotCommand> {
     }
     if content == "mineabove" {
         return Some(BotCommand::MineAbove);
+    }
+    if content == "sleep" {
+        return Some(BotCommand::Sleep);
     }
     if content == "attack" {
         return Some(BotCommand::Attack {
@@ -1894,6 +1901,25 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                 }
                                 Err(e) => {
                                     let chat = format!("[种植失败] {e}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!("Action output:\n❌ {e}"));
+                                    }
+                                }
+                            }
+                        }
+                        BotCommand::Sleep => {
+                            *state.mining_below.lock().unwrap() = false;
+                            match crate::azalea::sleep::do_sleep(&bot).await {
+                                Ok(msg) => {
+                                    let chat = format!("[睡觉] {msg}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!("Action output:\n{msg}"));
+                                    }
+                                }
+                                Err(e) => {
+                                    let chat = format!("[睡觉失败] {e}");
                                     let _ = evt_tx.send(BotEvent::Chat { content: chat });
                                     if let Some(tx) = &result_tx {
                                         let _ = tx.send(format!("Action output:\n❌ {e}"));
@@ -4294,6 +4320,25 @@ mod entity_target_tests {
             parse_chat_command("stop"),
             Some(BotCommand::StopFollow)
         ));
+    }
+
+    #[test]
+    fn chat_parser_sleep_and_tillandsow() {
+        assert!(matches!(parse_chat_command("sleep"), Some(BotCommand::Sleep)));
+        assert!(matches!(
+            parse_chat_command("tillandsow 10 64 20 wheat_seeds"),
+            Some(BotCommand::TillAndSow {
+                x: 10,
+                y: 64,
+                z: 20,
+                seed,
+            }) if seed == "wheat_seeds"
+        ));
+        assert!(matches!(
+            parse_chat_command("chat hello"),
+            Some(BotCommand::Chat { content }) if content == "hello"
+        ));
+        assert!(parse_chat_command("tillandsow 1 2").is_none());
     }
 }
 

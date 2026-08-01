@@ -1,0 +1,7 @@
+{"between_delay_ms": 2500, "steps": [
+  {"cmd": "chat /give @s red_bed 1"},
+  {"cmd": "chat /time set night"},
+  {"cmd": "place red_bed -489 95 -148"},
+  {"cmd": "sleep"},
+  {"state": true}
+]}

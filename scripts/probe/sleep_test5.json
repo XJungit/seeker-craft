@@ -1,0 +1,8 @@
+{"between_delay_ms": 2500, "steps": [
+  {"cmd": "chat /setblock -489 94 -149 minecraft:air"},
+  {"cmd": "chat /setblock -489 94 -148 minecraft:red_bed[facing=north,part=foot]"},
+  {"cmd": "chat /setblock -489 94 -149 minecraft:red_bed[facing=north,part=head]"},
+  {"cmd": "chat /time set night"},
+  {"cmd": "sleep"},
+  {"state": true}
+]}

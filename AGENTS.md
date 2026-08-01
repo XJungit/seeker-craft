@@ -309,7 +309,7 @@ cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot 
 probe bot 名 `craftbot_probe`，与 agent bot 共存不冲突。命令文本见
 `parse_chat_command`（azalea/mod.rs:508，支持 goto/mine x y z/minebelow/mineabove/attack/gather/
 craft/craft3/smelt/autocraft/place/open/enchant/trade/interact/interactblock x y z/tillandsow x y z seed/chat/chat 消息/
-follow/give/equip/discard/consume/chestview/chestwithdraw/chestdeposit/makeobsidian/pickup/defend）。
+follow/give/equip/discard/consume/chestview/chestwithdraw/chestdeposit/makeobsidian/pickup/defend/sleep）。
 需要 LLM 决策的测试（策略/规划/目标分解）才开 viewer+agent。
 
 新增工具命令时必须同时更新 `parse_chat_command`，否则 probe 无法驱动。

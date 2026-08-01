@@ -1,0 +1,7 @@
+{"between_delay_ms": 2500, "steps": [
+  {"cmd": "chat /time query daytime"},
+  {"cmd": "chat /time set night"},
+  {"cmd": "chat /time query daytime"},
+  {"cmd": "sleep"},
+  {"state": true}
+]}
