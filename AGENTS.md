@@ -17,6 +17,12 @@ Autonomously optimize and maintain this project. Authority: **full decision powe
 - Mindcraft and similar projects are reference implementations
 
 ### Iteration Workflow（必须遵守，2026-08-01 起）
+> 本质定位：**工作流 = 持续优化项目本身**（差距分析 → 修复 → 回填）。
+> bot 运行（viewer/autopilot）只是**按需观测手段**，不是常驻工作流——
+> 每个工作单元按需启动、观测完即停（`craft-agent-ctl stop`）。
+> 工具层验证优先用 probe（秒级），LLM 实机观测只在需要确认
+> 策略/规划行为时按工作单元启动。
+
 每个工作单元开始前按顺序执行：
 1. **差距分析先行**：扫 `docs/mindcraft-gap.md` 优先级队列，找出主线收益最高的缺失项
 2. **实机观测**：probe/status/session 确认问题真实存在（区分 harness bug vs LLM 决策）

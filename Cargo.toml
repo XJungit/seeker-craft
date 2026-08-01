@@ -69,6 +69,12 @@ windows-sys = { version = "0.61", features = [
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
 
+# ===== 开发调试 =====
+# 只保留行号表（断点/调用栈可用，变量值不可见），deps 产物减 40-60%
+# 需要完整调试信息时：RUSTFLAGS="-C debuginfo=2" cargo run
+[profile.dev]
+debug = "line-tables-only"
+
 # ===== 发布优化 =====
 [profile.release]
 lto = "fat"
