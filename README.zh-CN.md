@@ -4,6 +4,13 @@
 
 **一个由 LLM 驱动的 Minecraft 机器人，目标是击败末影龙。**
 
+> **项目性质声明。** 本项目完全由 AI 辅助编程（vibe coding）生成，属个人实验项目，
+> 不作为工程最佳实践、学习资料或生产参考。项目目的在于探索 AI Agent 与
+> vibe coding 方法论；实现过程中学习借鉴了
+> [Mindcraft](https://github.com/mindcraft-bots/mindcraft)、
+> [Azalea](https://github.com/azalea-rs/azalea) 等开源项目，并刻意采用作者此前
+> 完全未接触过的 Rust 技术栈，追求全 Rust 技术栈的 vibe coding。
+
 SeekerCraft 是用 Rust 实现的自主 Minecraft Agent：LLM 观察结构化游戏状态、
 规划多步生存策略，并通过基于
 [Azalea](https://github.com/azalea-rs/azalea) 客户端协议的 44 个类型化工具执行——

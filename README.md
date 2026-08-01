@@ -4,6 +4,15 @@
 
 **An LLM-driven Minecraft bot that beats the Ender Dragon.**
 
+> **Project nature.** This project is produced entirely through AI-assisted
+> development ("vibe coding") as a personal experiment. It is not intended as a
+> reference for best practices, nor as a learning or production resource. Its
+> purpose is to explore AI agents and the vibe-coding methodology. The
+> implementation draws on open-source projects such as
+> [Mindcraft](https://github.com/mindcraft-bots/mindcraft) and
+> [Azalea](https://github.com/azalea-rs/azalea), and deliberately adopts a
+> Rust-only toolchain with which the author had no prior experience.
+
 SeekerCraft is a Rust implementation of an autonomous Minecraft agent. An LLM
 observes structured game state, plans multi-step survival strategies, and
 executes them through 44 typed tools built on the
