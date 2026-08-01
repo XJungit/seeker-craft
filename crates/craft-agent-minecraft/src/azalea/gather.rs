@@ -277,9 +277,28 @@ pub async fn do_gather(bot: &Client, item: &str, count: u32) -> Result<String, S
             let center = bot.position().map_err(|e| format!("读取坐标失败: {e:?}"))?;
             let pos = scan_blocks(&w, center, block_kind, 32).into_iter().next();
             let Some(p) = pos else {
+                // P75：农作物采集失败时给替代食物方案——LLM 会死磕单一食物源
+                // （实测在 lush_caves 反复 gather wheat 找不到，浪费 10+ 回合）。
+                let food_alt = if matches!(
+                    item,
+                    "wheat"
+                        | "carrot"
+                        | "potato"
+                        | "beetroot"
+                        | "sugar_cane"
+                        | "apple"
+                        | "sweet_berries"
+                        | "melon"
+                ) {
+                    "\n替代食物方案：1) 蘑菇炖菜：bowl + red_mushroom + brown_mushroom（蘑菇群系/树下找，炖菜 +6 饥饿）；\
+                     2) 杀动物：perceive 看实体坐标（如 pig@12m@(x,y,z)），goto 靠近后 attack，生肉 smelt 成烤肉；\
+                     3) 换群系：平原/村庄有现成小麦田；4) 采集甜浆果灌木（针叶林常见）。"
+                } else {
+                    ""
+                };
                 return Err(format!(
                     "附近 32 格内找不到 {item}（已采集 {gathered}/{need}）。\
-                     建议：用 go 走到其它区域再 gather，或换一个采集目标。"
+                     建议：用 go 走到其它区域再 gather，或换一个采集目标。{food_alt}"
                 ));
             };
             let need = tool_need_for_block(&w, p);
