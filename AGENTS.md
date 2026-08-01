@@ -16,6 +16,15 @@ Autonomously optimize and maintain this project. Authority: **full decision powe
 - **Repeated issues**: MUST search for solutions
 - Mindcraft and similar projects are reference implementations
 
+### Iteration Workflow（必须遵守，2026-08-01 起）
+每个工作单元开始前按顺序执行：
+1. **差距分析先行**：扫 `docs/mindcraft-gap.md` 优先级队列，找出主线收益最高的缺失项
+2. **实机观测**：probe/status/session 确认问题真实存在（区分 harness bug vs LLM 决策）
+3. **修复/实现**：改代码 → `cargo test -p craft-agent-minecraft --features azalea-bot --lib` → 提交
+4. **回填**：更新 `docs/mindcraft-gap.md` 状态与 AGENTS.md（如有流程变更）
+> 禁止跳过第 1 步直接修 bug——被动修补（P57-P76 模式）是流程缺陷，
+> 主动差距分析（P77 起）是 Mission 第一优先级的正确执行方式。
+
 ## Build & Run
 
 ```bash
