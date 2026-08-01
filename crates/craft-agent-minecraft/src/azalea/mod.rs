@@ -1250,9 +1250,67 @@ impl AzaleaBot {
                                         })
                                         .unwrap_or(true);
                                     if target_is_air {
+                                        // P71：拒绝时附上附近最近的实心方块建议坐标——LLM 经常盲猜
+                                        // 坐标连续挖空气（实测 10 次连续 mine 空气死循环），
+                                        // 直接给出可挖目标比让它自己 perceive 猜更高效。
+                                        let mut suggestions: Vec<(i32, i32, i32)> = Vec::new();
+                                        if let Ok(world) = bot.world() {
+                                            'outer: for d in 1i32..=4 {
+                                                for dx in -d..=d {
+                                                    for dz in -d..=d {
+                                                        for dy in -1..=2 {
+                                                            if dx.abs() != d
+                                                                && dz.abs() != d
+                                                                && dy != -1
+                                                                && dy != 2
+                                                            {
+                                                                continue;
+                                                            }
+                                                            let pos = BlockPos::new(
+                                                                x + dx,
+                                                                y + dy,
+                                                                z + dz,
+                                                            );
+                                                            let bk: Option<BlockKind> = world
+                                                                .read()
+                                                                .get_block_state(pos)
+                                                                .map(|b| b.into());
+                                                            let solid = bk.map(|k| {
+                                                                k != BlockKind::Air
+                                                                    && k != BlockKind::Water
+                                                                    && k != BlockKind::Lava
+                                                            }).unwrap_or(false);
+                                                            if solid {
+                                                                suggestions.push((
+                                                                    x + dx,
+                                                                    y + dy,
+                                                                    z + dz,
+                                                                ));
+                                                                if suggestions.len() >= 4 {
+                                                                    break 'outer;
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        let hint = if suggestions.is_empty() {
+                                            "附近 4 格内无实心方块，请先 perceive 确认位置。"
+                                                .to_string()
+                                        } else {
+                                            format!(
+                                                "附近最近的实心方块（可挖）：{}。",
+                                                suggestions
+                                                    .iter()
+                                                    .map(|(sx, sy, sz)| format!("({sx},{sy},{sz})"))
+                                                    .collect::<Vec<_>>()
+                                                    .join(", ")
+                                            )
+                                        };
                                         format!(
-                                            "Action output:\nmine ({},{},{}): 该位置已是空气/方块不存在（可能之前已挖掉或坐标错误）。\
-                                             请先 perceive 看附近实际方块，再 gather 或 mine 有效目标。",
+                                            "Action output:\nmine ({},{},{}): 该位置已是空气/方块不存在（可能之前已挖掉或坐标错误）。{hint}\
+                                             直接 mine 上述坐标即可。",
                                             x, y, z
                                         )
                                     } else {
