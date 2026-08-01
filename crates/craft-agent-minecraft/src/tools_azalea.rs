@@ -1701,6 +1701,8 @@ impl GameTool for RunScriptTool {
     }
     fn description(&self) -> &str {
         "执行 rhai 脚本（嵌入式引擎，沙箱化）。支持变量、循环、条件。\
+         使用时机：需要连续执行 3 步以上动作（如 收集→合成→拾取 流水线、循环挖矿、\
+         带条件判断的多步流程）时用本工具；单步操作请直接调用对应工具（更可靠）。\
          动作函数: walk_to(x,y,z) [或 move_to/step_to，不要用 go/goto，rhai 保留字], \
          mine(x,y,z), mine_below(), mine_above(), interact(x,y,z), attack(target?), defend(), \
          craft(item,count), craft_3x3(item,count), smelt(output,fuel,count), auto_craft(item,count), enchant(item,level), \
@@ -1711,7 +1713,9 @@ impl GameTool for RunScriptTool {
          perceive(), list_blueprints(), build_blueprint(name,x,y,z), \
          sleep(ms), print(msg)。\
          脚本最后一行若是动作函数调用会作为返回值；不需要返回值时末尾加分号 `;`。\
-         例: walk_to(10, 64, 20); gather(\"oak_log\", 4); craft(\"oak_planks\", 4); pickup();"
+         函数返回错误消息字符串（含\"失败\"/\"超时\"/\"未持有\"）不会中断脚本，可用 if 判断：\
+         例1（流水线）: walk_to(10, 64, 20); gather(\"oak_log\", 4); craft(\"oak_planks\", 4); pickup();\
+         例2（循环+条件）: for i in 0..3 { let r = mine(10, 60-i, 20); if r.contains(\"失败\") { break; } sleep(300); }"
     }
     fn parameters(&self) -> Value {
         serde_json::json!({

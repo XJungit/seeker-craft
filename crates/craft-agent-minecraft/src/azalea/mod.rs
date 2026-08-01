@@ -3258,6 +3258,59 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                         }
                     }
                 }
+                // auto_eat：饥饿 ≤14 且背包有安全食物 → 自动进食（每 80 tick ≈4s 检查一次）。
+                // P58：借鉴 Mindcraft autoEat（startAt=14 + bannedFood）。此前靠 LLM 手动
+                // consume（30-60s/回合延迟），且 LLM 吃过 rotten_flesh（食物中毒风险）。
+                // 仅空闲时执行（不打断 LLM 的 goto/挖矿/合成），安全白名单排除毒物。
+                {
+                    let hunger_now = bot.hunger().ok().map(|h| h.food).unwrap_or(20);
+                    let auto_eat_ok = hunger_now <= 14
+                        && state.action_mgr.is_idle()
+                        && bot.ticks_connected() % 80 == 0;
+                    if auto_eat_ok {
+                        if let Ok(inv) = bot.get_inventory() {
+                            const SAFE_FOODS: [&str; 18] = [
+                                "cooked_beef",
+                                "cooked_porkchop",
+                                "cooked_chicken",
+                                "cooked_mutton",
+                                "cooked_rabbit",
+                                "cooked_cod",
+                                "cooked_salmon",
+                                "bread",
+                                "apple",
+                                "golden_apple",
+                                "baked_potato",
+                                "mushroom_stew",
+                                "rabbit_stew",
+                                "pumpkin_pie",
+                                "cookie",
+                                "melon_slice",
+                                "sweet_berries",
+                                "glow_berries",
+                            ];
+                            let found = SAFE_FOODS.iter().find_map(|name| {
+                                ItemKind::from_str(name).ok().filter(|k| {
+                                    find_item_slots(&inv, *k).first().is_some()
+                                })
+                            });
+                            if let Some(k) = found {
+                                let item_name = k
+                                    .to_str()
+                                    .strip_prefix("minecraft:")
+                                    .unwrap_or_else(|| k.to_str());
+                                let msg = do_consume(&bot, item_name).await;
+                                if !msg.contains("失败") && !msg.contains("未持有") {
+                                    let _ = evt_tx.send(BotEvent::Chat {
+                                        content: format!(
+                                            "[MODE:auto_eat] 饥饿 {hunger_now}/20，自动进食 {item_name}"
+                                        ),
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
                 // self_defense：空闲或寻路途中自动攻击附近敌对生物（每 100 tick ≈5s 检查一次）
                 // 距离限制：只攻击 4 格内实体，避免对远距离敌人（如持弩掠夺者）对着空气挥拳。
                 // 用 is_busy() 而非 is_idle()：Goto/Mine 等轮询命令执行期间 pending 非空但 busy=false，
