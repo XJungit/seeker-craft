@@ -20,8 +20,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install nightly toolchain (from rust-toolchain.toml)
+      - name: Install nightly-2026-07-21 toolchain
         uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "nightly-2026-07-21"
       - uses: Swatinem/rust-cache@v2
       - name: cargo fmt (check)
         run: cargo fmt --all -- --check
@@ -33,10 +35,13 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install nightly toolchain (from rust-toolchain.toml)
+      - name: Install nightly-2026-07-21 toolchain
         uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "nightly-2026-07-21"
       - uses: Swatinem/rust-cache@v2
       - name: cargo test (default features)
         run: cargo test --workspace --no-fail-fast
       - name: cargo test (azalea-bot)
         run: cargo test -p craft-agent-minecraft --features azalea-bot --lib
+
