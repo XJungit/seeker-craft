@@ -30,8 +30,14 @@ async fn main() {
             // 给一点时间让 Spawn 到达
             tokio::time::sleep(std::time::Duration::from_secs(3)).await;
             println!("[demo] 发指令：挖脚下方块 + 聊天");
-            bot.mine_below();
-            bot.chat("azalea module online");
+            let _ =
+                bot.push_cmd_and_wait(craft_agent_minecraft::azalea::BotCommand::MineBelow, 30_000);
+            let _ = bot.push_cmd_and_wait(
+                craft_agent_minecraft::azalea::BotCommand::Chat {
+                    content: "azalea module online".into(),
+                },
+                30_000,
+            );
         })
     };
 

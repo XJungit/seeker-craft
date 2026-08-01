@@ -183,12 +183,6 @@ impl Agent {
         self.last_mode_trigger = 0;
         None
     }
-
-    /// 兼容旧 API：返回 prompt 字符串（无 force_reprompt 信息）。
-    /// 新代码应使用 `check_modes()` 返回的 `ModeReaction`。
-    pub fn check_modes_legacy(&mut self) -> Option<String> {
-        self.check_modes().and_then(|r| r.prompt)
-    }
 }
 
 #[cfg(test)]

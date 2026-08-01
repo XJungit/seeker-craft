@@ -1558,6 +1558,48 @@ fn parse_step(action: &str, step: &serde_json::Value) -> anyhow::Result<Minecraf
         }),
         "pickup" => Ok(MinecraftAction::Pickup),
         "defend" => Ok(MinecraftAction::Defend),
+        "make_obsidian" => Ok(MinecraftAction::MakeObsidian {
+            count: u32("count").unwrap_or(1),
+        }),
+        "equip" => Ok(MinecraftAction::Equip {
+            item: str("item").ok_or_else(|| anyhow::anyhow!("equip 缺少 item"))?,
+            slot: str("slot").unwrap_or_else(|| "hand".to_string()),
+        }),
+        "discard" => Ok(MinecraftAction::Discard {
+            item: str("item").ok_or_else(|| anyhow::anyhow!("discard 缺少 item"))?,
+            count: u32("count").unwrap_or(0),
+        }),
+        "consume" => Ok(MinecraftAction::Consume {
+            item: str("item").ok_or_else(|| anyhow::anyhow!("consume 缺少 item"))?,
+        }),
+        "chest_view" => Ok(MinecraftAction::ChestView {
+            x: i64("x").ok_or_else(|| anyhow::anyhow!("chest_view 缺少 x"))?,
+            y: i64("y").ok_or_else(|| anyhow::anyhow!("chest_view 缺少 y"))?,
+            z: i64("z").ok_or_else(|| anyhow::anyhow!("chest_view 缺少 z"))?,
+        }),
+        "chest_withdraw" => Ok(MinecraftAction::ChestWithdraw {
+            x: i64("x").ok_or_else(|| anyhow::anyhow!("chest_withdraw 缺少 x"))?,
+            y: i64("y").ok_or_else(|| anyhow::anyhow!("chest_withdraw 缺少 y"))?,
+            z: i64("z").ok_or_else(|| anyhow::anyhow!("chest_withdraw 缺少 z"))?,
+            item: str("item").ok_or_else(|| anyhow::anyhow!("chest_withdraw 缺少 item"))?,
+            count: u32("count").unwrap_or(0),
+        }),
+        "chest_deposit" => Ok(MinecraftAction::ChestDeposit {
+            x: i64("x").ok_or_else(|| anyhow::anyhow!("chest_deposit 缺少 x"))?,
+            y: i64("y").ok_or_else(|| anyhow::anyhow!("chest_deposit 缺少 y"))?,
+            z: i64("z").ok_or_else(|| anyhow::anyhow!("chest_deposit 缺少 z"))?,
+            item: str("item").ok_or_else(|| anyhow::anyhow!("chest_deposit 缺少 item"))?,
+            count: u32("count").unwrap_or(0),
+        }),
+        "follow" => Ok(MinecraftAction::Follow {
+            target: str("target"),
+        }),
+        "stop_follow" => Ok(MinecraftAction::StopFollow),
+        "give" => Ok(MinecraftAction::Give {
+            item: str("item").ok_or_else(|| anyhow::anyhow!("give 缺少 item"))?,
+            count: u32("count").unwrap_or(0),
+            target: str("target"),
+        }),
         "set_goal" => Ok(MinecraftAction::Chat {
             content: format!("[set_goal] {}", str("goal").unwrap_or_default()),
         }),
@@ -1567,7 +1609,7 @@ fn parse_step(action: &str, step: &serde_json::Value) -> anyhow::Result<Minecraf
             "perceive 不支持在 run_plan 里调用（agent 主循环每轮自动注入 perceive，plan 里只放动作）"
         )),
         other => Err(anyhow::anyhow!(
-            "不支持的 action: {other}（支持: goto/mine/mine_below/interact/attack/chat/craft/craft_3x3/smelt/gather/place/open/auto_craft/enchant/trade/interact_entity/pickup/defend）"
+            "不支持的 action: {other}（支持: goto/mine/mine_below/mine_above/interact/interact_entity/attack/chat/craft/craft_3x3/smelt/gather/place/open/auto_craft/enchant/trade/pickup/defend/make_obsidian/equip/discard/consume/chest_view/chest_withdraw/chest_deposit/follow/stop_follow/give）"
         )),
     }
 }
@@ -2059,6 +2101,39 @@ fn build_rhai_engine(ctx: &Arc<AzaleaToolCtx>) -> rhai::Engine {
     let a = adapter.clone();
     engine.register_fn("pickup", move || -> String {
         _exec_action(&a, MinecraftAction::Pickup)
+    });
+    let a = adapter.clone();
+    engine.register_fn("make_obsidian", move |count: i64| -> String {
+        _exec_action(
+            &a,
+            MinecraftAction::MakeObsidian {
+                count: count.max(1) as u32,
+            },
+        )
+    });
+    let a = adapter.clone();
+    engine.register_fn("follow", move |target: String| -> String {
+        let target = if target.is_empty() {
+            None
+        } else {
+            Some(target)
+        };
+        _exec_action(&a, MinecraftAction::Follow { target })
+    });
+    let a = adapter.clone();
+    engine.register_fn("stop_follow", move || -> String {
+        _exec_action(&a, MinecraftAction::StopFollow)
+    });
+    let a = adapter.clone();
+    engine.register_fn("give", move |item: String, count: i64| -> String {
+        _exec_action(
+            &a,
+            MinecraftAction::Give {
+                item,
+                count: count.max(0) as u32,
+                target: None,
+            },
+        )
     });
 
     // ===== 感知/蓝图（读路径，不经过 BotCommand 队列） =====

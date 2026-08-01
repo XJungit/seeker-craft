@@ -12,14 +12,11 @@
 //! - 所有动作在 26.2 上已逐一验证（见 examples/azalea_connect.rs Phase 2 POC）。
 
 pub mod action_manager;
-pub mod actions;
 pub mod auto_craft;
 pub mod chest;
-pub mod client;
 pub mod craft;
 pub mod ext_state;
 pub mod gather;
-pub mod perception;
 pub mod place;
 pub mod recipe_book;
 pub mod recipes;
@@ -597,6 +594,9 @@ pub fn parse_chat_command(content: &str) -> Option<BotCommand> {
     if content == "minebelow" {
         return Some(BotCommand::MineBelow);
     }
+    if content == "mineabove" {
+        return Some(BotCommand::MineAbove);
+    }
     if content == "attack" {
         return Some(BotCommand::Attack {
             target: "chat".into(),
@@ -627,6 +627,15 @@ pub fn parse_chat_command(content: &str) -> Option<BotCommand> {
             });
         }
         return None;
+    }
+    if let Some(rest) = content.strip_prefix("interactblock ") {
+        let mut parts = rest.split_whitespace();
+        let (x, y, z) = (
+            parts.next()?.parse().ok()?,
+            parts.next()?.parse().ok()?,
+            parts.next()?.parse().ok()?,
+        );
+        return Some(BotCommand::BlockInteract { x, y, z });
     }
     if content == "follow" {
         return Some(BotCommand::Follow { target: None });
