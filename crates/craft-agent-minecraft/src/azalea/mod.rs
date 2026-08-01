@@ -3592,6 +3592,79 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                         *state.hunt_pickup_until.lock().unwrap() = 0;
                     }
                 }
+                // auto_armor：自动穿甲（P79，对齐 Mindcraft armorManager.equipAll()）。
+                // 实机高频问题：装备持续退化（头盔/靴子缺失、甲损坏），LLM 回合
+                // 30-60s 管不过来；且 P56 后 do_equip 幂等（目标槽同款直接成功）。
+                // 每 200 tick（~10s）：空闲时逐槽位检查，槽空或现有甲材料更差、
+                // 且背包有更高档同类甲 → 自动装备。材料优先级：netherite>diamond>
+                // iron>chainmail>gold>leather（MC 基础防御排序）。
+                if bot.ticks_connected() % 200 == 0 && state.action_mgr.is_idle() {
+                    if let Ok(inv) = bot.get_inventory() {
+                        if let Some(slots) = inv.slots() {
+                            let tier_rank = |id: &str| -> u8 {
+                                if id.contains("netherite") {
+                                    5
+                                } else if id.contains("diamond") {
+                                    4
+                                } else if id.contains("iron") {
+                                    3
+                                } else if id.contains("chainmail") {
+                                    2
+                                } else if id.contains("gold") {
+                                    1
+                                } else if id.contains("leather") {
+                                    0
+                                } else {
+                                    255
+                                }
+                            };
+                            const ARMOR_SLOTS: [(&str, usize); 4] = [
+                                ("helmet", 5),
+                                ("chestplate", 6),
+                                ("leggings", 7),
+                                ("boots", 8),
+                            ];
+                            for (slot_name, slot_idx) in ARMOR_SLOTS {
+                                let worn_id = slots.get(slot_idx).and_then(|st| {
+                                    if st.is_empty() {
+                                        None
+                                    } else {
+                                        Some(st.kind().to_str().to_string())
+                                    }
+                                });
+                                let worn_rank = worn_id.as_deref().map(tier_rank).unwrap_or(255);
+                                let best = [
+                                    ("netherite", slot_name),
+                                    ("diamond", slot_name),
+                                    ("iron", slot_name),
+                                    ("chainmail", slot_name),
+                                    ("golden", slot_name),
+                                    ("leather", slot_name),
+                                ]
+                                .iter()
+                                .find_map(|(mat, slot)| {
+                                    let item_id = format!("{mat}_{slot}");
+                                    ItemKind::from_str(&item_id)
+                                        .ok()
+                                        .filter(|k| find_item_slots(&inv, *k).first().is_some())
+                                });
+                                if let Some(k) = best {
+                                    let item_id = k
+                                        .to_str()
+                                        .strip_prefix("minecraft:")
+                                        .unwrap_or_else(|| k.to_str())
+                                        .to_string();
+                                    if tier_rank(&item_id) < worn_rank {
+                                        let msg = do_equip(&bot, &item_id, slot_name).await;
+                                        let _ = evt_tx.send(BotEvent::Chat {
+                                            content: format!("[MODE:auto_armor] {msg}"),
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 // cowardice：hp 低 + 附近有敌对 → 自动逃离（Mindcraft 移植）。
                 // self_defense 只攻击 4 格内敌人，而僵尸/骷髅 16m 外扑来时 LLM 回合
                 // 30-60s 太慢（实测 hp=1 濒死时 LLM 想撤退但 goto 连续失败，被僵尸追死）。

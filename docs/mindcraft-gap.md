@@ -80,18 +80,18 @@
 |---|---|---|---|
 | mineflayer-pvp（走位战斗） | self_defense 直打 | 🟡 | 无 strafe/进退走位 |
 | auto-eat（startAt=14+bannedFood） | auto_eat（P58/P73） | ✅ | 白名单等价 banned |
-| armor-manager 自动穿甲 | equip 工具（LLM） | 🟡 | 无 tick 层自动穿甲 |
+| armor-manager 自动穿甲 | auto_armor（P79） | ✅ | 200 tick 检查，材料优先级 |
 | 记忆（rememberPlace/记忆库） | WorldMemory 7 类 | ✅ | 锚点 goto 缺失 |
 | full_state（世界全量查询） | perceive 分块 | 🟡 | |
 | lockdown（限制物品/禁命令） | blocked_actions? | 🟡 | |
 
 ## 优先级队列（按主线收益排序）
 
-1. 🟡 自动穿甲（armor-manager 对齐）——装备持续退化是实机高频问题
-2. ❌ goToPlayer / goToSurface——树冠/找队友场景
-3. 🟡 item_collecting 独立化——hunting 拾取窗只覆盖打猎
-4. ❌ tillAndSow 种植——食物农场（蓝图已有 farm_plot）
-5. ❌ goToBed 睡觉——跳夜
-6. 🟡 pvp 走位（strafe）——creeper 规避已有，正面对砍补进退
+1. ❌ goToPlayer / goToSurface——树冠/找队友场景
+2. 🟡 item_collecting 独立化——hunting 拾取窗只覆盖打猎
+3. ❌ tillAndSow 种植——食物农场（蓝图已有 farm_plot）
+4. ❌ goToBed 睡觉——跳夜
+5. 🟡 pvp 走位（strafe）——creeper 规避已有，正面对砍补进退
+6. 🟡 自动穿甲已上线（P79）——待实机验证损坏甲/新甲替换
 
 > 更新规则：每次实现/新增能力后更新本表状态；每次迭代开始先看"优先级队列"。
