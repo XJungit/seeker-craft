@@ -1166,10 +1166,30 @@ impl AzaleaBot {
                                         .ok()
                                         .map(|p| (p.x, p.y, p.z))
                                         .unwrap_or((0.0, 0.0, 0.0));
-                                    format!(
-                                        "Action output:\nMined block at ({},{},{}). Block removed. Bot still at ({:.0},{:.0},{:.0}) — 挖完不会自动掉进洞，无需 goto 刚挖的位置。",
-                                        x, y, z, cx, cy, cz
-                                    )
+                                    // P57：目标方块已是空气（可能是之前就挖掉了）→ 明确告知，
+                                    // 避免 LLM 反复 mine 同一坐标（实测死循环：9 次连续 mine 同一格）。
+                                    let target_is_air = bot
+                                        .world()
+                                        .ok()
+                                        .map(|w| {
+                                            w.read()
+                                                .get_block_state(BlockPos::new(*x, *y, *z))
+                                                .map(|b| b.is_air())
+                                                .unwrap_or(true)
+                                        })
+                                        .unwrap_or(true);
+                                    if target_is_air {
+                                        format!(
+                                            "Action output:\nmine ({},{},{}): 该位置已是空气/方块不存在（可能之前已挖掉或坐标错误）。\
+                                             请先 perceive 看附近实际方块，再 gather 或 mine 有效目标。",
+                                            x, y, z
+                                        )
+                                    } else {
+                                        format!(
+                                            "Action output:\nMined block at ({},{},{}). Block removed. Bot still at ({:.0},{:.0},{:.0}) — 挖完不会自动掉进洞，无需 goto 刚挖的位置。",
+                                            x, y, z, cx, cy, cz
+                                        )
+                                    }
                                 }
                                 BotCommand::Mine { x, y, z } => {
                                     format!(
