@@ -151,9 +151,10 @@ fn record_surroundings(
                     let mp = MemoryPos::new(pos.x, pos.y, pos.z);
                     // TTL 内已扫过：跳过（世界变化由 action 路径/B 的 forget 即时处理）
                     if let Some(&last) = scanned_g.get(&mp)
-                        && now.saturating_sub(last) < SCAN_TTL_MS {
-                            continue;
-                        }
+                        && now.saturating_sub(last) < SCAN_TTL_MS
+                    {
+                        continue;
+                    }
                     scanned_g.insert(mp, now);
                     let still_memory = world
                         .read()
@@ -919,9 +920,10 @@ impl AzaleaBot {
                                         .map(|g| g.0.name.clone())
                                         .unwrap_or_default();
                                     if let Some(t) = &target
-                                        && &uname != t {
-                                            continue;
-                                        }
+                                        && &uname != t
+                                    {
+                                        continue;
+                                    }
                                     if let Ok(pos) = p.position() {
                                         chosen = Some((pos.x, pos.y, pos.z, uname));
                                         if target.is_some() {
@@ -980,52 +982,53 @@ impl AzaleaBot {
                     }
                     // 轮询非阻塞命令（Goto/Mine）完成状态 + 按命令类型超时
                     if let Some(qc) = state.action_mgr.peek_pending() {
-                        let done =
-                            match &qc.cmd {
-                                BotCommand::Mine { x, y, z } => {
-                                    if let Ok(world) = bot.world() {
-                                        let s =
-                                            world.read().get_block_state(BlockPos::new(*x, *y, *z));
-                                        let is_air =
-                                            s.is_none() || s.map(|b| b.is_air()).unwrap_or(false);
-                                        // P4 修复：start_mining 只在命令派发时调一次，但挖掘可能被
-                                        // 重力/移动/伤害中断后不再恢复。这里每 20 tick 重新发起挖掘，
-                                        // 确保方块还在就持续挖（对齐 MineBelow 的持续触发逻辑）。
-                                        if !is_air && !bot.is_mining() && tick_now.is_multiple_of(20) {
-                                            bot.start_mining(BlockPos::new(*x, *y, *z));
-                                        }
-                                        is_air
-                                    } else {
-                                        false
+                        let done = match &qc.cmd {
+                            BotCommand::Mine { x, y, z } => {
+                                if let Ok(world) = bot.world() {
+                                    let s = world.read().get_block_state(BlockPos::new(*x, *y, *z));
+                                    let is_air =
+                                        s.is_none() || s.map(|b| b.is_air()).unwrap_or(false);
+                                    // P4 修复：start_mining 只在命令派发时调一次，但挖掘可能被
+                                    // 重力/移动/伤害中断后不再恢复。这里每 20 tick 重新发起挖掘，
+                                    // 确保方块还在就持续挖（对齐 MineBelow 的持续触发逻辑）。
+                                    if !is_air && !bot.is_mining() && tick_now.is_multiple_of(20) {
+                                        bot.start_mining(BlockPos::new(*x, *y, *z));
                                     }
+                                    is_air
+                                } else {
+                                    false
                                 }
-                                BotCommand::Goto { x, y, z } => {
-                                    if let Ok(p) = bot.position() {
-                                        let d = ((p.x - *x as f64).powi(2)
-                                            + (p.y - *y as f64).powi(2)
-                                            + (p.z - *z as f64).powi(2))
-                                        .sqrt();
-                                        // P67：到达判定放宽 1.5→2.5m。probe 实测：bot 常停在目标 1.5-2.5m
-                                        // 处（pathfinder 已认为到达）而 done 永不触发 → 空等 60s 超时，
-                                        // LLM 误判"路径被阻"反复重试。2.5m 内即算到达。
-                                        d < 2.5
-                                    } else {
-                                        false
-                                    }
+                            }
+                            BotCommand::Goto { x, y, z } => {
+                                if let Ok(p) = bot.position() {
+                                    let d = ((p.x - *x as f64).powi(2)
+                                        + (p.y - *y as f64).powi(2)
+                                        + (p.z - *z as f64).powi(2))
+                                    .sqrt();
+                                    // P67：到达判定放宽 1.5→2.5m。probe 实测：bot 常停在目标 1.5-2.5m
+                                    // 处（pathfinder 已认为到达）而 done 永不触发 → 空等 60s 超时，
+                                    // LLM 误判"路径被阻"反复重试。2.5m 内即算到达。
+                                    d < 2.5
+                                } else {
+                                    false
                                 }
-                                BotCommand::MineBelow => false,
-                                BotCommand::MakeObsidian { .. } => false,
-                                BotCommand::MineAbove => {
-                                    let start_y = *state.mining_above_start_y.lock().unwrap();
-                                    bot.position().ok().zip(start_y).is_some_and(
-                                        |(position, start)| position.y.floor() as i32 > start,
-                                    )
-                                }
-                                // 非轮询命令（Equip/Craft/Gather/Place/...）由下方执行块处理，
-                                // 这里不能标记 done=true——否则会在执行前就清空 pending，
-                                // 导致 do_equip/do_craft 等从未运行（bug 表现：equip 返回"命令完成"但主手没变）。
-                                _ => false,
-                            };
+                            }
+                            BotCommand::MineBelow => false,
+                            BotCommand::MakeObsidian { .. } => false,
+                            BotCommand::MineAbove => {
+                                let start_y = *state.mining_above_start_y.lock().unwrap();
+                                bot.position()
+                                    .ok()
+                                    .zip(start_y)
+                                    .is_some_and(|(position, start)| {
+                                        position.y.floor() as i32 > start
+                                    })
+                            }
+                            // 非轮询命令（Equip/Craft/Gather/Place/...）由下方执行块处理，
+                            // 这里不能标记 done=true——否则会在执行前就清空 pending，
+                            // 导致 do_equip/do_craft 等从未运行（bug 表现：equip 返回"命令完成"但主手没变）。
+                            _ => false,
+                        };
                         // 按命令类型超时（取代原硬编码 60 tick）
                         let timed_out_cmd = state.action_mgr.check_timeout(tick_now);
                         let timed_out = timed_out_cmd.is_some();
@@ -1033,40 +1036,41 @@ impl AzaleaBot {
                         // bot 原地判"到达"(distance<1.5) 却从未真正移动 → 反复重发相同 goto 死循环。
                         // 检测：同一目标"done"了 2 次但 bot 实际位置(从 last_position)未变 → 强制 mine_above 脱困。
                         let mut unstick_now = false;
-                        if done && matches!(&qc.cmd, BotCommand::Goto { .. })
-                            && let BotCommand::Goto { x, y, z } = &qc.cmd {
-                                let mut wd = state.goto_watchdog.lock().unwrap();
-                                let moved =
-                                    state.last_position.lock().unwrap().is_none_or(|lp| {
-                                        (lp.x - *x as f64).abs() > 1.0
-                                            || (lp.y - *y as f64).abs() > 1.0
-                                            || (lp.z - *z as f64).abs() > 1.0
-                                    });
-                                if !moved && *x == wd.0 && *y == wd.1 && *z == wd.2 {
-                                    wd.3 += 1;
-                                } else {
-                                    *wd = (*x, *y, *z, 0);
-                                }
-                                if wd.3 >= 2 {
-                                    *wd = (0, 0, 0, 0);
-                                    // 地下 → 自动转 mine_above；地表 → 也强制上挖一层绕开实心目标
-                                    if bot.position().map_or(true, |p| (p.y.floor() as i32) < 62) {
-                                        *state.mining_above.lock().unwrap() = true;
-                                        *state.mining_above_start_y.lock().unwrap() =
-                                            Some(bot.position().map_or(0, |p| p.y.floor() as i32));
-                                        *state.mining_above_direction.lock().unwrap() = 0;
-                                        *state.mine_above_tried_tp.lock().unwrap() = false;
-                                        bot.force_stop_pathfinding();
-                                        if let Some(tx) = &qc.result_tx {
-                                            let _ = tx.send(
+                        if done
+                            && matches!(&qc.cmd, BotCommand::Goto { .. })
+                            && let BotCommand::Goto { x, y, z } = &qc.cmd
+                        {
+                            let mut wd = state.goto_watchdog.lock().unwrap();
+                            let moved = state.last_position.lock().unwrap().is_none_or(|lp| {
+                                (lp.x - *x as f64).abs() > 1.0
+                                    || (lp.y - *y as f64).abs() > 1.0
+                                    || (lp.z - *z as f64).abs() > 1.0
+                            });
+                            if !moved && *x == wd.0 && *y == wd.1 && *z == wd.2 {
+                                wd.3 += 1;
+                            } else {
+                                *wd = (*x, *y, *z, 0);
+                            }
+                            if wd.3 >= 2 {
+                                *wd = (0, 0, 0, 0);
+                                // 地下 → 自动转 mine_above；地表 → 也强制上挖一层绕开实心目标
+                                if bot.position().map_or(true, |p| (p.y.floor() as i32) < 62) {
+                                    *state.mining_above.lock().unwrap() = true;
+                                    *state.mining_above_start_y.lock().unwrap() =
+                                        Some(bot.position().map_or(0, |p| p.y.floor() as i32));
+                                    *state.mining_above_direction.lock().unwrap() = 0;
+                                    *state.mine_above_tried_tp.lock().unwrap() = false;
+                                    bot.force_stop_pathfinding();
+                                    if let Some(tx) = &qc.result_tx {
+                                        let _ = tx.send(
                                                 "Action output:\ngoto 反复'到达'但 bot 未移动（目标可能是脚下实心方块）。已自动转 mine_above 向上挖出脱困。".to_string(),
                                             );
-                                        }
-                                        state.action_mgr.clear_pending();
-                                        unstick_now = true;
                                     }
+                                    state.action_mgr.clear_pending();
+                                    unstick_now = true;
                                 }
                             }
+                        }
                         if unstick_now {
                             // 已自行处理：强制脱困并清空 pending，跳过下方 result_msg 生成。
                         } else if done || timed_out {
@@ -1118,10 +1122,11 @@ impl AzaleaBot {
                                         // 重置并冷却当前格子 15s（300 tick）：期间任何 goto 直接拒绝。
                                         *state.goto_watchdog.lock().unwrap() = (0, 0, 0, 0);
                                         if let Some((cx, cy, cz)) = cur {
-                                            state.goto_cooldown.lock().unwrap().insert(
-                                                (cx, cy, cz),
-                                                bot.ticks_connected() + 300,
-                                            );
+                                            state
+                                                .goto_cooldown
+                                                .lock()
+                                                .unwrap()
+                                                .insert((cx, cy, cz), bot.ticks_connected() + 300);
                                         }
                                         // 脱困：地下→mine_above；地表→挖开目标阻挡方块（若 solid）或向上挖一层
                                         if let Ok(p) = bot.position() {
@@ -1141,11 +1146,10 @@ impl AzaleaBot {
                                                 ] {
                                                     if let Some(bs) = world
                                                         .get_block_state(BlockPos::new(bx, by, bz))
-                                                        && !bs.is_air() {
-                                                            bot.start_mining(BlockPos::new(
-                                                                bx, by, bz,
-                                                            ));
-                                                        }
+                                                        && !bs.is_air()
+                                                    {
+                                                        bot.start_mining(BlockPos::new(bx, by, bz));
+                                                    }
                                                 }
                                             }
                                         }
@@ -1447,17 +1451,18 @@ impl AzaleaBot {
                                     );
                                     let cd = state.goto_cooldown.lock().unwrap();
                                     if let Some(&until) = cd.get(&cell)
-                                        && until > bot.ticks_connected() {
-                                            if let Some(tx) = &result_tx {
-                                                let _ = tx.send(format!(
+                                        && until > bot.ticks_connected()
+                                    {
+                                        if let Some(tx) = &result_tx {
+                                            let _ = tx.send(format!(
                                                     "Action output:\ngoto ({},{},{}) 被拒绝——你当前位置仍在导航冷却中（之前连续 goto 超时且没移动）。\
                                                      请改用 mine 挖开挡路方块，或 mine_above 上到地表开阔处，不要继续 goto 旁边区域。",
                                                     x, y, z
                                                 ));
-                                            }
-                                            state.action_mgr.clear_pending();
-                                            return bot;
                                         }
+                                        state.action_mgr.clear_pending();
+                                        return bot;
+                                    }
                                 }
                             }
                             // 距离限制：>32 格的 goto 拒绝执行，让 LLM 拆成多段。
@@ -1588,103 +1593,109 @@ goto ({},{},{}) ——bot 在地下，先自动挖回地表。mine_above 已启�
                                 let dy = (y as f64 - p.y).abs();
                                 let dxz =
                                     ((p.x - x as f64).powi(2) + (p.z - z as f64).powi(2)).sqrt();
-                                if dxz < 5.0 && dy < 2.0
-                                    && let Ok(world) = bot.world() {
-                                        let world = world.read();
-                                        let head_pos = BlockPos::new(
-                                            p.x.floor() as i32,
-                                            p.y.floor() as i32 + 1,
-                                            p.z.floor() as i32,
-                                        );
-                                        if let Some(head_block) = world.get_block_state(head_pos) {
-                                            let bk: azalea_registry::builtin::BlockKind =
-                                                head_block.into();
-                                            if bk != azalea_registry::builtin::BlockKind::Air
-                                                || (p.y as i32) < 62
-                                            {
-                                                let reason = if (p.y as i32) < 62 {
-                                                    format!(
-                                                        "bot 当前 Y={} 在地下（Y<62）。",
-                                                        p.y as i32
-                                                    )
-                                                } else {
-                                                    "bot 头上有方块（可能在地下）。".to_string()
-                                                };
-                                                if let Some(tx) = &result_tx {
-                                                    let _ = tx.send(format!(
-                                                        "Action output:
+                                if dxz < 5.0
+                                    && dy < 2.0
+                                    && let Ok(world) = bot.world()
+                                {
+                                    let world = world.read();
+                                    let head_pos = BlockPos::new(
+                                        p.x.floor() as i32,
+                                        p.y.floor() as i32 + 1,
+                                        p.z.floor() as i32,
+                                    );
+                                    if let Some(head_block) = world.get_block_state(head_pos) {
+                                        let bk: azalea_registry::builtin::BlockKind =
+                                            head_block.into();
+                                        if bk != azalea_registry::builtin::BlockKind::Air
+                                            || (p.y as i32) < 62
+                                        {
+                                            let reason = if (p.y as i32) < 62 {
+                                                format!(
+                                                    "bot 当前 Y={} 在地下（Y<62）。",
+                                                    p.y as i32
+                                                )
+                                            } else {
+                                                "bot 头上有方块（可能在地下）。".to_string()
+                                            };
+                                            if let Some(tx) = &result_tx {
+                                                let _ = tx.send(format!(
+                                                    "Action output:
 goto ({},{},{}) 失败——{}
 必须先用 mine_above() 挖回地表（Y>=62），才能用 goto 导航。",
-                                                        x, y, z, reason
-                                                    ));
-                                                }
-                                                state.action_mgr.clear_pending();
-                                                return bot;
+                                                    x, y, z, reason
+                                                ));
                                             }
+                                            state.action_mgr.clear_pending();
+                                            return bot;
                                         }
                                     }
+                                }
                             }
                             // P59: 快速可达性检测——检查目标是否在同一 Y 层被实心方块包围
                             if let Ok(p) = bot.position() {
                                 let dy = (y as f64 - p.y).abs();
                                 let dxz =
                                     ((p.x - x as f64).powi(2) + (p.z - z as f64).powi(2)).sqrt();
-                                if dxz < 5.0 && dy < 2.0
-                                    && let Ok(world) = bot.world() {
-                                        let world = world.read();
-                                        let head_pos = BlockPos::new(
-                                            p.x.floor() as i32,
-                                            p.y.floor() as i32 + 1,
-                                            p.z.floor() as i32,
-                                        );
-                                        if let Some(head_block) = world.get_block_state(head_pos) {
-                                            let bk: azalea_registry::builtin::BlockKind =
-                                                head_block.into();
-                                            if bk != azalea_registry::builtin::BlockKind::Air {
-                                                if let Some(tx) = &result_tx {
-                                                    let _ = tx.send(format!(
-                                                        "Action output:
+                                if dxz < 5.0
+                                    && dy < 2.0
+                                    && let Ok(world) = bot.world()
+                                {
+                                    let world = world.read();
+                                    let head_pos = BlockPos::new(
+                                        p.x.floor() as i32,
+                                        p.y.floor() as i32 + 1,
+                                        p.z.floor() as i32,
+                                    );
+                                    if let Some(head_block) = world.get_block_state(head_pos) {
+                                        let bk: azalea_registry::builtin::BlockKind =
+                                            head_block.into();
+                                        if bk != azalea_registry::builtin::BlockKind::Air {
+                                            if let Some(tx) = &result_tx {
+                                                let _ = tx.send(format!(
+                                                    "Action output:
 goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
 先用 perceive 确认位置，若 Y<62 说明在地下，需用 mine_above 挖回地表。",
-                                                        x, y, z
-                                                    ));
-                                                }
-                                                state.action_mgr.clear_pending();
-                                                return bot;
+                                                    x, y, z
+                                                ));
                                             }
+                                            state.action_mgr.clear_pending();
+                                            return bot;
                                         }
                                     }
+                                }
                             }
                             // P59: 快速可达性检测——检查目标是否在同一 Y 层被实心方块包围
                             if let Ok(p) = bot.position() {
                                 let dy = (y as f64 - p.y).abs();
                                 let dxz =
                                     ((p.x - x as f64).powi(2) + (p.z - z as f64).powi(2)).sqrt();
-                                if dxz < 5.0 && dy < 2.0
-                                    && let Ok(world) = bot.world() {
-                                        let world = world.read();
-                                        let head_pos = BlockPos::new(
-                                            p.x.floor() as i32,
-                                            p.y.floor() as i32 + 1,
-                                            p.z.floor() as i32,
-                                        );
-                                        if let Some(head_block) = world.get_block_state(head_pos) {
-                                            let bk: azalea_registry::builtin::BlockKind =
-                                                head_block.into();
-                                            if bk != azalea_registry::builtin::BlockKind::Air {
-                                                if let Some(tx) = &result_tx {
-                                                    let _ = tx.send(format!(
-                                                        "Action output:
+                                if dxz < 5.0
+                                    && dy < 2.0
+                                    && let Ok(world) = bot.world()
+                                {
+                                    let world = world.read();
+                                    let head_pos = BlockPos::new(
+                                        p.x.floor() as i32,
+                                        p.y.floor() as i32 + 1,
+                                        p.z.floor() as i32,
+                                    );
+                                    if let Some(head_block) = world.get_block_state(head_pos) {
+                                        let bk: azalea_registry::builtin::BlockKind =
+                                            head_block.into();
+                                        if bk != azalea_registry::builtin::BlockKind::Air {
+                                            if let Some(tx) = &result_tx {
+                                                let _ = tx.send(format!(
+                                                    "Action output:
 goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
 先用 perceive 确认位置，若 Y<62 说明在地下，需用 mine_above 挖回地表。",
-                                                        x, y, z
-                                                    ));
-                                                }
-                                                state.action_mgr.clear_pending();
-                                                return bot;
+                                                    x, y, z
+                                                ));
                                             }
+                                            state.action_mgr.clear_pending();
+                                            return bot;
                                         }
                                     }
+                                }
                             }
                             bot.start_goto(BlockPosGoal(BlockPos::new(x, y, z)));
                         }
@@ -1748,40 +1759,40 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             let head_is_air = head_state.is_some_and(|block| block.is_air());
                             // Surface pre-check: if already on surface (Y>=62 + air column),
                             // return immediately instead of starting 10s timeout.
-                            if head_is_air
-                                && let Ok(p) = bot.position() {
-                                    let y = p.y.floor() as i32;
-                                    if y >= 62
-                                        && let Ok(world) = bot.world() {
-                                            let cx = p.x.floor() as i32;
-                                            let cz = p.z.floor() as i32;
-                                            let world = world.read();
-                                            let mut five_air = true;
-                                            for dy in 1..=5 {
-                                                let check = BlockPos::new(cx, y + dy, cz);
-                                                let is_air = world
-                                                    .get_block_state(check)
-                                                    .map(|s| s.is_air())
-                                                    .unwrap_or(false);
-                                                if !is_air {
-                                                    five_air = false;
-                                                    break;
-                                                }
-                                            }
-                                            drop(world);
-                                            if mine_above_reached_surface(y, true, five_air) {
-                                                if let Some(tx) = &result_tx {
-                                                    let _ = tx.send(format!(
+                            if head_is_air && let Ok(p) = bot.position() {
+                                let y = p.y.floor() as i32;
+                                if y >= 62
+                                    && let Ok(world) = bot.world()
+                                {
+                                    let cx = p.x.floor() as i32;
+                                    let cz = p.z.floor() as i32;
+                                    let world = world.read();
+                                    let mut five_air = true;
+                                    for dy in 1..=5 {
+                                        let check = BlockPos::new(cx, y + dy, cz);
+                                        let is_air = world
+                                            .get_block_state(check)
+                                            .map(|s| s.is_air())
+                                            .unwrap_or(false);
+                                        if !is_air {
+                                            five_air = false;
+                                            break;
+                                        }
+                                    }
+                                    drop(world);
+                                    if mine_above_reached_surface(y, true, five_air) {
+                                        if let Some(tx) = &result_tx {
+                                            let _ = tx.send(format!(
                                                         "Action output:\nMineAbove done at Y={y} (已到地表，头顶是空气)。当前坐标 ({:.0},{y},{:.0})，可继续探索。",
                                                         p.x, p.z
                                                     ));
-                                                }
-                                                *state.mining_above.lock().unwrap() = false;
-                                                state.action_mgr.clear_pending();
-                                                return bot;
-                                            }
                                         }
+                                        *state.mining_above.lock().unwrap() = false;
+                                        state.action_mgr.clear_pending();
+                                        return bot;
+                                    }
                                 }
+                            }
                             let head_is_hard = head_state.map(is_hard_block).unwrap_or(true); // 不确定时按硬方块处理
                             if head_is_hard {
                                 let has_pick = has_any_pickaxe_in_inventory(&bot).await;
@@ -2501,37 +2512,40 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                     | BotCommand::Mine { .. }
                                     | BotCommand::MineBelow
                                     | BotCommand::MineAbove
-                            ) {
-                                state.action_mgr.clear_pending();
-                            }
+                            )
+                        {
+                            state.action_mgr.clear_pending();
+                        }
                     }
                 }
                 // 持续下挖：只要标志为真且当前未在挖，就续挖（对齐 POC 逻辑，
                 // 避免单次 start_mining 因中断失效导致 bot 停在原地不下降）。
                 // **Y 下限保护**：Y<=-61 是深板岩+基岩层（1.18+ 基岩层 Y=-64~-59），
                 // 继续下挖毫无意义且徒手挖深板岩极慢。到达后自动停止 mining_below 并提示。
-                if *state.mining_below.lock().unwrap() && !bot.is_mining()
-                    && let Ok(p) = bot.position() {
-                        let y = p.y.floor() as i32;
-                        if y <= -61 {
-                            // 到达深岩层，停止下挖
-                            *state.mining_below.lock().unwrap() = false;
-                            let _ = state.evt_tx.send(BotEvent::Chat {
+                if *state.mining_below.lock().unwrap()
+                    && !bot.is_mining()
+                    && let Ok(p) = bot.position()
+                {
+                    let y = p.y.floor() as i32;
+                    if y <= -61 {
+                        // 到达深岩层，停止下挖
+                        *state.mining_below.lock().unwrap() = false;
+                        let _ = state.evt_tx.send(BotEvent::Chat {
                             content: format!(
                                 "Action output:\nMineBelow stopped at Y={y} (深板岩/基岩层，继续下挖无意义)。\
                                  当前坐标 ({:.0},{y},{:.0})。建议改用 mine(x,y,z) 精确挖附近矿石，或 goto 上返回地面。",
                                 p.x, p.z
                             ),
                         });
-                        } else {
-                            let foot = BlockPos::new(
-                                p.x.floor() as i32,
-                                (p.y - 1.0).floor() as i32,
-                                p.z.floor() as i32,
-                            );
-                            bot.start_mining(foot);
-                        }
+                    } else {
+                        let foot = BlockPos::new(
+                            p.x.floor() as i32,
+                            (p.y - 1.0).floor() as i32,
+                            p.z.floor() as i32,
+                        );
+                        bot.start_mining(foot);
                     }
+                }
                 // 持续上挖：mining_above 标志为真时，让 pathfinder 自动挖通头顶并 ascend。
                 // **关键修复**：1x1 竖井里 bot 跳跃无法上升（物理限制），必须用 pathfinder
                 //              的 ascend_move 让 bot 走到旁边一格的上方。pathfinder allow_mining=true
@@ -2541,137 +2555,139 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                 // **Y 上限保护**：Y>=62（地表海平面）认为脱困，停止。
                 // **大 timeout**：挖通深板岩需要计算长路径，默认 5s 不够，改为 30s。
                 if *state.mining_above.lock().unwrap()
-                    && let Ok(p) = bot.position() {
-                        let t = bot.ticks_connected();
-                        let y = p.y.floor() as i32;
-                        let cx = p.x.floor() as i32;
-                        let cz = p.z.floor() as i32;
-                        // Throttle surface detection to every 5 ticks to reduce per-tick
-                        // world reads (6 block reads per check) and avoid GameTick lag.
-                        if t.is_multiple_of(5) {
-                            // Air alone only proves that the bot entered a cave. Require a
-                            // plausible overworld surface elevation before ending ascent.
-                            let head_pos = BlockPos::new(cx, y + 1, cz);
-                            let head_is_air = bot
+                    && let Ok(p) = bot.position()
+                {
+                    let t = bot.ticks_connected();
+                    let y = p.y.floor() as i32;
+                    let cx = p.x.floor() as i32;
+                    let cz = p.z.floor() as i32;
+                    // Throttle surface detection to every 5 ticks to reduce per-tick
+                    // world reads (6 block reads per check) and avoid GameTick lag.
+                    if t.is_multiple_of(5) {
+                        // Air alone only proves that the bot entered a cave. Require a
+                        // plausible overworld surface elevation before ending ascent.
+                        let head_pos = BlockPos::new(cx, y + 1, cz);
+                        let head_is_air = bot
+                            .world()
+                            .ok()
+                            .and_then(|w| w.read().get_block_state(head_pos))
+                            .map(|s| s.is_air())
+                            .unwrap_or(false);
+                        // Check an open column so a two-block tunnel at sea level does
+                        // not get reported as the surface.
+                        let mut five_air = true;
+                        for dy in 1..=5 {
+                            let check = BlockPos::new(cx, y + dy, cz);
+                            let is_air = bot
                                 .world()
                                 .ok()
-                                .and_then(|w| w.read().get_block_state(head_pos))
+                                .and_then(|w| w.read().get_block_state(check))
                                 .map(|s| s.is_air())
                                 .unwrap_or(false);
-                            // Check an open column so a two-block tunnel at sea level does
-                            // not get reported as the surface.
-                            let mut five_air = true;
-                            for dy in 1..=5 {
-                                let check = BlockPos::new(cx, y + dy, cz);
-                                let is_air = bot
-                                    .world()
-                                    .ok()
-                                    .and_then(|w| w.read().get_block_state(check))
-                                    .map(|s| s.is_air())
-                                    .unwrap_or(false);
-                                if !is_air {
-                                    five_air = false;
-                                    break;
-                                }
+                            if !is_air {
+                                five_air = false;
+                                break;
                             }
-                            if mine_above_reached_surface(y, head_is_air, five_air) {
-                                *state.mining_above.lock().unwrap() = false;
-                                let _ = state.evt_tx.send(BotEvent::Chat {
+                        }
+                        if mine_above_reached_surface(y, head_is_air, five_air) {
+                            *state.mining_above.lock().unwrap() = false;
+                            let _ = state.evt_tx.send(BotEvent::Chat {
                                 content: format!(
                                     "Action output:\nMineAbove done at Y={y} (已到地表，头顶是空气)。\
                                      当前坐标 ({:.0},{y},{:.0})，可继续探索。",
                                     p.x, p.z
                                 ),
                             });
-                            } else if y >= 320 {
-                                *state.mining_above.lock().unwrap() = false;
-                                let _ = state.evt_tx.send(BotEvent::Chat {
-                                    content: format!(
-                                        "Action output:\nMineAbove stopped at Y={y} (建筑高度上限)。\
+                        } else if y >= 320 {
+                            *state.mining_above.lock().unwrap() = false;
+                            let _ = state.evt_tx.send(BotEvent::Chat {
+                                content: format!(
+                                    "Action output:\nMineAbove stopped at Y={y} (建筑高度上限)。\
                                      当前坐标 ({:.0},{y},{:.0})。",
-                                        p.x, p.z
-                                    ),
-                                });
-                            } else {
-                                // Auto-tp rescue: when stuck in a cave air pocket below
-                                // surface, try /tp once to unblock the workflow. If cheats
-                                // are not enabled the staircase attempt below still runs.
-                                if head_is_air
-                                    && y < 62
-                                    && !*state.mine_above_tried_tp.lock().unwrap()
-                                {
-                                    *state.mine_above_tried_tp.lock().unwrap() = true;
-                                    bot.chat(format!("/tp @s ~ {} ~", 70));
-                                }
+                                    p.x, p.z
+                                ),
+                            });
+                        } else {
+                            // Auto-tp rescue: when stuck in a cave air pocket below
+                            // surface, try /tp once to unblock the workflow. If cheats
+                            // are not enabled the staircase attempt below still runs.
+                            if head_is_air && y < 62 && !*state.mine_above_tried_tp.lock().unwrap()
+                            {
+                                *state.mine_above_tried_tp.lock().unwrap() = true;
+                                bot.chat(format!("/tp @s ~ {} ~", 70));
                             }
-                        }
-                        // auto_equip is expensive (inventory scan), throttle to every 20 ticks.
-                        if t.is_multiple_of(20) {
-                            let _ = auto_equip_best_pickaxe(&bot).await;
-                        }
-                        // P60b: 强制楼梯脱困。当 bot 在 2 格高空气袋里（头顶是空气），
-                        // pathfinder 用 YGoal 算出的路径"reached"却不会真正上升（因为
-                        // 上方 y+2 是实心方块，bot 无法踏入）。这里每 4 tick 主动挖掉
-                        // 头顶上方那格 (y+2)，打开竖井，让 bot 能站到 y+1；
-                        // 同时发起一个 goto 到自身上方一格，触发真正的上升。
-                        let p60b_head_air = bot
-                            .world()
-                            .ok()
-                            .and_then(|w| w.read().get_block_state(BlockPos::new(cx, y + 1, cz)))
-                            .map(|s| s.is_air())
-                            .unwrap_or(false);
-                        if p60b_head_air {
-                            let above_head = BlockPos::new(cx, y + 2, cz);
-                            let above_is_solid = bot
-                                .world()
-                                .ok()
-                                .and_then(|w| w.read().get_block_state(above_head))
-                                .map(|s| !s.is_air())
-                                .unwrap_or(false);
-                            if above_is_solid && !bot.is_mining() {
-                                bot.start_mining(above_head);
-                            } else if !above_is_solid && t.is_multiple_of(4) {
-                                // 头顶上方已空：强制走到上方一格，真正上升。
-                                if !bot.is_calculating_path() && !bot.is_executing_path() {
-                                    use azalea::pathfinder::PathfinderOpts;
-                                    use std::time::Duration;
-                                    let opts = PathfinderOpts::new()
-                                        .allow_mining(true)
-                                        .min_timeout(Duration::from_secs(1))
-                                        .max_timeout(Duration::from_secs(10));
-                                    bot.start_goto_with_opts(
-                                        BlockPosGoal(BlockPos::new(cx, y + 1, cz)),
-                                        opts,
-                                    );
-                                }
-                            }
-                        }
-                        // An active goal with no calculation or execution can be
-                        // permanent no-path retry. Reset it periodically instead of
-                        // letting it suppress every future ascent attempt.
-                        if !bot.is_calculating_path() && !bot.is_executing_path() && t.is_multiple_of(40) {
-                            use azalea::pathfinder::PathfinderOpts;
-                            use std::time::Duration;
-                            bot.force_stop_pathfinding();
-                            let mut direction = state.mining_above_direction.lock().unwrap();
-                            let directions = [(1, 0), (0, 1), (-1, 0), (0, -1)];
-                            let (dx, dz) = directions[*direction % directions.len()];
-                            *direction = (*direction + 1) % 4;
-                            drop(direction);
-                            // P60 关键修复：1x1 竖井里用 YGoal(y+5) 而不是 BlockPosGoal。
-                            // BlockPosGoal 指向特定侧方方块，pathfinder 在 1x1 竖井里
-                            // 算不出通往该固定坐标的路径（每根柱子都只有 1 格宽），
-                            // 导致"reached end of path"却原地不动、永久卡死。
-                            // YGoal 只要求到达 y+5 任意水平位置，pathfinder 可自由选择
-                            // 最容易挖通的柱子上升，从而真正脱困。
-                            let target = BlockPos::new(cx + dx, y + 5, cz + dz);
-                            let opts = PathfinderOpts::new()
-                                .allow_mining(true)
-                                .min_timeout(Duration::from_secs(2))
-                                .max_timeout(Duration::from_secs(30));
-                            bot.start_goto_with_opts(YGoal::from(target), opts);
                         }
                     }
+                    // auto_equip is expensive (inventory scan), throttle to every 20 ticks.
+                    if t.is_multiple_of(20) {
+                        let _ = auto_equip_best_pickaxe(&bot).await;
+                    }
+                    // P60b: 强制楼梯脱困。当 bot 在 2 格高空气袋里（头顶是空气），
+                    // pathfinder 用 YGoal 算出的路径"reached"却不会真正上升（因为
+                    // 上方 y+2 是实心方块，bot 无法踏入）。这里每 4 tick 主动挖掉
+                    // 头顶上方那格 (y+2)，打开竖井，让 bot 能站到 y+1；
+                    // 同时发起一个 goto 到自身上方一格，触发真正的上升。
+                    let p60b_head_air = bot
+                        .world()
+                        .ok()
+                        .and_then(|w| w.read().get_block_state(BlockPos::new(cx, y + 1, cz)))
+                        .map(|s| s.is_air())
+                        .unwrap_or(false);
+                    if p60b_head_air {
+                        let above_head = BlockPos::new(cx, y + 2, cz);
+                        let above_is_solid = bot
+                            .world()
+                            .ok()
+                            .and_then(|w| w.read().get_block_state(above_head))
+                            .map(|s| !s.is_air())
+                            .unwrap_or(false);
+                        if above_is_solid && !bot.is_mining() {
+                            bot.start_mining(above_head);
+                        } else if !above_is_solid && t.is_multiple_of(4) {
+                            // 头顶上方已空：强制走到上方一格，真正上升。
+                            if !bot.is_calculating_path() && !bot.is_executing_path() {
+                                use azalea::pathfinder::PathfinderOpts;
+                                use std::time::Duration;
+                                let opts = PathfinderOpts::new()
+                                    .allow_mining(true)
+                                    .min_timeout(Duration::from_secs(1))
+                                    .max_timeout(Duration::from_secs(10));
+                                bot.start_goto_with_opts(
+                                    BlockPosGoal(BlockPos::new(cx, y + 1, cz)),
+                                    opts,
+                                );
+                            }
+                        }
+                    }
+                    // An active goal with no calculation or execution can be
+                    // permanent no-path retry. Reset it periodically instead of
+                    // letting it suppress every future ascent attempt.
+                    if !bot.is_calculating_path()
+                        && !bot.is_executing_path()
+                        && t.is_multiple_of(40)
+                    {
+                        use azalea::pathfinder::PathfinderOpts;
+                        use std::time::Duration;
+                        bot.force_stop_pathfinding();
+                        let mut direction = state.mining_above_direction.lock().unwrap();
+                        let directions = [(1, 0), (0, 1), (-1, 0), (0, -1)];
+                        let (dx, dz) = directions[*direction % directions.len()];
+                        *direction = (*direction + 1) % 4;
+                        drop(direction);
+                        // P60 关键修复：1x1 竖井里用 YGoal(y+5) 而不是 BlockPosGoal。
+                        // BlockPosGoal 指向特定侧方方块，pathfinder 在 1x1 竖井里
+                        // 算不出通往该固定坐标的路径（每根柱子都只有 1 格宽），
+                        // 导致"reached end of path"却原地不动、永久卡死。
+                        // YGoal 只要求到达 y+5 任意水平位置，pathfinder 可自由选择
+                        // 最容易挖通的柱子上升，从而真正脱困。
+                        let target = BlockPos::new(cx + dx, y + 5, cz + dz);
+                        let opts = PathfinderOpts::new()
+                            .allow_mining(true)
+                            .min_timeout(Duration::from_secs(2))
+                            .max_timeout(Duration::from_secs(30));
+                        bot.start_goto_with_opts(YGoal::from(target), opts);
+                    }
+                }
                 // P67：make_obsidian 状态机。每 tick 推进：
                 //  phase 0：找附近（半径12）岩浆源；装备 water_bucket+diamond_pickaxe；
                 //          在岩浆旁的空气块右键放水（block_interact 手持 water_bucket）→ 生成黑曜石。
@@ -2693,39 +2709,40 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                         && k != azalea_registry::builtin::ItemKind::WaterBucket
                                 })
                                 .unwrap_or(true)
-                                && let Ok(inv) = bot.get_inventory() {
-                                    if let Some(h) = find_hotbar_slot_for(
-                                        &inv,
-                                        azalea_registry::builtin::ItemKind::Bucket,
-                                    ) {
-                                        bot.set_selected_hotbar_slot(h);
-                                    } else if let Some(srcs) = Some(find_item_slots(
-                                        &inv,
-                                        azalea_registry::builtin::ItemKind::Bucket,
-                                    )) && !srcs.is_empty()
-                                    {
-                                        let menu = inv.menu().ok().flatten();
-                                        if let Some(menu) = menu {
-                                            let hotbar_range = menu.hotbar_slots_range();
-                                            if let Some(slots) = inv.slots() {
-                                                let mut placed = false;
-                                                for hb in hotbar_range {
-                                                    if slots
-                                                        .get(hb)
-                                                        .map(|s| s.is_empty())
-                                                        .unwrap_or(false)
-                                                    {
-                                                        inv.left_click(*srcs.first().unwrap());
-                                                        inv.left_click(hb);
-                                                        placed = true;
-                                                        break;
-                                                    }
+                                && let Ok(inv) = bot.get_inventory()
+                            {
+                                if let Some(h) = find_hotbar_slot_for(
+                                    &inv,
+                                    azalea_registry::builtin::ItemKind::Bucket,
+                                ) {
+                                    bot.set_selected_hotbar_slot(h);
+                                } else if let Some(srcs) = Some(find_item_slots(
+                                    &inv,
+                                    azalea_registry::builtin::ItemKind::Bucket,
+                                )) && !srcs.is_empty()
+                                {
+                                    let menu = inv.menu().ok().flatten();
+                                    if let Some(menu) = menu {
+                                        let hotbar_range = menu.hotbar_slots_range();
+                                        if let Some(slots) = inv.slots() {
+                                            let mut placed = false;
+                                            for hb in hotbar_range {
+                                                if slots
+                                                    .get(hb)
+                                                    .map(|s| s.is_empty())
+                                                    .unwrap_or(false)
+                                                {
+                                                    inv.left_click(*srcs.first().unwrap());
+                                                    inv.left_click(hb);
+                                                    placed = true;
+                                                    break;
                                                 }
-                                                let _ = placed;
                                             }
+                                            let _ = placed;
                                         }
                                     }
                                 }
+                            }
                             // 检查手持 water_bucket；没有则自动找水源装水（已装备 bucket）。
                             let held = bot
                                 .get_held_item()
@@ -2812,11 +2829,11 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                                         ] {
                                                             if let Some(nb) = world.get_block_state(
                                                                 BlockPos::new(nx, ny, nz),
-                                                            )
-                                                                && nb.is_air() {
-                                                                    found = Some((nx, ny, nz));
-                                                                    break 'scan;
-                                                                }
+                                                            ) && nb.is_air()
+                                                            {
+                                                                found = Some((nx, ny, nz));
+                                                                break 'scan;
+                                                            }
                                                         }
                                                     }
                                                 }
@@ -2962,188 +2979,299 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                 // 每 20 tick 推送状态快照。
                 let t = bot.ticks_connected();
                 if t.is_multiple_of(20)
-                    && let Ok(p) = bot.position() {
-                        // 全量背包：列出所有非空格，**按物品 ID 聚合后输出**（旧版每个槽位单独
-                        // 输出，导致 `dirt:46, dirt:64, leaflitter:64, leaflitter:26` 这种重复条目，
-                        // LLM 困惑且浪费 token）。聚合后输出 `dirt:110, leaflitter:90`。
-                        let (inventory, armor_str) = match bot.get_inventory() {
-                            Ok(inv) => match inv.slots() {
-                                Some(slots) => {
-                                    // P56：Player 菜单槽位布局（azalea declare_menus!）：
-                                    // 0=craft_result, 1-4=craft, 5-8=armor(helmet/chestplate/
-                                    // leggings/boots), 9-44=inventory, 45=offhand。
-                                    // 原实现把 armor 槽混入"背包"聚合 → LLM 以为甲还在背包，
-                                    // 反复 equip 又因 find_item_slots(9-44) 找不到而报"背包未持有"
-                                    // → 死循环（实测甲已上身仍被反复驱赶）。现跳过 armor 槽并
-                                    // 单独产出装备摘要行。仅 Player 菜单布局固定，容器菜单跳过。
-                                    let is_player_menu = inv
-                                        .menu()
-                                        .ok()
-                                        .flatten()
-                                        .map(|m| matches!(m, azalea::inventory::Menu::Player(_)))
-                                        .unwrap_or(false);
-                                    let mut agg: std::collections::HashMap<String, u32> =
-                                        std::collections::HashMap::new();
-                                    let mut armor: [String; 4] = Default::default();
-                                    for (idx, s) in slots.iter().enumerate() {
-                                        if s.is_empty() {
-                                            continue;
-                                        }
-                                        // P5 关键修复：用 to_str() 返回 minecraft id（如 "minecraft:crafting_table"），
-                                        // 然后 strip "minecraft:" 前缀得到 "crafting_table"。
-                                        // 原代码用 format!("{:?}", s.kind()).to_lowercase() 得到 enum Debug 名
-                                        // （如 "CraftingTable".to_lowercase() = "craftingtable"，无下划线），
-                                        // 与工具/craft 配方表期望的 snake_case id 不匹配 → LLM 看到 "craftingtable"
-                                        // 却 craft("crafting_table") 报"无此物品" → 100% 卡死。
-                                        let kind_full = s.kind().to_str();
-                                        let kind = kind_full
-                                            .strip_prefix("minecraft:")
-                                            .unwrap_or(kind_full);
-                                        let cnt = s.count() as u32;
-                                        if is_player_menu && (5..=8).contains(&idx) {
-                                            armor[idx - 5] = kind.to_string();
-                                        } else {
-                                            *agg.entry(kind.to_string()).or_insert(0) += cnt;
-                                        }
+                    && let Ok(p) = bot.position()
+                {
+                    // 全量背包：列出所有非空格，**按物品 ID 聚合后输出**（旧版每个槽位单独
+                    // 输出，导致 `dirt:46, dirt:64, leaflitter:64, leaflitter:26` 这种重复条目，
+                    // LLM 困惑且浪费 token）。聚合后输出 `dirt:110, leaflitter:90`。
+                    let (inventory, armor_str) = match bot.get_inventory() {
+                        Ok(inv) => match inv.slots() {
+                            Some(slots) => {
+                                // P56：Player 菜单槽位布局（azalea declare_menus!）：
+                                // 0=craft_result, 1-4=craft, 5-8=armor(helmet/chestplate/
+                                // leggings/boots), 9-44=inventory, 45=offhand。
+                                // 原实现把 armor 槽混入"背包"聚合 → LLM 以为甲还在背包，
+                                // 反复 equip 又因 find_item_slots(9-44) 找不到而报"背包未持有"
+                                // → 死循环（实测甲已上身仍被反复驱赶）。现跳过 armor 槽并
+                                // 单独产出装备摘要行。仅 Player 菜单布局固定，容器菜单跳过。
+                                let is_player_menu = inv
+                                    .menu()
+                                    .ok()
+                                    .flatten()
+                                    .map(|m| matches!(m, azalea::inventory::Menu::Player(_)))
+                                    .unwrap_or(false);
+                                let mut agg: std::collections::HashMap<String, u32> =
+                                    std::collections::HashMap::new();
+                                let mut armor: [String; 4] = Default::default();
+                                for (idx, s) in slots.iter().enumerate() {
+                                    if s.is_empty() {
+                                        continue;
                                     }
-                                    let inv_str = if agg.is_empty() {
-                                        "空背包".to_string()
+                                    // P5 关键修复：用 to_str() 返回 minecraft id（如 "minecraft:crafting_table"），
+                                    // 然后 strip "minecraft:" 前缀得到 "crafting_table"。
+                                    // 原代码用 format!("{:?}", s.kind()).to_lowercase() 得到 enum Debug 名
+                                    // （如 "CraftingTable".to_lowercase() = "craftingtable"，无下划线），
+                                    // 与工具/craft 配方表期望的 snake_case id 不匹配 → LLM 看到 "craftingtable"
+                                    // 却 craft("crafting_table") 报"无此物品" → 100% 卡死。
+                                    let kind_full = s.kind().to_str();
+                                    let kind =
+                                        kind_full.strip_prefix("minecraft:").unwrap_or(kind_full);
+                                    let cnt = s.count() as u32;
+                                    if is_player_menu && (5..=8).contains(&idx) {
+                                        armor[idx - 5] = kind.to_string();
                                     } else {
-                                        // 按数量降序输出（多的在前，LLM 重点看前几个）
-                                        let mut items: Vec<(String, u32)> =
-                                            agg.into_iter().collect();
-                                        items.sort_by(|a, b| b.1.cmp(&a.1));
-                                        items
-                                            .iter()
-                                            .map(|(k, c)| format!("{k}:{c}"))
-                                            .collect::<Vec<_>>()
-                                            .join(", ")
-                                    };
-                                    let display = |s: &String| {
-                                        if s.is_empty() {
-                                            "无".to_string()
-                                        } else {
-                                            s.clone()
-                                        }
-                                    };
-                                    let armor_summary = format!(
-                                        "头盔: {}, 胸甲: {}, 护腿: {}, 靴子: {}",
-                                        display(&armor[0]),
-                                        display(&armor[1]),
-                                        display(&armor[2]),
-                                        display(&armor[3])
-                                    );
-                                    (inv_str, armor_summary)
+                                        *agg.entry(kind.to_string()).or_insert(0) += cnt;
+                                    }
                                 }
-                                None => (
-                                    "slots=None".to_string(),
-                                    "头盔: 无, 胸甲: 无, 护腿: 无, 靴子: 无".to_string(),
-                                ),
-                            },
-                            Err(_) => (
-                                "获取失败".to_string(),
+                                let inv_str = if agg.is_empty() {
+                                    "空背包".to_string()
+                                } else {
+                                    // 按数量降序输出（多的在前，LLM 重点看前几个）
+                                    let mut items: Vec<(String, u32)> = agg.into_iter().collect();
+                                    items.sort_by(|a, b| b.1.cmp(&a.1));
+                                    items
+                                        .iter()
+                                        .map(|(k, c)| format!("{k}:{c}"))
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                };
+                                let display = |s: &String| {
+                                    if s.is_empty() {
+                                        "无".to_string()
+                                    } else {
+                                        s.clone()
+                                    }
+                                };
+                                let armor_summary = format!(
+                                    "头盔: {}, 胸甲: {}, 护腿: {}, 靴子: {}",
+                                    display(&armor[0]),
+                                    display(&armor[1]),
+                                    display(&armor[2]),
+                                    display(&armor[3])
+                                );
+                                (inv_str, armor_summary)
+                            }
+                            None => (
+                                "slots=None".to_string(),
                                 "头盔: 无, 胸甲: 无, 护腿: 无, 靴子: 无".to_string(),
                             ),
-                        };
-                        let player_count = bot.nearby_players().map(|pp| pp.len()).unwrap_or(0);
-                        // 朝向（yaw/pitch，度数）：从 LookDirection 的 Debug 输出解析（azalea 字段为私有，不改动库）。
-                        let (yaw, pitch) = bot
-                            .direction()
-                            .map(|d| {
-                                let s = format!("{d:?}");
-                                let y = s
-                                    .split("y_rot: ")
-                                    .nth(1)
-                                    .and_then(|x| x.split(',').next())
-                                    .and_then(|x| x.trim().parse::<f64>().ok())
-                                    .unwrap_or(0.0);
-                                let pi = s
-                                    .split("x_rot: ")
-                                    .nth(1)
-                                    .and_then(|x| x.split('}').next())
-                                    .and_then(|x| x.trim().parse::<f64>().ok())
-                                    .unwrap_or(0.0);
-                                (y, pi)
-                            })
-                            .unwrap_or((0.0, 0.0));
-                        // 脚下方块 + 前方 1 格方块（用于 bot 判断脚下是否悬空/面前是否墙）。
-                        let block_name = |bp: BlockPos| -> String {
-                            if let Ok(world) = bot.world() {
-                                match world.read().get_block_state(bp) {
-                                    Some(s) if !s.is_air() => {
-                                        let bk: BlockKind = s.into();
-                                        // P5 修复：用 to_str() 拿到 minecraft id（如 "minecraft:stone"）。
-                                        // 原代码 format!("{bk:?}").to_lowercase() 得到 "stone"（无前缀），
-                                        // 但对于多词方块如 "GrassBlock".to_lowercase() = "grassblock"（无下划线），
-                                        // 与工具/mem 期望的 snake_case id 不匹配。
-                                        let k = bk.to_str();
-                                        k.strip_prefix("minecraft:").unwrap_or(k).to_string()
-                                    }
-                                    _ => "air".to_string(),
+                        },
+                        Err(_) => (
+                            "获取失败".to_string(),
+                            "头盔: 无, 胸甲: 无, 护腿: 无, 靴子: 无".to_string(),
+                        ),
+                    };
+                    let player_count = bot.nearby_players().map(|pp| pp.len()).unwrap_or(0);
+                    // 朝向（yaw/pitch，度数）：从 LookDirection 的 Debug 输出解析（azalea 字段为私有，不改动库）。
+                    let (yaw, pitch) = bot
+                        .direction()
+                        .map(|d| {
+                            let s = format!("{d:?}");
+                            let y = s
+                                .split("y_rot: ")
+                                .nth(1)
+                                .and_then(|x| x.split(',').next())
+                                .and_then(|x| x.trim().parse::<f64>().ok())
+                                .unwrap_or(0.0);
+                            let pi = s
+                                .split("x_rot: ")
+                                .nth(1)
+                                .and_then(|x| x.split('}').next())
+                                .and_then(|x| x.trim().parse::<f64>().ok())
+                                .unwrap_or(0.0);
+                            (y, pi)
+                        })
+                        .unwrap_or((0.0, 0.0));
+                    // 脚下方块 + 前方 1 格方块（用于 bot 判断脚下是否悬空/面前是否墙）。
+                    let block_name = |bp: BlockPos| -> String {
+                        if let Ok(world) = bot.world() {
+                            match world.read().get_block_state(bp) {
+                                Some(s) if !s.is_air() => {
+                                    let bk: BlockKind = s.into();
+                                    // P5 修复：用 to_str() 拿到 minecraft id（如 "minecraft:stone"）。
+                                    // 原代码 format!("{bk:?}").to_lowercase() 得到 "stone"（无前缀），
+                                    // 但对于多词方块如 "GrassBlock".to_lowercase() = "grassblock"（无下划线），
+                                    // 与工具/mem 期望的 snake_case id 不匹配。
+                                    let k = bk.to_str();
+                                    k.strip_prefix("minecraft:").unwrap_or(k).to_string()
                                 }
-                            } else {
-                                "?".to_string()
+                                _ => "air".to_string(),
                             }
+                        } else {
+                            "?".to_string()
+                        }
+                    };
+                    let foot_y = (p.y - 1.0).floor() as i32;
+                    let block_under = block_name(BlockPos::new(
+                        p.x.floor() as i32,
+                        foot_y,
+                        p.z.floor() as i32,
+                    ));
+                    // 前方方块：由 yaw/pitch 推算视线落点（水平 1 格 + 俯仰修正）。
+                    let rad = yaw.to_radians();
+                    let dx = -rad.sin(); // 与 azalea 约定一致：yaw 0 朝 +Z
+                    let dz = rad.cos();
+                    let horiz = 1.0_f64.max((pitch.abs() / 90.0) * 2.0);
+                    let ahead_x = (p.x + dx * horiz).floor() as i32;
+                    let ahead_z = (p.z + dz * horiz).floor() as i32;
+                    let ahead_y = (p.y + -(pitch / 90.0)).floor() as i32;
+                    let block_ahead = block_name(BlockPos::new(ahead_x, ahead_y, ahead_z));
+                    // 生命/饱食/主手/群系/附近方块
+                    let health = bot.health().unwrap_or(20.0);
+                    let hunger = bot.hunger().ok();
+                    let food = hunger.as_ref().map(|h| h.food).unwrap_or(20);
+                    let saturation = hunger.as_ref().map(|h| h.saturation).unwrap_or(5.0);
+                    let held_item = match bot.get_held_item() {
+                        Ok(item) if !item.is_empty() => {
+                            // P5 修复：用 to_str() 拿到 minecraft id（同背包聚合逻辑）。
+                            let k = item.kind().to_str();
+                            k.strip_prefix("minecraft:").unwrap_or(k).to_string()
+                        }
+                        _ => "air".to_string(),
+                    };
+                    // biome 通过 registry 解析为可读 Identifier（如 "minecraft:dark_forest"）。
+                    // 旧实现 `format!("{b:?}")` 会输出 "biome { id: 30 }" 这种调试串，LLM 看不懂。
+                    let biome = bot
+                        .world()
+                        .ok()
+                        .and_then(|w| {
+                            w.read().get_biome(BlockPos::new(
+                                p.x.floor() as i32,
+                                p.y.floor() as i32,
+                                p.z.floor() as i32,
+                            ))
+                        })
+                        .and_then(|b| bot.resolve_registry_key(&b).ok().flatten())
+                        .map(|key| key.into_ident().to_string())
+                        .map(|s| {
+                            // "minecraft:dark_forest" → "dark_forest"
+                            s.strip_prefix("minecraft:")
+                                .map(|x| x.to_string())
+                                .unwrap_or(s)
+                        })
+                        .unwrap_or_else(|| "unknown".to_string());
+                    // 附近方块摘要：3x3 地面区域
+                    let nearby = {
+                        let foot_x = p.x.floor() as i32;
+                        let foot_z = p.z.floor() as i32;
+                        let mut counts: HashMap<String, u32> = HashMap::new();
+                        let world = bot.world().ok();
+                        for dx in -1..=1 {
+                            for dz in -1..=1 {
+                                if let Some(ref w) = world {
+                                    let bp = BlockPos::new(foot_x + dx, foot_y, foot_z + dz);
+                                    let name = match w.read().get_block_state(bp) {
+                                        Some(s) if !s.is_air() => {
+                                            let bk: BlockKind = s.into();
+                                            // P5 修复：用 to_str() 拿到 snake_case minecraft id
+                                            let k = bk.to_str();
+                                            k.strip_prefix("minecraft:").unwrap_or(k).to_string()
+                                        }
+                                        _ => "air".to_string(),
+                                    };
+                                    *counts.entry(name).or_insert(0) += 1;
+                                }
+                            }
+                        }
+                        let parts: Vec<String> = counts
+                            .into_iter()
+                            .filter(|(k, _)| k != "air")
+                            .map(|(k, v)| format!("{k}:{v}"))
+                            .collect();
+                        if parts.is_empty() {
+                            "air".to_string()
+                        } else {
+                            parts.join(", ")
+                        }
+                    };
+                    // 结构化游戏状态 JSON（前端面板可视化）
+                    let game_state = {
+                        let inv_slots: Vec<serde_json::Value> = match bot.get_inventory() {
+                            Ok(inv) => match inv.slots() {
+                                Some(slots) => slots
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, s)| {
+                                        let id = if s.is_empty() {
+                                            "minecraft:air".to_string()
+                                        } else {
+                                            // P5 修复：to_str() 已返回 "minecraft:xxx"，不需要拼前缀
+                                            s.kind().to_str().to_string()
+                                        };
+                                        let cnt = if s.is_empty() { 0 } else { s.count() };
+                                        serde_json::json!({"slot": i, "id": id, "count": cnt})
+                                    })
+                                    .collect(),
+                                None => vec![],
+                            },
+                            Err(_) => vec![],
                         };
-                        let foot_y = (p.y - 1.0).floor() as i32;
-                        let block_under = block_name(BlockPos::new(
+                        let xp = bot.experience().ok();
+                        let dimension = bot
+                            .world_name()
+                            .map(|name| name.to_string())
+                            .unwrap_or_else(|_| "unknown".to_string());
+                        let portal_active = nearby_active_portal(
+                            &bot,
+                            BlockPos::new(
+                                p.x.floor() as i32,
+                                p.y.floor() as i32,
+                                p.z.floor() as i32,
+                            ),
+                        );
+                        let kill_counts = bot
+                            .ecs
+                            .read()
+                            .resource::<crate::azalea::ext_state::BotExtResource>()
+                            .0
+                            .lock()
+                            .unwrap()
+                            .kill_counts
+                            .clone();
+                        serde_json::json!({
+                            "inventory": inv_slots,
+                            // P56：盔甲槽位（Player 菜单 5-8）单独列出，与背包区分。
+                            "armor": inv_slots
+                                .iter()
+                                .filter(|s| {
+                                    s.get("slot")
+                                        .and_then(|v| v.as_u64())
+                                        .map(|i| (5..=8).contains(&i))
+                                        .unwrap_or(false)
+                                })
+                                .cloned()
+                                .collect::<Vec<_>>(),
+                            "experience_level": xp.as_ref().map(|e| e.level).unwrap_or(0),
+                            "experience_progress": xp.as_ref().map(|e| e.progress).unwrap_or(0.0),
+                            "held_item": held_item,
+                            "selected_slot": bot.selected_hotbar_slot().unwrap_or(0),
+                            "dimension": dimension,
+                            "portal_active": portal_active,
+                            "kill_counts": kill_counts,
+                        })
+                    };
+                    // 回填世界记忆：更新当前位置锚点 + 扫描周边关键方块
+                    if let Some(mem) = &state.memory {
+                        let mp = MemoryPos::new(
                             p.x.floor() as i32,
-                            foot_y,
+                            p.y.floor() as i32,
                             p.z.floor() as i32,
-                        ));
-                        // 前方方块：由 yaw/pitch 推算视线落点（水平 1 格 + 俯仰修正）。
-                        let rad = yaw.to_radians();
-                        let dx = -rad.sin(); // 与 azalea 约定一致：yaw 0 朝 +Z
-                        let dz = rad.cos();
-                        let horiz = 1.0_f64.max((pitch.abs() / 90.0) * 2.0);
-                        let ahead_x = (p.x + dx * horiz).floor() as i32;
-                        let ahead_z = (p.z + dz * horiz).floor() as i32;
-                        let ahead_y = (p.y + -(pitch / 90.0)).floor() as i32;
-                        let block_ahead = block_name(BlockPos::new(ahead_x, ahead_y, ahead_z));
-                        // 生命/饱食/主手/群系/附近方块
-                        let health = bot.health().unwrap_or(20.0);
-                        let hunger = bot.hunger().ok();
-                        let food = hunger.as_ref().map(|h| h.food).unwrap_or(20);
-                        let saturation = hunger.as_ref().map(|h| h.saturation).unwrap_or(5.0);
-                        let held_item = match bot.get_held_item() {
-                            Ok(item) if !item.is_empty() => {
-                                // P5 修复：用 to_str() 拿到 minecraft id（同背包聚合逻辑）。
-                                let k = item.kind().to_str();
-                                k.strip_prefix("minecraft:").unwrap_or(k).to_string()
-                            }
-                            _ => "air".to_string(),
-                        };
-                        // biome 通过 registry 解析为可读 Identifier（如 "minecraft:dark_forest"）。
-                        // 旧实现 `format!("{b:?}")` 会输出 "biome { id: 30 }" 这种调试串，LLM 看不懂。
-                        let biome = bot
-                            .world()
-                            .ok()
-                            .and_then(|w| {
-                                w.read().get_biome(BlockPos::new(
-                                    p.x.floor() as i32,
-                                    p.y.floor() as i32,
-                                    p.z.floor() as i32,
-                                ))
-                            })
-                            .and_then(|b| bot.resolve_registry_key(&b).ok().flatten())
-                            .map(|key| key.into_ident().to_string())
-                            .map(|s| {
-                                // "minecraft:dark_forest" → "dark_forest"
-                                s.strip_prefix("minecraft:")
-                                    .map(|x| x.to_string())
-                                    .unwrap_or(s)
-                            })
-                            .unwrap_or_else(|| "unknown".to_string());
-                        // 附近方块摘要：3x3 地面区域
-                        let nearby = {
-                            let foot_x = p.x.floor() as i32;
-                            let foot_z = p.z.floor() as i32;
-                            let mut counts: HashMap<String, u32> = HashMap::new();
-                            let world = bot.world().ok();
-                            for dx in -1..=1 {
-                                for dz in -1..=1 {
+                        );
+                        mem.set_anchor("__self__", Some(mp), "当前位置");
+                        record_surroundings(&bot, mem, &mp, &state.scanned);
+                    }
+                    // 10x10 范围方块扫描：列出所有非空气方块类型及计数
+                    let nearby_blocks = {
+                        let mut counts: HashMap<String, u32> = HashMap::new();
+                        let world = bot.world().ok();
+                        let cx = p.x.floor() as i32;
+                        let cy = p.y.floor() as i32;
+                        let cz = p.z.floor() as i32;
+                        for dx in -5..=5 {
+                            for dy in -5..=5 {
+                                for dz in -5..=5 {
                                     if let Some(ref w) = world {
-                                        let bp = BlockPos::new(foot_x + dx, foot_y, foot_z + dz);
+                                        let bp = BlockPos::new(cx + dx, cy + dy, cz + dz);
                                         let name = match w.read().get_block_state(bp) {
                                             Some(s) if !s.is_air() => {
                                                 let bk: BlockKind = s.into();
@@ -3153,211 +3281,97 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                                     .unwrap_or(k)
                                                     .to_string()
                                             }
-                                            _ => "air".to_string(),
+                                            _ => continue,
                                         };
                                         *counts.entry(name).or_insert(0) += 1;
                                     }
                                 }
                             }
-                            let parts: Vec<String> = counts
-                                .into_iter()
-                                .filter(|(k, _)| k != "air")
-                                .map(|(k, v)| format!("{k}:{v}"))
-                                .collect();
-                            if parts.is_empty() {
-                                "air".to_string()
-                            } else {
-                                parts.join(", ")
-                            }
-                        };
-                        // 结构化游戏状态 JSON（前端面板可视化）
-                        let game_state = {
-                            let inv_slots: Vec<serde_json::Value> = match bot.get_inventory() {
-                                Ok(inv) => match inv.slots() {
-                                    Some(slots) => slots
-                                        .iter()
-                                        .enumerate()
-                                        .map(|(i, s)| {
-                                            let id = if s.is_empty() {
-                                                "minecraft:air".to_string()
-                                            } else {
-                                                // P5 修复：to_str() 已返回 "minecraft:xxx"，不需要拼前缀
-                                                s.kind().to_str().to_string()
-                                            };
-                                            let cnt = if s.is_empty() { 0 } else { s.count() };
-                                            serde_json::json!({"slot": i, "id": id, "count": cnt})
-                                        })
-                                        .collect(),
-                                    None => vec![],
-                                },
-                                Err(_) => vec![],
-                            };
-                            let xp = bot.experience().ok();
-                            let dimension = bot
-                                .world_name()
-                                .map(|name| name.to_string())
-                                .unwrap_or_else(|_| "unknown".to_string());
-                            let portal_active = nearby_active_portal(
-                                &bot,
-                                BlockPos::new(
-                                    p.x.floor() as i32,
-                                    p.y.floor() as i32,
-                                    p.z.floor() as i32,
-                                ),
-                            );
-                            let kill_counts = bot
-                                .ecs
-                                .read()
-                                .resource::<crate::azalea::ext_state::BotExtResource>()
-                                .0
-                                .lock()
-                                .unwrap()
-                                .kill_counts
-                                .clone();
-                            serde_json::json!({
-                                "inventory": inv_slots,
-                                // P56：盔甲槽位（Player 菜单 5-8）单独列出，与背包区分。
-                                "armor": inv_slots
-                                    .iter()
-                                    .filter(|s| {
-                                        s.get("slot")
-                                            .and_then(|v| v.as_u64())
-                                            .map(|i| (5..=8).contains(&i))
-                                            .unwrap_or(false)
-                                    })
-                                    .cloned()
-                                    .collect::<Vec<_>>(),
-                                "experience_level": xp.as_ref().map(|e| e.level).unwrap_or(0),
-                                "experience_progress": xp.as_ref().map(|e| e.progress).unwrap_or(0.0),
-                                "held_item": held_item,
-                                "selected_slot": bot.selected_hotbar_slot().unwrap_or(0),
-                                "dimension": dimension,
-                                "portal_active": portal_active,
-                                "kill_counts": kill_counts,
-                            })
-                        };
-                        // 回填世界记忆：更新当前位置锚点 + 扫描周边关键方块
-                        if let Some(mem) = &state.memory {
-                            let mp = MemoryPos::new(
-                                p.x.floor() as i32,
-                                p.y.floor() as i32,
-                                p.z.floor() as i32,
-                            );
-                            mem.set_anchor("__self__", Some(mp), "当前位置");
-                            record_surroundings(&bot, mem, &mp, &state.scanned);
                         }
-                        // 10x10 范围方块扫描：列出所有非空气方块类型及计数
-                        let nearby_blocks = {
-                            let mut counts: HashMap<String, u32> = HashMap::new();
-                            let world = bot.world().ok();
-                            let cx = p.x.floor() as i32;
-                            let cy = p.y.floor() as i32;
-                            let cz = p.z.floor() as i32;
-                            for dx in -5..=5 {
-                                for dy in -5..=5 {
-                                    for dz in -5..=5 {
-                                        if let Some(ref w) = world {
-                                            let bp = BlockPos::new(cx + dx, cy + dy, cz + dz);
-                                            let name = match w.read().get_block_state(bp) {
-                                                Some(s) if !s.is_air() => {
-                                                    let bk: BlockKind = s.into();
-                                                    // P5 修复：用 to_str() 拿到 snake_case minecraft id
-                                                    let k = bk.to_str();
-                                                    k.strip_prefix("minecraft:")
-                                                        .unwrap_or(k)
-                                                        .to_string()
-                                                }
-                                                _ => continue,
-                                            };
-                                            *counts.entry(name).or_insert(0) += 1;
-                                        }
-                                    }
-                                }
+                        let mut items: Vec<_> = counts.into_iter().collect();
+                        items.sort_by(|a, b| b.1.cmp(&a.1));
+                        items
+                            .iter()
+                            .map(|(k, v)| format!("{k}:{v}"))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    };
+                    // 资源分类摘要：把 10x10 里的方块按 wood/stone/ore/other 分组，
+                    // 让 WorldInfo 的 find_match_line 能为每类找到独立的 label 行，
+                    // 避免【场景提示】里 Wood/Stone/Ore 三条都粘同一份 10x10 字符串。
+                    let _resource_summary = {
+                        let wood_kinds = [
+                            "oaklog",
+                            "darkoaklog",
+                            "birchlog",
+                            "sprucelog",
+                            "acalog",
+                            "junglelog",
+                            "mangrovelog",
+                            "cherrylog",
+                            "oakplanks",
+                            "darkoakplanks",
+                        ];
+                        let stone_kinds = [
+                            "stone",
+                            "cobblestone",
+                            "dirt",
+                            "grassblock",
+                            "sand",
+                            "gravel",
+                            "andesite",
+                            "granite",
+                            "diorite",
+                        ];
+                        let ore_kinds = [
+                            "coalore",
+                            "ironore",
+                            "copperore",
+                            "goldore",
+                            "diamondore",
+                            "emeraldore",
+                            "redstoneore",
+                            "lapisore",
+                            "netherquartzore",
+                        ];
+                        let mut wood = Vec::new();
+                        let mut stone = Vec::new();
+                        let mut ore = Vec::new();
+                        for (k, v) in nearby_blocks.split(", ").map(|s| {
+                            let mut it = s.split(':');
+                            (
+                                it.next().unwrap_or("").to_string(),
+                                it.next().and_then(|x| x.parse::<u32>().ok()).unwrap_or(0),
+                            )
+                        }) {
+                            if wood_kinds.iter().any(|x| *x == k) {
+                                wood.push(format!("{k}:{v}"));
+                            } else if stone_kinds.iter().any(|x| *x == k) {
+                                stone.push(format!("{k}:{v}"));
+                            } else if ore_kinds.iter().any(|x| *x == k) {
+                                ore.push(format!("{k}:{v}"));
                             }
-                            let mut items: Vec<_> = counts.into_iter().collect();
-                            items.sort_by(|a, b| b.1.cmp(&a.1));
-                            items
-                                .iter()
-                                .map(|(k, v)| format!("{k}:{v}"))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        };
-                        // 资源分类摘要：把 10x10 里的方块按 wood/stone/ore/other 分组，
-                        // 让 WorldInfo 的 find_match_line 能为每类找到独立的 label 行，
-                        // 避免【场景提示】里 Wood/Stone/Ore 三条都粘同一份 10x10 字符串。
-                        let _resource_summary = {
-                            let wood_kinds = [
-                                "oaklog",
-                                "darkoaklog",
-                                "birchlog",
-                                "sprucelog",
-                                "acalog",
-                                "junglelog",
-                                "mangrovelog",
-                                "cherrylog",
-                                "oakplanks",
-                                "darkoakplanks",
-                            ];
-                            let stone_kinds = [
-                                "stone",
-                                "cobblestone",
-                                "dirt",
-                                "grassblock",
-                                "sand",
-                                "gravel",
-                                "andesite",
-                                "granite",
-                                "diorite",
-                            ];
-                            let ore_kinds = [
-                                "coalore",
-                                "ironore",
-                                "copperore",
-                                "goldore",
-                                "diamondore",
-                                "emeraldore",
-                                "redstoneore",
-                                "lapisore",
-                                "netherquartzore",
-                            ];
-                            let mut wood = Vec::new();
-                            let mut stone = Vec::new();
-                            let mut ore = Vec::new();
-                            for (k, v) in nearby_blocks.split(", ").map(|s| {
-                                let mut it = s.split(':');
-                                (
-                                    it.next().unwrap_or("").to_string(),
-                                    it.next().and_then(|x| x.parse::<u32>().ok()).unwrap_or(0),
-                                )
-                            }) {
-                                if wood_kinds.iter().any(|x| *x == k) {
-                                    wood.push(format!("{k}:{v}"));
-                                } else if stone_kinds.iter().any(|x| *x == k) {
-                                    stone.push(format!("{k}:{v}"));
-                                } else if ore_kinds.iter().any(|x| *x == k) {
-                                    ore.push(format!("{k}:{v}"));
-                                }
-                            }
-                            let mut lines = Vec::new();
-                            if !wood.is_empty() {
-                                lines.push(format!("木材: {}", wood.join(", ")));
-                            }
-                            if !stone.is_empty() {
-                                lines.push(format!("石头: {}", stone.join(", ")));
-                            }
-                            if !ore.is_empty() {
-                                lines.push(format!("矿石: {}", ore.join(", ")));
-                            }
-                            lines.join("\n")
-                        };
-                        // 附近实体列表：按类型分组计数 + 最小距离（仅感知半径内，避免 LLM 追逐远处实体）
-                        // P74：加最近实例坐标——LLM 想找动物狩猎/避开怪物时可直接 goto，
-                        // 此前只有距离没有方向（实测 LLM 在树冠上找不到食物来源）。
-                        let nearby_entities = {
-                            const PERCEPTION_RADIUS: f64 = 24.0;
-                            let mut kinds: HashMap<String, (u32, f64, (i32, i32, i32))> =
-                                HashMap::new();
-                            if let Ok(entities) = bot.nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>() {
+                        }
+                        let mut lines = Vec::new();
+                        if !wood.is_empty() {
+                            lines.push(format!("木材: {}", wood.join(", ")));
+                        }
+                        if !stone.is_empty() {
+                            lines.push(format!("石头: {}", stone.join(", ")));
+                        }
+                        if !ore.is_empty() {
+                            lines.push(format!("矿石: {}", ore.join(", ")));
+                        }
+                        lines.join("\n")
+                    };
+                    // 附近实体列表：按类型分组计数 + 最小距离（仅感知半径内，避免 LLM 追逐远处实体）
+                    // P74：加最近实例坐标——LLM 想找动物狩猎/避开怪物时可直接 goto，
+                    // 此前只有距离没有方向（实测 LLM 在树冠上找不到食物来源）。
+                    let nearby_entities = {
+                        const PERCEPTION_RADIUS: f64 = 24.0;
+                        let mut kinds: HashMap<String, (u32, f64, (i32, i32, i32))> =
+                            HashMap::new();
+                        if let Ok(entities) = bot.nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>() {
                             let self_id = bot.entity().id();
                             for e in entities.iter() {
                                 if e.id() == self_id { continue; }
@@ -3375,45 +3389,45 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                 }
                             }
                         }
-                            // 玩家分开计数
-                            let player_count = bot.nearby_players().map(|pp| pp.len()).unwrap_or(0);
-                            let mut parts: Vec<String> = Vec::new();
-                            if player_count > 0 {
-                                parts.push(format!("player:{}", player_count));
+                        // 玩家分开计数
+                        let player_count = bot.nearby_players().map(|pp| pp.len()).unwrap_or(0);
+                        let mut parts: Vec<String> = Vec::new();
+                        if player_count > 0 {
+                            parts.push(format!("player:{}", player_count));
+                        }
+                        let mut items: Vec<_> = kinds.into_iter().collect();
+                        items.sort_by(|a, b| b.1.0.cmp(&a.1.0));
+                        for (k, (v, d, pos)) in items {
+                            if v > 0 {
+                                parts.push(format!("{k}:{v}@{d:.0}m@{pos:?}"));
                             }
-                            let mut items: Vec<_> = kinds.into_iter().collect();
-                            items.sort_by(|a, b| b.1.0.cmp(&a.1.0));
-                            for (k, (v, d, pos)) in items {
-                                if v > 0 {
-                                    parts.push(format!("{k}:{v}@{d:.0}m@{pos:?}"));
-                                }
-                            }
-                            if parts.is_empty() {
-                                "无".to_string()
-                            } else {
-                                parts.join(", ")
-                            }
-                        };
-                        let _ = evt_tx.send(BotEvent::State {
-                            position: p,
-                            inventory,
-                            armor: armor_str,
-                            player_count,
-                            yaw,
-                            pitch,
-                            block_under,
-                            block_ahead,
-                            health,
-                            food,
-                            saturation,
-                            held_item,
-                            biome,
-                            nearby,
-                            nearby_blocks,
-                            nearby_entities,
-                            game_state,
-                        });
-                    }
+                        }
+                        if parts.is_empty() {
+                            "无".to_string()
+                        } else {
+                            parts.join(", ")
+                        }
+                    };
+                    let _ = evt_tx.send(BotEvent::State {
+                        position: p,
+                        inventory,
+                        armor: armor_str,
+                        player_count,
+                        yaw,
+                        pitch,
+                        block_under,
+                        block_ahead,
+                        health,
+                        food,
+                        saturation,
+                        held_item,
+                        biome,
+                        nearby,
+                        nearby_blocks,
+                        nearby_entities,
+                        game_state,
+                    });
+                }
                 // ===== 反应式 modes（每 tick 检查，直接执行动作，不依赖 LLM）=====
                 // self_preservation：检测火/岩浆，自动脱困
                 // 使用 ActionManager 的 High 优先级抢占当前 pending（如正在合成时着火立即打断）
@@ -3476,50 +3490,49 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                     let auto_eat_ok = hunger_now <= 14
                         && state.action_mgr.is_idle()
                         && bot.ticks_connected().is_multiple_of(80);
-                    if auto_eat_ok
-                        && let Ok(inv) = bot.get_inventory() {
-                            const SAFE_FOODS: [&str; 20] = [
-                                "cooked_beef",
-                                "cooked_porkchop",
-                                "cooked_chicken",
-                                "cooked_mutton",
-                                "cooked_rabbit",
-                                "cooked_cod",
-                                "cooked_salmon",
-                                "bread",
-                                "apple",
-                                "golden_apple",
-                                "baked_potato",
-                                "mushroom_stew",
-                                "rabbit_stew",
-                                "pumpkin_pie",
-                                "cookie",
-                                "melon_slice",
-                                "sweet_berries",
-                                "glow_berries",
-                                "cake",
-                                "dried_kelp",
-                            ];
-                            let found = SAFE_FOODS.iter().find_map(|name| {
-                                ItemKind::from_str(name)
-                                    .ok()
-                                    .filter(|k| !find_item_slots(&inv, *k).is_empty())
-                            });
-                            if let Some(k) = found {
-                                let item_name = k
-                                    .to_str()
-                                    .strip_prefix("minecraft:")
-                                    .unwrap_or_else(|| k.to_str());
-                                let msg = do_consume(&bot, item_name).await;
-                                if !msg.contains("失败") && !msg.contains("未持有") {
-                                    let _ = evt_tx.send(BotEvent::Chat {
-                                        content: format!(
-                                            "[MODE:auto_eat] 饥饿 {hunger_now}/20，自动进食 {item_name}"
-                                        ),
-                                    });
-                                }
+                    if auto_eat_ok && let Ok(inv) = bot.get_inventory() {
+                        const SAFE_FOODS: [&str; 20] = [
+                            "cooked_beef",
+                            "cooked_porkchop",
+                            "cooked_chicken",
+                            "cooked_mutton",
+                            "cooked_rabbit",
+                            "cooked_cod",
+                            "cooked_salmon",
+                            "bread",
+                            "apple",
+                            "golden_apple",
+                            "baked_potato",
+                            "mushroom_stew",
+                            "rabbit_stew",
+                            "pumpkin_pie",
+                            "cookie",
+                            "melon_slice",
+                            "sweet_berries",
+                            "glow_berries",
+                            "cake",
+                            "dried_kelp",
+                        ];
+                        let found = SAFE_FOODS.iter().find_map(|name| {
+                            ItemKind::from_str(name)
+                                .ok()
+                                .filter(|k| !find_item_slots(&inv, *k).is_empty())
+                        });
+                        if let Some(k) = found {
+                            let item_name = k
+                                .to_str()
+                                .strip_prefix("minecraft:")
+                                .unwrap_or_else(|| k.to_str());
+                            let msg = do_consume(&bot, item_name).await;
+                            if !msg.contains("失败") && !msg.contains("未持有") {
+                                let _ = evt_tx.send(BotEvent::Chat {
+                                    content: format!(
+                                        "[MODE:auto_eat] 饥饿 {hunger_now}/20，自动进食 {item_name}"
+                                    ),
+                                });
                             }
                         }
+                    }
                 }
                 // hunting：空闲时自动狩猎附近动物（P77，Mindcraft 移植）。
                 // Mindcraft modes.js hunting: 8m 内 isHuntable 动物自动 attackEntity，
@@ -3587,7 +3600,11 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                 {
                     let tick = bot.ticks_connected();
                     let until = *state.hunt_pickup_until.lock().unwrap();
-                    if until > 0 && tick < until && tick.is_multiple_of(20) && state.action_mgr.is_idle() {
+                    if until > 0
+                        && tick < until
+                        && tick.is_multiple_of(20)
+                        && state.action_mgr.is_idle()
+                    {
                         let _ = crate::azalea::smart_actions::pickup_nearby_items(&bot).await;
                     }
                     if until > 0 && tick >= until {
@@ -3659,71 +3676,73 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                 // 每 200 tick（~10s）：空闲时逐槽位检查，槽空或现有甲材料更差、
                 // 且背包有更高档同类甲 → 自动装备。材料优先级：netherite>diamond>
                 // iron>chainmail>gold>leather（MC 基础防御排序）。
-                if bot.ticks_connected().is_multiple_of(200) && state.action_mgr.is_idle()
+                if bot.ticks_connected().is_multiple_of(200)
+                    && state.action_mgr.is_idle()
                     && let Ok(inv) = bot.get_inventory()
-                        && let Some(slots) = inv.slots() {
-                            let tier_rank = |id: &str| -> u8 {
-                                if id.contains("netherite") {
-                                    5
-                                } else if id.contains("diamond") {
-                                    4
-                                } else if id.contains("iron") {
-                                    3
-                                } else if id.contains("chainmail") {
-                                    2
-                                } else if id.contains("gold") {
-                                    1
-                                } else if id.contains("leather") {
-                                    0
-                                } else {
-                                    255
-                                }
-                            };
-                            const ARMOR_SLOTS: [(&str, usize); 4] = [
-                                ("helmet", 5),
-                                ("chestplate", 6),
-                                ("leggings", 7),
-                                ("boots", 8),
-                            ];
-                            for (slot_name, slot_idx) in ARMOR_SLOTS {
-                                let worn_id = slots.get(slot_idx).and_then(|st| {
-                                    if st.is_empty() {
-                                        None
-                                    } else {
-                                        Some(st.kind().to_str().to_string())
-                                    }
+                    && let Some(slots) = inv.slots()
+                {
+                    let tier_rank = |id: &str| -> u8 {
+                        if id.contains("netherite") {
+                            5
+                        } else if id.contains("diamond") {
+                            4
+                        } else if id.contains("iron") {
+                            3
+                        } else if id.contains("chainmail") {
+                            2
+                        } else if id.contains("gold") {
+                            1
+                        } else if id.contains("leather") {
+                            0
+                        } else {
+                            255
+                        }
+                    };
+                    const ARMOR_SLOTS: [(&str, usize); 4] = [
+                        ("helmet", 5),
+                        ("chestplate", 6),
+                        ("leggings", 7),
+                        ("boots", 8),
+                    ];
+                    for (slot_name, slot_idx) in ARMOR_SLOTS {
+                        let worn_id = slots.get(slot_idx).and_then(|st| {
+                            if st.is_empty() {
+                                None
+                            } else {
+                                Some(st.kind().to_str().to_string())
+                            }
+                        });
+                        let worn_rank = worn_id.as_deref().map(tier_rank).unwrap_or(255);
+                        let best = [
+                            ("netherite", slot_name),
+                            ("diamond", slot_name),
+                            ("iron", slot_name),
+                            ("chainmail", slot_name),
+                            ("golden", slot_name),
+                            ("leather", slot_name),
+                        ]
+                        .iter()
+                        .find_map(|(mat, slot)| {
+                            let item_id = format!("{mat}_{slot}");
+                            ItemKind::from_str(&item_id)
+                                .ok()
+                                .filter(|k| !find_item_slots(&inv, *k).is_empty())
+                        });
+                        if let Some(k) = best {
+                            let item_id = k
+                                .to_str()
+                                .strip_prefix("minecraft:")
+                                .unwrap_or_else(|| k.to_str())
+                                .to_string();
+                            if tier_rank(&item_id) < worn_rank {
+                                let msg = do_equip(&bot, &item_id, slot_name).await;
+                                let _ = evt_tx.send(BotEvent::Chat {
+                                    content: format!("[MODE:auto_armor] {msg}"),
                                 });
-                                let worn_rank = worn_id.as_deref().map(tier_rank).unwrap_or(255);
-                                let best = [
-                                    ("netherite", slot_name),
-                                    ("diamond", slot_name),
-                                    ("iron", slot_name),
-                                    ("chainmail", slot_name),
-                                    ("golden", slot_name),
-                                    ("leather", slot_name),
-                                ]
-                                .iter()
-                                .find_map(|(mat, slot)| {
-                                    let item_id = format!("{mat}_{slot}");
-                                    ItemKind::from_str(&item_id)
-                                        .ok()
-                                        .filter(|k| !find_item_slots(&inv, *k).is_empty())
-                                });
-                                if let Some(k) = best {
-                                    let item_id = k
-                                        .to_str()
-                                        .strip_prefix("minecraft:")
-                                        .unwrap_or_else(|| k.to_str())
-                                        .to_string();
-                                    if tier_rank(&item_id) < worn_rank {
-                                        let msg = do_equip(&bot, &item_id, slot_name).await;
-                                        let _ = evt_tx.send(BotEvent::Chat {
-                                            content: format!("[MODE:auto_armor] {msg}"),
-                                        });
-                                    }
-                                }
                             }
                         }
+                    }
+                }
                 // cowardice：hp 低 + 附近有敌对 → 自动逃离（Mindcraft 移植）。
                 // self_defense 只攻击 4 格内敌人，而僵尸/骷髅 16m 外扑来时 LLM 回合
                 // 30-60s 太慢（实测 hp=1 濒死时 LLM 想撤退但 goto 连续失败，被僵尸追死）。
@@ -4231,9 +4250,11 @@ fn find_item_slots(inv: &ContainerHandleRef, kind: ItemKind) -> Vec<usize> {
     let range = menu.player_slots_range();
     for s in range {
         if let Some(stack) = slots.get(s)
-            && !stack.is_empty() && stack.kind() == kind {
-                out.push(s);
-            }
+            && !stack.is_empty()
+            && stack.kind() == kind
+        {
+            out.push(s);
+        }
     }
     out
 }
@@ -4247,11 +4268,13 @@ fn find_hotbar_slot_for(inv: &ContainerHandleRef, kind: ItemKind) -> Option<u8> 
     let hotbar_start = *hotbar_range.start();
     for s in hotbar_range {
         if let Some(stack) = slots.get(s)
-            && !stack.is_empty() && stack.kind() == kind {
-                let idx = (s - hotbar_start) as u8;
-                debug_assert!(idx <= 8, "hotbar idx out of range: {idx}");
-                return Some(idx);
-            }
+            && !stack.is_empty()
+            && stack.kind() == kind
+        {
+            let idx = (s - hotbar_start) as u8;
+            debug_assert!(idx <= 8, "hotbar idx out of range: {idx}");
+            return Some(idx);
+        }
     }
     None
 }
@@ -4768,23 +4791,24 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
                                 let player_range = menu.player_slots_range();
                                 for hs in hotbar_range.clone() {
                                     if let Some(st) = slots.get(hs)
-                                        && !st.is_empty() {
-                                            inv.left_click(hs);
-                                            sleep(Duration::from_millis(80)).await;
-                                            // 找一个空的主背包槽位放下
-                                            for ps in player_range.clone() {
-                                                let is_empty = slots
-                                                    .get(ps)
-                                                    .map(|st| st.is_empty())
-                                                    .unwrap_or(false);
-                                                if is_empty || ps >= slots.len() {
-                                                    inv.left_click(ps);
-                                                    sleep(Duration::from_millis(80)).await;
-                                                    break;
-                                                }
+                                        && !st.is_empty()
+                                    {
+                                        inv.left_click(hs);
+                                        sleep(Duration::from_millis(80)).await;
+                                        // 找一个空的主背包槽位放下
+                                        for ps in player_range.clone() {
+                                            let is_empty = slots
+                                                .get(ps)
+                                                .map(|st| st.is_empty())
+                                                .unwrap_or(false);
+                                            if is_empty || ps >= slots.len() {
+                                                inv.left_click(ps);
+                                                sleep(Duration::from_millis(80)).await;
+                                                break;
                                             }
-                                            break;
                                         }
+                                        break;
+                                    }
                                 }
                             }
                         }
@@ -4843,14 +4867,10 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
                 let range = menu.player_slots_range();
                 for s in range {
                     if let Some(st) = slots.get(s)
-                        && !st.is_empty() {
-                            diag_items.push(format!(
-                                "slot{}={}x{}",
-                                s,
-                                st.kind().to_str(),
-                                st.count()
-                            ));
-                        }
+                        && !st.is_empty()
+                    {
+                        diag_items.push(format!("slot{}={}x{}", s, st.kind().to_str(), st.count()));
+                    }
                 }
             }
             // P12 修复（2026-07-26）：针对工具类（pickaxe/axe/sword/hoe）的失败
@@ -5262,23 +5282,24 @@ pub async fn do_consume(bot: &Client, item: &str) -> String {
         // 注意：inv 可能已被上面的 drop(inv) 释放，重新获取一份
         let mut diag = String::new();
         if let Ok(inv3) = bot.get_inventory()
-            && let Some(menu) = inv3.menu().ok().flatten() {
-                let range = menu.player_slots_range();
-                diag.push_str(&format!("player_slots_range={range:?}; "));
-                if let Some(slots) = inv3.slots() {
-                    let nonempty: Vec<String> = slots
-                        .iter()
-                        .enumerate()
-                        .filter(|(_, s)| !s.is_empty())
-                        .map(|(i, s)| format!("slot{i}:{:?}", s.kind()))
-                        .collect();
-                    diag.push_str(&format!(
-                        "非空槽位({}): {}",
-                        nonempty.len(),
-                        nonempty.join(", ")
-                    ));
-                }
+            && let Some(menu) = inv3.menu().ok().flatten()
+        {
+            let range = menu.player_slots_range();
+            diag.push_str(&format!("player_slots_range={range:?}; "));
+            if let Some(slots) = inv3.slots() {
+                let nonempty: Vec<String> = slots
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, s)| !s.is_empty())
+                    .map(|(i, s)| format!("slot{i}:{:?}", s.kind()))
+                    .collect();
+                diag.push_str(&format!(
+                    "非空槽位({}): {}",
+                    nonempty.len(),
+                    nonempty.join(", ")
+                ));
             }
+        }
         return format!("背包未持有 {item}（无法消耗）[diag: {diag}]");
     };
 

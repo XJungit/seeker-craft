@@ -40,9 +40,10 @@ fn normalize_item_id(item: &str) -> String {
 /// 当前是否已打开非 Player 菜单（即任意容器）。
 pub fn is_container_open(bot: &Client) -> bool {
     if let Ok(inv) = bot.get_inventory()
-        && let Ok(Some(menu)) = inv.menu() {
-            return !matches!(menu, azalea::inventory::Menu::Player(_));
-        }
+        && let Ok(Some(menu)) = inv.menu()
+    {
+        return !matches!(menu, azalea::inventory::Menu::Player(_));
+    }
     false
 }
 
@@ -142,9 +143,11 @@ fn count_in_inventory(bot: &Client, item: &str) -> u32 {
     let mut total = 0u32;
     for s in range {
         if let Some(st) = slots.get(s)
-            && !st.is_empty() && st.kind() == kind {
-                total += st.count().max(0) as u32;
-            }
+            && !st.is_empty()
+            && st.kind() == kind
+        {
+            total += st.count().max(0) as u32;
+        }
     }
     total
 }
@@ -443,7 +446,9 @@ pub async fn ensure_table_open(
                                         for _retry in 0..2u8 {
                                             walk_to_reach(bot, new_pos).await;
                                             sleep(Duration::from_millis(150)).await;
-                                            if let Ok(Some(h)) = bot.open_container_at(new_pos).await {
+                                            if let Ok(Some(h)) =
+                                                bot.open_container_at(new_pos).await
+                                            {
                                                 std::mem::forget(h);
                                                 for _ in 0..20 {
                                                     if is_container_open(bot) {
@@ -494,18 +499,17 @@ pub async fn ensure_table_open(
                                                 for _retry in 0..2u8 {
                                                     walk_to_reach(bot, dug_pos).await;
                                                     sleep(Duration::from_millis(150)).await;
-                                                    if let Ok(Some(h)) = bot.open_container_at(dug_pos).await {
+                                                    if let Ok(Some(h)) =
+                                                        bot.open_container_at(dug_pos).await
+                                                    {
                                                         std::mem::forget(h);
                                                         for _ in 0..20 {
                                                             if is_container_open(bot) {
-                                                                sleep(Duration::from_millis(
-                                                                    80,
-                                                                ))
-                                                                .await;
+                                                                sleep(Duration::from_millis(80))
+                                                                    .await;
                                                                 return Ok(dug_pos);
                                                             }
-                                                            sleep(Duration::from_millis(50))
-                                                                .await;
+                                                            sleep(Duration::from_millis(50)).await;
                                                         }
                                                     }
                                                     sleep(Duration::from_millis(300)).await;
@@ -599,10 +603,11 @@ pub async fn ensure_table_open(
                             .map(|slots| {
                                 for s in range {
                                     if let Some(st) = slots.get(s)
-                                        && !st.is_empty() && st.kind().to_str().ends_with("_planks")
-                                        {
-                                            return true;
-                                        }
+                                        && !st.is_empty()
+                                        && st.kind().to_str().ends_with("_planks")
+                                    {
+                                        return true;
+                                    }
                                 }
                                 false
                             })
@@ -629,13 +634,13 @@ pub async fn ensure_table_open(
                                 .map(|slots| {
                                     for s in range {
                                         if let Some(st) = slots.get(s)
-                                            && !st.is_empty() {
-                                                let kind = st.kind().to_str();
-                                                if kind.ends_with("_log") || kind.ends_with("_stem")
-                                                {
-                                                    return true;
-                                                }
+                                            && !st.is_empty()
+                                        {
+                                            let kind = st.kind().to_str();
+                                            if kind.ends_with("_log") || kind.ends_with("_stem") {
+                                                return true;
                                             }
+                                        }
                                     }
                                     false
                                 })
@@ -658,23 +663,24 @@ pub async fn ensure_table_open(
                                 inv.slots().and_then(|slots| {
                                     for s in range {
                                         if let Some(st) = slots.get(s)
-                                            && !st.is_empty() {
-                                                let kind = st.kind().to_str();
-                                                let bare_kind =
-                                                    kind.strip_prefix("minecraft:").unwrap_or(kind);
-                                                if bare_kind.ends_with("_log") {
-                                                    let wood = bare_kind
-                                                        .strip_suffix("_log")
-                                                        .unwrap_or(bare_kind);
-                                                    return Some(format!("{}_planks", wood));
-                                                }
-                                                if bare_kind.ends_with("_stem") {
-                                                    let wood = bare_kind
-                                                        .strip_suffix("_stem")
-                                                        .unwrap_or(bare_kind);
-                                                    return Some(format!("{}_planks", wood));
-                                                }
+                                            && !st.is_empty()
+                                        {
+                                            let kind = st.kind().to_str();
+                                            let bare_kind =
+                                                kind.strip_prefix("minecraft:").unwrap_or(kind);
+                                            if bare_kind.ends_with("_log") {
+                                                let wood = bare_kind
+                                                    .strip_suffix("_log")
+                                                    .unwrap_or(bare_kind);
+                                                return Some(format!("{}_planks", wood));
                                             }
+                                            if bare_kind.ends_with("_stem") {
+                                                let wood = bare_kind
+                                                    .strip_suffix("_stem")
+                                                    .unwrap_or(bare_kind);
+                                                return Some(format!("{}_planks", wood));
+                                            }
+                                        }
                                     }
                                     None
                                 })
@@ -917,11 +923,13 @@ fn find_hotbar_slot(inv: &ContainerHandleRef, kind: ItemKind) -> Option<u8> {
     let slots = inv.slots()?;
     for s in hotbar_range {
         if let Some(stack) = slots.get(s)
-            && !stack.is_empty() && stack.kind() == kind {
-                let idx = (s - hotbar_start) as u8;
-                debug_assert!(idx <= 8, "hotbar idx out of range: {idx}");
-                return Some(idx);
-            }
+            && !stack.is_empty()
+            && stack.kind() == kind
+        {
+            let idx = (s - hotbar_start) as u8;
+            debug_assert!(idx <= 8, "hotbar idx out of range: {idx}");
+            return Some(idx);
+        }
     }
     None
 }

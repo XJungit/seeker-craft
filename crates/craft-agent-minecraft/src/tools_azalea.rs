@@ -181,11 +181,12 @@ impl GameTool for MineBelowTool {
         // 行动回写：仅当挖掘成功时才从世界记忆移除脚下方块。
         // P5 修复：原代码无条件 forget_pos，挖掘失败时记忆也被清空。
         if r.ok
-            && let Some(p) = self.ctx.memory.find_anchor("__self__").and_then(|a| a.pos) {
-                self.ctx
-                    .memory
-                    .forget_pos(MemoryPos::new(p.x, p.y - 1, p.z));
-            }
+            && let Some(p) = self.ctx.memory.find_anchor("__self__").and_then(|a| a.pos)
+        {
+            self.ctx
+                .memory
+                .forget_pos(MemoryPos::new(p.x, p.y - 1, p.z));
+        }
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,
@@ -229,12 +230,14 @@ impl GameTool for MineAboveTool {
             .execute_shared(Action::Minecraft(MinecraftAction::MineAbove))?;
         // 行动回写：只有实际向上移动后才从世界记忆移除头前方块。
         // P5 修复：原代码无条件 forget_pos，挖掘失败时记忆也被清空。
-        if r.ok && r.detail.contains("MineAbove progressed")
-            && let Some(p) = self.ctx.memory.find_anchor("__self__").and_then(|a| a.pos) {
-                self.ctx
-                    .memory
-                    .forget_pos(MemoryPos::new(p.x, p.y + 1, p.z));
-            }
+        if r.ok
+            && r.detail.contains("MineAbove progressed")
+            && let Some(p) = self.ctx.memory.find_anchor("__self__").and_then(|a| a.pos)
+        {
+            self.ctx
+                .memory
+                .forget_pos(MemoryPos::new(p.x, p.y + 1, p.z));
+        }
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,
@@ -1423,16 +1426,17 @@ impl GameTool for RunPlanTool {
             let action_name = step.get("action").and_then(|v| v.as_str()).unwrap_or("?");
             // 跳过无效 goto：目标是上一步 mine 的位置
             if action_name == "goto"
-                && let Some((mx, my, mz)) = last_mined {
-                    let gx = step.get("x").and_then(|v| v.as_i64()).map(|v| v as i32);
-                    let gy = step.get("y").and_then(|v| v.as_i64()).map(|v| v as i32);
-                    let gz = step.get("z").and_then(|v| v.as_i64()).map(|v| v as i32);
-                    if gx == Some(mx) && gy == Some(my) && gz == Some(mz) {
-                        results.push(format!("步骤{} (goto) 跳过: goto ({},{},{}) 是上一步刚挖的位置，bot 已在附近无需 goto。", i + 1, mx, my, mz));
-                        last_mined = None;
-                        continue;
-                    }
+                && let Some((mx, my, mz)) = last_mined
+            {
+                let gx = step.get("x").and_then(|v| v.as_i64()).map(|v| v as i32);
+                let gy = step.get("y").and_then(|v| v.as_i64()).map(|v| v as i32);
+                let gz = step.get("z").and_then(|v| v.as_i64()).map(|v| v as i32);
+                if gx == Some(mx) && gy == Some(my) && gz == Some(mz) {
+                    results.push(format!("步骤{} (goto) 跳过: goto ({},{},{}) 是上一步刚挖的位置，bot 已在附近无需 goto。", i + 1, mx, my, mz));
+                    last_mined = None;
+                    continue;
                 }
+            }
             let mc = parse_step(action_name, step)?;
             // 记录 mine 坐标供下一步检测
             if let MinecraftAction::MineBlock { x, y, z } = &mc {

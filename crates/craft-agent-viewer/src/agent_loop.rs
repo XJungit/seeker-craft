@@ -720,7 +720,8 @@ fn run_agent(
             let did = agent.rollover_in_place(session_path, &goal_snapshot);
             if did {
                 let _ = event_tx.send(AgentEvent::Log {
-                    text: "♻️ 会话自动滚动（防 OOM）：已归档并重置内存历史，bot 继续运行。".to_string(),
+                    text: "♻️ 会话自动滚动（防 OOM）：已归档并重置内存历史，bot 继续运行。"
+                        .to_string(),
                 });
             }
         }

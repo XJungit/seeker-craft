@@ -25,11 +25,13 @@ fn find_hotbar_slot(inv: &ContainerHandleRef, kind: ItemKind) -> Option<u8> {
     let slots = inv.slots()?;
     for s in hotbar_range {
         if let Some(stack) = slots.get(s)
-            && !stack.is_empty() && stack.kind() == kind {
-                let idx = (s - hotbar_start) as u8;
-                debug_assert!(idx <= 8, "hotbar idx out of range: {idx}");
-                return Some(idx);
-            }
+            && !stack.is_empty()
+            && stack.kind() == kind
+        {
+            let idx = (s - hotbar_start) as u8;
+            debug_assert!(idx <= 8, "hotbar idx out of range: {idx}");
+            return Some(idx);
+        }
     }
     None
 }
@@ -53,9 +55,11 @@ fn find_item_slot_in_main_inventory(inv: &ContainerHandleRef, kind: ItemKind) ->
             continue; // 跳过 hotbar
         }
         if let Some(stack) = slots.get(s)
-            && !stack.is_empty() && stack.kind() == kind {
-                return Some(s);
-            }
+            && !stack.is_empty()
+            && stack.kind() == kind
+        {
+            return Some(s);
+        }
     }
     None
 }
@@ -637,11 +641,12 @@ fn find_nearby_container_block(bot: &Client, origin: BlockPos, radius: i32) -> O
                 let pos = BlockPos::new(origin.x + dx, origin.y + dy, origin.z + dz);
                 let kind = world.get_block_state(pos).map(|s| s.into());
                 if let Some(bk) = kind
-                    && is_container_block(bk) {
-                        // 曼哈顿距离作优先级，距离近的优先
-                        let dist = dx.abs() + dy.abs() + dz.abs();
-                        candidates.push((dist, pos));
-                    }
+                    && is_container_block(bk)
+                {
+                    // 曼哈顿距离作优先级，距离近的优先
+                    let dist = dx.abs() + dy.abs() + dz.abs();
+                    candidates.push((dist, pos));
+                }
             }
         }
     }

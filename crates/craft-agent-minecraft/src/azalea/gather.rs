@@ -66,9 +66,11 @@ fn count_item(inv: &ContainerHandleRef, kind: ItemKind) -> u32 {
     let mut total = 0u32;
     for s in range {
         if let Some(stack) = slots.get(s)
-            && !stack.is_empty() && stack.kind() == kind {
-                total += stack.count().max(0) as u32;
-            }
+            && !stack.is_empty()
+            && stack.kind() == kind
+        {
+            total += stack.count().max(0) as u32;
+        }
     }
     total
 }
@@ -400,9 +402,7 @@ pub async fn do_gather(bot: &Client, item: &str, count: u32) -> Result<String, S
                 .ok()
                 .and_then(|s| if s.is_empty() { None } else { Some(s.kind()) });
             let required_tier = block_required_pickaxe_tier(block_kind);
-            let held_tier = held_kind
-                .map(crate::azalea::pickaxe_tier)
-                .unwrap_or(0);
+            let held_tier = held_kind.map(crate::azalea::pickaxe_tier).unwrap_or(0);
             let best_tier = best_pickaxe_tier_in_inventory(bot).await;
 
             // 完全没镐 → 缺工具

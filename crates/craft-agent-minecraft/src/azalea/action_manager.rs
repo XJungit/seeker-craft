@@ -16,8 +16,7 @@ use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
 /// 命令优先级。高优先级可抢占低优先级 pending。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[derive(Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Priority {
     /// 普通命令（LLM 工具调用产生）。FIFO 排队。
     #[default]
@@ -26,7 +25,6 @@ pub enum Priority {
     /// 若 pending 是 Normal，抢占之；若 pending 也是 High，则排队等。
     High,
 }
-
 
 /// 快循环检测阈值：最近 10 条命令中相同签名出现 N 次即视为循环。
 const LOOP_DETECT_THRESHOLD: usize = 3;

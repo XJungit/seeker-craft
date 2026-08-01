@@ -99,18 +99,18 @@ async fn main() {
                         Err(e) => println!("[azalea_connect] t={t} nearby_players 失败: {e:?}"),
                     }
                     // 放置验证：每 200 tick 对着脚下方块交互（block_interact，验证 place API 链路）。
-                    if t.is_multiple_of(200) && t > 0
-                        && let Ok(p) = bot.position() {
-                            let foot = BlockPos::new(
-                                p.x.floor() as i32,
-                                (p.y - 1.0).floor() as i32,
-                                p.z.floor() as i32,
-                            );
-                            println!(
-                                "[azalea_connect] t={t} 尝试放置(block_interact) 目标={foot:?}"
-                            );
-                            bot.block_interact(foot);
-                        }
+                    if t.is_multiple_of(200)
+                        && t > 0
+                        && let Ok(p) = bot.position()
+                    {
+                        let foot = BlockPos::new(
+                            p.x.floor() as i32,
+                            (p.y - 1.0).floor() as i32,
+                            p.z.floor() as i32,
+                        );
+                        println!("[azalea_connect] t={t} 尝试放置(block_interact) 目标={foot:?}");
+                        bot.block_interact(foot);
+                    }
                 }
             }
             Event::Disconnect(reason) => {

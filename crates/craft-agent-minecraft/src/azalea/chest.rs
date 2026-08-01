@@ -181,7 +181,8 @@ pub async fn do_chest_withdraw(
     sleep(Duration::from_millis(150)).await;
     let after = bot
         .get_inventory()
-        .ok().map(|i| count_in_player_slots(&i, kind))
+        .ok()
+        .map(|i| count_in_player_slots(&i, kind))
         .unwrap_or(before);
     let actual = after.saturating_sub(before);
     if let Ok(inv) = bot.get_inventory() {
@@ -259,7 +260,8 @@ pub async fn do_chest_deposit(
     sleep(Duration::from_millis(150)).await;
     let after = bot
         .get_inventory()
-        .ok().map(|i| count_in_player_slots(&i, kind))
+        .ok()
+        .map(|i| count_in_player_slots(&i, kind))
         .unwrap_or(before);
     let actual = before.saturating_sub(after);
     if let Ok(inv) = bot.get_inventory() {

@@ -641,9 +641,10 @@ impl Agent {
         // 仅当启用知识工具时才追加 manage_knowledge（azalea 等无世界
         // 知识库的路线设 false，避免向 LLM 暴露无用/触发上游 400 的工具）。
         if self.config.enable_knowledge_tool
-            && let Ok(def) = serde_json::from_str::<Value>(MANAGE_KNOWLEDGE_TOOL) {
-                tool_defs.push(def);
-            }
+            && let Ok(def) = serde_json::from_str::<Value>(MANAGE_KNOWLEDGE_TOOL)
+        {
+            tool_defs.push(def);
+        }
         Context {
             system_prompt: full_prompt,
             messages: chatml,

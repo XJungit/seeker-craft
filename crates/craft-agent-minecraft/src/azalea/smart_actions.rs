@@ -959,9 +959,11 @@ fn count_item_kind(inv: &azalea::container::ContainerHandleRef, kind: ItemKind) 
     let mut total = 0u32;
     for s in range {
         if let Some(stack) = slots.get(s)
-            && !stack.is_empty() && stack.kind() == kind {
-                total += stack.count().max(0) as u32;
-            }
+            && !stack.is_empty()
+            && stack.kind() == kind
+        {
+            total += stack.count().max(0) as u32;
+        }
     }
     total
 }
@@ -1018,9 +1020,10 @@ fn total_inventory_count(bot: &Client) -> u32 {
             let mut total = 0u32;
             for s in range {
                 if let Some(stack) = slots.get(s)
-                    && !stack.is_empty() {
-                        total += stack.count().max(0) as u32;
-                    }
+                    && !stack.is_empty()
+                {
+                    total += stack.count().max(0) as u32;
+                }
             }
             Some(total)
         })
@@ -1243,9 +1246,11 @@ async fn count_items_in_inventory(bot: &Client, kinds: &[ItemKind]) -> u32 {
     let mut total = 0u32;
     for s in range {
         if let Some(st) = slots.get(s)
-            && !st.is_empty() && kinds.contains(&st.kind()) {
-                total += st.count() as u32;
-            }
+            && !st.is_empty()
+            && kinds.contains(&st.kind())
+        {
+            total += st.count() as u32;
+        }
     }
     total
 }

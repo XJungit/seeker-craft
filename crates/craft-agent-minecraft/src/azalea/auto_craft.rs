@@ -47,9 +47,10 @@ fn recipe_input_counts(r: &StoredRecipe) -> Vec<(String, u32)> {
         StoredRecipe::Shaped { grid, .. } => {
             for cell in grid {
                 if let Some(ing) = cell
-                    && let Some(k) = ing.items.first() {
-                        *map.entry(k.to_string()).or_insert(0) += 1;
-                    }
+                    && let Some(k) = ing.items.first()
+                {
+                    *map.entry(k.to_string()).or_insert(0) += 1;
+                }
             }
         }
         StoredRecipe::Shapeless { ingredients, .. } => {
@@ -96,9 +97,10 @@ async fn ensure_via_book(bot: &Client, item: &str, amount: u32) -> Option<Result
             if recipe_needs_table(&r) {
                 // 3×3：确保有工作台并放置/打开后合成
                 if item != "crafting_table"
-                    && let Err(e) = Box::pin(ensure(bot, "crafting_table", 1)).await {
-                        return Some(Err(e));
-                    }
+                    && let Err(e) = Box::pin(ensure(bot, "crafting_table", 1)).await
+                {
+                    return Some(Err(e));
+                }
                 // P40: 优先复用附近已放置的工作台，无则放置新的
                 let at = match ensure_placed_tool_block(bot, "crafting_table").await {
                     Ok(p) => p,
@@ -128,9 +130,10 @@ async fn ensure_via_book(bot: &Client, item: &str, amount: u32) -> Option<Result
                 return Some(Err(e));
             }
             if item != "smithing_table"
-                && let Err(e) = Box::pin(ensure(bot, "smithing_table", 1)).await {
-                    return Some(Err(e));
-                }
+                && let Err(e) = Box::pin(ensure(bot, "smithing_table", 1)).await
+            {
+                return Some(Err(e));
+            }
             // P40: 优先复用附近已放置的锻造台
             let at = match ensure_placed_tool_block(bot, "smithing_table").await {
                 Ok(p) => p,
@@ -152,9 +155,10 @@ async fn ensure_via_book(bot: &Client, item: &str, amount: u32) -> Option<Result
                 return Some(Err(e));
             }
             if item != "stonecutter"
-                && let Err(e) = Box::pin(ensure(bot, "stonecutter", 1)).await {
-                    return Some(Err(e));
-                }
+                && let Err(e) = Box::pin(ensure(bot, "stonecutter", 1)).await
+            {
+                return Some(Err(e));
+            }
             // P40: 优先复用附近已放置的切石机
             let at = match ensure_placed_tool_block(bot, "stonecutter").await {
                 Ok(p) => p,
@@ -176,9 +180,10 @@ async fn ensure_via_book(bot: &Client, item: &str, amount: u32) -> Option<Result
                 return Some(Err(e));
             }
             if item != "brewing_stand"
-                && let Err(e) = Box::pin(ensure(bot, "brewing_stand", 1)).await {
-                    return Some(Err(e));
-                }
+                && let Err(e) = Box::pin(ensure(bot, "brewing_stand", 1)).await
+            {
+                return Some(Err(e));
+            }
             // P40: 优先复用附近已放置的酿造台
             let at = match ensure_placed_tool_block(bot, "brewing_stand").await {
                 Ok(p) => p,
@@ -200,9 +205,10 @@ async fn ensure_via_book(bot: &Client, item: &str, amount: u32) -> Option<Result
                 return Some(Err(e));
             }
             if item != "furnace"
-                && let Err(e) = Box::pin(ensure(bot, "furnace", 1)).await {
-                    return Some(Err(e));
-                }
+                && let Err(e) = Box::pin(ensure(bot, "furnace", 1)).await
+            {
+                return Some(Err(e));
+            }
             // P40: 优先复用附近已放置的熔炉
             let at = match ensure_placed_tool_block(bot, "furnace").await {
                 Ok(p) => p,
@@ -257,9 +263,11 @@ async fn has_item(bot: &Client, item: &str) -> u32 {
     let mut t = 0u32;
     for s in range {
         if let Some(st) = slots.get(s)
-            && !st.is_empty() && st.kind() == k {
-                t += st.count().max(0) as u32;
-            }
+            && !st.is_empty()
+            && st.kind() == k
+        {
+            t += st.count().max(0) as u32;
+        }
     }
     t
 }
@@ -301,9 +309,11 @@ async fn has_item_with_aliases(bot: &Client, item: &str) -> u32 {
     let mut t = 0u32;
     for s in range {
         if let Some(st) = slots.get(s)
-            && !st.is_empty() && kinds_to_count.contains(&st.kind()) {
-                t += st.count().max(0) as u32;
-            }
+            && !st.is_empty()
+            && kinds_to_count.contains(&st.kind())
+        {
+            t += st.count().max(0) as u32;
+        }
     }
     t
 }
@@ -404,17 +414,19 @@ async fn ensure(bot: &Client, item: &str, amount: u32) -> Result<(), String> {
         // 有则复用（符合 vanilla 玩家行为：玩家在地下挖矿时通常会带着工作台/熔炉，
         // 或用完就地放下，下次需要时回去找），无才返回原错误。
         if is_tool_block(item)
-            && let Some(_pos) = find_nearby_placed_block(bot, item, 32).await {
-                return Ok(());
-            }
+            && let Some(_pos) = find_nearby_placed_block(bot, item, 32).await
+        {
+            return Ok(());
+        }
         return res;
     }
 
     // P40: 无配方书条目时，工具方块先扫描附近已放置的
     if is_tool_block(item)
-        && let Some(_pos) = find_nearby_placed_block(bot, item, 32).await {
-            return Ok(());
-        }
+        && let Some(_pos) = find_nearby_placed_block(bot, item, 32).await
+    {
+        return Ok(());
+    }
 
     let recipe = lookup(item)
         .ok_or_else(|| format!("auto_craft 无法制造 {item}（无配方且非可采集方块）"))?;

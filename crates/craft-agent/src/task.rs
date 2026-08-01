@@ -268,9 +268,10 @@ fn parse_count_line(perceive: &str, prefix: &str, wanted: &str) -> u32 {
                 continue;
             };
             if normalize_identifier(item_id) == wanted_norm
-                && let Ok(n) = count_str.trim().parse::<u32>() {
-                    return n;
-                }
+                && let Ok(n) = count_str.trim().parse::<u32>()
+            {
+                return n;
+            }
         }
         break;
     }
@@ -288,16 +289,17 @@ fn parse_position(perceive: &str) -> Option<(f64, f64, f64)> {
         }
         // 提取括号内数字
         if let Some(start) = trimmed.find('(')
-            && let Some(end) = trimmed.find(')') {
-                let inner = &trimmed[start + 1..end];
-                let parts: Vec<&str> = inner.split(',').map(|s| s.trim()).collect();
-                if parts.len() == 3 {
-                    let x = parts[0].parse::<f64>().ok()?;
-                    let y = parts[1].parse::<f64>().ok()?;
-                    let z = parts[2].parse::<f64>().ok()?;
-                    return Some((x, y, z));
-                }
+            && let Some(end) = trimmed.find(')')
+        {
+            let inner = &trimmed[start + 1..end];
+            let parts: Vec<&str> = inner.split(',').map(|s| s.trim()).collect();
+            if parts.len() == 3 {
+                let x = parts[0].parse::<f64>().ok()?;
+                let y = parts[1].parse::<f64>().ok()?;
+                let z = parts[2].parse::<f64>().ok()?;
+                return Some((x, y, z));
             }
+        }
         break;
     }
     None
@@ -507,9 +509,10 @@ impl TaskManager {
         self.statuses.clear();
         for (id, value) in statuses {
             if self.tasks.iter().any(|task| task.id == *id)
-                && let Ok(status) = serde_json::from_value::<TaskStatus>(value.clone()) {
-                    self.statuses.insert(id.clone(), status);
-                }
+                && let Ok(status) = serde_json::from_value::<TaskStatus>(value.clone())
+            {
+                self.statuses.insert(id.clone(), status);
+            }
         }
         let Some(current_id) = snapshot.get("current_id").and_then(Value::as_str) else {
             return;

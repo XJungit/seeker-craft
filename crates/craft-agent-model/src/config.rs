@@ -281,10 +281,11 @@ chat_template_kwargs = { enable_thinking = false }
 
     #[test]
     fn extra_body_and_explicit_key_parsed() {
+        // CI/无环境变量环境不保证有 AGNES_API_KEY：显式注入后再断言解析结果。
+        unsafe { std::env::set_var("AGNES_API_KEY", "sk-test-from-env") };
         let cfg: AgentConfig = toml::from_str(SAMPLE).unwrap();
         let agnes = cfg.vlm.backends.get("agnes").unwrap();
-        let expected = std::env::var("AGNES_API_KEY").unwrap_or_else(|_| "sk-test".to_string());
-        assert_eq!(agnes.resolve_api_key().unwrap(), expected);
+        assert_eq!(agnes.resolve_api_key().unwrap(), "sk-test-from-env");
         let eb = agnes.extra_body.as_ref().unwrap();
         assert_eq!(eb["chat_template_kwargs"]["enable_thinking"], false);
     }

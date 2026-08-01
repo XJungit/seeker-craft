@@ -127,9 +127,11 @@ fn find_source_slot(inv: &ContainerHandleRef, kind: ItemKind) -> Option<usize> {
     let range = menu.player_slots_range();
     for s in range {
         if let Some(stack) = slots.get(s)
-            && !stack.is_empty() && stack.kind() == kind {
-                return Some(s);
-            }
+            && !stack.is_empty()
+            && stack.kind() == kind
+        {
+            return Some(s);
+        }
     }
     None
 }
@@ -191,9 +193,10 @@ fn find_empty_player_slot(inv: &ContainerHandleRef) -> Option<usize> {
     let range = menu.player_slots_range();
     for s in range {
         if let Some(st) = slots.get(s)
-            && st.is_empty() {
-                return Some(s);
-            }
+            && st.is_empty()
+        {
+            return Some(s);
+        }
     }
     None
 }
@@ -211,15 +214,16 @@ fn dump_player_inventory(inv: &ContainerHandleRef) -> String {
     let mut count = 0;
     for s in range {
         if let Some(st) = slots.get(s)
-            && !st.is_empty() {
-                let k = st.kind().to_str();
-                let bare = k.strip_prefix("minecraft:").unwrap_or(k);
-                items.push(format!("slot{s}={bare}x{}", st.count()));
-                count += 1;
-                if count >= 20 {
-                    break;
-                }
+            && !st.is_empty()
+        {
+            let k = st.kind().to_str();
+            let bare = k.strip_prefix("minecraft:").unwrap_or(k);
+            items.push(format!("slot{s}={bare}x{}", st.count()));
+            count += 1;
+            if count >= 20 {
+                break;
             }
+        }
     }
     if items.is_empty() {
         "(空背包)".into()
@@ -336,9 +340,11 @@ async fn auto_discard_junk(bot: &Client) -> (String, u32) {
         let mut stacks: Vec<(usize, u32)> = Vec::new();
         for s in range {
             if let Some(st) = slots.get(s)
-                && !st.is_empty() && st.kind() == kind {
-                    stacks.push((s, st.count() as u32));
-                }
+                && !st.is_empty()
+                && st.kind() == kind
+            {
+                stacks.push((s, st.count() as u32));
+            }
         }
         if stacks.is_empty() {
             continue;
@@ -414,9 +420,11 @@ fn find_ingredient_slot(
     let slots = inv.slots()?;
     for s in grid_slots.clone() {
         if let Some(stack) = slots.get(s)
-            && !stack.is_empty() && stack.kind() == kind {
-                return Some(s);
-            }
+            && !stack.is_empty()
+            && stack.kind() == kind
+        {
+            return Some(s);
+        }
     }
     // P23: 别名替换——找不到精确 kind 时，尝试同类其他变体
     for alt_kind in expand_ingredient_aliases(kind) {
@@ -433,14 +441,16 @@ fn find_ingredient_slot(
         }
         for s in grid_slots.clone() {
             if let Some(stack) = slots.get(s)
-                && !stack.is_empty() && stack.kind() == alt_kind {
-                    eprintln!(
-                        "[craft] P23 别名替换（网格）：{} -> {}",
-                        kind.to_str(),
-                        alt_kind.to_str()
-                    );
-                    return Some(s);
-                }
+                && !stack.is_empty()
+                && stack.kind() == alt_kind
+            {
+                eprintln!(
+                    "[craft] P23 别名替换（网格）：{} -> {}",
+                    kind.to_str(),
+                    alt_kind.to_str()
+                );
+                return Some(s);
+            }
         }
     }
     None
@@ -684,9 +694,10 @@ pub async fn do_craft_2x2(bot: &Client, item: &str, count: u32) -> Result<String
             sleep(Duration::from_millis(100)).await;
             if let Ok(inv) = bot.get_inventory()
                 && let Ok(Some(menu)) = inv.menu()
-                    && matches!(menu, azalea::inventory::Menu::Player(_)) {
-                        break;
-                    }
+                && matches!(menu, azalea::inventory::Menu::Player(_))
+            {
+                break;
+            }
         }
     }
 
@@ -696,12 +707,13 @@ pub async fn do_craft_2x2(bot: &Client, item: &str, count: u32) -> Result<String
 
     // 二次确认：菜单必须是 Player（2×2 网格只在此菜单下有效）
     if let Ok(Some(menu)) = inv.menu()
-        && !matches!(menu, azalea::inventory::Menu::Player(_)) {
-            return Err(format!(
-                "合成 {item} 失败：当前打开的不是玩家背包（2×2 网格不可用）。\
+        && !matches!(menu, azalea::inventory::Menu::Player(_))
+    {
+        return Err(format!(
+            "合成 {item} 失败：当前打开的不是玩家背包（2×2 网格不可用）。\
                  请先关闭已打开的容器再调用 craft。"
-            ));
-        }
+        ));
+    }
 
     // 决定 placement：[(slot, ItemKind)] 列表 + output_per_craft
     // 优先级：SHAPED_2X2 候选（含 coal/charcoal 多变体）> 顺序填充（lookup_recipe）
@@ -865,15 +877,16 @@ pub async fn do_craft_2x2(bot: &Client, item: &str, count: u32) -> Result<String
             .map(|st| st.kind());
         let count_kind = actual_kind.unwrap_or(target_kind);
         if let Some(ak) = actual_kind
-            && ak != target_kind {
-                let ak_name = ak.to_str();
-                let tk_name = target_kind.to_str();
-                eprintln!(
-                    "[craft 2x2] 警告：result slot 是 {} 而非 {}（可能 LLM 传了别名，按实际类型计数）",
-                    ak_name.strip_prefix("minecraft:").unwrap_or(ak_name),
-                    tk_name.strip_prefix("minecraft:").unwrap_or(tk_name),
-                );
-            }
+            && ak != target_kind
+        {
+            let ak_name = ak.to_str();
+            let tk_name = target_kind.to_str();
+            eprintln!(
+                "[craft 2x2] 警告：result slot 是 {} 而非 {}（可能 LLM 传了别名，按实际类型计数）",
+                ak_name.strip_prefix("minecraft:").unwrap_or(ak_name),
+                tk_name.strip_prefix("minecraft:").unwrap_or(tk_name),
+            );
+        }
         let before_count = count_item_in_player_slots(&inv, count_kind);
 
         // 先尝试 shift_click(0)（如果主背包有空位，这是最快的）
@@ -1546,14 +1559,15 @@ pub async fn do_craft_3x3(
             .filter(|st| !st.is_empty())
             .map(|st| st.kind());
         if let Some(rk) = result_kind
-            && rk != target_kind {
-                let rk_name = rk.to_str();
-                eprintln!(
-                    "[craft 3x3] 警告：result slot 是 {} 而非 {}（网格可能摆错）",
-                    rk_name, item
-                );
-                // 不直接报错，继续尝试收集——可能 LLM 指定了别名
-            }
+            && rk != target_kind
+        {
+            let rk_name = rk.to_str();
+            eprintln!(
+                "[craft 3x3] 警告：result slot 是 {} 而非 {}（网格可能摆错）",
+                rk_name, item
+            );
+            // 不直接报错，继续尝试收集——可能 LLM 指定了别名
+        }
 
         // 先尝试 shift_click(0)（如果主背包有空位，这是最快的）
         let empty_before = count_empty_player_slots(&inv);
@@ -1698,10 +1712,11 @@ pub async fn do_craft_3x3_recipe(
                 for c in 0..w {
                     let idx = r * w + c;
                     if let Some(Some(ing)) = grid.get(idx)
-                        && let Some(k) = ing.items.first() {
-                            // 工作台槽位：row*3+col+1
-                            placed.push((r * 3 + c + 1, *k));
-                        }
+                        && let Some(k) = ing.items.first()
+                    {
+                        // 工作台槽位：row*3+col+1
+                        placed.push((r * 3 + c + 1, *k));
+                    }
                 }
             }
             (placed, "shaped")
@@ -1809,7 +1824,8 @@ pub async fn do_craft_3x3_recipe(
             None => {
                 let _ = clear_grid(&inv2, GRID).await;
                 return Err("配方书合成失败：背包完全满，产物无法收集。\
-                     建议：先 discard 丢弃垃圾物品腾出空位后再重试。".to_string());
+                     建议：先 discard 丢弃垃圾物品腾出空位后再重试。"
+                    .to_string());
             }
         }
         let inv3 = match bot.get_inventory() {
@@ -1824,8 +1840,11 @@ pub async fn do_craft_3x3_recipe(
 
         // 都失败了
         let _ = clear_grid(&inv3, GRID).await;
-        return Err("配方书合成失败：产物无法从结果槽移入背包（shift_click + left_click 均失败）。\
-             建议：1) 先 discard 腾出空位；2) 关闭工作台再重新打开后重试。".to_string());
+        return Err(
+            "配方书合成失败：产物无法从结果槽移入背包（shift_click + left_click 均失败）。\
+             建议：1) 先 discard 腾出空位；2) 关闭工作台再重新打开后重试。"
+                .to_string(),
+        );
     }
 
     clear_cursor(&inv).await;
@@ -2026,7 +2045,8 @@ pub async fn do_craft_stonecutter(
             }
             None => {
                 return Err("切石失败：背包完全满，产物无法收集。\
-                     建议：1) 先 discard 丢弃垃圾物品腾出空位；2) 关闭切石机再重新打开后重试。".to_string());
+                     建议：1) 先 discard 丢弃垃圾物品腾出空位；2) 关闭切石机再重新打开后重试。"
+                    .to_string());
             }
         }
         let inv3 = match bot.get_inventory() {
@@ -2040,8 +2060,11 @@ pub async fn do_craft_stonecutter(
         }
 
         // 都失败了
-        return Err("切石失败：产物无法从结果槽移入背包（shift_click + left_click 均失败）。\
-             建议：1) 先 discard 腾出空位；2) 关闭切石机再重新打开后重试。".to_string());
+        return Err(
+            "切石失败：产物无法从结果槽移入背包（shift_click + left_click 均失败）。\
+             建议：1) 先 discard 腾出空位；2) 关闭切石机再重新打开后重试。"
+                .to_string(),
+        );
     }
     Ok(format!("切石合成 x{count} 完成（约 {made} 次）"))
 }
@@ -2255,15 +2278,16 @@ pub async fn do_smelt(
         ))
         .ok();
         if let Some(expected) = input_kind_check
-            && existing.kind() != expected {
-                return Err(format!(
-                    "熔炉正在炼别的东西（input 槽有 {}x{}，期望 {}）。\
+            && existing.kind() != expected
+        {
+            return Err(format!(
+                "熔炉正在炼别的东西（input 槽有 {}x{}，期望 {}）。\
                      不抢占炉子。建议：1) 等当前熔炼完成；2) 打开另一个炉子；3) 关闭炉子取回原料后重试。",
-                    existing.kind().to_str(),
-                    existing.count(),
-                    expected.to_str()
-                ));
-            }
+                existing.kind().to_str(),
+                existing.count(),
+                expected.to_str()
+            ));
+        }
     }
 
     // 优先选背包里有的原料；若都没有，选第一个候选并报错（列出所有候选原料）
@@ -2331,9 +2355,10 @@ pub async fn do_smelt(
         ];
         for f in fallbacks {
             if let Ok(k) = ItemKind::from_str(&normalize_item(f))
-                && !v.contains(&k) {
-                    v.push(k);
-                }
+                && !v.contains(&k)
+            {
+                v.push(k);
+            }
         }
         v
     };
@@ -3077,21 +3102,9 @@ mod tests {
             1,
             "1 个 planks 请求 → 1 次合成（产出 4）"
         );
-        assert_eq!(
-            4u32.div_ceil(output_per),
-            1,
-            "4 个 planks 请求 → 1 次合成"
-        );
-        assert_eq!(
-            5u32.div_ceil(output_per),
-            2,
-            "5 个 planks 请求 → 2 次合成"
-        );
-        assert_eq!(
-            8u32.div_ceil(output_per),
-            2,
-            "8 个 planks 请求 → 2 次合成"
-        );
+        assert_eq!(4u32.div_ceil(output_per), 1, "4 个 planks 请求 → 1 次合成");
+        assert_eq!(5u32.div_ceil(output_per), 2, "5 个 planks 请求 → 2 次合成");
+        assert_eq!(8u32.div_ceil(output_per), 2, "8 个 planks 请求 → 2 次合成");
     }
 
     /// P45 回归测试：furnace 配方必须是 8 个 cobblestone 围一圈（slot 5 为空）。
