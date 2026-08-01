@@ -447,6 +447,10 @@ pub struct BotState {
     /// P68：跟随模式。Some(target) 表示正在跟随该玩家（None 名=跟随最近玩家）；
     /// None 表示未跟随。handler 每 tick 读取目标坐标 goto。
     pub follow_target: Arc<Mutex<Option<Option<String>>>>,
+    /// P77：hunting 模式——攻击动物后自动拾取掉落物的截止 tick（0=无窗口）。
+    pub hunt_pickup_until: Arc<Mutex<u64>>,
+    /// P77：战斗模式请求自动装备的武器名（防重复 push Equip；None=无待装备）。
+    pub combat_equip_pending: Arc<Mutex<Option<String>>>,
 }
 
 impl Default for BotState {
@@ -472,6 +476,8 @@ impl Default for BotState {
             action_mgr: ActionManager::new(),
             memory: None,
             scanned: Arc::new(Mutex::new(HashMap::new())),
+            hunt_pickup_until: Arc::new(Mutex::new(0)),
+            combat_equip_pending: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -777,6 +783,8 @@ impl AzaleaBot {
             action_mgr: ActionManager::new(),
             memory: memory,
             scanned: Arc::new(Mutex::new(HashMap::new())),
+            hunt_pickup_until: Arc::new(Mutex::new(0)),
+            combat_equip_pending: Arc::new(Mutex::new(None)),
             goto_watchdog: Arc::new(Mutex::new((0, 0, 0, 0))),
             goto_cooldown: Arc::new(Mutex::new(HashMap::new())),
             no_move_ticks: Arc::new(Mutex::new(0)),
@@ -3509,14 +3517,91 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                         }
                     }
                 }
+                // hunting：空闲时自动狩猎附近动物（P77，Mindcraft 移植）。
+                // Mindcraft modes.js hunting: 8m 内 isHuntable 动物自动 attackEntity，
+                // 掉落物靠 item_collecting 模式拾取。此前我们只有 LLM 决策层提示
+                // （30-60s/回合），动物跑了/没 LLM 关注就没有食物来源。
+                // 实现：100 tick 节流 + is_idle + hp≥10（濒死让位 cowardice）；
+                // 攻击后 5s 拾取窗口内自动 pickup 掉落物。
+                if bot.ticks_connected() % 100 == 0
+                    && state.action_mgr.is_idle()
+                    && !*state.mining_below.lock().unwrap()
+                    && bot.health().unwrap_or(20.0) >= 10.0
+                {
+                    if let Ok(entities) = bot
+                        .nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>()
+                    {
+                        let self_id = bot.entity().id();
+                        let self_pos = bot.position().ok();
+                        'hunt: for e in entities.iter() {
+                            if e.id() == self_id {
+                                continue;
+                            }
+                            let Ok(kind) = e.kind() else { continue };
+                            let huntable = matches!(
+                                kind,
+                                EntityKind::Cow
+                                    | EntityKind::Pig
+                                    | EntityKind::Chicken
+                                    | EntityKind::Sheep
+                                    | EntityKind::Rabbit
+                                    | EntityKind::Mooshroom
+                            );
+                            if !huntable {
+                                continue;
+                            }
+                            let (Some(sp), Ok(ep)) = (self_pos, e.position()) else {
+                                continue;
+                            };
+                            let d = ((sp.x - ep.x).powi(2)
+                                + (sp.y - ep.y).powi(2)
+                                + (sp.z - ep.z).powi(2))
+                                .sqrt();
+                            if d <= 8.0 {
+                                let indexed = bot
+                                    .query_self::<&azalea::entity::indexing::EntityIdIndex, _>(
+                                        |index| index.contains_ecs_entity(e.id()),
+                                    )
+                                    .unwrap_or(false);
+                                if indexed
+                                    && e.get_component::<azalea::entity::EntityKindComponent>()
+                                        .is_some()
+                                {
+                                    e.attack();
+                                    let tick = bot.ticks_connected() as u64;
+                                    *state.hunt_pickup_until.lock().unwrap() = tick + 100;
+                                    let _ = evt_tx.send(BotEvent::Chat {
+                                        content: format!(
+                                            "[MODE:hunting] 自动狩猎 {kind:?}（食物来源）"
+                                        ),
+                                    });
+                                    break 'hunt;
+                                }
+                            }
+                        }
+                    }
+                }
+                // hunting 拾取窗口：攻击动物后自动捡掉落物（每 20 tick 一次，直到窗口结束）。
+                {
+                    let tick = bot.ticks_connected() as u64;
+                    let until = *state.hunt_pickup_until.lock().unwrap();
+                    if until > 0 && tick < until && tick % 20 == 0 && state.action_mgr.is_idle() {
+                        let _ = crate::azalea::smart_actions::pickup_nearby_items(&bot).await;
+                    }
+                    if until > 0 && tick >= until {
+                        *state.hunt_pickup_until.lock().unwrap() = 0;
+                    }
+                }
                 // cowardice：hp 低 + 附近有敌对 → 自动逃离（Mindcraft 移植）。
                 // self_defense 只攻击 4 格内敌人，而僵尸/骷髅 16m 外扑来时 LLM 回合
                 // 30-60s 太慢（实测 hp=1 濒死时 LLM 想撤退但 goto 连续失败，被僵尸追死）。
+                // P77：阈值 hp<6→hp<10（骷髅 2 箭 7-9 伤害就能破 6，之前的阈值太晚；
+                // Mindcraft 是无条件 16m 逃，我们保留 hp 门槛避免 bot 见怪就放弃主线）。
                 // 地下→自动向上挖洞逃生（僵尸不会挖方块）；地表→向远离敌人方向走 20 格。
-                // 优先于 self_defense：hp<6 时 self_defense 的攻击会被跳过。
+                // 优先于 self_defense：hp<10 时 self_defense 的攻击会被跳过。
                 if bot.ticks_connected() % 100 == 0 {
                     let health = bot.health().unwrap_or(20.0);
-                    if health < 6.0 {
+                    if health < 10.0 {
                         let mut flee_dir: Option<(f64, f64)> = None;
                         if let Ok(entities) = bot
                             .nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>()
@@ -3545,6 +3630,19 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                             | EntityKind::Drowned
                                             | EntityKind::Husk
                                             | EntityKind::Stray
+                                            // P77：下界/末地敌对（dragon 主线的自动防御保障）
+                                            | EntityKind::Blaze
+                                            | EntityKind::Ghast
+                                            | EntityKind::Piglin
+                                            | EntityKind::PiglinBrute
+                                            | EntityKind::ZombifiedPiglin
+                                            | EntityKind::Guardian
+                                            | EntityKind::ElderGuardian
+                                            | EntityKind::Shulker
+                                            | EntityKind::Vex
+                                            | EntityKind::Wither
+                                            | EntityKind::WitherSkeleton
+                                            | EntityKind::MagmaCube
                                     );
                                     if hostile {
                                         if let (Some(sp), Ok(ep)) = (self_pos, e.position()) {
@@ -3618,20 +3716,25 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                     }
                 }
                 // self_defense：空闲或寻路途中自动攻击附近敌对生物（每 100 tick ≈5s 检查一次）
-                // 距离限制：只攻击 4 格内实体，避免对远距离敌人（如持弩掠夺者）对着空气挥拳。
+                // 距离限制：只攻击 8 格内实体（P77：对齐 Mindcraft 的 8m；4m 太近——
+                // 僵尸走到 4m 内往往已经开始扑击，8m 能提前两轮出手）。
                 // 用 is_busy() 而非 is_idle()：Goto/Mine 等轮询命令执行期间 pending 非空但 busy=false，
                 // 此时仍应自卫（否则 bot 寻路途中被僵尸攻击不还手——H3 bug）。
                 // 只在异步命令（Craft/Gather/Smelt）执行中（busy=true）跳过，避免抢占。
-                // hp<6 时不攻击（cowardice 逃跑优先，避免濒死还硬刚被补刀）。
+                // hp<10 时不攻击（cowardice 逃跑优先，避免濒死还硬刚被补刀——P77 随 cowardice 同步 6→10）。
+                // P77：主手非武器且背包有剑/斧 → 自动装备（Mindcraft pvp 插件默认行为），
+                // 装备请求期间跳过攻击（等 5s 后下一轮装备好再打）。
+                // P77：creeper ≤3m（爆炸半径）→ 撤离优先于攻击。
                 if !state.action_mgr.is_busy()
                     && !*state.mining_below.lock().unwrap()
-                    && bot.health().unwrap_or(20.0) >= 6.0
+                    && bot.health().unwrap_or(20.0) >= 10.0
                     && bot.ticks_connected() % 100 == 0
                 {
                     if let Ok(entities) = bot.nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>() {
                     let self_id = bot.entity().id();
                     let self_pos = bot.position().ok();
                     let mut attacked = false;
+                    let mut creeper_evaded = false;
                     for e in entities.iter() {
                         if e.id() == self_id { continue; }
                         if attacked { break; }
@@ -3641,16 +3744,51 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                 | EntityKind::Spider | EntityKind::CaveSpider | EntityKind::Enderman
                                 | EntityKind::Pillager | EntityKind::Phantom | EntityKind::Witch
                                 | EntityKind::Drowned | EntityKind::Husk | EntityKind::Stray
+                                // P77：下界/末地敌对（dragon 主线的自动防御保障）
+                                | EntityKind::Blaze | EntityKind::Ghast | EntityKind::Piglin
+                                | EntityKind::PiglinBrute | EntityKind::ZombifiedPiglin
+                                | EntityKind::Guardian | EntityKind::ElderGuardian
+                                | EntityKind::Shulker | EntityKind::Vex | EntityKind::Wither
+                                | EntityKind::WitherSkeleton | EntityKind::MagmaCube
                             );
                             if hostile {
-                                // 距离检查：只在 4 格内才攻击，否则会反复对空气挥拳
-                                // （远距离敌人由 LLM 决策是否 goto 拉近或撤退）
+                                // creeper 3m 内：爆炸半径内，撤离优先（High 优先级 goto 8m 外）
+                                if kind == EntityKind::Creeper {
+                                    if let (Some(sp), Ok(ep)) = (self_pos, e.position()) {
+                                        let d = ((sp.x - ep.x).powi(2)
+                                            + (sp.y - ep.y).powi(2)
+                                            + (sp.z - ep.z).powi(2)).sqrt();
+                                        if d <= 3.0 {
+                                            let mut dx = sp.x - ep.x;
+                                            let mut dz = sp.z - ep.z;
+                                            let dl = (dx * dx + dz * dz).sqrt();
+                                            if dl < 0.1 { dx = 1.0; dz = 0.0; } else { dx /= dl; dz /= dl; }
+                                            let tx = (sp.x + dx * 8.0).floor() as i32;
+                                            let ty = sp.y.floor() as i32;
+                                            let tz = (sp.z + dz * 8.0).floor() as i32;
+                                            let tick_now = bot.ticks_connected() as u64;
+                                            let _ = state.action_mgr.submit(
+                                                BotCommand::Goto { x: tx, y: ty, z: tz },
+                                                Priority::High,
+                                                &cmd_queue,
+                                                tick_now,
+                                            );
+                                            let _ = evt_tx.send(BotEvent::Chat {
+                                                content: format!("[MODE] creeper {d:.1}m 内即将爆炸，自动撤离 ({tx},{ty},{tz})"),
+                                            });
+                                            creeper_evaded = true;
+                                            attacked = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                // 距离检查：8 格内才攻击（远距离敌人由 LLM 决策是否拉近或撤退）
                                 let in_range = if let Some(sp) = self_pos {
                                     if let Ok(ep) = e.position() {
                                         let d = ((sp.x - ep.x).powi(2)
                                             + (sp.y - ep.y).powi(2)
                                             + (sp.z - ep.z).powi(2)).sqrt();
-                                        d <= 4.0
+                                        d <= 8.0
                                     } else {
                                         false
                                     }
@@ -3658,6 +3796,56 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                     false
                                 };
                                 if !in_range { continue; }
+                                // 自动换武器：主手非武器且背包有剑/斧 → Equip（防重复，本轮跳过攻击）
+                                let held_is_weapon = bot
+                                    .get_held_item()
+                                    .ok()
+                                    .map(|s| {
+                                        let id = s.kind().to_str();
+                                        id.ends_with("_sword") || id.ends_with("_axe")
+                                    })
+                                    .unwrap_or(false);
+                                if !held_is_weapon {
+                                    let mut pending = state.combat_equip_pending.lock().unwrap();
+                                    if pending.is_none() {
+                                        if let Ok(inv) = bot.get_inventory() {
+                                            let best = [
+                                                "diamond_sword", "iron_sword", "stone_sword",
+                                                "wooden_sword", "diamond_axe", "iron_axe",
+                                                "stone_axe", "wooden_axe",
+                                            ]
+                                            .iter()
+                                            .find_map(|n| {
+                                                ItemKind::from_str(n).ok().filter(|k| {
+                                                    find_item_slots(&inv, *k).first().is_some()
+                                                })
+                                            });
+                                            if let Some(k) = best {
+                                                let name = k.to_str()
+                                                    .strip_prefix("minecraft:")
+                                                    .unwrap_or_else(|| k.to_str())
+                                                    .to_string();
+                                                *pending = Some(name.clone());
+                                                let tick_now = bot.ticks_connected() as u64;
+                                                let _ = state.action_mgr.submit(
+                                                    BotCommand::Equip {
+                                                        item: name.clone(),
+                                                        slot: "hand".into(),
+                                                    },
+                                                    Priority::Normal,
+                                                    &cmd_queue,
+                                                    tick_now,
+                                                );
+                                                let _ = evt_tx.send(BotEvent::Chat {
+                                                    content: format!("[MODE:self_defense] 主手无武器，自动装备 {name}"),
+                                                });
+                                            }
+                                        }
+                                    }
+                                    continue;
+                                } else {
+                                    *state.combat_equip_pending.lock().unwrap() = None;
+                                }
                                 // 攻击前检查实体是否存活（get_component 失败说明已消失）
                                 let indexed = bot
                                     .query_self::<&azalea::entity::indexing::EntityIdIndex, _>(|index| {
