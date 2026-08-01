@@ -295,6 +295,28 @@ discard/consume/chestview/chestwithdraw/chestdeposit/makeobsidian/pickup/defend�
 probe 发现的工具层 bug 优先修（例：P67 goto 到达判定 1.5→2.5m，
 probe 实测 bot 停在 1.5-2.5m 处永不 done → 60s 超时空等）。
 
+## craft-agent-ctl 运维控制台（替代频繁 shell 长命令）
+
+**重要**：不要用 shell 的 `Start-Process`/长 `Start-Sleep` 管理进程——
+管道句柄问题会导致 opencode 工具层 terminated。一律用 ctl（Rust 实现，
+stdout/stderr 文件重定向，命令快速返回）：
+
+```bash
+cargo run -p craft-agent-ctl -- status    # 进程 + API + game-state 摘要 + 日志尾部
+cargo run -p craft-agent-ctl -- stop      # taskkill 所有 craft-agent 进程
+cargo run -p craft-agent-ctl -- build     # 编译 viewer + autopilot
+cargo run -p craft-agent-ctl -- goal "<g>" # 注入 steering goal
+cargo run -p craft-agent-ctl -- session 10 # 会话最近 10 个工具结果
+cargo run -p craft-agent-ctl -- tail <log> <N>
+```
+
+部署流程（ctl deploy 的 build 阶段可能超时，分步执行更稳）：
+1. `craft-agent-ctl stop`
+2. `craft-agent-ctl build`
+3. `Start-Process target\debug\craft-agent-viewer.exe -ArgumentList '--goal','...','--steps','0','--port','8080','--mc','localhost:4444','--username','CraftAgent' -WindowStyle Hidden`（不带重定向参数）
+4. `Start-Process target\debug\craft-agent-autopilot.exe -WindowStyle Hidden`（autopilot 会自动 start agent）
+5. `craft-agent-ctl status` 验证 running=true
+
 ## Reference Projects
 
 - **Mindcraft** (mindcraft-bots/mindcraft): JS + mineflayer, LLM bot framework. Reference for tasks, profiles, modes.
