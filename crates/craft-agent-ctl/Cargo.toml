@@ -1,0 +1,13 @@
+[package]
+name = "craft-agent-ctl"
+version.workspace = true
+edition.workspace = true
+description = "Craft-Agent 运维控制台：部署/状态/监控/会话分析，单命令快速返回"
+
+[[bin]]
+name = "craft-agent-ctl"
+path = "src/main.rs"
+
+[dependencies]
+reqwest = { version = "0.12", features = ["blocking", "json"] }
+serde_json = { workspace = true }
