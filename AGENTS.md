@@ -272,6 +272,29 @@ cargo test regression_all_tasks_dir_json_loads
 cargo test regression_system_prompt_byte_stable
 ```
 
+## Probe Mode（不开 LLM 的工具层测试）
+
+LLM 实机测试慢（每回合 30-60s+），**工具层行为验证一律用 probe**，
+秒级完成，无需 viewer/agent/LLM：
+
+```bash
+# 单条命令（无需 --script）
+cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot -- 4444 --cmd "equip iron_helmet helmet"
+# 脚本（见 scripts/probe/smoke.json 示例）
+cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot -- 4444 --script scripts\probe\smoke.json
+```
+
+脚本格式：`steps` 数组，每项为 `{"cmd": "..."}` / `{"wait_ms": N}` / `{"state": true}`（打印状态快照）。
+probe bot 名 `craftbot_probe`，与 agent bot 共存不冲突。命令文本见
+`parse_chat_command`（azalea/mod.rs:508，支持 goto/mine x y z/minebelow/attack/gather/
+craft/craft3/smelt/autocraft/place/open/enchant/trade/interact/follow/give/equip/
+discard/consume/chestview/chestwithdraw/chestdeposit/makeobsidian/pickup/defend）。
+需要 LLM 决策的测试（策略/规划/目标分解）才开 viewer+agent。
+
+新增工具命令时必须同时更新 `parse_chat_command`，否则 probe 无法驱动。
+probe 发现的工具层 bug 优先修（例：P67 goto 到达判定 1.5→2.5m，
+probe 实测 bot 停在 1.5-2.5m 处永不 done → 60s 超时空等）。
+
 ## Reference Projects
 
 - **Mindcraft** (mindcraft-bots/mindcraft): JS + mineflayer, LLM bot framework. Reference for tasks, profiles, modes.

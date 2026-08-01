@@ -505,7 +505,7 @@ fn parse_chat_coords(rest: &str) -> Option<(i32, i32, i32)> {
 
 /// Parse the small, synchronous chat command surface used for in-game control.
 /// Keeping this pure makes malformed commands testable without a live client.
-fn parse_chat_command(content: &str) -> Option<BotCommand> {
+pub fn parse_chat_command(content: &str) -> Option<BotCommand> {
     let content = content.trim();
     if let Some(rest) = content.strip_prefix("autocraft ") {
         let mut parts = rest.split_whitespace();
@@ -639,6 +639,77 @@ fn parse_chat_command(content: &str) -> Option<BotCommand> {
             count,
             target,
         });
+    }
+    if let Some(rest) = content.strip_prefix("equip ") {
+        let mut parts = rest.split_whitespace();
+        let item = parts.next()?.to_string();
+        let slot = parts
+            .next()
+            .map(str::to_string)
+            .unwrap_or_else(|| "hand".to_string());
+        return Some(BotCommand::Equip { item, slot });
+    }
+    if let Some(rest) = content.strip_prefix("discard ") {
+        let mut parts = rest.split_whitespace();
+        let item = parts.next()?.to_string();
+        let count = parts
+            .next()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(0);
+        return Some(BotCommand::Discard { item, count });
+    }
+    if let Some(rest) = content.strip_prefix("consume ") {
+        let item = rest.trim();
+        if item.is_empty() {
+            return None;
+        }
+        return Some(BotCommand::Consume {
+            item: item.to_string(),
+        });
+    }
+    if let Some(rest) = content.strip_prefix("chestview ") {
+        let (x, y, z) = parse_chat_coords(rest)?;
+        return Some(BotCommand::ChestView { x, y, z });
+    }
+    if let Some(rest) = content.strip_prefix("chestwithdraw ") {
+        let mut parts = rest.split_whitespace();
+        let (x, y, z) = parse_chat_coords(&parts.clone().collect::<Vec<_>>()[0..3].join(" "))?;
+        let _ = parts.next();
+        let _ = parts.next();
+        let _ = parts.next();
+        let item = parts.next()?.to_string();
+        let count = parts
+            .next()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(1);
+        return Some(BotCommand::ChestWithdraw { x, y, z, item, count });
+    }
+    if let Some(rest) = content.strip_prefix("chestdeposit ") {
+        let mut parts = rest.split_whitespace();
+        let (x, y, z) = parse_chat_coords(&parts.clone().collect::<Vec<_>>()[0..3].join(" "))?;
+        let _ = parts.next();
+        let _ = parts.next();
+        let _ = parts.next();
+        let item = parts.next()?.to_string();
+        let count = parts
+            .next()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(1);
+        return Some(BotCommand::ChestDeposit { x, y, z, item, count });
+    }
+    if let Some(rest) = content.strip_prefix("makeobsidian") {
+        let count = rest
+            .split_whitespace()
+            .next()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(1);
+        return Some(BotCommand::MakeObsidian { count });
+    }
+    if content == "pickup" {
+        return Some(BotCommand::Pickup);
+    }
+    if content == "defend" {
+        return Some(BotCommand::Defend);
     }
     None
 }
@@ -908,7 +979,10 @@ impl AzaleaBot {
                                             + (p.y - *y as f64).powi(2)
                                             + (p.z - *z as f64).powi(2))
                                         .sqrt();
-                                        d < 1.5
+                                        // P67：到达判定放宽 1.5→2.5m。probe 实测：bot 常停在目标 1.5-2.5m
+                                        // 处（pathfinder 已认为到达）而 done 永不触发 → 空等 60s 超时，
+                                        // LLM 误判"路径被阻"反复重试。2.5m 内即算到达。
+                                        d < 2.5
                                     } else {
                                         false
                                     }
