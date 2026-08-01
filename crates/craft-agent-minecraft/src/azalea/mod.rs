@@ -1148,10 +1148,81 @@ impl AzaleaBot {
                                                 x, y, z, p.y
                                             )
                                         } else {
-                                            format!(
-                                                "Action output:\ngoto ({},{},{}) 超时——路径被阻或目标不可达（地表）。perceive 确认位置后改用更近的中间点重试（已第 {} 次净不动，连 3 次将强制停止并挖开阻挡）。",
-                                                x, y, z, stall_count
-                                            )
+                                            // P69a：goto 超时（地表）自动清障——树冠/密林/山体地形下
+                                            // pathfinder 找不到路（empty path），LLM 换坐标也白搭。
+                                            // 挖开 bot 周围挡路的实心方块（树干/树叶/石头），每格让
+                                            // pathfinder 多一条路。黑名单保护容器/工作台等设施不挖。
+                                            // 借鉴 Mineflayer pathfinder 的 dig 模式。
+                                            let mut cleared = 0u32;
+                                            if let (Ok(bp), Ok(world)) =
+                                                (bot.position(), bot.world())
+                                            {
+                                                let bx = bp.x.floor() as i32;
+                                                let by = bp.y.floor() as i32;
+                                                let bz = bp.z.floor() as i32;
+                                                let no_dig = |bk: &BlockKind| {
+                                                    matches!(
+                                                        bk,
+                                                        BlockKind::Chest
+                                                            | BlockKind::CraftingTable
+                                                            | BlockKind::Furnace
+                                                            | BlockKind::BlastFurnace
+                                                            | BlockKind::Smoker
+                                                            | BlockKind::Barrel
+                                                            | BlockKind::Anvil
+                                                            | BlockKind::EnchantingTable
+                                                            | BlockKind::BrewingStand
+                                                            | BlockKind::Bedrock
+                                                    )
+                                                };
+                                                for (dx, dz) in [
+                                                    (0, 1),
+                                                    (0, -1),
+                                                    (1, 0),
+                                                    (-1, 0),
+                                                    (1, 1),
+                                                    (1, -1),
+                                                    (-1, 1),
+                                                    (-1, -1),
+                                                ] {
+                                                    if cleared >= 3 {
+                                                        break;
+                                                    }
+                                                    for dy in [0i32, 1] {
+                                                        let pos =
+                                                            BlockPos::new(bx + dx, by + dy, bz + dz);
+                                                        let solid = world
+                                                            .read()
+                                                            .get_block_state(pos)
+                                                            .map(|b| !b.is_air())
+                                                            .unwrap_or(false);
+                                                        if solid {
+                                                            let bk: BlockKind = world
+                                                                .read()
+                                                                .get_block_state(pos)
+                                                                .unwrap()
+                                                                .into();
+                                                            if no_dig(&bk) {
+                                                                break;
+                                                            }
+                                                            bot.start_mining(pos);
+                                                            cleared += 1;
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            if cleared > 0 {
+                                                format!(
+                                                    "Action output:\ngoto ({},{},{}) 超时——路径被阻（地表）。已自动挖开 {} 个挡路方块开道，稍后请重试 goto 同一目标。",
+                                                    x, y, z, cleared
+                                                )
+                                            } else {
+                                                format!(
+                                                    "Action output:\ngoto ({},{},{}) 超时——路径被阻或目标不可达（地表）。perceive 确认位置后改用更近的中间点重试（已第 {} 次净不动，连 3 次将强制停止）。",
+                                                    x, y, z, stall_count
+                                                )
+                                            }
                                         }
                                     } else {
                                         format!(
@@ -1340,6 +1411,36 @@ impl AzaleaBot {
                                     false
                                 };
                                 if target_solid {
+                                    // P69b：目标实心（树干/树叶/山体/树冠）时不再直接拒绝——
+                                    // LLM 在密林里看不见地面，经常选到树冠/树干坐标。
+                                    // 自动向上找最近的可站立空气点，修正目标继续前往。
+                                    // 若上方 8 格全是实心（如地下岩体）才走原拒绝逻辑。
+                                    let mut fallback: Option<(i32, i32, i32)> = None;
+                                    if let Ok(world) = bot.world() {
+                                        for k in 1..=8 {
+                                            let up = BlockPos::new(x, y + k, z);
+                                            let is_air = world
+                                                .read()
+                                                .get_block_state(up)
+                                                .map(|b| b.is_air())
+                                                .unwrap_or(false);
+                                            if is_air {
+                                                fallback = Some((x, y + k, z));
+                                                break;
+                                            }
+                                        }
+                                    }
+                                    if let Some((fx, fy, fz)) = fallback {
+                                        if let Some(tx) = &result_tx {
+                                            let _ = tx.send(format!(
+                                                "Action output:\ngoto ({},{},{}) 目标方块是实心（树干/树叶/山体），已自动修正为上方可站立点 ({},{},{}) 继续前往。",
+                                                x, y, z, fx, fy, fz
+                                            ));
+                                        }
+                                        bot.start_goto(BlockPosGoal(BlockPos::new(fx, fy, fz)));
+                                        state.action_mgr.clear_pending();
+                                        return bot;
+                                    }
                                     if let Some(tx) = &result_tx {
                                         let _ = tx.send(format!(
                                             "Action output:\ngoto ({},{},{}) 失败——目标方块是实心方块（不能站在里面）。请改用附近的空气方块坐标，或若在地下请用 mine_above 向上挖出脱困。",
