@@ -1,5 +1,7 @@
 # SeekerCraft
 
+**[English](README.md) | [中文](README.zh-CN.md)**
+
 **An LLM-driven Minecraft bot that beats the Ender Dragon.**
 
 SeekerCraft is a Rust implementation of an autonomous Minecraft agent. An LLM
