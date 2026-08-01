@@ -3309,9 +3309,12 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             lines.join("\n")
                         };
                         // 附近实体列表：按类型分组计数 + 最小距离（仅感知半径内，避免 LLM 追逐远处实体）
+                        // P74：加最近实例坐标——LLM 想找动物狩猎/避开怪物时可直接 goto，
+                        // 此前只有距离没有方向（实测 LLM 在树冠上找不到食物来源）。
                         let nearby_entities = {
                             const PERCEPTION_RADIUS: f64 = 24.0;
-                            let mut kinds: HashMap<String, (u32, f64)> = HashMap::new();
+                            let mut kinds: HashMap<String, (u32, f64, (i32, i32, i32))> =
+                                HashMap::new();
                             if let Ok(entities) = bot.nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>() {
                             let self_id = bot.entity().id();
                             for e in entities.iter() {
@@ -3319,9 +3322,15 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                 let Ok(distance) = e.distance_to_client() else { continue; };
                                 if distance > PERCEPTION_RADIUS { continue; }
                                 let name = entity_kind_name(e.kind().unwrap_or(EntityKind::Pig));
-                                let entry = kinds.entry(name).or_insert((0, distance));
+                                let pos = e.position().ok().map(|p| {
+                                    (p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32)
+                                });
+                                let entry = kinds.entry(name).or_insert((0, distance, pos.unwrap_or((0,0,0))));
                                 entry.0 += 1;
-                                entry.1 = entry.1.min(distance);
+                                if distance < entry.1 {
+                                    entry.1 = distance;
+                                    if let Some(p) = pos { entry.2 = p; }
+                                }
                             }
                         }
                             // 玩家分开计数
@@ -3332,9 +3341,9 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             }
                             let mut items: Vec<_> = kinds.into_iter().collect();
                             items.sort_by(|a, b| b.1.0.cmp(&a.1.0));
-                            for (k, (v, d)) in items {
+                            for (k, (v, d, pos)) in items {
                                 if v > 0 {
-                                    parts.push(format!("{k}:{v}@{d:.0}m"));
+                                    parts.push(format!("{k}:{v}@{d:.0}m@{pos:?}"));
                                 }
                             }
                             if parts.is_empty() {
