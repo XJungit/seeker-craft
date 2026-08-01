@@ -3428,7 +3428,7 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                         && bot.ticks_connected() % 80 == 0;
                     if auto_eat_ok {
                         if let Ok(inv) = bot.get_inventory() {
-                            const SAFE_FOODS: [&str; 18] = [
+                            const SAFE_FOODS: [&str; 21] = [
                                 "cooked_beef",
                                 "cooked_porkchop",
                                 "cooked_chicken",
@@ -3447,6 +3447,9 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                 "melon_slice",
                                 "sweet_berries",
                                 "glow_berries",
+                                "egg",
+                                "cake",
+                                "dried_kelp",
                             ];
                             let found = SAFE_FOODS.iter().find_map(|name| {
                                 ItemKind::from_str(name).ok().filter(|k| {
