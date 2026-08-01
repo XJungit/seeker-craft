@@ -241,22 +241,27 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
     // 修复：用 wait_for_held_item 轮询最多 1.5s，确认主手确实是目标物品
     // 才 block_interact。如果超时，返回明确错误让 LLM 重试。
     if !crate::azalea::wait_for_held_item(bot, kind, 1500).await {
-        let held_desc = bot
-            .get_held_item()
-            .ok()
-            .map(|st| {
-                if st.is_empty() {
-                    "空手".to_string()
-                } else {
-                    format!("{}x{}", st.kind().to_str(), st.count())
-                }
-            })
-            .unwrap_or_else(|| "无法读取主手".to_string());
-        return Err(format!(
-            "放置 {item} 失败：set_selected_hotbar_slot({slot}) 后主手仍为 {held_desc}\
-             （期望 {item}）。可能原因：1) 服务端同步延迟（shift_click 移动物品后 hotbar 内容未就绪）；\
-             2) hotbar 槽位内容被其他操作覆盖。建议：稍后重试 place，或先 perceive 确认背包状态。"
-        ));
+        // 缓存过期兜底：find_hotbar_slot 命中但切槽后主手不对
+        // （本地 slots 缓存滞后于服务端，槽内容实际已变），
+        // 强制 shift_click 归位到 hotbar 后重试。
+        if let Err(e) = crate::azalea::force_hold_in_hotbar(bot, kind).await {
+            let held_desc = bot
+                .get_held_item()
+                .ok()
+                .map(|st| {
+                    if st.is_empty() {
+                        "空手".to_string()
+                    } else {
+                        format!("{}x{}", st.kind().to_str(), st.count())
+                    }
+                })
+                .unwrap_or_else(|| "无法读取主手".to_string());
+            return Err(format!(
+                "放置 {item} 失败：set_selected_hotbar_slot({slot}) 后主手仍为 {held_desc}\
+                 （期望 {item}）。兜底归位失败: {e}。可能原因：1) 服务端同步延迟（shift_click 移动物品后 hotbar 内容未就绪）；\
+                 2) hotbar 槽位内容被其他操作覆盖。建议：稍后重试 place，或先 perceive 确认背包状态。"
+            ));
+        }
     }
 
     // P5 关键修复：block_interact(pos) 是「右键点击 pos 处的方块」，

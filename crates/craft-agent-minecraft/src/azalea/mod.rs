@@ -4782,10 +4782,22 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
                     if wait_for_held_item(bot, kind, 1500).await {
                         return format!("已装备 {item} 到主手（hotbar 槽 {h}）");
                     }
-                    return format!(
-                        "装备 {item} 失败：set_selected_hotbar_slot({h}) 后主手仍未持有 {item}\
-                         （已轮询 1.5s，可能服务端同步延迟或 hotbar 内容被覆盖，建议稍后重试）"
-                    );
+                    // 缓存过期兜底：find_hotbar_slot_for 命中但切槽后主手不对
+                    // （本地 slots 缓存滞后于服务端），强制 shift_click 归位重试。
+                    drop(inv);
+                    match force_hold_in_hotbar(bot, kind).await {
+                        Ok(h2) => {
+                            return format!(
+                                "已装备 {item} 到主手（缓存过期，归位后 hotbar 槽 {h2}）"
+                            );
+                        }
+                        Err(e) => {
+                            return format!(
+                                "装备 {item} 失败：set_selected_hotbar_slot({h}) 后主手仍未持有 {item}\
+                                 （已轮询 1.5s，兜底归位也失败: {e}，建议稍后重试）"
+                            );
+                        }
+                    }
                 }
 
                 // 不在 hotbar，从主背包 shift_click 到 hotbar（服务端找第一个空槽）
@@ -5131,6 +5143,58 @@ pub async fn wait_for_held_item(bot: &Client, expected: ItemKind, timeout_ms: u6
         }
     }
     false
+}
+
+/// 强制把 item 归位到 hotbar 并选中（兜底 hotbar 缓存过期场景）。
+///
+/// 背景：`get_inventory().slots()` 是本地缓存，可能滞后于服务端实际内容。
+/// 现象：`find_hotbar_slot_for` 命中槽 h（缓存里槽 h = item），但
+/// `set_selected_hotbar_slot(h)` 后主手是别的物品（服务端槽 h 实际内容不同）。
+/// 此时原逻辑直接报错——LLM 重试同样失败，形成死循环。
+///
+/// 兜底：把主背包里的 item shift_click 到 hotbar（服务端自动找落点），
+/// 重新选中并轮询验证。成功返回 hotbar 槽号；失败返回 Err（含原因）。
+pub async fn force_hold_in_hotbar(bot: &Client, kind: ItemKind) -> Result<u8, String> {
+    // 尝试 1：当前缓存命中槽位 + 轮询验证（缓存可能是准的）
+    let inv = bot
+        .get_inventory()
+        .map_err(|e| format!("获取背包失败: {e:?}"))?;
+    if let Some(h) = find_hotbar_slot_for(&inv, kind) {
+        bot.set_selected_hotbar_slot(h);
+        if wait_for_held_item(bot, kind, 1200).await {
+            return Ok(h);
+        }
+    }
+    // 尝试 2：从主背包 shift_click 归位（排除 hotbar 槽，避免把 item 移出 hotbar）
+    let is_hotbar = |s: usize| {
+        inv.menu()
+            .ok()
+            .flatten()
+            .map(|m| m.hotbar_slots_range().contains(&s))
+            .unwrap_or(false)
+    };
+    let src = find_item_slots(&inv, kind)
+        .into_iter()
+        .find(|&s| !is_hotbar(s));
+    let Some(src) = src else {
+        return Err(format!("背包未持有 {}（无法归位到 hotbar）", kind.to_str()));
+    };
+    inv.shift_click(src);
+    sleep(Duration::from_millis(250)).await;
+    drop(inv);
+    let inv2 = bot
+        .get_inventory()
+        .map_err(|e| format!("归位后重新获取背包失败: {e:?}"))?;
+    if let Some(h) = find_hotbar_slot_for(&inv2, kind) {
+        bot.set_selected_hotbar_slot(h);
+        if wait_for_held_item(bot, kind, 1200).await {
+            return Ok(h);
+        }
+    }
+    Err(format!(
+        "强制归位失败：shift_click 后 hotbar 仍未持有 {}",
+        kind.to_str()
+    ))
 }
 
 /// 验证指定盔甲槽（5=helmet/6=chestplate/7=leggings/8=boots）是否持有指定 ItemKind。
