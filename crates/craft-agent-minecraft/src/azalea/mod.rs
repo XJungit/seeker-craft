@@ -4135,19 +4135,23 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
             };
             let srcs = find_item_slots(&inv, kind);
             if let Some(src) = srcs.first() {
-                inv.shift_click(*src);
+                // P54 修复：不用 shift_click 穿甲。azalea quick_move_stack 对 Player 菜单
+                // 的 armor 处理是 TODO（只模拟 hotbar/inventory 互移），本地状态与服务端
+                // QuickMove 行为不一致，且服务端可能拒绝（实测 2s 轮询仍穿不上）。
+                // 改用最基础的 Pickup 点击：left_click 拿起 → left_click 盔甲槽放下。
+                inv.left_click(*src);
+                sleep(Duration::from_millis(120)).await;
+                inv.left_click(armor_slot_idx);
                 drop(inv);
-                // P53 修复：shift_click 后轮询验证（最多 2s），覆盖服务端同步延迟。
-                // 背景：azalea quick_move_stack 本地模拟把盔甲移到 hotbar/主背包，
-                // 而服务端 QuickMove 实际会穿甲；150ms 单次验证经常读到旧状态误报失败。
+                // 轮询验证（最多 2s），覆盖服务端同步延迟。
                 for _ in 0..20u8 {
                     sleep(Duration::from_millis(100)).await;
                     if verify_armor_slot(bot, armor_slot_idx, kind).await {
-                        return format!("已装备 {item} 到 {slot_norm}（shift_click 槽 {src}）");
+                        return format!("已装备 {item} 到 {slot_norm}（left_click 槽 {src}→{armor_slot_idx}）");
                     }
                 }
                 return format!(
-                    "装备 {item} 到 {slot_norm} 失败：shift_click 后轮询 2s，盔甲槽仍未持有 {item}。\
+                    "装备 {item} 到 {slot_norm} 失败：left_click 后轮询 2s，盔甲槽仍未持有 {item}。\
                      可能原因：1) 该槽已有其他盔甲（需先 discard 旧盔甲）；\
                      2) {item} 不是 {slot_norm} 类型的盔甲；3) 服务端同步延迟。\
                      建议：用 perceive 查看当前盔甲槽状态，或换一个空槽位。"
