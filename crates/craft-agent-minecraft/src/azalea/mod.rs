@@ -243,6 +243,9 @@ pub enum BotEvent {
         nearby_blocks: String,
         /// 附近实体列表：玩家、动物、怪物等
         nearby_entities: String,
+        /// 头顶连续实心方块数（P83）：从 bot 头部向上数，遇到空气/未加载停止（上限 64）。
+        /// 0 = 头顶即空气（洞穴/地表）；N>10 = 深埋，需 mine_above 挖出。
+        overhead_solid: u32,
         /// 结构化游戏状态 JSON（前端面板可视化用），构建于 tick handler 中。
         game_state: serde_json::Value,
     },
@@ -3424,6 +3427,25 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             parts.join(", ")
                         }
                     };
+                    // P83：头顶连续实心方块数——LLM 判断"能否 mine_above 挖出"的关键信号。
+                    // bot 在深洞时 n 大（深埋），在洞穴/地表时 n=0。
+                    let overhead_solid = {
+                        let wx = p.x.floor() as i32;
+                        let wz = p.z.floor() as i32;
+                        let head_y = p.y.floor() as i32;
+                        match bot.world() {
+                            Ok(world) => {
+                                let w = world.read();
+                                count_overhead_solid(
+                                    |bp| w.get_block_state(bp),
+                                    wx,
+                                    head_y,
+                                    wz,
+                                )
+                            }
+                            Err(_) => 0,
+                        }
+                    };
                     let _ = evt_tx.send(BotEvent::State {
                         position: p,
                         inventory,
@@ -3441,6 +3463,7 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                         nearby,
                         nearby_blocks,
                         nearby_entities,
+                        overhead_solid,
                         game_state,
                     });
                 }
@@ -4537,6 +4560,33 @@ fn mine_above_reached_surface(y: i32, head_is_air: bool, five_air: bool) -> bool
     y >= 62 && head_is_air && five_air
 }
 
+/// P83：从 (x, head_y, z) 的上一格起向上数连续实心方块（非空气/水/岩浆），
+/// 遇空气或未加载（None）即停，上限 64。0 = 头顶即空气（洞穴/地表）；
+/// N 越大埋得越深（需 mine_above 挖出）。
+fn count_overhead_solid(
+    get_state: impl Fn(BlockPos) -> Option<azalea::block::BlockState>,
+    x: i32,
+    head_y: i32,
+    z: i32,
+) -> u32 {
+    let mut n = 0u32;
+    for dy in 1..=64 {
+        let state = get_state(BlockPos::new(x, head_y + dy, z));
+        let solid = state
+            .map(|s| {
+                let bk: BlockKind = s.into();
+                bk != BlockKind::Air && !matches!(bk, BlockKind::Water | BlockKind::Lava)
+            })
+            .unwrap_or(false);
+        if solid {
+            n += 1;
+        } else {
+            break;
+        }
+    }
+    n
+}
+
 /// 返回镐的品质等级（用于判断能否挖某种方块）。
 ///
 /// Minecraft 工具等级规则（vanilla 26.2）：
@@ -5487,6 +5537,62 @@ mod tests {
         assert!(!mine_above_reached_surface(-16, true, true));
         assert!(!mine_above_reached_surface(62, true, false));
         assert!(mine_above_reached_surface(62, true, true));
+    }
+
+    /// P83：头顶实心计数——地表/洞穴头顶空气 n=0；
+    /// 深埋时数到空气为止；未加载视为空气停止；水/岩浆不算实心。
+    #[test]
+    fn count_overhead_solid_basic() {
+        // 头顶全空气 → 0
+        let air = |_bp: BlockPos| None;
+        assert_eq!(count_overhead_solid(air, 0, 94, 0), 0);
+        // 从 +1 起 3 格石头，+4 是空气 → 3
+        let stone3 = |bp: BlockPos| {
+            if (1..=3).contains(&bp.y) {
+                Some(azalea::block::BlockState::from(B::Stone))
+            } else {
+                None
+            }
+        };
+        assert_eq!(count_overhead_solid(stone3, 0, 0, 0), 3);
+        // 5 格实心（stone）后空气 → 5
+        let stone5 = |bp: BlockPos| {
+            if (1..=5).contains(&bp.y) {
+                Some(azalea::block::BlockState::from(B::Stone))
+            } else {
+                None
+            }
+        };
+        assert_eq!(count_overhead_solid(stone5, 0, 0, 0), 5);
+    }
+
+    /// P83：水/岩浆不算实心（头顶积水洞穴不算埋住），计数应停在它们下方。
+    #[test]
+    fn count_overhead_solid_ignores_liquid() {
+        // +1 石头、+2 水、+3 石头 → 只数到 +1，水即停止 → 1
+        let blocks = |bp: BlockPos| {
+            let b = match bp.y {
+                1 => B::Stone,
+                2 => B::Water,
+                3 => B::Stone,
+                _ => B::Air,
+            };
+            Some(azalea::block::BlockState::from(b))
+        };
+        assert_eq!(count_overhead_solid(blocks, 0, 0, 0), 1);
+    }
+
+    /// P83：64 格全实心（极限深埋）封顶计数 64。
+    #[test]
+    fn count_overhead_solid_caps_at_64() {
+        let all_solid = |bp: BlockPos| {
+            if bp.y >= 1 {
+                Some(azalea::block::BlockState::from(B::Stone))
+            } else {
+                None
+            }
+        };
+        assert_eq!(count_overhead_solid(all_solid, 0, 0, 0), 64);
     }
 
     /// 验证 block_required_pickaxe_tier 返回正确的需求等级。

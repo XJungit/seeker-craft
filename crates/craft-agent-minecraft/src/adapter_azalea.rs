@@ -157,6 +157,7 @@ impl MinecraftAzaleaAdapter {
                             nearby,
                             nearby_blocks,
                             nearby_entities,
+                            overhead_solid,
                             game_state,
                         } = ev
                         {
@@ -221,6 +222,16 @@ impl MinecraftAzaleaAdapter {
                                     entries.join(", ")
                                 })
                                 .unwrap_or_default();
+                            let overhead_hint = if overhead_solid > 0 {
+                                let advice = if overhead_solid >= 15 {
+                                    "（深埋！调用 mine_above 可逐格向上挖出地表）"
+                                } else {
+                                    "（上方有实心方块，需 mine_above 挖出）"
+                                };
+                                format!("头顶: {} 格实心{}", overhead_solid, advice)
+                            } else {
+                                "头顶: 空气（已在地下洞穴或地表）".to_string()
+                            };
                             let scene = format!(
                                 "位置: ({:.0}, {:.0}, {:.0})\n\
                                   生命: {:.0}/20  饱食: {}/20  主手: {}\n\
@@ -233,7 +244,8 @@ impl MinecraftAzaleaAdapter {
                                   击杀统计: [{}]\n\
                                   装备: [{}]\n\
                                   背包: [{}]\n\
-                                  玩家: {}{}",
+                                  玩家: {}{}\n\
+                                  {}",
                                 position.x,
                                 position.y,
                                 position.z,
@@ -257,7 +269,8 @@ impl MinecraftAzaleaAdapter {
                                 armor,
                                 inventory,
                                 player_count,
-                                stuck_hint
+                                stuck_hint,
+                                overhead_hint
                             );
                             *g.last.lock().unwrap() = Some(WorldState {
                                 scene_desc: scene.clone(),

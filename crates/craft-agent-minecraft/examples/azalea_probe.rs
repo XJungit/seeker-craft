@@ -78,10 +78,11 @@ async fn main() {
                     held_item,
                     biome,
                     nearby,
+                    overhead_solid,
                     ..
                 } => {
                     let snapshot = format!(
-                        "pos=({:.1},{:.1},{:.1}) hp={:.1}/20 food={}/20 held={} biome={} nearby=[{}] inv=[{}] players={}",
+                        "pos=({:.1},{:.1},{:.1}) hp={:.1}/20 food={}/20 held={} biome={} overhead={} nearby=[{}] inv=[{}] players={}",
                         position.x,
                         position.y,
                         position.z,
@@ -89,6 +90,7 @@ async fn main() {
                         food,
                         held_item,
                         biome,
+                        overhead_solid,
                         nearby,
                         inventory,
                         player_count
