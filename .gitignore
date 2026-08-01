@@ -6,6 +6,15 @@
 config/.env
 *.env
 
+# 本地 LLM 后端配置（含真实 api_key）；开源仓库只提交 agent.example.toml
+/data/config/agent.toml
+
+# opencode 工作笔记（含内部日志与历史密钥记录，仅本机）
+.opencode/
+
+# 运行期数据（会话 JSONL / 事件 / 报告）
+/sessions/
+
 # 临时文件
 *.tmp
 *.png

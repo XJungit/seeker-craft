@@ -1,0 +1,172 @@
+# Craft-Agent 后端配置
+# -------------------------------------------------------------------
+# 换后端只需改这份文件，无需改代码、无需重编译。
+# UI 界面后续也直接读写本文件即可。
+#
+# 密钥安全：优先用 api_key_env（从环境变量读）。本文件是示例：复制为 agent.toml 后填入真实 key。
+#   PowerShell 设置示例：  $env:MINICPM_API_KEY = "lis_sk_..."
+#   bash 设置示例：        export MINICPM_API_KEY="lis_sk_..."
+
+# ================= 视觉理解后端（VLM） =================
+[vlm]
+# 当前启用的后端名
+active = "stepfun"
+
+  [vlm.backends.minicpm]
+  base_url = "https://api.modelbest.co/v1"
+  model = "MiniCPM-V-4.6-Instruct"        # 注意别用 -Thinking 版（会变慢）
+  api_key_env = "MINICPM_API_KEY"
+  timeout_secs = 60
+  max_side = 768                          # VLM 输入优化：最长边缩到 768px，省带宽/编码/token
+
+  [vlm.backends.agnes]
+  base_url = "https://api.agnes-ai.cn/v1"
+  model = "agnes-2.5-flash"
+  api_key_env = "AGNES_API_KEY"
+  timeout_secs = 180
+  max_side = 768                          # 同上；VLM 内部本就按 ~768/1024 分块
+    # 非标准参数透传：关闭思考模式（省 token；速度改善有限，瓶颈在端点）
+    [vlm.backends.agnes.extra_body]
+    chat_template_kwargs = { enable_thinking = false }
+
+  [vlm.backends.stepfun]
+  base_url = "https://api.stepfun.com/step_plan/v1"
+  model = "step-3.7-flash"
+  api_key_env = "STEPFUN_API_KEY"
+  timeout_secs = 60
+  max_side = 768
+  max_tokens = 1024
+
+  # 追加任意 OpenAI 兼容后端只需照抄一段，改 active 即可切换：
+  # [vlm.backends.gpt4o]
+  # base_url = "https://api.openai.com/v1"
+  # model = "gpt-4o"
+  # api_key_env = "OPENAI_API_KEY"
+
+# ================= 决策 LLM 后端（P1.3） =================
+[llm]
+active = "cbcn_hy3"
+
+  [llm.backends.deepseek]
+  base_url = "http://localhost:20128/v1"
+  model = "OC-DSV4F"
+  api_key = "YOUR_KEY_HERE"
+  timeout_secs = 60
+  max_tokens = 16384
+  context_window = 200000
+  # P56：关闭 thinking——high effort + 155k 上下文导致单次调用 60s+ 超时，
+  # 实测 11:15 后连续 9 次 "LLM: all attempts failed"，bot 卡死 10 分钟（hp 1.6 濒死）。
+  # 关思考后单次调用 5-20s，每分钟 2-6 回合，且不破坏 system prompt 前缀缓存。
+  # 若需思考可在 UI 或临时改这里为 reasoning_effort = "low"。
+    [llm.backends.deepseek.extra_body]
+    thinking = { type = "disabled" }
+
+  [llm.backends.cbcn_hy3]
+  base_url = "http://localhost:20128/v1"
+  model = "cbcn/hy3"
+  api_key = "YOUR_KEY_HERE"
+  timeout_secs = 60
+  max_tokens = 8192
+  context_window = 200000
+    # 关闭思考模式（实测该模型不输出 reasoning_content，仍显式关闭兜底，
+    # 与 deepseek 的 thinking disabled 对齐，保证前缀缓存字节稳定）
+    [llm.backends.cbcn_hy3.extra_body]
+    enable_thinking = false
+
+  [llm.backends.minicpm]
+  base_url = "https://api.modelbest.co/v1"
+  model = "MiniCPM-V-4.6-Instruct"
+  api_key_env = "MINICPM_API_KEY"
+  timeout_secs = 60
+  max_tokens = 512
+
+  [llm.backends.agnes]
+  base_url = "https://api.agnes-ai.cn/v1"
+  model = "agnes-2.5-flash"
+  api_key_env = "AGNES_API_KEY"
+  timeout_secs = 180
+  max_tokens = 16384
+    [llm.backends.agnes.extra_body]
+    chat_template_kwargs = { enable_thinking = false }
+
+  [llm.backends.longcat]
+  base_url = "https://api.longcat.chat/openai/v1"
+  model = "LongCat-2.0"
+  api_key_env = "LONGCAT_API_KEY"
+  # 60s 单次超时 + 1 次重试 = 最坏 ~120s，配合 viewer ≥120s 自动 abort
+  # （原 90s × 3 次 = 270s+ 导致第 10 步卡 300s 无响应）
+  timeout_secs = 60
+  max_tokens = 4096
+  context_window = 500000
+  # 必须强制 HTTP/1.1：Windows schannel 对 longcat CDN 的 HTTP/2 ALPN 会偶发卡握手
+  # （config.rs 注释已真机验证 Agnes CDN 同问题；longcat 端点同理）
+  force_http1 = true
+    [llm.backends.longcat.extra_body]
+    thinking = { type = "disabled" }
+
+  # step-3.7-flash 是多模态模型：配合 [perceive] mode="multimodal"，
+  # 截图以图像段直传它，由它自己看像素做决策（去掉 VLM 中间层）。
+  [llm.backends.stepfun]
+  base_url = "https://api.stepfun.com/step_plan/v1"
+  model = "step-3.7-flash"
+  api_key_env = "STEPFUN_API_KEY"
+  timeout_secs = 60
+  max_tokens = 1024
+  context_window = 200000
+
+  # step-router-v1 是 Step Plan 通道路由模型，仅走 deepseek 引擎；
+  # 不支持图像/文档输入与 tools.web_search，决策场景只传文本状态与工具定义。
+  [llm.backends.stepfun_router]
+  base_url = "https://api.stepfun.com/step_plan/v1"
+  model = "step-router-v1"
+  api_key_env = "STEPFUN_API_KEY"
+  timeout_secs = 60
+  max_tokens = 8192
+  context_window = 350000
+
+# ================= Agent 行为配置（Pi 风格） =================
+# 注意：Agent 的 system prompt 与工具集不再从这里读取（避免“改配置却不生效”的假象）。
+# - system prompt：在真实入口 `crates/craft-agent-minecraft/examples/agent_multi_step.rs`
+#   通过 `AgentConfig::new(...)` 注入，并叠加 `craft-agent::agent::MC_KNOWLEDGE`（Minecraft 控制知识）
+#   与酒馆式 WorldInfo（`core/prompt.rs::default_mc_world_info`，每轮从 perceive 结果动态注入）。
+# - 工具集：在 `crates/craft-agent-minecraft/src/tools/mod.rs::create_mc_tools` 注册
+#   （perceive / look / press / mine 四个真实工具），新增工具只改代码、不改本文件。
+# - 压缩预算：从下方 [llm] 后端 `context_window` 读取（LongCat = 1_000_000），
+#   由 `CompactionConfig` 计算 reserve / keep_recent，不在此硬编码。
+
+# ================= 专用压缩模型后端（上下文压缩） =================
+# 用独立、免费、512K 上下文的 agnes-2.5-flash 做历史压缩，
+# 隔离主决策模型，避免小模型因上下文过长而卡死 / 压缩失败。
+# 若不配 [compaction]，压缩复用主决策模型（[llm] active）。
+[compaction]
+active = "agnes"
+
+  [compaction.backends.cbcn_hy3]
+  base_url = "http://localhost:20128/v1"
+  model = "cbcn/hy3"
+  api_key = "YOUR_KEY_HERE"
+  timeout_secs = 180
+  max_tokens = 4096          # 压缩摘要可能较长，放宽上限
+  context_window = 200000
+
+  [compaction.backends.agnes]
+  base_url = "https://api.agnes-ai.cn/v1"
+  model = "agnes-2.5-flash"
+  api_key_env = "AGNES_API_KEY"
+  timeout_secs = 180
+  max_tokens = 4096          # 压缩摘要可能较长，放宽上限
+  context_window = 512000
+  # 压缩需要较强推理能力，开启 Thinking 模式提升摘要质量
+  [compaction.backends.agnes.extra_body]
+  chat_template_kwargs = { enable_thinking = true }
+
+# ================= perceive 视觉后端模式 =================
+# 控制 perceive 工具怎么把"看到的东西"喂给决策 LLM：
+#   mode = "vlm"        → 独立 VLM 把截图转成文字描述，文字进历史（默认，向后兼容）
+#   mode = "multimodal" → 截图以 base64 直接作为工具结果图像段返回，决策 LLM 自己看像素
+# 注意：azalea 路线下 perceive 工具返回结构化世界状态（坐标/背包/附近方块与实体），
+# 不截图、不调 VLM。日常运行无需视觉，结构化数据已足够决策，省 token 省延迟。
+[perceive]
+mode = "vlm"
+image_max_side = 768
+
