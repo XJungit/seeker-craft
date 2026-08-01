@@ -3412,13 +3412,123 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                         }
                     }
                 }
+                // cowardice：hp 低 + 附近有敌对 → 自动逃离（Mindcraft 移植）。
+                // self_defense 只攻击 4 格内敌人，而僵尸/骷髅 16m 外扑来时 LLM 回合
+                // 30-60s 太慢（实测 hp=1 濒死时 LLM 想撤退但 goto 连续失败，被僵尸追死）。
+                // 地下→自动向上挖洞逃生（僵尸不会挖方块）；地表→向远离敌人方向走 20 格。
+                // 优先于 self_defense：hp<6 时 self_defense 的攻击会被跳过。
+                if bot.ticks_connected() % 100 == 0 {
+                    let health = bot.health().unwrap_or(20.0);
+                    if health < 6.0 {
+                        let mut flee_dir: Option<(f64, f64)> = None;
+                        if let Ok(entities) = bot
+                            .nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>()
+                        {
+                            let self_id = bot.entity().id();
+                            let self_pos = bot.position().ok();
+                            for e in entities.iter() {
+                                if e.id() == self_id {
+                                    continue;
+                                }
+                                if flee_dir.is_some() {
+                                    break;
+                                }
+                                if let Ok(kind) = e.kind() {
+                                    let hostile = matches!(
+                                        kind,
+                                        EntityKind::Zombie
+                                            | EntityKind::Skeleton
+                                            | EntityKind::Creeper
+                                            | EntityKind::Spider
+                                            | EntityKind::CaveSpider
+                                            | EntityKind::Enderman
+                                            | EntityKind::Pillager
+                                            | EntityKind::Phantom
+                                            | EntityKind::Witch
+                                            | EntityKind::Drowned
+                                            | EntityKind::Husk
+                                            | EntityKind::Stray
+                                    );
+                                    if hostile {
+                                        if let (Some(sp), Ok(ep)) = (self_pos, e.position()) {
+                                            let dx = sp.x - ep.x;
+                                            let dz = sp.z - ep.z;
+                                            let d = (dx * dx + dz * dz).sqrt();
+                                            // 20m 半径：僵尸 18m 外徘徊时也要提前逃
+                                            // （实测 hp=1 时僵尸 18m 处 bot 原地等死，LLM 回合太慢）
+                                            if d <= 20.0 && d > 0.01 {
+                                                flee_dir = Some((dx / d, dz / d));
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if let (Some((fx, fz)), Ok(p)) = (flee_dir, bot.position()) {
+                            let head_blocked = bot
+                                .world()
+                                .ok()
+                                .map(|w| {
+                                    w.read()
+                                        .get_block_state(BlockPos::new(
+                                            p.x.floor() as i32,
+                                            p.y.floor() as i32 + 1,
+                                            p.z.floor() as i32,
+                                        ))
+                                        .map(|b| !b.is_air())
+                                        .unwrap_or(false)
+                                })
+                                .unwrap_or(false);
+                            if (p.y.floor() as i32) < 62 || head_blocked {
+                                // 地下：向上挖逃生
+                                if !*state.mining_above.lock().unwrap() {
+                                    *state.mining_above.lock().unwrap() = true;
+                                    *state.mining_above_start_y.lock().unwrap() =
+                                        Some(p.y.floor() as i32);
+                                    *state.mining_above_direction.lock().unwrap() = 0;
+                                    *state.mine_above_tried_tp.lock().unwrap() = false;
+                                    bot.force_stop_pathfinding();
+                                    let _ = evt_tx.send(BotEvent::Chat {
+                                        content: format!(
+                                            "[MODE:cowardice] HP {health:.0}/20 过低且附近有敌对生物，自动向上挖洞逃生（mine_above）"
+                                        ),
+                                    });
+                                }
+                            } else {
+                                // 地表：向远离方向走 20 格
+                                let tx = (p.x + fx * 20.0).floor() as i32;
+                                let ty = p.y.floor() as i32;
+                                let tz = (p.z + fz * 20.0).floor() as i32;
+                                let escape_cmd = BotCommand::Goto {
+                                    x: tx,
+                                    y: ty,
+                                    z: tz,
+                                };
+                                let tick_now = bot.ticks_connected() as u64;
+                                let _ = state.action_mgr.submit(
+                                    escape_cmd,
+                                    Priority::High,
+                                    &cmd_queue,
+                                    tick_now,
+                                );
+                                let _ = evt_tx.send(BotEvent::Chat {
+                                    content: format!(
+                                        "[MODE:cowardice] HP {health:.0}/20 过低且附近有敌对生物，自动向 ({tx},{ty},{tz}) 逃离"
+                                    ),
+                                });
+                            }
+                        }
+                    }
+                }
                 // self_defense：空闲或寻路途中自动攻击附近敌对生物（每 100 tick ≈5s 检查一次）
                 // 距离限制：只攻击 4 格内实体，避免对远距离敌人（如持弩掠夺者）对着空气挥拳。
                 // 用 is_busy() 而非 is_idle()：Goto/Mine 等轮询命令执行期间 pending 非空但 busy=false，
                 // 此时仍应自卫（否则 bot 寻路途中被僵尸攻击不还手——H3 bug）。
                 // 只在异步命令（Craft/Gather/Smelt）执行中（busy=true）跳过，避免抢占。
+                // hp<6 时不攻击（cowardice 逃跑优先，避免濒死还硬刚被补刀）。
                 if !state.action_mgr.is_busy()
                     && !*state.mining_below.lock().unwrap()
+                    && bot.health().unwrap_or(20.0) >= 6.0
                     && bot.ticks_connected() % 100 == 0
                 {
                     if let Ok(entities) = bot.nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>() {
