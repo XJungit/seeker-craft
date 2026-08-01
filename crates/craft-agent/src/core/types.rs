@@ -132,6 +132,14 @@ pub enum MinecraftAction {
     MineAbove,
     /// 对着指定方块交互（放置/右键）。
     InteractBlock { x: i32, y: i32, z: i32 },
+    /// 犁地+播种（P84）：目标 (x,y,z) 需为 dirt/grass_block/farmland，
+    /// 自动持锄头犁地、持种子播种并验证。seed 如 "wheat_seeds"。
+    TillAndSow {
+        x: i32,
+        y: i32,
+        z: i32,
+        seed: String,
+    },
     /// 发送聊天消息（也用作 LLM 指令回显）。
     Chat { content: String },
     /// 攻击最近的生物（用于自卫/狩猎）。target 为 "nearest" 或实体种类关键词（如 "zombie"）。

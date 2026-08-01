@@ -219,6 +219,7 @@ pub fn timeout_ticks(cmd: &BotCommand) -> u64 {
         BotCommand::Chat { .. } => 20,          // 1s
         BotCommand::Attack { .. } => 60,        // 3s
         BotCommand::BlockInteract { .. } => 60, // 3s
+        BotCommand::TillAndSow { .. } => 200, // 10s（犁地+播种+两次验证）
         // 寻路/挖掘
         BotCommand::Goto { .. } => 30, // 1.5s（长距离由 32m 限制拦截；无路径时快速失败）
         BotCommand::Mine { .. } => 200, // 10s（深板岩/黑曜石等硬方块可能慢；wooden_pickaxe 挖 deepslate ~4.5s）
@@ -273,6 +274,7 @@ pub fn cmd_signature(cmd: &BotCommand) -> String {
         BotCommand::MineBelow => "mine_below".to_string(),
         BotCommand::MineAbove => "mine_above".to_string(),
         BotCommand::BlockInteract { .. } => "block_interact(#,#,#)".to_string(),
+        BotCommand::TillAndSow { seed, .. } => format!("till_and_sow(#,#,#,{seed})"),
         BotCommand::Chat { content } => {
             format!("chat({})", content.chars().take(20).collect::<String>())
         }

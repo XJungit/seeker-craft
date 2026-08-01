@@ -87,12 +87,13 @@
 
 ## 优先级队列（按主线收益排序）
 
-1. ❌ tillAndSow 种植——食物农场（蓝图已有 farm_plot）【实机确认 2026-08-01：bot 捡到 wheat_seeds 因无法种植而 discard】
-2. ❌ goToPlayer / goToSurface——树冠/找队友场景
+1. ✅ tillAndSow 种植——食物农场（P84 完成，2026-08-02 probe 全路径实测通过）【原实机问题：bot 捡到 wheat_seeds 因无法种植而 discard】
+2. ❌ goToSurface 强化——P83 信号已给（overhead_solid→mine_above），待实机确认 LLM 脱困成功率
 3. ❌ goToBed 睡觉——跳夜
-4. 🟡 pvp 走位（strafe）——creeper 规避已有，正面对砍补进退
-5. 🟡 自动穿甲（P79）待实机验证损坏甲/新甲替换
-6. 🟡 item_collecting（P80）待实机验证挖矿掉落物自动拾取
+4. 🟡 收割（collectBlock 作物分支）——farmland 成熟后 dig+拾取
+5. 🟡 pvp 走位（strafe）——creeper 规避已有，正面对砍补进退
+6. 🟡 自动穿甲（P79）待实机验证损坏甲/新甲替换
+7. 🟡 item_collecting（P80）待实机验证挖矿掉落物自动拾取
 
 > 更新规则：每次实现/新增能力后更新本表状态；每次迭代开始先看"优先级队列"。
 
@@ -104,3 +105,4 @@
 - 死代码清理：actions.rs/client.rs/perception.rs（假 ticks() 返回 0）、check_modes_legacy。
 - 实机观察：bot 卡 tier3_bread（地下无小麦），捡到 wheat_seeds 因无种植能力丢弃；red_mushroom+bowl 可做蘑菇炖菜但 LLM 未识别（策略层知识注入待补）。
 - P83 感知增强 + 知识注入（2026-08-02）：BotEvent::State 新增 overhead_solid（头顶连续实心方块数，0=洞穴/地表，N 大=深埋），perceive 场景渲染"头顶: N 格实心"行并提示 mine_above 脱困；_default prompt 新增 UNDERGROUND & CAVE SURVIVAL 段（蘑菇炖菜配方/种子保留不丢弃/头顶实心→mine_above/回地表优先级/不吃毒物）。纯函数 count_overhead_solid + 3 单测；probe 状态快照打印 overhead。probe 实测 overhead=0（洞穴）✓。优先级 2 的 goToSurface 问题部分缓解（LLM 现在有明确脱困信号），tillAndSow 仍为队列第一。
+- P84 tillAndSow 种植（2026-08-02）：新 BotCommand::TillAndSow + LLM 工具 till_and_sow + rhai 注册 + probe 命令 tillandsow + run_plan parse_step。参考 Mindcraft tillAndSow：校验目标 dirt/grass_block/farmland → 4.5m 距离检查 → 背包找锄头（品质优先）→ 持锄头右键犁地并验证 Farmland → 持种子右键播种并验证作物（wheat/beetroot/carrot/potato/melon/pumpkin）→ 幂等（已种返回"无需重种"）。单测 2（seed 映射/可犁校验）+ 2（till 模块）。probe 实测全路径：stone 拒绝 ✓ 无锄头报错 ✓ 犁地+播种成功（成就 A Seedy Place，种子 16→15）✓ 幂等 ✓。另修 parse_chat_command 缺 chat 前缀的文档-代码不一致。

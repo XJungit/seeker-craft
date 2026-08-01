@@ -1,0 +1,4 @@
+{"between_delay_ms": 2500, "steps": [
+  {"cmd": "tillandsow -489 96 -150 wheat_seeds"},
+  {"state": true}
+]}

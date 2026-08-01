@@ -70,6 +70,7 @@ async fn main() {
                 nearby,
                 nearby_blocks: _,
                 nearby_entities: _,
+                overhead_solid: _,
                 game_state: _,
             } => {
                 println!(

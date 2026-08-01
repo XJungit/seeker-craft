@@ -22,6 +22,7 @@ pub mod recipe_book;
 pub mod recipes;
 pub mod smart_actions;
 pub mod table_flow;
+pub mod till;
 pub mod trade;
 
 pub use action_manager::{ActionManager, Priority, SubmitOutcome, cmd_signature, timeout_ticks};
@@ -273,6 +274,14 @@ pub enum BotCommand {
         x: i32,
         y: i32,
         z: i32,
+    },
+    /// P84：犁地+播种（参考 Mindcraft tillAndSow）。目标 (x,y,z) 需为 dirt/grass_block/farmland，
+    /// 自动持锄头右键犁地、持种子右键播种并验证。seed 如 "wheat_seeds"。
+    TillAndSow {
+        x: i32,
+        y: i32,
+        z: i32,
+        seed: String,
     },
     Chat {
         content: String,
@@ -594,6 +603,14 @@ pub fn parse_chat_command(content: &str) -> Option<BotCommand> {
         let (x, y, z) = parse_chat_coords(rest)?;
         return Some(BotCommand::Mine { x, y, z });
     }
+    if let Some(rest) = content.strip_prefix("chat ") {
+        let msg = rest.trim();
+        if !msg.is_empty() {
+            return Some(BotCommand::Chat {
+                content: msg.to_string(),
+            });
+        }
+    }
     if content == "minebelow" {
         return Some(BotCommand::MineBelow);
     }
@@ -639,6 +656,16 @@ pub fn parse_chat_command(content: &str) -> Option<BotCommand> {
             parts.next()?.parse().ok()?,
         );
         return Some(BotCommand::BlockInteract { x, y, z });
+    }
+    if let Some(rest) = content.strip_prefix("tillandsow ") {
+        let mut parts = rest.split_whitespace();
+        let (x, y, z, seed) = (
+            parts.next()?.parse().ok()?,
+            parts.next()?.parse().ok()?,
+            parts.next()?.parse().ok()?,
+            parts.next()?.to_string(),
+        );
+        return Some(BotCommand::TillAndSow { x, y, z, seed });
     }
     if content == "follow" {
         return Some(BotCommand::Follow { target: None });
@@ -1852,6 +1879,26 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             bot.block_interact(BlockPos::new(x, y, z));
                             if let Some(tx) = &result_tx {
                                 let _ = tx.send(format!("已交互 ({},{},{})", x, y, z));
+                            }
+                        }
+                        BotCommand::TillAndSow { x, y, z, seed } => {
+                            *state.mining_below.lock().unwrap() = false;
+                            match crate::azalea::till::do_till_and_sow(&bot, x, y, z, &seed).await
+                            {
+                                Ok(msg) => {
+                                    let chat = format!("[种植] {msg}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!("Action output:\n{msg}"));
+                                    }
+                                }
+                                Err(e) => {
+                                    let chat = format!("[种植失败] {e}");
+                                    let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!("Action output:\n❌ {e}"));
+                                    }
+                                }
                             }
                         }
                         BotCommand::Chat { content } => {

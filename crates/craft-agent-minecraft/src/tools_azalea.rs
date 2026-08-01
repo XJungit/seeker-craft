@@ -418,11 +418,76 @@ impl GameTool for InteractBlockTool {
     }
 }
 
+/// 犁地+播种（P84）：目标方块需为 dirt/grass_block/farmland，自动持锄头犁地、
+/// 持种子播种并验证。一次调用完成，无需分步。
+pub struct TillAndSowTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl TillAndSowTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for TillAndSowTool {
+    fn name(&self) -> &str {
+        "till_and_sow"
+    }
+    fn description(&self) -> &str {
+        "在指定世界坐标 (x,y,z) 犁地并播种。目标必须是草方块/泥土/已耕地；需背包有锄头和种子。种子支持 wheat_seeds/beetroot_seeds/carrot/potato/melon_seeds/pumpkin_seeds。若目标过远需先 goto 靠近。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "x": { "type": "integer", "description": "目标 X 坐标" },
+                "y": { "type": "integer", "description": "目标 Y 坐标" },
+                "z": { "type": "integer", "description": "目标 Z 坐标" },
+                "seed": { "type": "string", "description": "种子物品 id，如 wheat_seeds" }
+            },
+            "required": ["x", "y", "z", "seed"]
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let x = args
+            .get("x")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 x"))? as i32;
+        let y = args
+            .get("y")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 y"))? as i32;
+        let z = args
+            .get("z")
+            .and_then(|v| v.as_i64())
+            .ok_or_else(|| anyhow::anyhow!("缺少 z"))? as i32;
+        let seed = args
+            .get("seed")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("缺少 seed"))?
+            .to_string();
+        let r = self.ctx.adapter.execute_shared(Action::Minecraft(
+            MinecraftAction::TillAndSow { x, y, z, seed },
+        ))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}
+
 /// 攻击最近的指定种类生物（自卫/狩猎）。
 pub struct AttackTool {
     ctx: Arc<AzaleaToolCtx>,
-}
-impl AttackTool {
+}impl AttackTool {
     pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
         Self { ctx }
     }
@@ -1494,6 +1559,12 @@ fn parse_step(action: &str, step: &serde_json::Value) -> anyhow::Result<Minecraf
             y: i64("y").ok_or_else(|| anyhow::anyhow!("interact 缺少 y"))?,
             z: i64("z").ok_or_else(|| anyhow::anyhow!("interact 缺少 z"))?,
         }),
+        "till_and_sow" | "tillandsow" => Ok(MinecraftAction::TillAndSow {
+            x: i64("x").ok_or_else(|| anyhow::anyhow!("till_and_sow 缺少 x"))?,
+            y: i64("y").ok_or_else(|| anyhow::anyhow!("till_and_sow 缺少 y"))?,
+            z: i64("z").ok_or_else(|| anyhow::anyhow!("till_and_sow 缺少 z"))?,
+            seed: str("seed").ok_or_else(|| anyhow::anyhow!("till_and_sow 缺少 seed"))?,
+        }),
         "chat" => Ok(MinecraftAction::Chat {
             content: str("content").ok_or_else(|| anyhow::anyhow!("chat 缺少 content"))?,
         }),
@@ -1891,6 +1962,18 @@ fn build_rhai_engine(ctx: &Arc<AzaleaToolCtx>) -> rhai::Engine {
                 x: x as i32,
                 y: y as i32,
                 z: z as i32,
+            },
+        )
+    });
+    let a = adapter.clone();
+    engine.register_fn("till_and_sow", move |x: i64, y: i64, z: i64, seed: String| -> String {
+        _exec_action(
+            &a,
+            MinecraftAction::TillAndSow {
+                x: x as i32,
+                y: y as i32,
+                z: z as i32,
+                seed,
             },
         )
     });
@@ -2718,6 +2801,7 @@ pub fn create_mc_azalea_tools_full(
         Box::new(MineAboveTool::new(ctx.clone())),
         Box::new(MineTool::new(ctx.clone())),
         Box::new(InteractBlockTool::new(ctx.clone())),
+        Box::new(TillAndSowTool::new(ctx.clone())),
         Box::new(AttackTool::new(ctx.clone())),
         Box::new(CraftTool::new(ctx.clone())),
         Box::new(Craft3x3Tool::new(ctx.clone())),
