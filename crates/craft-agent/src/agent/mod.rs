@@ -3028,6 +3028,82 @@ mod tests {
         );
     }
 
+    // ── P91 回归：第二次压缩走增量摘要路径（<previous-summary> 传入 LLM 增量更新）──
+    #[test]
+    fn compaction_second_round_uses_incremental_summary_path() {
+        use std::sync::{Arc, Mutex as StdMutex};
+
+        struct RecordingProvider {
+            last_prompt: Arc<StdMutex<Option<String>>>,
+        }
+        impl LlmProvider for RecordingProvider {
+            fn complete(
+                &self,
+                messages: &[Value],
+                _tools: &[Value],
+            ) -> Result<crate::core::message::AssistantResponse> {
+                // user 消息 = 压缩 prompt（system + user）
+                let prompt = messages
+                    .iter()
+                    .find(|m| m["role"] == "user")
+                    .and_then(|m| m["content"].as_str())
+                    .unwrap_or("")
+                    .to_string();
+                *self.last_prompt.lock().unwrap() = Some(prompt);
+                Ok(AssistantResponse {
+                    content: Some("压缩摘要内容".into()),
+                    reasoning: None,
+                    tool_calls: vec![],
+                    usage: Usage::default(),
+                    stop_reason: StopReason::Stop,
+                })
+            }
+        }
+
+        let mut config = AgentConfig::new("test".into(), 1);
+        config.auto_perceive = false;
+        config.compaction.keep_recent = 30; // 极小阈值：几条消息即触发压缩
+        let last_prompt = Arc::new(StdMutex::new(None));
+        let mut agent = Agent::new(
+            Box::new(RecordingProvider {
+                last_prompt: last_prompt.clone(),
+            }),
+            ToolRegistry::new(),
+            config,
+        );
+        for i in 0..8 {
+            agent.messages.push(Message::user(format!("对话消息 {i}")));
+        }
+
+        // 第一次压缩：无 previous-summary（初始摘要路径）
+        agent.compact().unwrap();
+        let first = last_prompt.lock().unwrap().clone().unwrap();
+        assert!(
+            first.contains("<conversation>"),
+            "首次压缩应走完整对话摘要"
+        );
+        assert!(
+            !first.contains("<previous-summary>"),
+            "首次压缩不应有 previous-summary"
+        );
+        assert!(agent.previous_summary.is_some(), "压缩后应保存摘要");
+
+        // 第二次压缩：增量路径
+        for i in 0..8 {
+            agent.messages.push(Message::user(format!("对话消息 {i}")));
+        }
+        agent.compact().unwrap();
+        let second = last_prompt.lock().unwrap().clone().unwrap();
+        assert!(
+            second.contains("<previous-summary>\n压缩摘要内容\n</previous-summary>"),
+            "第二次压缩应携带上一轮摘要走增量更新路径, got: {second:.200}"
+        );
+        assert!(
+            second.contains("update the existing summary"),
+            "增量路径应使用 UPDATE_SUMMARIZATION_PROMPT"
+        );
+    }
+
     // ── 回归：上下文压缩摘要不得包含易变 perceive 快照（避免过期坐标污染）──
     #[test]
     fn compaction_excludes_volatile_perceive_snapshot() {
