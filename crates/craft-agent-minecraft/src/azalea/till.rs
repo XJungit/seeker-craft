@@ -2,8 +2,8 @@
 //! 校验目标为 dirt/grass_block/farmland → 靠近 4.5m → 持锄头右键犁地 →
 //! 持种子右键播种。全程不依赖 LLM 逐步操作，一次命令完成。
 
-use azalea::Client;
 use azalea::BlockPos;
+use azalea::Client;
 use azalea_registry::builtin::BlockKind;
 use azalea_registry::builtin::ItemKind;
 use std::time::Duration;
@@ -99,7 +99,9 @@ pub(crate) async fn do_till_and_sow(
     // 2. 上方方块校验
     let above_kind: BlockKind = {
         let w = world.read();
-        w.get_block_state(above_pos).map(Into::into).unwrap_or(BlockKind::Air)
+        w.get_block_state(above_pos)
+            .map(Into::into)
+            .unwrap_or(BlockKind::Air)
     };
     if target_kind == BlockKind::Farmland {
         if above_kind != BlockKind::Air {
@@ -118,10 +120,8 @@ pub(crate) async fn do_till_and_sow(
 
     // 3. 距离检查（服务器交互距离 4.5m）
     let p = bot.position().map_err(|e| format!("读取位置失败: {e:?}"))?;
-    let dist = ((p.x - x as f64).powi(2)
-        + (p.y - y as f64).powi(2)
-        + (p.z - z as f64).powi(2))
-        .sqrt();
+    let dist =
+        ((p.x - x as f64).powi(2) + (p.y - y as f64).powi(2) + (p.z - z as f64).powi(2)).sqrt();
     if dist > 4.5 {
         return Err(format!(
             "({x},{y},{z}) 距离 {dist:.1}m 过远（交互距离 4.5m）——请先 goto 到目标旁再 till_and_sow"
@@ -142,7 +142,9 @@ pub(crate) async fn do_till_and_sow(
         let now_kind: BlockKind = {
             let w = bot.world().map_err(|e| format!("读取世界失败: {e:?}"))?;
             let w = w.read();
-            w.get_block_state(target_pos).map(Into::into).unwrap_or(BlockKind::Air)
+            w.get_block_state(target_pos)
+                .map(Into::into)
+                .unwrap_or(BlockKind::Air)
         };
         if now_kind != BlockKind::Farmland {
             return Err(format!(
@@ -162,7 +164,9 @@ pub(crate) async fn do_till_and_sow(
     let now_above: BlockKind = {
         let w = bot.world().map_err(|e| format!("读取世界失败: {e:?}"))?;
         let w = w.read();
-        w.get_block_state(above_pos).map(Into::into).unwrap_or(BlockKind::Air)
+        w.get_block_state(above_pos)
+            .map(Into::into)
+            .unwrap_or(BlockKind::Air)
     };
     if now_above != crop {
         return Err(format!(
@@ -192,10 +196,7 @@ mod tests {
         );
         assert_eq!(seed_to_crop_kind("carrot"), Some(BlockKind::Carrots));
         assert_eq!(seed_to_crop_kind("potato"), Some(BlockKind::Potatoes));
-        assert_eq!(
-            seed_to_crop_kind("melon_seeds"),
-            Some(BlockKind::MelonStem)
-        );
+        assert_eq!(seed_to_crop_kind("melon_seeds"), Some(BlockKind::MelonStem));
         assert_eq!(
             seed_to_crop_kind("pumpkin_seeds"),
             Some(BlockKind::PumpkinStem)

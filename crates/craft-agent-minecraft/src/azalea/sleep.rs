@@ -2,8 +2,8 @@
 //! 夜晚找床 → 走到床旁 → 空主手 → 右键床 → 轮询 Sleeping 组件验证入睡 →
 //! 睡到自然醒（跳过夜晚）。白天睡觉服务端会拒绝并返回错误。
 
-use azalea::Client;
 use azalea::BlockPos;
+use azalea::Client;
 use azalea::pathfinder::goals::BlockPosGoal;
 use azalea::prelude::*;
 use azalea_registry::builtin::BlockKind;
@@ -92,7 +92,7 @@ pub(crate) async fn do_sleep(bot: &Client) -> Result<String, String> {
     let dist = ((p.x - bed.x as f64).powi(2)
         + (p.y - bed.y as f64).powi(2)
         + (p.z - bed.z as f64).powi(2))
-        .sqrt();
+    .sqrt();
     if dist > 2.0 {
         let stand = BlockPos::new(bed.x, bed.y, bed.z);
         bot.start_goto(BlockPosGoal(stand));
@@ -103,7 +103,7 @@ pub(crate) async fn do_sleep(bot: &Client) -> Result<String, String> {
                 let d = ((p.x - bed.x as f64).powi(2)
                     + (p.y - bed.y as f64).powi(2)
                     + (p.z - bed.z as f64).powi(2))
-                    .sqrt();
+                .sqrt();
                 if d < 2.0 {
                     arrived = true;
                     break;
@@ -111,13 +111,18 @@ pub(crate) async fn do_sleep(bot: &Client) -> Result<String, String> {
             }
         }
         if !arrived {
-            return Err(format!("走到床 ({},{},{}) 失败（5s 超时）——可能有障碍", bed.x, bed.y, bed.z));
+            return Err(format!(
+                "走到床 ({},{},{}) 失败（5s 超时）——可能有障碍",
+                bed.x, bed.y, bed.z
+            ));
         }
     }
 
     // 3. 空主手（避免右键放置方块盖住床）
     if !empty_main_hand(bot) {
-        return Err("主手有物品且 hotbar 没有空槽——请先 discard 或移动物品腾出空槽再睡觉".to_string());
+        return Err(
+            "主手有物品且 hotbar 没有空槽——请先 discard 或移动物品腾出空槽再睡觉".to_string(),
+        );
     }
 
     // 4. 右键床

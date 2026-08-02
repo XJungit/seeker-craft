@@ -473,9 +473,15 @@ impl GameTool for TillAndSowTool {
             .and_then(|v| v.as_str())
             .ok_or_else(|| anyhow::anyhow!("缺少 seed"))?
             .to_string();
-        let r = self.ctx.adapter.execute_shared(Action::Minecraft(
-            MinecraftAction::TillAndSow { x, y, z, seed },
-        ))?;
+        let r =
+            self.ctx
+                .adapter
+                .execute_shared(Action::Minecraft(MinecraftAction::TillAndSow {
+                    x,
+                    y,
+                    z,
+                    seed,
+                }))?;
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,
@@ -565,8 +571,10 @@ impl GameTool for HarvestTool {
 }
 
 /// 攻击最近的指定种类生物（自卫/狩猎）。
-pub struct AttackTool {    ctx: Arc<AzaleaToolCtx>,
-}impl AttackTool {
+pub struct AttackTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl AttackTool {
     pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
         Self { ctx }
     }
@@ -2047,17 +2055,20 @@ fn build_rhai_engine(ctx: &Arc<AzaleaToolCtx>) -> rhai::Engine {
         )
     });
     let a = adapter.clone();
-    engine.register_fn("till_and_sow", move |x: i64, y: i64, z: i64, seed: String| -> String {
-        _exec_action(
-            &a,
-            MinecraftAction::TillAndSow {
-                x: x as i32,
-                y: y as i32,
-                z: z as i32,
-                seed,
-            },
-        )
-    });
+    engine.register_fn(
+        "till_and_sow",
+        move |x: i64, y: i64, z: i64, seed: String| -> String {
+            _exec_action(
+                &a,
+                MinecraftAction::TillAndSow {
+                    x: x as i32,
+                    y: y as i32,
+                    z: z as i32,
+                    seed,
+                },
+            )
+        },
+    );
 
     // ===== 战斗 =====
     let a = adapter.clone();

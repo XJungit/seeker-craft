@@ -21,8 +21,8 @@ pub mod harvest;
 pub mod place;
 pub mod recipe_book;
 pub mod recipes;
-pub mod smart_actions;
 pub mod sleep;
+pub mod smart_actions;
 pub mod table_flow;
 pub mod till;
 pub mod trade;
@@ -1902,8 +1902,7 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                         }
                         BotCommand::TillAndSow { x, y, z, seed } => {
                             *state.mining_below.lock().unwrap() = false;
-                            match crate::azalea::till::do_till_and_sow(&bot, x, y, z, &seed).await
-                            {
+                            match crate::azalea::till::do_till_and_sow(&bot, x, y, z, &seed).await {
                                 Ok(msg) => {
                                     let chat = format!("[种植] {msg}");
                                     let _ = evt_tx.send(BotEvent::Chat { content: chat });
@@ -3540,12 +3539,7 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                         match bot.world() {
                             Ok(world) => {
                                 let w = world.read();
-                                count_overhead_solid(
-                                    |bp| w.get_block_state(bp),
-                                    wx,
-                                    head_y,
-                                    wz,
-                                )
+                                count_overhead_solid(|bp| w.get_block_state(bp), wx, head_y, wz)
                             }
                             Err(_) => 0,
                         }
@@ -4395,7 +4389,10 @@ mod entity_target_tests {
 
     #[test]
     fn chat_parser_sleep_and_tillandsow() {
-        assert!(matches!(parse_chat_command("sleep"), Some(BotCommand::Sleep)));
+        assert!(matches!(
+            parse_chat_command("sleep"),
+            Some(BotCommand::Sleep)
+        ));
         assert!(matches!(
             parse_chat_command("tillandsow 10 64 20 wheat_seeds"),
             Some(BotCommand::TillAndSow {
@@ -4409,7 +4406,10 @@ mod entity_target_tests {
             parse_chat_command("chat hello"),
             Some(BotCommand::Chat { content }) if content == "hello"
         ));
-        assert!(matches!(parse_chat_command("harvest"), Some(BotCommand::Harvest)));
+        assert!(matches!(
+            parse_chat_command("harvest"),
+            Some(BotCommand::Harvest)
+        ));
         assert!(parse_chat_command("harvest 3").is_none());
         assert!(parse_chat_command("tillandsow 1 2").is_none());
     }

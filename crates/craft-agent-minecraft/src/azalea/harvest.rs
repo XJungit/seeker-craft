@@ -4,9 +4,9 @@
 
 use azalea::BlockPos;
 use azalea::Client;
+use azalea::block::{BlockState, BlockTrait};
 use azalea::pathfinder::goals::BlockPosGoal;
 use azalea::prelude::*;
-use azalea::block::{BlockState, BlockTrait};
 use azalea_registry::builtin::BlockKind;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -185,4 +185,3 @@ mod tests {
         assert!(!crop_is_mature(stone));
     }
 }
-
