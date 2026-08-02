@@ -573,9 +573,9 @@ pub struct CompactionResult {
 // ── Agent ──
 
 pub struct Agent {
-    pub provider: Box<dyn LlmProvider>,
+    pub provider: Arc<dyn LlmProvider>,
     /// 可选：专用压缩模型 provider（用于上下文压缩/摘要，隔离主模型 token 预算）
-    pub compaction_provider: Option<Box<dyn LlmProvider>>,
+    pub compaction_provider: Option<Arc<dyn LlmProvider>>,
     pub tools: ToolRegistry,
     pub messages: Vec<Message>,
     pub session_entries: Vec<SessionEntry>,
@@ -583,6 +583,11 @@ pub struct Agent {
     pub events: Vec<AgentEvent>,
     usage: Usage,
     previous_summary: Option<String>,
+    /// P96：后台预压缩摘要（worker 线程写入，下一轮 compact() 直接取用，避免
+    /// 压缩阻塞主循环的 LLM 调用——pi compaction_worker 的两阶段非阻塞思路）。
+    prefetch_summary: Arc<Mutex<Option<String>>>,
+    /// P96：预压缩在途标志（防重复 spawn worker）。
+    prefetch_in_flight: Arc<AtomicBool>,
     steering: Arc<Mutex<VecDeque<String>>>,
     follow_up: VecDeque<String>,
     turn: u32,
@@ -834,6 +839,9 @@ impl Agent {
             .unwrap_or_else(default_mc_world_info);
         let compaction_provider = config.compaction.compaction_provider.take();
         let world_memory = config.world_memory.clone();
+        // P96：Box → Arc（同一 provider 可被后台预压缩 worker 共享；trait 已要求 Send+Sync）
+        let provider: Arc<dyn LlmProvider> = Arc::from(provider);
+        let compaction_provider: Option<Arc<dyn LlmProvider>> = compaction_provider.map(Arc::from);
         Self {
             provider,
             tools,
@@ -843,6 +851,8 @@ impl Agent {
             events: vec![],
             usage: Usage::default(),
             previous_summary: None,
+            prefetch_summary: Arc::new(Mutex::new(None)),
+            prefetch_in_flight: Arc::new(AtomicBool::new(false)),
             steering: Arc::new(Mutex::new(VecDeque::new())),
             follow_up: VecDeque::new(),
             turn: 0,
@@ -2196,6 +2206,8 @@ impl Agent {
 
         self.events.push(AgentEvent::TurnEnd { turn });
         self.persist_turn()?;
+        // P96：回合末后台预压缩（不阻塞本回合；下一轮 compact() 直接取用）
+        self.maybe_prefetch_compaction();
         Ok((log, true))
     }
 

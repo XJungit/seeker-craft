@@ -1,6 +1,8 @@
 use crate::core::message::{Message, Usage, system_chatml};
 use crate::core::session::SessionEntry as SessionFileEntry;
 use serde_json::Value;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 
 use super::{Agent, CompactionResult, LlmProvider, build_knowledge_string};
 
@@ -131,8 +133,36 @@ impl Agent {
             return Ok(CompactionResult::default());
         }
 
-        // 用统一的 token 估算（实测优先 / 消息累加 / 启发式），避免重复计入：
-        // 之前 `msg_tokens 求和 + self.usage.total_tokens` 会把每条消息算两遍（usage 已含同等内容）。
+        // P96：后台预压缩已产出摘要 → 直接应用，本轮不阻塞调用 LLM。
+        let prefetched = self.prefetch_summary.lock().unwrap().take();
+        if let Some(summary) = prefetched {
+            let comp_result = self.apply_summary(cut, summary);
+            self.last_compaction = Some(comp_result.clone());
+            return Ok(comp_result);
+        }
+
+        // 序列化旧历史时剔除"易变瞬时注入"（perceive 状态、邻近世界记忆、
+        // [当前目标] 重注、nudge 提示词），它们每轮重生且易过期，
+        // 进入摘要会污染压缩结果（如矛盾坐标、过时目标）。
+        let cm = build_cm(&self.messages[..cut], self.previous_summary.as_deref());
+
+        // 1) 优先专用压缩模型（隔离主模型/换小模型）
+        // 2) 失败回退主决策模型再试一次
+        let summary = request_summary(
+            self.compaction_provider.as_deref(),
+            self.provider.as_ref(),
+            &cm,
+        )
+        .map_err(|e| anyhow::anyhow!("compaction failed: {e}"))?;
+
+        let comp_result = self.apply_summary(cut, summary);
+        self.last_compaction = Some(comp_result.clone());
+        Ok(comp_result)
+    }
+
+    /// 用摘要替换 `[..cut]` 的历史，保留最近 `cut..` 消息。
+    /// 同步压缩与 P96 后台预压缩共用此路径。
+    fn apply_summary(&mut self, cut: usize, summary: String) -> CompactionResult {
         let tokens_before = self.estimate_tokens_range(0, cut);
         let recent_count = self.messages.len() - cut;
         let first_kept_entry_id = self
@@ -151,103 +181,6 @@ impl Agent {
                 String::new()
             })
             .unwrap_or_default();
-        // 序列化旧历史时剔除"易变瞬时注入"（perceive 状态、邻近世界记忆、
-        // [当前目标] 重注、nudge 提示词），它们每轮重生且易过期，
-        // 进入摘要会污染压缩结果（如矛盾坐标、过时目标）。
-        let old: Vec<String> = self.messages[..cut]
-            .iter()
-            .filter(|m| match m {
-                Message::User(u) => {
-                    !(u.content.starts_with("【当前游戏状态（自动注入）】")
-                        || u.content.starts_with("【邻近世界记忆】")
-                        || u.content.starts_with("[当前目标]")
-                        // P1 改进5: 过滤 nudge 提示词 — 它们是瞬时纠正，不应进入摘要
-                        || u.content.starts_with("【纠正】")
-                        || u.content.starts_with("【继续】")
-                        || u.content.starts_with("【强制行动】")
-                        || u.content.starts_with("【死循环警告】")
-                        || u.content.starts_with("【连续失败警告】")
-                        || u.content.starts_with("【探索建议】")
-                        || u.content.starts_with("【系统提示】"))
-                }
-                _ => true,
-            })
-            .map(Self::serialize_msg)
-            .collect();
-        let mut prompt = format!("<conversation>\n{}\n</conversation>\n\n", old.join("\n\n"));
-        let system = if let Some(prev) = &self.previous_summary {
-            prompt.push_str(&format!(
-                "<previous-summary>\n{prev}\n</previous-summary>\n\n"
-            ));
-            prompt.push_str(super::UPDATE_SUMMARIZATION_PROMPT);
-            super::COMPACTION_SYSTEM
-        } else {
-            prompt.push_str(super::SUMMARIZATION_PROMPT);
-            super::COMPACTION_SYSTEM
-        };
-
-        let cm = vec![system_chatml(system), Message::user(prompt).to_chatml()];
-
-        // 压缩调用：先专用模型，失败再回退主模型。返回 (摘要, 是否成功, 失败原因)。
-        fn try_summarize(messages: &[Value], provider: &dyn LlmProvider) -> Result<String, String> {
-            let mut result: Option<String> = None;
-            let mut last_err: Option<String> = None;
-            for attempt in 1..=3 {
-                match provider.complete(messages, &[]) {
-                    Ok(resp) => {
-                        if let Some(t) = resp.content.as_ref().filter(|t| !t.trim().is_empty()) {
-                            result = Some(t.clone());
-                        } else if let Some(t) =
-                            resp.reasoning.as_ref().filter(|t| !t.trim().is_empty())
-                        {
-                            result = Some(t.clone());
-                        } else {
-                            last_err = Some("empty response".into());
-                        }
-                        if result.is_some() {
-                            break;
-                        }
-                    }
-                    Err(e) => {
-                        last_err = Some(format!("{e}"));
-                        if attempt < 3 {
-                            std::thread::sleep(std::time::Duration::from_millis(
-                                500 * attempt as u64,
-                            ));
-                        }
-                    }
-                }
-            }
-            result.ok_or_else(|| last_err.unwrap_or_else(|| "unknown".into()))
-        }
-
-        // 1) 优先专用压缩模型（隔离主模型/换小模型）
-        let summary = if let Some(comp) = self.compaction_provider.as_ref() {
-            match try_summarize(&cm, comp.as_ref()) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("[compaction] 专用压缩模型失败，回退主模型: {e}");
-                    // 2) 回退主决策模型再试一次
-                    match try_summarize(&cm, self.provider.as_ref()) {
-                        Ok(s) => s,
-                        Err(e2) => {
-                            return Err(anyhow::anyhow!(
-                                "compaction failed: 专用模型({e}) 与主模型({e2}) 均失败"
-                            ));
-                        }
-                    }
-                }
-            }
-        } else {
-            // 未配专用模型：直接用主模型
-            match try_summarize(&cm, self.provider.as_ref()) {
-                Ok(s) => s,
-                Err(e) => {
-                    return Err(anyhow::anyhow!("compaction failed: 主模型 {e}"));
-                }
-            }
-        };
-
         let recent: Vec<_> = self.messages.drain(cut..).collect();
         let summary_msg = Message::user(format!(
             "The conversation history before this point was compacted into the following summary:\n\n<summary>\n{}\n</summary>",
@@ -258,14 +191,55 @@ impl Agent {
         self.previous_summary = Some(summary.clone());
         self.pending_checkpoint = true;
         self.usage = Usage::default();
-
-        let comp_result = CompactionResult {
+        CompactionResult {
             summary,
             first_kept_entry_id,
             tokens_before,
-        };
-        self.last_compaction = Some(comp_result.clone());
-        Ok(comp_result)
+        }
+    }
+
+    /// P96：后台预压缩（pi compaction_worker 的两阶段非阻塞思路）。
+    /// 消息量达到触发阈值的 2/3 时，提前在后台线程生成摘要；
+    /// 下一轮 compact() 直接取用，主循环不被 LLM 压缩调用阻塞。
+    pub fn maybe_prefetch_compaction(&mut self) {
+        if !self.config.enable_compaction {
+            return;
+        }
+        if self.prefetch_in_flight.load(Ordering::Acquire) {
+            return;
+        }
+        // 已有待用摘要（上一轮 spawn 完成、本轮 compact 尚未取用）→ 不重复 spawn
+        if self.prefetch_summary.lock().unwrap().is_some() {
+            return;
+        }
+        let budget = self
+            .config
+            .compaction
+            .context_window
+            .saturating_sub(self.config.compaction.reserve);
+        // 压缩触发线是 60% 预算；达到 40%（2/3 提前量）即开始后台预压缩
+        if self.estimate_tokens() < budget * 2 / 5 {
+            return;
+        }
+        if self.messages.is_empty() {
+            return;
+        }
+        let snapshot: Vec<Message> = self.messages.clone();
+        let previous = self.previous_summary.clone();
+        let cm = build_cm(&snapshot, previous.as_deref());
+        self.prefetch_in_flight.store(true, Ordering::Release);
+        let out = self.prefetch_summary.clone();
+        let in_flight = self.prefetch_in_flight.clone();
+        let primary = Arc::clone(&self.provider);
+        let comp = self.compaction_provider.clone();
+        std::thread::spawn(move || {
+            let result = request_summary(comp.as_deref(), primary.as_ref(), &cm);
+            match result {
+                Ok(s) => *out.lock().unwrap() = Some(s),
+                Err(e) => eprintln!("[compaction] 后台预压缩失败（下轮回退同步压缩）: {e}"),
+            }
+            in_flight.store(false, Ordering::Release);
+        });
     }
 
     /// 硬截断：不调 LLM，直接丢弃最旧的消息，保留系统提示 + 最近 N 条。
@@ -344,6 +318,93 @@ impl Agent {
             }
             Message::ToolResult(r) => format!("result({}): {}", r.tool_name, r.content),
         }
+    }
+}
+
+/// 构建压缩请求（chatml）：过滤易变瞬时注入（perceive/记忆/目标/nudge），
+/// 附带 previous-summary（增量压缩）。同步压缩与 P96 后台预压缩共用。
+fn build_cm(messages: &[Message], previous_summary: Option<&str>) -> Vec<Value> {
+    let old: Vec<String> = messages
+        .iter()
+        .filter(|m| match m {
+            Message::User(u) => {
+                !(u.content.starts_with("【当前游戏状态（自动注入）】")
+                    || u.content.starts_with("【邻近世界记忆】")
+                    || u.content.starts_with("[当前目标]")
+                    // P1 改进5: 过滤 nudge 提示词 — 它们是瞬时纠正，不应进入摘要
+                    || u.content.starts_with("【纠正】")
+                    || u.content.starts_with("【继续】")
+                    || u.content.starts_with("【强制行动】")
+                    || u.content.starts_with("【死循环警告】")
+                    || u.content.starts_with("【连续失败警告】")
+                    || u.content.starts_with("【探索建议】")
+                    || u.content.starts_with("【工具调用上限】")
+                    || u.content.starts_with("【系统提示】"))
+            }
+            _ => true,
+        })
+        .map(Agent::serialize_msg)
+        .collect();
+    let mut prompt = format!("<conversation>\n{}\n</conversation>\n\n", old.join("\n\n"));
+    let system = if let Some(prev) = previous_summary {
+        prompt.push_str(&format!("<previous-summary>\n{prev}\n</previous-summary>\n\n"));
+        prompt.push_str(super::UPDATE_SUMMARIZATION_PROMPT);
+        super::COMPACTION_SYSTEM
+    } else {
+        prompt.push_str(super::SUMMARIZATION_PROMPT);
+        super::COMPACTION_SYSTEM
+    };
+    vec![system_chatml(system), Message::user(prompt).to_chatml()]
+}
+
+/// 执行压缩摘要：先专用模型（最多 3 次重试），失败回退主模型再试一次。
+/// 同步压缩与 P96 后台预压缩共用。
+fn request_summary(
+    comp: Option<&dyn LlmProvider>,
+    primary: &dyn LlmProvider,
+    cm: &[Value],
+) -> Result<String, String> {
+    fn try_summarize(messages: &[Value], provider: &dyn LlmProvider) -> Result<String, String> {
+        let mut result: Option<String> = None;
+        let mut last_err: Option<String> = None;
+        for attempt in 1..=3 {
+            match provider.complete(messages, &[]) {
+                Ok(resp) => {
+                    if let Some(t) = resp.content.as_ref().filter(|t| !t.trim().is_empty()) {
+                        result = Some(t.clone());
+                    } else if let Some(t) =
+                        resp.reasoning.as_ref().filter(|t| !t.trim().is_empty())
+                    {
+                        result = Some(t.clone());
+                    } else {
+                        last_err = Some("empty response".into());
+                    }
+                    if result.is_some() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    last_err = Some(format!("{e}"));
+                    if attempt < 3 {
+                        std::thread::sleep(std::time::Duration::from_millis(
+                            500 * attempt as u64,
+                        ));
+                    }
+                }
+            }
+        }
+        result.ok_or_else(|| last_err.unwrap_or_else(|| "unknown".into()))
+    }
+
+    match comp {
+        Some(comp) => match try_summarize(cm, comp) {
+            Ok(s) => Ok(s),
+            Err(e) => {
+                eprintln!("[compaction] 专用压缩模型失败，回退主模型: {e}");
+                try_summarize(cm, primary)
+            }
+        },
+        None => try_summarize(cm, primary),
     }
 }
 
@@ -529,5 +590,167 @@ mod tests {
             s.starts_with("result(gather)"),
             "error should still format as result: {s}"
         );
+    }
+
+    // ── P96：后台预压缩（compaction_worker）──
+
+    use crate::agent::AgentConfig;
+    use crate::core::message::AssistantResponse;
+    use crate::core::tool::ToolRegistry;
+    use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
+
+    #[derive(Debug)]
+    struct CountingProvider {
+        calls: Arc<AtomicU32>,
+    }
+    impl LlmProvider for CountingProvider {
+        fn complete(
+            &self,
+            _messages: &[Value],
+            _tools: &[Value],
+        ) -> anyhow::Result<AssistantResponse> {
+            self.calls.fetch_add(1, AtomicOrdering::SeqCst);
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            Ok(AssistantResponse {
+                content: Some("后台预压缩摘要内容".into()),
+                reasoning: None,
+                tool_calls: vec![],
+                usage: Usage::default(),
+                stop_reason: crate::core::message::StopReason::Stop,
+            })
+        }
+    }
+
+    fn wait_for<F: Fn() -> bool>(timeout_ms: u64, cond: F) -> bool {
+        let deadline = std::time::Instant::now()
+            + std::time::Duration::from_millis(timeout_ms);
+        while std::time::Instant::now() < deadline {
+            if cond() {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        cond()
+    }
+
+    #[test]
+    fn p96_prefetch_compaction_runs_in_background_and_compact_skips_llm() {
+        // 小预算配置：context_window=1000, reserve=200 → budget=800 → 40% 触发线 320 tokens
+        let mut config = AgentConfig::new("test".into(), 1);
+        config.enable_compaction = true;
+        config.compaction.context_window = 1000;
+        config.compaction.reserve = 200;
+        config.compaction.keep_recent = 200;
+        config.auto_perceive = false;
+        let calls = Arc::new(AtomicU32::new(0));
+        let mut agent = Agent::new(
+            Box::new(CountingProvider {
+                calls: calls.clone(),
+            }),
+            ToolRegistry::new(),
+            config,
+        );
+        // 造 400+ tokens 的消息（40 条 × ~20 chars）
+        for i in 0..40 {
+            agent
+                .messages
+                .push(Message::user(format!("早期对话片段 {}", "x".repeat(20))));
+        }
+        let est = agent.estimate_tokens();
+        assert!(est >= 320, "测试前置：token 估算应超过预取线，got {est}");
+
+        // 预取：后台线程生成摘要
+        agent.maybe_prefetch_compaction();
+        assert!(
+            agent.prefetch_in_flight.load(AtomicOrdering::Acquire),
+            "预取应在途"
+        );
+        assert!(
+            wait_for(3000, || !agent
+                .prefetch_in_flight
+                .load(AtomicOrdering::Acquire)),
+            "后台预压缩应在 3s 内完成"
+        );
+        // 摘要已产出，且只调用了一次 provider（后台线程）
+        let prefetched = agent.prefetch_summary.lock().unwrap().clone();
+        assert_eq!(
+            prefetched.as_deref(),
+            Some("后台预压缩摘要内容"),
+            "后台线程应产出摘要"
+        );
+        assert_eq!(calls.load(AtomicOrdering::SeqCst), 1, "仅后台线程调用 1 次");
+
+        // compact() 直接取用预取摘要，不再调用 LLM
+        let result = agent.compact().unwrap();
+        assert!(
+            !result.summary.is_empty(),
+            "compact 应返回预取摘要"
+        );
+        assert_eq!(
+            calls.load(AtomicOrdering::SeqCst),
+            1,
+            "compact 不得再调用 provider"
+        );
+        assert_eq!(agent.previous_summary.as_deref(), Some("后台预压缩摘要内容"));
+        assert!(
+            agent.messages[0]
+                .to_chatml()
+                .to_string()
+                .contains("<summary>"),
+            "消息应以摘要开头"
+        );
+    }
+
+    #[test]
+    fn p96_prefetch_is_idempotent_until_summary_consumed() {
+        let mut config = AgentConfig::new("test".into(), 1);
+        config.enable_compaction = true;
+        config.compaction.context_window = 1000;
+        config.compaction.reserve = 200;
+        config.compaction.keep_recent = 200;
+        config.auto_perceive = false;
+        let calls = Arc::new(AtomicU32::new(0));
+        let mut agent = Agent::new(
+            Box::new(CountingProvider {
+                calls: calls.clone(),
+            }),
+            ToolRegistry::new(),
+            config,
+        );
+        for i in 0..40 {
+            agent
+                .messages
+                .push(Message::user(format!("早期对话片段 {}", "x".repeat(20))));
+        }
+        // 第一次预取 → 后台完成
+        agent.maybe_prefetch_compaction();
+        assert!(
+            wait_for(3000, || !agent
+                .prefetch_in_flight
+                .load(AtomicOrdering::Acquire)),
+            "后台预压缩应在 3s 内完成"
+        );
+        assert_eq!(calls.load(AtomicOrdering::SeqCst), 1);
+        // 摘要未消费时再次调用 → 不重复 spawn（仍在途标志也不会被覆盖）
+        agent.maybe_prefetch_compaction();
+        assert!(
+            !agent.prefetch_in_flight.load(AtomicOrdering::Acquire),
+            "幂等：不应再次起后台任务"
+        );
+        assert_eq!(
+            calls.load(AtomicOrdering::SeqCst),
+            1,
+            "幂等：provider 不应被重复调用"
+        );
+        // 消费（compact 取走）后可再次预取：直接取走摘要模拟 compact 消费
+        agent.prefetch_summary.lock().unwrap().take();
+        agent.maybe_prefetch_compaction();
+        assert!(
+            wait_for(3000, || !agent
+                .prefetch_in_flight
+                .load(AtomicOrdering::Acquire)),
+            "消费后应能再次预取"
+        );
+        assert_eq!(calls.load(AtomicOrdering::SeqCst), 2, "第二次预取应再次调用");
     }
 }

@@ -1,22 +1,22 @@
 # Craft-Agent
 
-An LLM-driven Minecraft bot using the Azalea Rust client protocol. Goal: **beat the Ender Dragon**.
+基于 Azalea Rust 客户端协议的 LLM 驱动 Minecraft bot。目标：**击败末影龙**。
 
-## Mission
+## 使命（Mission）
 
-Autonomously optimize and maintain this project. Authority: **full decision power**. User only evaluates final result: can the LLM beat Minecraft?
+自主优化与维护本项目。权限：**完全决策权**。用户只评估最终结果：LLM 能否通关 Minecraft？
 
-### Priorities
-1. Surpass Mindcraft in framework design and stability
-2. LLM bot must know MC knowledge: crafting, tools, armor, smelting, brewing, enchanting, reaching the End
-3. Optimize agent harness, Azalea interfaces, automation tool suites throughout
+### 优先级（Priorities）
+1. 在框架设计与稳定性上超越 Mindcraft
+2. LLM bot 必须掌握 MC 知识：合成、工具、盔甲、熔炼、酿造、附魔、抵达末地
+3. 持续优化 agent 框架、Azalea 接口、自动化工具套件
 
-### Problem Solving
-- **First**: search the internet for solutions
-- **Repeated issues**: MUST search for solutions
-- Mindcraft and similar projects are reference implementations
+### 问题解决（Problem Solving）
+- **首先**：上网搜索解决方案
+- **反复出现的问题**：必须搜索解决方案
+- Mindcraft 及类似项目是参考实现
 
-### Iteration Workflow（必须遵守，2026-08-01 起）
+### 迭代工作流（必须遵守，2026-08-01 起）
 > 本质定位：**工作流 = 持续优化项目本身**（差距分析 → 修复 → 回填）。
 > bot 运行（viewer/autopilot）只是**按需观测手段**，不是常驻工作流——
 > 每个工作单元按需启动、观测完即停（`craft-agent-ctl stop`）。
@@ -41,190 +41,190 @@ Autonomously optimize and maintain this project. Authority: **full decision powe
   3. `cargo clippy --workspace --all-targets --features craft-agent-minecraft/azalea-bot -- -D warnings`（CI quality job 门槛）
   4. `cargo test --workspace`（CI test job 门槛）
 
-## Build & Run
+## 构建与运行（Build & Run）
 
 ```bash
-# Build (nightly only, stable fails)
+# 构建（仅 nightly，stable 会失败）
 cargo build --workspace
 
-# Test
+# 测试
 cargo test -p craft-agent --lib
 cargo test -p craft-agent-minecraft --features azalea-bot --lib
 
-# Run viewer
+# 运行 viewer
 # 注意：craft-agent-viewer 包只有一个 bin，直接运行即可
 cargo run -p craft-agent-viewer --bin craft-agent-viewer
 
-# Run azalea bot demo
+# 运行 azalea bot demo
 cargo run -p craft-agent-minecraft --example agent_azalea_demo --features azalea-bot -- --goal="挖矿下探" --steps=20
 ```
 
-## Architecture (5 crates)
+## 架构（5 个 crate）
 
 ```
-craft-agent              Core agent framework (~5000 lines)
-  agent/                 run_one_turn (2164 lines), compaction, prompt, modes, session
-  core/                  types (MinecraftAction), GameTool trait, ToolRegistry, memory (WorldMemory), skill
-  task.rs                Task system: 23 tier1-6 tasks, structured success conditions
-  profile.rs             3-layer prompt merging (_default → defaults/{mode} → {individual})
+craft-agent              核心 agent 框架（约 5000 行）
+  agent/                 run_one_turn（2164 行）、compaction、prompt、modes、session
+  core/                  types（MinecraftAction）、GameTool trait、ToolRegistry、memory（WorldMemory）、skill
+  task.rs                Task 系统：23 个 tier1-6 任务，结构化成功条件
+  profile.rs             3 层 prompt 合并（_default → defaults/{mode} → {individual}）
 
-craft-agent-minecraft    MC adapter (azalea protocol, ~12000+ lines)
-  azalea/mod.rs          AzaleaBot + tick handler, command queue, 33 BotCommand variants
-  azalea/craft.rs        2x2/3x3 crafting, smelting, smithing, stonecutter, brewing, enchanting (4706 lines)
-  azalea/gather.rs       Block scanning + tool tier checks + auto-equip (568 lines)
-  azalea/auto_craft.rs   Recursive recipe satisfaction + tool block placement (681 lines)
-  azalea/place.rs        Block placement + container opening + reach checks (814 lines)
-  azalea/recipes.rs      Recipe knowledge base (427 lines)
-  azalea/perception.rs   Position reading
-  azalea/actions.rs      Basic bot actions (goto/mine/chat)
-  adapter_azalea.rs      GameAdapter impl, perceive format, execute
-  tools_azalea.rs        44 LLM tools (3866 lines)
-  action_lib.rs          LLM-defined rhai scripts (338 lines)
-  blueprint.rs           Blueprint library (310 lines)
+craft-agent-minecraft    MC 适配器（azalea 协议，约 12000+ 行）
+  azalea/mod.rs          AzaleaBot + tick handler、命令队列、33 个 BotCommand 变体
+  azalea/craft.rs        2x2/3x3 合成、熔炼、锻造、切石、酿造、附魔（4706 行）
+  azalea/gather.rs       方块扫描 + 工具等级检查 + 自动装备（568 行）
+  azalea/auto_craft.rs   递归配方满足 + 工具方块放置（681 行）
+  azalea/place.rs        方块放置 + 容器开启 + 触及范围检查（814 行）
+  azalea/recipes.rs      配方知识库（427 行）
+  azalea/perception.rs   位置读取
+  azalea/actions.rs      基础 bot 动作（goto/mine/chat）
+  adapter_azalea.rs      GameAdapter 实现、perceive 格式、execute
+  tools_azalea.rs        44 个 LLM 工具（3866 行）
+  action_lib.rs          LLM 定义的 rhai 脚本（338 行）
+  blueprint.rs           蓝图库（310 行）
 
-craft-agent-model        LLM client (OpenAI-compatible)
-  decision.rs            chat_tools(), fold_tool_history(), parse_chat_tools_response()
-  config.rs              Multi-backend config loader
-  vision.rs              VLM client
+craft-agent-model        LLM 客户端（OpenAI 兼容）
+  decision.rs            chat_tools()、fold_tool_history()、parse_chat_tools_response()
+  config.rs              多后端配置加载器
+  vision.rs              VLM 客户端
 
-craft-agent-viewer       Web dashboard (Axum + SSE)
-  agent_loop.rs          Main loop: agent.step() → chat drain → idle loop
+craft-agent-viewer       Web 仪表盘（Axum + SSE）
+  agent_loop.rs          主循环：agent.step() → chat drain → idle loop
 
-craft-agent-autopilot    Autonomous test loop (build/test → anomaly → RCA → commit)
+craft-agent-autopilot    自主测试循环（build/test → anomaly → RCA → commit）
 ```
 
-## 44 LLM Tools
+## 44 个 LLM 工具
 
-| Category | Tools |
+| 类别 | 工具 |
 |---|---|
-| Perception | `perceive`, `memory`, `search_wiki` |
-| Movement | `goto`, `mine_below`, `mine_above`, `pickup`, `follow`, `stop_follow` |
-| Mining | `mine`, `make_obsidian` |
-| Interaction | `interact_block`, `interact_entity`, `attack`, `defend` |
-| Crafting | `craft`, `craft_3x3`, `smelt`, `auto_craft`, `enchant` |
-| Gathering | `gather`, `till_and_sow`, `harvest` |
-| Placement | `place`, `build`, `build_blueprint`, `list_blueprints` |
-| Container | `open`, `chest_view`, `chest_withdraw`, `chest_deposit` |
-| Inventory | `equip`, `discard`, `consume` |
-| NPC / Social | `trade`, `give` |
-| Meta | `chat`, `set_goal`, `run_plan`, `run_script`, `new_action`, `list_actions`, `pause_goal`, `resume_goal`, `task_complete`, `task_retry` |
+| 感知 | `perceive`, `memory`, `search_wiki` |
+| 移动 | `goto`, `mine_below`, `mine_above`, `pickup`, `follow`, `stop_follow` |
+| 挖掘 | `mine`, `make_obsidian` |
+| 交互 | `interact_block`, `interact_entity`, `attack`, `defend` |
+| 合成 | `craft`, `craft_3x3`, `smelt`, `auto_craft`, `enchant` |
+| 采集 | `gather`, `till_and_sow`, `harvest` |
+| 放置 | `place`, `build`, `build_blueprint`, `list_blueprints` |
+| 容器 | `open`, `chest_view`, `chest_withdraw`, `chest_deposit` |
+| 背包 | `equip`, `discard`, `consume` |
+| NPC / 社交 | `trade`, `give` |
+| 元操作 | `chat`, `set_goal`, `run_plan`, `run_script`, `new_action`, `list_actions`, `pause_goal`, `resume_goal`, `task_complete`, `task_retry` |
 
-## Agent Loop (run_one_turn, 13 steps)
+## Agent 主循环（run_one_turn，13 步）
 
-1. `drain_queues()` — steering/follow_up messages
-2. Compaction — messages ≥ 10000 or token over budget → compact()
-3. Strip ephemeral messages — perceive, memory, goal from last turn
-4. Auto-perceive — inject structured state snapshot
-5. Modes — check_modes() → [MODE: ...] text hint
-6. SelfPrompter — inject [当前目标]
-7. Dynamic context — WorldInfo + Skill + Few-shot + obs warnings
-8. WorldMemory — render nearby memories (radius 64)
-9. LLM call — with retry (exponential backoff)
-10. Text-only check — if no tool_calls, inject nudge + return (continue)
-11. Dead-loop check — 4+ same normalized signature → nudge
-12. Execute tools — grouped by effect (READ parallel, WRITE sequential)
-13. Skill extraction — learn from non-obs tool calls
+1. `drain_queues()` — 获取 steering/follow_up 消息
+2. 压缩（Compaction）— 消息 ≥ 10000 或 token 超预算 → compact()
+3. 剔除临时消息 — 上一轮的 perceive、memory、goal
+4. 自动感知（Auto-perceive）— 注入结构化状态快照
+5. 模式（Modes）— check_modes() → [MODE: ...] 文本提示
+6. SelfPrompter — 注入 [当前目标]
+7. 动态上下文 — WorldInfo + Skill + Few-shot + 观测警告
+8. WorldMemory — 渲染邻近记忆（半径 64）
+9. LLM 调用 — 带重试（指数退避）
+10. 纯文本检查 — 若无 tool_calls，注入 nudge 并返回（continue）
+11. 死循环检查 — 4+ 次相同规范化签名 → nudge
+12. 执行工具 — 按效果分组（READ 并行、WRITE 串行）
+13. 技能抽取 — 从非观测工具调用中学习
 
-**Nudge rule:** Must inject AFTER all tool results, never between `assistant(tool_calls)` and `tool` (triggers 400).
+**Nudge 规则：** 必须在所有工具结果之后注入，绝不能插在 `assistant(tool_calls)` 与 `tool` 之间（会触发 400）。
 
-## Project Files
-
-```
-tasks/                   23 task JSONs (tier1-6: crafting_table → netherite → ender_dragon → elytra)
-profiles/                3-layer prompt templates
-  _default.json          Base prompt
-  defaults/{mode}.json   Mode overrides
-  {individual}.json      Individual overrides
-blueprints/              4 blueprint JSONs (farm_plot, small_shelter, storage_corner, torch_pillar)
-actions/                 LLM-defined rhai scripts (*.rhai.json)
-sessions/                Runtime session JSONL files
-scripts/                 Debug/diagnostic shell scripts
-.github/workflows/ci.yml CI config
-data/config/agent.toml   Multi-backend LLM/VLM config
-```
-
-## Task System (task.rs)
-
-23 structured tasks with completion conditions:
-- `InventoryHas { item, count }` — backpack has item ≥ count
-- `AtPosition { x, y, z, radius }` — bot within radius of position
-- `BelowY { y }` — below Y coordinate
-- `InDimension { dimension }` — currently in the specified dimension
-- `PortalActive` — an active Nether portal is present in scan range
-- `Killed { entity_kind, count }` — server-reported cumulative entity kills
-- `All/Any { conditions }` — composite conditions
-- Tasks loaded from `tasks/*.json`, sorted by tier, explicit order, then id
-
-## Profile System (profile.rs)
-
-3-layer prompt merging (field-level, not full replacement):
-1. `profiles/_default.json` — baseline (required)
-2. `profiles/defaults/{mode}.json` — mode overrides (optional)
-3. `profiles/{individual}.json` — individual overrides (optional)
-
-Placeholders: `$NAME`, `$SELF_PROMPT`, `$MEMORY`, `$STATS`, `$INVENTORY`, `$COMMAND_DOCS`, `$EXAMPLES`
-
-## Modes System (agent/modes.rs)
-
-10 reactive modes, tick-level, independent of LLM:
-- `self_preservation` — fire/lava escape
-- `self_defense` — attack hostile mobs
-- `unstuck` — break free when stuck
-- `cowardice` — flee from hostiles
-- `hunting` — hunt animals for food
-- `item_collecting` — pick up drops
-- `torch_placing` — place torches in dark
-- `elbow_room` — clear cramped spaces
-- `idle_staring` — look around when idle
-- `cheat` — creative mode cheats
-
-## WorldMemory (core/memory.rs)
-
-Spatial memory with chunk-based indexing:
-- 7 memory kinds: Resource, Structure, Container, Entity, Hazard, Portal, Note
-- `chunk_key` = (x>>4, y>>4, z>>4) for O(1) nearby queries
-- Named anchors: "home", "nether_portal", etc.
-- Forgetting: TTL-based + explicit `forget_*`
-
-## Azalea Integration (Command Queue Pattern)
+## 项目文件
 
 ```
-LLM tool call → tools_azalea.rs → adapter_azalea.rs::execute()
+tasks/                   23 个任务 JSON（tier1-6：crafting_table → netherite → ender_dragon → elytra）
+profiles/                3 层 prompt 模板
+  _default.json          基础 prompt
+  defaults/{mode}.json   模式覆盖
+  {individual}.json      个体覆盖
+blueprints/              4 个蓝图 JSON（farm_plot、small_shelter、storage_corner、torch_pillar）
+actions/                 LLM 定义的 rhai 脚本（*.rhai.json）
+sessions/                运行时会话 JSONL 文件
+scripts/                 调试/诊断 shell 脚本
+.github/workflows/ci.yml CI 配置
+data/config/agent.toml   多后端 LLM/VLM 配置
+```
+
+## 任务系统（task.rs）
+
+23 个带完成条件的结构化任务：
+- `InventoryHas { item, count }` — 背包中有物品 ≥ count
+- `AtPosition { x, y, z, radius }` — bot 位于位置 radius 范围内
+- `BelowY { y }` — 位于 Y 坐标以下
+- `InDimension { dimension }` — 当前处于指定维度
+- `PortalActive` — 扫描范围内存在激活的下界传送门
+- `Killed { entity_kind, count }` — 服务器报告的累计实体击杀数
+- `All/Any { conditions }` — 复合条件
+- 任务从 `tasks/*.json` 加载，按 tier、显式顺序、id 排序
+
+## Profile 系统（profile.rs）
+
+3 层 prompt 合并（字段级合并，非整体替换）：
+1. `profiles/_default.json` — 基线（必需）
+2. `profiles/defaults/{mode}.json` — 模式覆盖（可选）
+3. `profiles/{individual}.json` — 个体覆盖（可选）
+
+占位符：`$NAME`, `$SELF_PROMPT`, `$MEMORY`, `$STATS`, `$INVENTORY`, `$COMMAND_DOCS`, `$EXAMPLES`
+
+## 模式系统（agent/modes.rs）
+
+10 个反应式模式，tick 级，独立于 LLM：
+- `self_preservation` — 火/岩浆脱困
+- `self_defense` — 攻击敌对生物
+- `unstuck` — 卡住时脱困
+- `cowardice` — 逃离敌对生物
+- `hunting` — 狩猎动物获取食物
+- `item_collecting` — 拾取掉落物
+- `torch_placing` — 黑暗处放置火把
+- `elbow_room` — 清理拥挤空间
+- `idle_staring` — 空闲时环顾四周
+- `cheat` — 创造模式作弊
+
+## WorldMemory（core/memory.rs）
+
+基于区块索引的空间记忆：
+- 7 种记忆类型：Resource、Structure、Container、Entity、Hazard、Portal、Note
+- `chunk_key` = (x>>4, y>>4, z>>4) 实现 O(1) 邻近查询
+- 命名锚点："home"、"nether_portal" 等
+- 遗忘机制：基于 TTL + 显式 `forget_*`
+
+## Azalea 集成（命令队列模式）
+
+```
+LLM 工具调用 → tools_azalea.rs → adapter_azalea.rs::execute()
   → AzaleaBot::push_cmd(BotCommand) → cmd_queue
-  → handler tick drains queue → executes with bot API
-  → BotEvent::Chat("[采集] ...") sent back via event channel
+  → handler tick 排空队列 → 用 bot API 执行
+  → BotEvent::Chat("[采集] ...") 通过事件通道回传
 ```
 
-**Key constraint:** Azalea `Client` is only accessible inside handler closure. External code uses fire-and-forget command queue. Results come back asynchronously via `BotEvent`.
+**关键约束：** Azalea `Client` 只能在 handler 闭包内访问。外部代码使用 fire-and-forget 命令队列。结果通过 `BotEvent` 异步返回。
 
-## System Prompt Byte Stability
+## 系统提示字节稳定性
 
-DeepSeek prefix cache requires system prompt to be identical every call.
-- **Static content** → system prompt (identity, role_desc, jailbreak, knowledge)
-- **Dynamic content** → user messages, injected each turn and stripped the next:
-  - `【当前游戏状态（自动注入）】` — perceive state
-  - `【邻近世界记忆】` — WorldMemory nearby
-  - `[当前目标]` — self_prompt goal
-  - `【参考示例】` — few-shot examples
-  - `【工具执行】...` — folded tool history
+DeepSeek 前缀缓存要求每次调用的系统提示完全相同。
+- **静态内容** → 系统提示（identity、role_desc、jailbreak、knowledge）
+- **动态内容** → 用户消息，每轮注入并在下一轮剔除：
+  - `【当前游戏状态（自动注入）】` — perceive 状态
+  - `【邻近世界记忆】` — 邻近 WorldMemory
+  - `[当前目标]` — self_prompt 目标
+  - `【参考示例】` — few-shot 示例
+  - `【工具执行】...` — 折叠的工具历史
 
-**Regression test:** `regression_system_prompt_byte_stable_across_obs_streak`
+**回归测试：** `regression_system_prompt_byte_stable_across_obs_streak`
 
-## Tool Calling
+## 工具调用（Tool Calling）
 
-- All tools use OpenAI function calling (JSON `tool_calls`), never text commands
-- `fold_tool_history` in `decision.rs` strips tool_calls for DeepSeek compat
-- Converts `tool_calls` + `role:tool` → `【工具执行】name(args) → result` text
-- Tools return sync results
+- 所有工具使用 OpenAI function calling（JSON `tool_calls`），绝不用文本命令
+- `decision.rs` 中的 `fold_tool_history` 为 DeepSeek 兼容性剥离 tool_calls
+- 将 `tool_calls` + `role:tool` 转换为 `【工具执行】name(args) → result` 文本
+- 工具返回同步结果
 
-## Code Execution
+## 代码执行（Code Execution）
 
-- **`run_script`** → rhai engine (embedded, Rust-native, safe)
-  - Functions: goto, mine, mine_below, mine_above, gather, craft, craft_3x3, place, open, chest_view, chat, attack, defend, smelt, interact, interact_entity, enchant, auto_craft, trade, equip, discard, consume, pickup, make_obsidian, follow, stop_follow, give, till_and_sow, harvest, sleep, print
-- **`run_plan`** → JSON multi-step plan (sequential, synchronous)
-- **`new_action`** → save named rhai script to `actions/<name>.rhai.json`, reusable across sessions
+- **`run_script`** → rhai 引擎（内嵌、Rust 原生、安全）
+  - 函数：goto, mine, mine_below, mine_above, gather, craft, craft_3x3, place, open, chest_view, chat, attack, defend, smelt, interact, interact_entity, enchant, auto_craft, trade, equip, discard, consume, pickup, make_obsidian, follow, stop_follow, give, till_and_sow, harvest, sleep, print
+- **`run_plan`** → JSON 多步计划（顺序执行、同步）
+- **`new_action`** → 将命名 rhai 脚本保存到 `actions/<name>.rhai.json`，跨会话可复用
 
-## Perceive Format (adapter_azalea.rs)
+## Perceive 格式（adapter_azalea.rs）
 
 ```
 位置: (-489.0, 86.0, -169.0)
@@ -242,62 +242,62 @@ DeepSeek prefix cache requires system prompt to be identical every call.
 卡住: 0轮
 ```
 
-Block names use `BlockKind` (not `BlockState` Debug format).
+方块名称使用 `BlockKind`（而非 `BlockState` 的 Debug 格式）。
 
-## Critical Constraints
+## 关键约束
 
-### Don't modify vendor/azalea
-- `vendor/azalea` is a separate git repo + workspace
-- All changes must use azalea's public API only
-- To modify: commit in vendor → update SHA in both `.cargo/config.toml` [patch] and `Cargo.toml`
+### 不要修改 vendor/azalea
+- `vendor/azalea` 是独立的 git 仓库 + workspace
+- 所有改动只能使用 azalea 的公开 API
+- 若要修改：在 vendor 中提交 → 同步更新 `.cargo/config.toml` [patch] 与 `Cargo.toml` 中的 SHA
 
-### Cargo network
-- Uses `rsproxy.cn` mirror (sparse index)
-- `NO_PROXY` env var includes rsproxy.cn, mirrors.ustc.edu.cn, etc.
-- azalea is git dependency with local vendor patch — offline builds work
+### Cargo 网络
+- 使用 `rsproxy.cn` 镜像（sparse index）
+- `NO_PROXY` 环境变量包含 rsproxy.cn、mirrors.ustc.edu.cn 等
+- azalea 是带本地 vendor patch 的 git 依赖——离线构建可用
 
-### Git safety
-- ❌ Never `git checkout -- <file>`, `git checkout .`, `git restore`, `git reset --hard`, `git clean -fd`
-- ❌ Never `git stash` without immediate pop plan
-- ✅ Use SearchReplace to revert code (visible, line-by-line)
-- ✅ `git add -A && git commit --no-verify -m "wip: checkpoint"` before risky experiments
+### Git 安全
+- ❌ 绝不 `git checkout -- <file>`、`git checkout .`、`git restore`、`git reset --hard`、`git clean -fd`
+- ❌ 没有立即 pop 计划绝不 `git stash`
+- ✅ 用 SearchReplace 回滚代码（可见、逐行）
+- ✅ 冒险实验前 `git add -A && git commit --no-verify -m "wip: checkpoint"`
 
-### Tool Name Discipline
-- Tool names must be stable — changing them breaks LLM prompt compatibility
-- When adding tools, add to BOTH `tools_azalea.rs` AND `core/types.rs::MinecraftAction`
-- Tool descriptions are part of the prompt — keep them concise and action-oriented
+### 工具命名纪律
+- 工具名必须稳定——改名会破坏 LLM prompt 兼容性
+- 新增工具时，同时加到 `tools_azalea.rs` 和 `core/types.rs::MinecraftAction`
+- 工具描述是 prompt 的一部分——保持简洁、面向行动
 
-## Common Build Errors
+## 常见构建错误
 
-| Error | Fix |
+| 错误 | 修复 |
 |-------|-----|
 | `cannot find trait LlmProvider` | `use crate::agent::LlmProvider` |
-| `cannot find module azalea_block` | Use `azalea::block::BlockState` |
-| `mismatched closing delimiter` | Check for duplicate code blocks from merge errors |
-| `failed to get anyhow as dependency` | rsproxy.cn down, temporarily rename `.cargo/config.toml` |
-| `tried to attack entity which isn't in EntityIdIndex` | Self-defense mode needs entity existence check |
-| `nightly-only feature` | Don't switch to stable, azalea requires nightly |
-| LSP ConfigInvalidError | `lsp` must be `true`, `false`, or object — not array |
+| `cannot find module azalea_block` | 使用 `azalea::block::BlockState` |
+| `mismatched closing delimiter` | 检查合并错误导致的重复代码块 |
+| `failed to get anyhow as dependency` | rsproxy.cn 宕机，临时重命名 `.cargo/config.toml` |
+| `tried to attack entity which isn't in EntityIdIndex` | 自卫模式需要实体存在性检查 |
+| `nightly-only feature` | 不要切回 stable，azalea 需要 nightly |
+| LSP ConfigInvalidError | `lsp` 必须是 `true`、`false` 或对象——不能是数组 |
 
-## Testing
+## 测试
 
 ```bash
-# All tests
+# 全部测试
 cargo test --workspace
 
-# Specific crate
+# 指定 crate
 cargo test -p craft-agent --lib
 cargo test -p craft-agent-minecraft --features azalea-bot --lib
 
-# Specific test
+# 指定测试
 cargo test task_manager_lifecycle
 cargo test regression_all_tasks_dir_json_loads
 
-# After changing system prompt
+# 修改系统提示后
 cargo test regression_system_prompt_byte_stable
 ```
 
-## Probe Mode（不开 LLM 的工具层测试）
+## Probe 模式（不开 LLM 的工具层测试）
 
 LLM 实机测试慢（每回合 30-60s+），**工具层行为验证一律用 probe**，
 秒级完成，无需 viewer/agent/LLM：
@@ -342,25 +342,25 @@ cargo run -p craft-agent-ctl -- tail <log> <N>
 4. `Start-Process target\debug\craft-agent-autopilot.exe -WindowStyle Hidden`（autopilot 会自动 start agent）
 5. `craft-agent-ctl status` 验证 running=true
 
-## Reference Projects
+## 参考项目
 
-- **Mindcraft** (mindcraft-bots/mindcraft): JS + mineflayer, LLM bot framework. Reference for tasks, profiles, modes.
-- **Azalea** (azalea-rs/azalea): Rust Minecraft client protocol. This project builds on top.
-- **Numen**: Structured survival automation (SurvivalJournal, FailureType classification).
+- **Mindcraft** (mindcraft-bots/mindcraft)：JS + mineflayer，LLM bot 框架。任务、profiles、modes 的参考。
+- **Azalea** (azalea-rs/azalea)：Rust Minecraft 客户端协议。本项目构建于其上。
+- **Numen**：结构化生存自动化（SurvivalJournal、FailureType 分类）。
 
-## Goal: Beat Minecraft
+## 目标：通关 Minecraft
 
-6-stage completion path:
-1. Tier 1-2: Wood/stone/iron tools, crafting table, furnace
-2. Tier 3-4: Iron armor, diamond gear, mine to bedrock
-3. Tier 5: Enchanting, brewing, nether portal
-4. Tier 6: Netherite, shulker boxes, elytra
-5. Reach the End
-6. Defeat the Ender Dragon
+6 阶段通关路径：
+1. Tier 1-2：木/石/铁工具、工作台、熔炉
+2. Tier 3-4：铁甲、钻石装备、挖至基岩
+3. Tier 5：附魔、酿造、下界传送门
+4. Tier 6：下界合金、潜影盒、鞘翅
+5. 抵达末地
+6. 击败末影龙
 
-Each stage requires the LLM to know:
-- MC crafting recipes (all tiers)
-- Tool/armor tier progression
-- Smelting and brewing recipes
-- Enchantment strategies
-- Nether and End dimension mechanics
+每个阶段要求 LLM 掌握：
+- MC 合成配方（全等级）
+- 工具/盔甲等级进阶
+- 熔炼与酿造配方
+- 附魔策略
+- 下界与末地维度机制
