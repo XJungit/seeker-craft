@@ -53,6 +53,9 @@ async fn main() {
             BotEvent::Chat { content } => {
                 println!("[demo] 收到聊天: {content}");
             }
+            BotEvent::Progress { command, detail } => {
+                println!("[demo] 进度: {command} — {detail}");
+            }
             BotEvent::State {
                 position,
                 inventory,

@@ -214,6 +214,9 @@ pub enum BotEvent {
     Spawn { position: azalea::Vec3 },
     /// 收到游戏聊天（LLM 指令入口）。
     Chat { content: String },
+    /// P93：长时工具进度流式事件（goto/mine 执行中每 20 tick 推一次）。
+    /// 供 viewer 可视化与 harness 超时前干预；agent 工具结果语义不变（仍为最终结果）。
+    Progress { command: String, detail: String },
     /// 与服务端断开。
     Disconnect { reason: String },
     /// 周期性状态快照（位置/维度 + 背包 + 生命/饱食 + 主手 + 群系 + 附近方块/实体 + 任务统计）。
@@ -1951,6 +1954,22 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                 }
                             }
                             bot.start_goto(BlockPosGoal(BlockPos::new(x, y, z)));
+                            // P93：goto 进度流式事件（每 20 tick 一次）
+                            if bot.ticks_connected().is_multiple_of(20)
+                                && let Ok(p) = bot.position()
+                            {
+                                let dist = ((p.x - x as f64).powi(2)
+                                    + (p.y - y as f64).powi(2)
+                                    + (p.z - z as f64).powi(2))
+                                .sqrt();
+                                let _ = evt_tx.send(BotEvent::Progress {
+                                    command: format!("goto ({x},{y},{z})"),
+                                    detail: format!(
+                                        "位置 ({:.1},{:.1},{:.1})，距目标 {:.1}m",
+                                        p.x, p.y, p.z, dist
+                                    ),
+                                });
+                            }
                         }
                         BotCommand::Mine { x, y, z } => {
                             *state.mining_below.lock().unwrap() = false;
@@ -1958,6 +1977,22 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             // 既慢又不掉落物，且 LLM 不会主动 equip（挖矿工具隐含前提）。
                             let _ = auto_equip_best_pickaxe(&bot).await;
                             bot.start_mining(BlockPos::new(x, y, z));
+                            // P93：mine 进度流式事件（每 20 tick 一次）
+                            if bot.ticks_connected().is_multiple_of(20)
+                                && let Ok(p) = bot.position()
+                            {
+                                let dist = ((p.x - x as f64).powi(2)
+                                    + (p.y - y as f64).powi(2)
+                                    + (p.z - z as f64).powi(2))
+                                .sqrt();
+                                let _ = evt_tx.send(BotEvent::Progress {
+                                    command: format!("mine ({x},{y},{z})"),
+                                    detail: format!(
+                                        "挖掘目标距当前位置 {:.1}m，bot 位置 ({:.1},{:.1},{:.1})",
+                                        dist, p.x, p.y, p.z
+                                    ),
+                                });
+                            }
                         }
                         BotCommand::MineBelow => {
                             *state.mining_below.lock().unwrap() = true;
@@ -2854,6 +2889,13 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             p.z.floor() as i32,
                         );
                         bot.start_mining(foot);
+                        // P93：mine_below 进度（每 20 tick）
+                        if bot.ticks_connected().is_multiple_of(20) {
+                            let _ = state.evt_tx.send(BotEvent::Progress {
+                                command: "mine_below".into(),
+                                detail: format!("当前 Y={y}，持续下挖中"),
+                            });
+                        }
                     }
                 }
                 // 持续上挖：mining_above 标志为真时，让 pathfinder 自动挖通头顶并 ascend。
@@ -2931,6 +2973,11 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                     // auto_equip is expensive (inventory scan), throttle to every 20 ticks.
                     if t.is_multiple_of(20) {
                         let _ = auto_equip_best_pickaxe(&bot).await;
+                        // P93：mine_above 进度（与 auto_equip 同节流）
+                        let _ = state.evt_tx.send(BotEvent::Progress {
+                            command: "mine_above".into(),
+                            detail: format!("当前 Y={y}，正在向上挖掘"),
+                        });
                     }
                     // P60b: 强制楼梯脱困。当 bot 在 2 格高空气袋里（头顶是空气），
                     // pathfinder 用 YGoal 算出的路径"reached"却不会真正上升（因为
