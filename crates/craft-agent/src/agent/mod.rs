@@ -1780,6 +1780,11 @@ impl Agent {
                 .collect();
             let batches = plan_tool_effect_batches(&effects);
             // P89：WRITE 工具失败 → 中止剩余批次；executed 记录已执行索引（补 tool 消息用）
+            // P94：轮内工具迭代预算。跨 reroute 累计（LLM 一次可调大量工具，
+            // 失败重调又追加一批）；达到上限中断剩余批次 + 软交棒 nudge，不再重调。
+            let max_tools_per_turn = 20usize;
+            let mut turn_tool_count: usize = 0;
+            let mut handoff_hit = false;
             let mut executed_indices: Vec<usize> = Vec::new();
             let mut aborted = false;
             let mut abort_fail: Option<(String, String)> = None;
@@ -1793,6 +1798,11 @@ impl Agent {
                 // P90：新指令到达，剩余批次不再执行（预测状态的调用失去意义）
                 if !self.steering.lock().unwrap().is_empty() {
                     steering_hit = true;
+                    break;
+                }
+                // P94：单轮工具调用上限 → 软交棒（停止执行，下轮 LLM 回望目标）
+                if turn_tool_count + executed_indices.len() >= max_tools_per_turn {
+                    handoff_hit = true;
                     break;
                 }
                 let mut parallel_indices = Vec::new();
@@ -2017,6 +2027,9 @@ impl Agent {
                 }
             }
 
+            // P94：累计本轮已执行工具数（跨 reroute）
+            turn_tool_count += executed_indices.len();
+
             // 死循环 nudge 在所有 tool result 之后注入，避免插在 assistant(tool_calls)
             // 与 tool result 之间导致 DeepSeek/OpenAI 400（P89：nudge 注入移到循环内，
             // 与失败重规划同轮生效；consecutive_failures 分支保留在循环外）。
@@ -2106,6 +2119,31 @@ impl Agent {
                     aborted_names.len()
                 ));
                 continue;
+            }
+            // P94：单轮工具调用上限 → 软交棒。占位补齐剩余调用（OpenAI 约束），
+            // 注入「回望目标」nudge，不重调 LLM（预算已耗尽，下轮 LLM 自行收敛）。
+            if handoff_hit {
+                for (idx, tc) in calls.iter().enumerate() {
+                    if !executed_indices.contains(&idx) {
+                        self.messages.push(Message::tool_result(
+                            &tc.id,
+                            &tc.name,
+                            "【已中止】本轮工具调用已达上限，剩余调用未执行。",
+                        ));
+                    }
+                }
+                let nudge = format!(
+                    "【工具调用上限】本轮已执行 {} 个工具调用（上限 {max_tools_per_turn}）。\n\
+                 如果你还在原地打转或低效调用工具，请先停下：1) perceive 确认当前实际状态 \
+                 2) 回望当前目标 3) 规划一个更直接的方案（如一次 run_plan 完成多步，或 \
+                 先 gather 关键原料再合成），避免大量小步调用。",
+                    turn_tool_count
+                );
+                self.messages.push(Message::user(nudge));
+                log.push(format!(
+                    "[t{turn}] P94 软交棒: 本轮执行 {turn_tool_count} 个工具，达上限 {max_tools_per_turn}，注入收敛指令"
+                ));
+                break Some(calls);
             }
             break Some(calls);
         }; // end P89 reroute loop
@@ -3102,6 +3140,117 @@ mod tests {
             second.contains("update the existing summary"),
             "增量路径应使用 UPDATE_SUMMARIZATION_PROMPT"
         );
+    }
+
+    // ── P94：单轮工具迭代预算 → 软交棒（数量信号，与 P89 重复信号互补）──
+    #[test]
+    fn p94_tool_budget_handoff_aborts_excess_calls_and_injects_convergence_nudge() {
+        use crate::core::tool::GameTool;
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        struct BudgetProvider {
+            calls: Arc<AtomicU32>,
+        }
+        impl LlmProvider for BudgetProvider {
+            fn complete(
+                &self,
+                _messages: &[Value],
+                _tools: &[Value],
+            ) -> Result<crate::core::message::AssistantResponse> {
+                let n = self.calls.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    // 第 1 次：25 个 WRITE 调用（超过 20 上限）
+                    let tool_calls: Vec<ToolCall> = (0..25)
+                        .map(|i| ToolCall {
+                            id: format!("tc_{i}"),
+                            name: "goto".into(),
+                            arguments: serde_json::json!({ "x": i, "y": 2, "z": 3 }),
+                        })
+                        .collect();
+                    Ok(AssistantResponse {
+                        content: Some("大量调用".into()),
+                        reasoning: None,
+                        tool_calls,
+                        usage: Usage::default(),
+                        stop_reason: StopReason::ToolCalls,
+                    })
+                } else {
+                    Ok(AssistantResponse {
+                        content: Some("收敛".into()),
+                        reasoning: None,
+                        tool_calls: vec![],
+                        usage: Usage::default(),
+                        stop_reason: StopReason::Stop,
+                    })
+                }
+            }
+        }
+        struct GotoTool {
+            executed: Arc<AtomicU32>,
+        }
+        impl GameTool for GotoTool {
+            fn name(&self) -> &str {
+                "goto"
+            }
+            fn description(&self) -> &str {
+                ""
+            }
+            fn parameters(&self) -> Value {
+                serde_json::json!({})
+            }
+            fn execute(
+                &self,
+                _id: &str,
+                _a: Value,
+                _u: Option<crate::core::tool::ToolUpdateFn>,
+            ) -> anyhow::Result<ToolResult> {
+                self.executed.fetch_add(1, Ordering::SeqCst);
+                Ok(ToolResult {
+                    message: "ok".into(),
+                    is_error: false,
+                    images: vec![],
+                })
+            }
+        }
+        let executed = Arc::new(AtomicU32::new(0));
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(GotoTool {
+            executed: executed.clone(),
+        }));
+        let mut config = AgentConfig::new("test".into(), 1);
+        config.auto_perceive = false;
+        config.text_only_stop = 1;
+        let call_count = Arc::new(AtomicU32::new(0));
+        let mut agent = Agent::new(
+            Box::new(BudgetProvider {
+                calls: call_count.clone(),
+            }),
+            tools,
+            config,
+        );
+        agent.run("start").unwrap();
+
+        // 1) 执行数恰好 20（上限），剩余 5 个未执行
+        assert_eq!(
+            executed.load(Ordering::SeqCst),
+            20,
+            "应恰好执行 20 个（上限），其余中止"
+        );
+        // 2) LLM 仅调用 1 次（达上限不再重调）
+        assert_eq!(call_count.load(Ordering::SeqCst), 1, "达上限不应再重调 LLM");
+        // 3) 5 个未执行调用补【已中止】占位
+        let aborted_count = agent
+            .messages
+            .iter()
+            .filter(|m| matches!(m, Message::ToolResult(tr) if tr.content.contains("【已中止】")))
+            .count();
+        assert_eq!(aborted_count, 5, "应有 5 条【已中止】占位");
+        // 4) 软交棒 nudge 注入
+        let nudge_msg = agent.messages.iter().any(|m| {
+            matches!(m, Message::User(u) if u.content.contains("【工具调用上限】")
+                && u.content.contains("回望当前目标"))
+        });
+        assert!(nudge_msg, "应注入含回望目标的收敛 nudge");
     }
 
     // ── 回归：上下文压缩摘要不得包含易变 perceive 快照（避免过期坐标污染）──
