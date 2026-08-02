@@ -59,26 +59,61 @@ cargo run -p craft-agent-viewer --bin craft-agent-viewer
 cargo run -p craft-agent-minecraft --example agent_azalea_demo --features azalea-bot -- --goal="挖矿下探" --steps=20
 ```
 
+## 项目维护与迭代准则（总纲，2026-08-02 起）
+
+> 本质：本项目代码将由 AI 代理长期维护。**一切改动**（功能、修复、重构、实验）
+> 服从同一套准则：**稳定、可靠、准确、方便长期维护**。优先级：稳定性 > 工作量。
+> LLM 兼容性是不可破坏的契约（工具名、消息格式、prompt 文本、配置 schema）。
+
+### 通用迭代准则（适用于所有工作单元）
+
+1. **先测试锁定行为**：任何改动（尤其重构）前，先写/确认针对性测试锁定现有行为；改动后全量验证
+2. **行为不变原则**：工具名、消息格式、prompt 文本、任务/配置文件 schema 绝不因重构而变
+3. **单提交单关注点**：一次改动一个提交，回滚粒度 = 单次提交；纯移动/重命名提交的 diff 只有位置变化
+4. **全量门槛**：每次改动后 `cargo test --workspace` + `cargo fmt --all -- --check` + clippy `-D warnings` 全绿才算完成
+5. **可回滚**：冒险实验前先 `git add -A && git commit --no-verify -m "wip: checkpoint"`；绝不 `git checkout`/`reset`/`restore`/`stash` 回滚（用 SearchReplace 逐行可见回滚）
+6. **文档同步**：每次迭代回填 `docs/mindcraft-gap.md` 状态；流程性变更必须回写 AGENTS.md 本准则
+7. **双点同步防线**：任何涉及工具/动作/消息格式的新增，按下方"新增能力纪律"四处同步，回归测试兜底
+
+### 架构演进路线图（稳定优先，逐步执行）
+
+- **P1 已完成基线收尾**：P1.3 ctl 日志文件名统一 ✓ / P1.2 工具↔MinecraftAction 映射集中 + 全量回归测试 ✓ / P1.1 瞬态消息统一 `push_transient` helper ✓
+- **P2 结构性（稳定优先逐步执行）**：
+  - P2.1 `run_one_turn` 拆分：`execute_batches`（批分组/READ 并行/WRITE 串行/slow 探测）+ `finalize_aborted`（P89/P90/P94/P99 四分支收敛为 `AbortDecision::{Reroute, Handoff, Done}` 枚举）
+  - P2.2 `azalea/mod.rs`（6340 行）拆分：`azalea/commands.rs`（BotCommand + parse_chat_command）+ `azalea/handler.rs`（tick 主体）
+  - P2.3 `craft-agent-model` 边界：文档标注只依赖 `craft_agent::core::{message,types}`，CI 用 `cargo check -p craft-agent-model --no-default-features` 验证不渗透上层
+- **P3 按需（不设 deadline）**：`craft.rs`（4730 行）按域拆 craft_table/smelt/brew/enchant/smith；`tools_azalea.rs`（4166 行）按域分组文件保留单一 `register_all_tools()`；`agent_loop.rs` 事件推送/会话保存/滚动抽 helper
+
+### 新增能力纪律（工具/动作/消息格式的双点同步）
+
+工具名必须稳定（LLM prompt 兼容性）。新增工具需同步 4 处：
+1. `tools_azalea.rs` 注册 GameTool
+2. `core/types.rs::MinecraftAction` 变体
+3. `adapter_azalea.rs` 映射表 `action_for()`（或 execute match）
+4. `azalea/mod.rs::parse_chat_command`（probe 驱动）
+防线：`regression_every_registered_tool_maps_to_action`（漏一处即测试红）。
+
 ## 架构（5 个 crate）
 
 ```
 craft-agent              核心 agent 框架（约 5000 行）
-  agent/                 run_one_turn（2164 行）、compaction、prompt、modes、session
-  core/                  types（MinecraftAction）、GameTool trait、ToolRegistry、memory（WorldMemory）、skill
+  agent/                 run_one_turn（4098 行含测试）、compaction、prompt、modes、session
+  core/                  types（MinecraftAction 27 变体）、GameTool trait、ToolRegistry、memory（WorldMemory）、skill
   task.rs                Task 系统：23 个 tier1-6 任务，结构化成功条件
   profile.rs             3 层 prompt 合并（_default → defaults/{mode} → {individual}）
 
 craft-agent-minecraft    MC 适配器（azalea 协议，约 12000+ 行）
-  azalea/mod.rs          AzaleaBot + tick handler、命令队列、33 个 BotCommand 变体
-  azalea/craft.rs        2x2/3x3 合成、熔炼、锻造、切石、酿造、附魔（4706 行）
+  azalea/mod.rs          AzaleaBot + tick handler、命令队列、BotCommand 变体（6340 行，P2.2 待拆）
+  azalea/craft.rs        2x2/3x3 合成、熔炼、锻造、切石、酿造、附魔（4730 行）
   azalea/gather.rs       方块扫描 + 工具等级检查 + 自动装备（568 行）
   azalea/auto_craft.rs   递归配方满足 + 工具方块放置（681 行）
-  azalea/place.rs        方块放置 + 容器开启 + 触及范围检查（814 行）
+  azalea/place.rs        方块放置 + 容器开启 + 触及范围检查（827 行）
   azalea/recipes.rs      配方知识库（427 行）
   azalea/perception.rs   位置读取
   azalea/actions.rs      基础 bot 动作（goto/mine/chat）
-  adapter_azalea.rs      GameAdapter 实现、perceive 格式、execute
-  tools_azalea.rs        44 个 LLM 工具（3866 行）
+  azalea/smart_actions.rs 多工具聚合动作（1319 行）
+  adapter_azalea.rs      GameAdapter 实现、perceive 格式、execute、工具↔动作映射
+  tools_azalea.rs        47 个 LLM 工具（4166 行）
   action_lib.rs          LLM 定义的 rhai 脚本（338 行）
   blueprint.rs           蓝图库（310 行）
 
