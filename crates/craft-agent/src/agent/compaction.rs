@@ -327,21 +327,11 @@ fn build_cm(messages: &[Message], previous_summary: Option<&str>) -> Vec<Value> 
     let old: Vec<String> = messages
         .iter()
         .filter(|m| match m {
-            Message::User(u) => {
-                !(u.content.starts_with("【当前游戏状态（自动注入）】")
-                    || u.content.starts_with("【邻近世界记忆】")
-                    || u.content.starts_with("【长期记忆】")
-                    || u.content.starts_with("[当前目标]")
-                    // P1 改进5: 过滤 nudge 提示词 — 它们是瞬时纠正，不应进入摘要
-                    || u.content.starts_with("【纠正】")
-                    || u.content.starts_with("【继续】")
-                    || u.content.starts_with("【强制行动】")
-                    || u.content.starts_with("【死循环警告】")
-                    || u.content.starts_with("【连续失败警告】")
-                    || u.content.starts_with("【探索建议】")
-                    || u.content.starts_with("【工具调用上限】")
-                    || u.content.starts_with("【系统提示】"))
-            }
+            // B3：统一用 TRANSIENT_USER_PREFIXES 过滤全部轮间注入消息
+            // （perceive/记忆/目标/nudge/警告/引导）——不进入压缩摘要。
+            Message::User(u) => !super::TRANSIENT_USER_PREFIXES
+                .iter()
+                .any(|p| u.content.starts_with(p)),
             _ => true,
         })
         .map(Agent::serialize_msg)

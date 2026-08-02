@@ -72,6 +72,9 @@ pub struct MemoryEntry {
     /// 被注入过的次数（frequency 加权）
     #[serde(default)]
     pub uses: u32,
+    /// B4：最近一次被注入的轮次（注入冷却用，防同一批记忆每轮重复浮现疲劳）
+    #[serde(default)]
+    pub last_injected_turn: i64,
 }
 
 /// 语义记忆库（内部可变，外部经 `Arc<Mutex<..>>` 共享给 remember 工具与注入）。
@@ -82,6 +85,8 @@ pub struct SemanticMemory {
     pub max_injected: usize,
     /// 单条内容注入截断字符数
     pub content_max_chars: usize,
+    /// B4：同一条记忆两次注入的最小轮数间隔（防每轮重复浮现疲劳）
+    pub inject_cooldown_turns: i64,
 }
 
 impl Default for SemanticMemory {
@@ -91,6 +96,7 @@ impl Default for SemanticMemory {
             path: None,
             max_injected: 4,
             content_max_chars: 200,
+            inject_cooldown_turns: 5,
         }
     }
 }
@@ -212,6 +218,7 @@ impl SemanticMemory {
             updated: now,
             last_used: 0,
             uses: 0,
+            last_injected_turn: 0,
         });
         let _ = self.save();
         format!(
@@ -294,14 +301,31 @@ impl SemanticMemory {
 
     /// 注入文本：渲染「相关记忆 + 标题索引」块，返回 (文本, 被消费的标题)。
     /// 消费后调用 [`Self::touch`] 更新频率统计。`scope` 过滤见 [`Self::relevant`]。
-    pub fn injection_text(&self, query: &str, scope: Option<&str>) -> (String, Vec<String>) {
+    /// B4：`now_turn` 传当前轮次——距上次注入 ≤ `inject_cooldown_turns` 的条目
+    /// 跳过（目标不变时查询词固定，否则同一批记忆每轮重复浮现，LLM 注意力疲劳）；
+    /// 若全部被冷却则返回空（该轮不注入记忆）。
+    pub fn injection_text(
+        &self,
+        query: &str,
+        scope: Option<&str>,
+        now_turn: i64,
+    ) -> (String, Vec<String>) {
         let relevant = self.relevant(query, scope, self.max_injected);
-        if relevant.is_empty() {
+        let cooldown = self.inject_cooldown_turns;
+        let cooled: Vec<&MemoryEntry> = relevant
+            .into_iter()
+            .filter(|e| {
+                // 从未注入过（0）必须放行——否则新记忆首轮被 `1 - 0 > cooldown`
+                // 误杀（实机/测试均踩中：B4 首版 bug）
+                e.last_injected_turn == 0 || now_turn - e.last_injected_turn > cooldown
+            })
+            .collect();
+        if cooled.is_empty() {
             return (String::new(), vec![]);
         }
         let mut s = String::from("相关长期记忆：\n");
         let mut touched = Vec::new();
-        for (i, e) in relevant.iter().enumerate() {
+        for (i, e) in cooled.iter().enumerate() {
             let content = truncate(&e.content, self.content_max_chars);
             s.push_str(&format!(
                 "{}. [{}] {}：{}\n",
@@ -314,18 +338,19 @@ impl SemanticMemory {
         }
         s.push_str(&format!(
             "（另有 {} 条记忆未被注入，可通过 remember 查询或写入）",
-            self.entries.len().saturating_sub(relevant.len())
+            self.entries.len().saturating_sub(cooled.len())
         ));
         (s, touched)
     }
 
-    /// 消费统计：更新 last_used / uses。
-    pub fn touch(&mut self, titles: &[String]) {
+    /// 消费统计：更新 last_used / uses / last_injected_turn。
+    pub fn touch(&mut self, titles: &[String], now_turn: i64) {
         let now = now_ms();
         for e in self.entries.iter_mut() {
             if titles.contains(&e.title) {
                 e.last_used = now;
                 e.uses = e.uses.saturating_add(1);
+                e.last_injected_turn = now_turn;
             }
         }
     }
@@ -580,19 +605,19 @@ mod tests {
             MemoryKind::Strategy,
             None,
         );
-        let (text, touched) = m.injection_text("挖 diamond", None);
+        let (text, touched) = m.injection_text("挖 diamond", None, 100);
         assert!(text.contains("相关长期记忆"), "应渲染注入块");
         assert!(text.contains("挖矿策略"));
         assert_eq!(touched.len(), 1);
         let before = m.list()[0].uses;
-        m.touch(&touched);
+        m.touch(&touched, 100);
         assert_eq!(m.list()[0].uses, before + 1, "消费应更新频率统计");
     }
 
     #[test]
     fn injection_empty_when_no_entries() {
         let m = mem();
-        let (text, touched) = m.injection_text("diamond", None);
+        let (text, touched) = m.injection_text("diamond", None, 100);
         assert!(text.is_empty());
         assert!(touched.is_empty());
     }
@@ -652,7 +677,7 @@ mod tests {
             Some("s1"),
         );
         // 当前服务器 s2：global 应注入，s1 应隔离
-        let (text, touched) = m.injection_text("工具 砍树", Some("s2"));
+        let (text, touched) = m.injection_text("工具 砍树", Some("s2"), 100);
         assert!(
             text.contains("通用策略"),
             "scope=global 应视为全局知识注入: {text}"
@@ -660,7 +685,7 @@ mod tests {
         assert!(!text.contains("服务器坐标"), "其他服务器坐标仍隔离");
         assert_eq!(touched.len(), 1);
         // 空 scope（无服务器会话）：global 同样注入
-        let (text2, _) = m.injection_text("工具 砍树", None);
+        let (text2, _) = m.injection_text("工具 砍树", None, 100);
         assert!(text2.contains("通用策略"));
     }
 
@@ -692,14 +717,14 @@ mod tests {
         );
 
         // 在 s1：全局 + s1 条目可见，s2 条目被隔离
-        let (text_s1, touched_s1) = m.injection_text("基地", Some("s1"));
+        let (text_s1, touched_s1) = m.injection_text("基地", Some("s1"), 100);
         assert!(text_s1.contains("基地坐标"), "当前服务器条目应注入");
         assert!(!text_s1.contains("旧服基地"), "其他服务器条目必须隔离");
         assert!(text_s1.contains("钻石镐配方"), "全局知识应始终注入");
         assert_eq!(touched_s1.len(), 2);
 
         // 无 scope（通用会话）：只注入全局知识，坐标类全部隔离
-        let (text_none, _) = m.injection_text("基地", None);
+        let (text_none, _) = m.injection_text("基地", None, 100);
         assert!(
             !text_none.contains("基地坐标"),
             "无 scope 时服务器特定记忆不得注入"
@@ -707,7 +732,7 @@ mod tests {
         assert!(text_none.contains("钻石镐配方"));
 
         // 其他服务器：只看到自己的 + 全局
-        let (text_s2, _) = m.injection_text("基地", Some("s2"));
+        let (text_s2, _) = m.injection_text("基地", Some("s2"), 100);
         assert!(text_s2.contains("旧服基地"));
         assert!(!text_s2.contains("基地坐标"));
     }

@@ -364,10 +364,13 @@ fn integration_no_auto_perceive_when_disabled() {
     let mut agent = Agent::new(Box::new(StopProvider), tools, config);
 
     agent.run("hi").expect("run 应成功");
+    // 排除 A1 few-shot 示例消息（带【示例】标记的真实消息对）——只查真实执行结果
     let has_perceive = agent
         .messages
         .iter()
-        .any(|m| matches!(m, Message::ToolResult(r) if r.tool_name == "perceive"));
+        .any(|m| {
+            matches!(m, Message::ToolResult(r) if r.tool_name == "perceive" && !r.content.starts_with("【示例】"))
+        });
     assert!(!has_perceive, "auto_perceive 关闭时不应注入 perceive");
 }
 

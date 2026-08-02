@@ -499,7 +499,11 @@ fn run_agent(
         .with_modes_config(profile.modes)
         .with_task_chain(true)
         // P97：语义记忆按服务器隔离（坐标/基地类记忆不跨世界污染）
-        .with_memory_scope(mc_addr.to_string());
+        .with_memory_scope(mc_addr.to_string())
+        // A2：分阶段知识（按任务 tier 注入 user 消息，不进 system prompt）
+        .with_stage_knowledge(profile.stage_knowledge.clone())
+        // C7：jailbreak 可被 profile 覆盖（None = 内置默认）
+        .with_jailbreak(profile.jailbreak.clone());
 
     let mut agent = {
         let path = Path::new(session_path);

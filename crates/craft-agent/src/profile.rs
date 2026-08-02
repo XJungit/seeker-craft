@@ -79,6 +79,19 @@ fn default_cooldown_ms() -> u64 {
     3000
 }
 
+/// 分阶段知识块（A2，2026-08-02）：按任务 tier 生效的知识段。
+/// 早期只注入低 tier 知识（省 token + 注意力聚焦），tier 推进后累积注入。
+/// 从 system prompt 拆出——system 只留核心规则（DeepSeek 前缀缓存更省）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct StageKnowledge {
+    /// 生效所需的最低任务 tier（1=木石期 → 6=末地龙）。0 表示始终注入。
+    #[serde(default)]
+    pub tier: u8,
+    /// 该阶段知识文本（markdown 风格，与 system_prompt 拼接方式一致）
+    #[serde(default)]
+    pub text: String,
+}
+
 /// Prompt profile（对应一个 JSON 文件）。
 ///
 /// 字段全部 `Option` 化以支持叠加：下层 profile 的 `None` 字段不被上层覆盖，
@@ -98,6 +111,15 @@ pub struct Profile {
     /// MC 常识段（拼在 system_prompt 末尾，含矿物分布/工具规则/合成链等）。
     #[serde(default)]
     pub mc_knowledge: Option<String>,
+
+    /// 后置强制指令（替代硬编码 jailbreak，改 prompt 无需重编译）。
+    /// `None` = 使用 Rust 内置默认。
+    #[serde(default)]
+    pub jailbreak: Option<String>,
+
+    /// 分阶段知识（A2）：按任务 tier 注入 user 消息，不进 system prompt。
+    #[serde(default)]
+    pub stage_knowledge: Vec<StageKnowledge>,
 
     /// 模式开关。
     #[serde(default)]
@@ -168,6 +190,12 @@ impl Profile {
         if other.mc_knowledge.is_some() {
             self.mc_knowledge = other.mc_knowledge.clone();
         }
+        if other.jailbreak.is_some() {
+            self.jailbreak = other.jailbreak.clone();
+        }
+        if !other.stage_knowledge.is_empty() {
+            self.stage_knowledge = other.stage_knowledge.clone();
+        }
         // modes 字段级合并（直接替换，因为 bool 没法区分"未设"和"false"，
         // Mindcraft 的设计是 modes 一次性整组替换，不是逐字段叠加）
         self.modes = other.modes.clone();
@@ -216,6 +244,8 @@ mod tests {
             name: "_default".into(),
             system_prompt: Some("base prompt".into()),
             mc_knowledge: Some("base knowledge".into()),
+            jailbreak: None,
+            stage_knowledge: vec![],
             modes: Modes::default(),
             conversation_examples: vec![],
             cooldown_ms: 3000,
@@ -224,6 +254,8 @@ mod tests {
             name: "survival".into(),
             system_prompt: None,                             // 不覆盖
             mc_knowledge: Some("survival knowledge".into()), // 覆盖
+            jailbreak: Some("jail".into()),
+            stage_knowledge: vec![],
             modes: Modes {
                 cheat: true,
                 ..Modes::default()
@@ -243,6 +275,8 @@ mod tests {
     fn test_render_replaces_placeholders() {
         let p = Profile {
             system_prompt: Some("Hello $NAME, you are at $LOCATION.".into()),
+            jailbreak: None,
+            stage_knowledge: vec![],
             ..Default::default()
         };
         let mut reps = HashMap::new();
@@ -257,6 +291,8 @@ mod tests {
         let p = Profile {
             system_prompt: Some("base".into()),
             mc_knowledge: Some("MC_TIPS_HERE".into()),
+            jailbreak: None,
+            stage_knowledge: vec![],
             ..Default::default()
         };
         let rendered = p.render(&HashMap::new());

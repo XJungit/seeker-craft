@@ -1,4 +1,5 @@
-use crate::core::message::system_chatml;
+use crate::core::message::Message;
+use crate::core::message::{AssistantMsg, ToolCall, ToolResultMsg, Usage, system_chatml};
 use crate::core::prompt::PromptBuilder;
 use serde_json::Value;
 
@@ -7,15 +8,76 @@ use super::{Agent, Context, MANAGE_KNOWLEDGE_TOOL};
 /// Few-shot 示例：场景关键词 + 成功工具调用模式
 ///
 /// **重要约束**（务必保持，否则 LLM 会抄错签名）：
-/// - 工具调用以 OpenAI tool_calls 形式呈现（assistant 调用 → system 返回结果）
+/// - 工具调用以 OpenAI tool_calls 形式呈现（assistant 调用 → tool 返回结果）
 /// - 工具名必须与 `tools_azalea.rs::create_mc_azalea_tools_full` 注册的 44 个工具 100% 一致
 /// - 参数名必须与各工具的 `parameters()` schema 一致（如 gather 用 item/count，
 ///   goto 用 x/y/z，attack 用 target 字符串，非位置参数）
 /// - 不要用假坐标 (10,64,20) — 用占位变量或感知真实坐标
+/// - A1（2026-08-02）：turns 从文本改为结构化 ShotTurn，注入时转换为**真实
+///   Message 序列**（assistant 带 tool_calls JSON + role:tool 结果配对），让 LLM
+///   直接模仿 function calling 的真实形态，替代旧文本描述（文本会被模仿成伪调用）。
 struct Example {
     keywords: &'static [&'static str],
-    /// (role, content) 对，role 为 "user"/"system"/"assistant"
-    turns: &'static [(&'static str, &'static str)],
+    turns: &'static [ShotTurn],
+}
+
+/// 示例轮次：转换后为真实消息对。
+/// `Assistant` 的第二个字段是工具调用数组 `(name, args_json)`，
+/// `Tool` 按出现顺序对应当前 assistant 的调用。
+enum ShotTurn {
+    /// 用户输入（steering/玩家指令）
+    User(&'static str),
+    /// assistant 文字 + 0..n 个工具调用
+    Assistant(&'static str, &'static [(&'static str, &'static str)]),
+    /// 工具结果
+    Tool(&'static str),
+}
+
+/// A1：把示例 turns 转换为真实消息序列（assistant 带 tool_calls + tool 结果配对，
+/// id 用 `fewshot{base}_{i}_{j}` 前缀避免与真实调用冲突）。
+fn example_to_messages(ex: &Example, base: usize) -> Vec<Message> {
+    let mut msgs = Vec::new();
+    let mut pending: Vec<(String, String)> = Vec::new();
+    for (i, turn) in ex.turns.iter().enumerate() {
+        match turn {
+            ShotTurn::User(t) => msgs.push(Message::user(format!("【示例】{t}"))),
+            ShotTurn::Assistant(text, calls) => {
+                let tool_calls: Vec<ToolCall> = calls
+                    .iter()
+                    .enumerate()
+                    .map(|(j, (name, args))| {
+                        let id = format!("fewshot{base}_{i}_{j}");
+                        pending.push((id.clone(), name.to_string()));
+                        ToolCall {
+                            id,
+                            name: name.to_string(),
+                            arguments: serde_json::from_str(args).unwrap_or(Value::Null),
+                        }
+                    })
+                    .collect();
+                msgs.push(Message::Assistant(AssistantMsg {
+                    content: Some(format!("【示例】{text}")),
+                    reasoning: None,
+                    tool_calls,
+                    timestamp: 0,
+                    usage: Usage::default(),
+                }));
+            }
+            ShotTurn::Tool(content) => {
+                let (tool_call_id, tool_name) = pending.remove(0);
+                msgs.push(Message::ToolResult(ToolResultMsg {
+                    tool_call_id,
+                    tool_name,
+                    content: format!("【示例】{content}"),
+                    is_error: false,
+                    timestamp: 0,
+                    details: None,
+                    images: vec![],
+                }));
+            }
+        }
+    }
+    msgs
 }
 
 const FEW_SHOT_EXAMPLES: &[Example] = &[
@@ -25,29 +87,26 @@ const FEW_SHOT_EXAMPLES: &[Example] = &[
             "explore", "探索", "find", "找", "look", "看看", "附近", "周围", "周围",
         ],
         turns: &[
-            (
-                "assistant",
+            ShotTurn::Assistant(
                 "我先 perceive 看看周围，然后选个方向走 20 格探索。",
+                &[("perceive", "{}")],
             ),
-            (
-                "system",
-                "[perceive 结果: 群系 dark_forest, 木材 darkoaklog:8, 矿石 coalore:16]",
+            ShotTurn::Tool("[perceive 结果: 群系 dark_forest, 木材 darkoaklog:8, 矿石 coalore:16]"),
+            ShotTurn::Assistant(
+                "向南走 20 格探索。",
+                &[("goto", r#"{"x":-489,"y":88,"z":-144}"#)],
             ),
-            (
-                "assistant",
-                "向南走 20 格探索。调用 goto(x=-489, y=88, z=-144)",
+            ShotTurn::Tool("已到达目标 (-489,88,-144)"),
+            ShotTurn::Assistant("perceive 看看新位置有什么。", &[("perceive", "{}")]),
+            ShotTurn::Tool("[perceive 结果: 发现村庄/villager:2]"),
+            ShotTurn::Assistant(
+                "把村庄记到空间记忆。",
+                &[(
+                    "memory",
+                    r#"{"action":"save","x":-489,"y":88,"z":-144,"kind":"structure","label":"村庄"}"#,
+                )],
             ),
-            ("system", "已到达目标 (-489,88,-144)"),
-            ("assistant", "perceive 看看新位置有什么。"),
-            ("system", "[perceive 结果: 发现村庄/villager:2]"),
-            (
-                "assistant",
-                "memory(action=\"save\", x=-489, y=88, z=-144, kind=\"structure\", label=\"村庄\") 记下来。",
-            ),
-            (
-                "system",
-                "已记录记忆 @(-489,88,-144) kind=Structure label=村庄",
-            ),
+            ShotTurn::Tool("已记录记忆 @(-489,88,-144) kind=Structure label=村庄"),
         ],
     },
     // 砍树 → 木板 → 工作台 → 棒子（最经典开局）
@@ -64,38 +123,35 @@ const FEW_SHOT_EXAMPLES: &[Example] = &[
             "log",
         ],
         turns: &[
-            (
-                "assistant",
-                "gather(item=\"darkoaklog\", count=4) 砍 4 根原木。",
+            ShotTurn::Assistant(
+                "砍 4 根原木。",
+                &[("gather", r#"{"item":"darkoaklog","count":4}"#)],
             ),
-            (
-                "system",
+            ShotTurn::Tool(
                 "Action output:\nSuccessfully gathered 4 darkoaklog, you now have 4 darkoaklog.",
             ),
-            (
-                "assistant",
-                "craft(item=\"oak_planks\", count=4) 把原木合成木板（2×2 背包网格）。",
+            ShotTurn::Assistant(
+                "把原木合成木板（2×2 背包网格）。",
+                &[("craft", r#"{"item":"oak_planks","count":4}"#)],
             ),
-            (
-                "system",
+            ShotTurn::Tool(
                 "Action output:\nSuccessfully crafted oak_planks, you now have 16 oak_planks.",
             ),
-            (
-                "assistant",
-                "craft(item=\"crafting_table\", count=1) 合成工作台。",
+            ShotTurn::Assistant(
+                "合成工作台。",
+                &[("craft", r#"{"item":"crafting_table","count":1}"#)],
             ),
-            (
-                "system",
+            ShotTurn::Tool(
                 "Action output:\nSuccessfully crafted crafting_table, you now have 1 crafting_table.",
             ),
-            (
-                "assistant",
-                "place(item=\"crafting_table\", x=-489, y=88, z=-144) 把工作台放在脚边。",
+            ShotTurn::Assistant(
+                "把工作台放在脚边。",
+                &[(
+                    "place",
+                    r#"{"item":"crafting_table","x":-489,"y":88,"z":-144}"#,
+                )],
             ),
-            (
-                "system",
-                "Action output:\nPlaced crafting_table at (-489, 88, -144).",
-            ),
+            ShotTurn::Tool("Action output:\nPlaced crafting_table at (-489, 88, -144)."),
         ],
     },
     // 制作石镐（开局第二阶段）
@@ -109,25 +165,23 @@ const FEW_SHOT_EXAMPLES: &[Example] = &[
             "圆石",
         ],
         turns: &[
-            (
-                "assistant",
-                "先确认有工作台（用 perceive 检查 10x10 是否有 crafting_table）。然后 gather(item=\"stone\", count=3) 挖 3 个石头得 cobblestone。",
+            ShotTurn::Assistant(
+                "先确认有工作台（用 perceive 检查附近是否有 crafting_table），再挖 3 个石头。",
+                &[("gather", r#"{"item":"stone","count":3}"#)],
             ),
-            (
-                "system",
+            ShotTurn::Tool(
                 "Action output:\nSuccessfully gathered 3 cobblestone, you now have 3 cobblestone.",
             ),
-            ("assistant", "open(x=-489, y=88, z=-144) 打开工作台。"),
-            (
-                "system",
-                "Action output:\nOpened crafting_table at (-489, 88, -144).",
+            ShotTurn::Assistant("打开工作台。", &[("open", r#"{"x":-489,"y":88,"z":-144}"#)]),
+            ShotTurn::Tool("Action output:\nOpened crafting_table at (-489, 88, -144)."),
+            ShotTurn::Assistant(
+                "用木板做 2 个棒子，再用工作台 3x3 合石镐。",
+                &[
+                    ("craft", r#"{"item":"stick","count":2}"#),
+                    ("craft_3x3", r#"{"item":"stone_pickaxe","count":1}"#),
+                ],
             ),
-            (
-                "assistant",
-                "先 craft(item=\"stick\", count=2) 用木板做棒子（2×2 即可），再 craft_3x3(item=\"stone_pickaxe\", count=1) 用工作台合石镐。",
-            ),
-            (
-                "system",
+            ShotTurn::Tool(
                 "Action output:\nSuccessfully crafted stone_pickaxe, you now have 1 stone_pickaxe.",
             ),
         ],
@@ -139,41 +193,42 @@ const FEW_SHOT_EXAMPLES: &[Example] = &[
             "iron_ore", "铁矿", "iron", "铁", "smelt", "熔炼", "furnace", "熔炉",
         ],
         turns: &[
-            (
-                "assistant",
-                "gather(item=\"iron_ore\", count=3) 挖铁矿。需石镐+。",
+            ShotTurn::Assistant(
+                "挖 3 个铁矿（需石镐+）。",
+                &[("gather", r#"{"item":"iron_ore","count":3}"#)],
             ),
-            (
-                "system",
+            ShotTurn::Tool(
                 "Action output:\nSuccessfully gathered 3 iron_ore, you now have 3 iron_ore.",
             ),
-            (
-                "assistant",
-                "熔炼前必须有 furnace。先确认背包有无 furnace（perceive 看背包），没有就 craft_3x3 合成：先 gather(cobblestone,8) → open 工作台 → craft_3x3(item=\"furnace\", count=1)。",
+            ShotTurn::Assistant(
+                "熔炼前必须有 furnace：先确认背包有无（perceive 看背包），没有就 gather 8 圆石 → open 工作台 → 3x3 合成。",
+                &[
+                    ("gather", r#"{"item":"cobblestone","count":8}"#),
+                    ("craft_3x3", r#"{"item":"furnace","count":1}"#),
+                ],
             ),
-            (
-                "system",
-                "Action output:\nSuccessfully crafted furnace, you now have 1 furnace.",
+            ShotTurn::Tool("Action output:\nSuccessfully crafted furnace, you now have 1 furnace."),
+            ShotTurn::Assistant(
+                "放熔炉并打开。",
+                &[
+                    ("place", r#"{"item":"furnace","x":-489,"y":88,"z":-145}"#),
+                    ("open", r#"{"x":-489,"y":88,"z":-145}"#),
+                ],
             ),
-            (
-                "assistant",
-                "place(item=\"furnace\", x=-489, y=88, z=-145) 放熔炉，再 open(x=-489, y=88, z=-145) 打开。",
+            ShotTurn::Tool("Action output:\nOpened furnace at (-489, 88, -145)."),
+            ShotTurn::Assistant(
+                "还需燃料，挖 1 个煤（或拿原木代替）。",
+                &[("gather", r#"{"item":"coal_ore","count":1}"#)],
             ),
-            (
-                "system",
-                "Action output:\nOpened furnace at (-489, 88, -145).",
+            ShotTurn::Tool("Action output:\nSuccessfully gathered 1 coal."),
+            ShotTurn::Assistant(
+                "烧 3 个铁锭。",
+                &[(
+                    "smelt",
+                    r#"{"output":"iron_ingot","fuel":"coal","count":3}"#,
+                )],
             ),
-            (
-                "assistant",
-                "还需燃料。gather(item=\"coal_ore\", count=1) 挖煤得 coal（或用 planks/log 代替）。",
-            ),
-            ("system", "Action output:\nSuccessfully gathered 1 coal."),
-            (
-                "assistant",
-                "smelt(output=\"iron_ingot\", fuel=\"coal\", count=3) 烧 3 个铁锭。",
-            ),
-            (
-                "system",
+            ShotTurn::Tool(
                 "Action output:\nSuccessfully smelted 3 iron_ingot, you now have 3 iron_ingot.",
             ),
         ],
@@ -196,19 +251,13 @@ const FEW_SHOT_EXAMPLES: &[Example] = &[
             "combat",
         ],
         turns: &[
-            (
-                "assistant",
-                "perceive 看到附近 zombie:3。attack(target=\"zombie\") 攻击最近僵尸。",
+            ShotTurn::Assistant(
+                "perceive 看到附近 zombie:3，攻击最近僵尸。",
+                &[("perceive", "{}"), ("attack", r#"{"target":"zombie"}"#)],
             ),
-            (
-                "system",
-                "Action output:\nSuccessfully killed zombie, health: 20/20.",
-            ),
-            ("assistant", "继续 attack(target=\"zombie\") 打下一个。"),
-            (
-                "system",
-                "Action output:\nCould not find any zombie nearby. Health: 19/20.",
-            ),
+            ShotTurn::Tool("Action output:\nSuccessfully killed zombie, health: 20/20."),
+            ShotTurn::Assistant("继续打下一个。", &[("attack", r#"{"target":"zombie"}"#)]),
+            ShotTurn::Tool("Action output:\nCould not find any zombie nearby. Health: 19/20."),
         ],
     },
     // 食物：狩猎 + 烤肉（P52 修正：对齐 9.2 铁律，furnace 必须用 craft_3x3 + place，
@@ -219,28 +268,32 @@ const FEW_SHOT_EXAMPLES: &[Example] = &[
             "饱食",
         ],
         turns: &[
-            (
-                "assistant",
-                "附近 cow:3。goto 走过去后 attack(target=\"cow\") 击杀。",
+            ShotTurn::Assistant(
+                "附近 cow:3。走过去后击杀。",
+                &[
+                    ("goto", r#"{"x":-487,"y":88,"z":-146}"#),
+                    ("attack", r#"{"target":"cow"}"#),
+                ],
             ),
-            (
-                "system",
-                "Action output:\nSuccessfully killed cow, dropped raw_beef x2.",
+            ShotTurn::Tool("Action output:\nSuccessfully killed cow, dropped raw_beef x2."),
+            ShotTurn::Assistant(
+                "烤肉需要 furnace。若背包无 furnace：gather 8 圆石 → open 工作台 → 3x3 合成 → place → open。",
+                &[
+                    ("gather", r#"{"item":"cobblestone","count":8}"#),
+                    ("craft_3x3", r#"{"item":"furnace","count":1}"#),
+                    ("place", r#"{"item":"furnace","x":-489,"y":88,"z":-145}"#),
+                    ("open", r#"{"x":-489,"y":88,"z":-145}"#),
+                ],
             ),
-            (
-                "assistant",
-                "烤肉需要 furnace。若背包无 furnace：gather(cobblestone,8) → open 工作台 → craft_3x3(furnace) → place → open furnace。",
+            ShotTurn::Tool("Action output:\nOpened furnace at (-489, 88, -145)."),
+            ShotTurn::Assistant(
+                "烤熟 2 块牛肉（coal 也可换 planks/log）。",
+                &[(
+                    "smelt",
+                    r#"{"output":"cooked_beef","fuel":"coal","count":2}"#,
+                )],
             ),
-            (
-                "system",
-                "Action output:\nOpened furnace at (-489, 88, -145).",
-            ),
-            (
-                "assistant",
-                "smelt(output=\"cooked_beef\", fuel=\"coal\", count=2) 烤熟（coal 也可换 planks/log）。",
-            ),
-            (
-                "system",
+            ShotTurn::Tool(
                 "Action output:\nSuccessfully smelted 2 cooked_beef, you now have 2 cooked_beef.",
             ),
         ],
@@ -249,89 +302,89 @@ const FEW_SHOT_EXAMPLES: &[Example] = &[
     Example {
         keywords: &["torch", "火把", "light", "照明", "暗", "夜晚", "night"],
         turns: &[
-            (
-                "assistant",
-                "gather(item=\"coal_ore\", count=1) 挖煤，craft(item=\"stick\", count=1) 做棒子。",
+            ShotTurn::Assistant(
+                "挖煤做棒子。",
+                &[
+                    ("gather", r#"{"item":"coal_ore","count":1}"#),
+                    ("craft", r#"{"item":"stick","count":1}"#),
+                ],
             ),
-            (
-                "system",
-                "Action output:\nSuccessfully gathered 1 coal, crafted 1 stick.",
+            ShotTurn::Tool("Action output:\nSuccessfully gathered 1 coal, crafted 1 stick."),
+            ShotTurn::Assistant(
+                "用 1 煤 + 1 棒合 4 火把。",
+                &[("craft", r#"{"item":"torch","count":4}"#)],
             ),
-            (
-                "assistant",
-                "craft(item=\"torch\", count=4) 用 1 煤 + 1 棒合 4 火把。",
-            ),
-            (
-                "system",
-                "Action output:\nSuccessfully crafted 4 torch, you now have 4 torch.",
-            ),
+            ShotTurn::Tool("Action output:\nSuccessfully crafted 4 torch, you now have 4 torch."),
         ],
     },
     // 箱子存储
     Example {
         keywords: &["chest", "箱子", "存储", "store", "store"],
         turns: &[
-            (
-                "assistant",
-                "gather(item=\"oak_log\", count=8); craft(item=\"oak_planks\", count=8) 准备 32 木板。",
+            ShotTurn::Assistant(
+                "砍 8 原木并合 32 木板。",
+                &[
+                    ("gather", r#"{"item":"oak_log","count":8}"#),
+                    ("craft", r#"{"item":"oak_planks","count":8}"#),
+                ],
             ),
-            (
-                "system",
-                "Action output:\nSuccessfully crafted 32 oak_planks.",
+            ShotTurn::Tool("Action output:\nSuccessfully crafted 32 oak_planks."),
+            ShotTurn::Assistant(
+                "合 1 箱子并放下。",
+                &[
+                    ("craft", r#"{"item":"chest","count":1}"#),
+                    ("place", r#"{"item":"chest","x":-489,"y":88,"z":-146}"#),
+                ],
             ),
-            (
-                "assistant",
-                "craft(item=\"chest\", count=1); place(item=\"chest\", x=-489, y=88, z=-146) 放箱子。",
-            ),
-            (
-                "system",
-                "Action output:\nPlaced chest at (-489, 88, -146).",
-            ),
+            ShotTurn::Tool("Action output:\nPlaced chest at (-489, 88, -146)."),
         ],
     },
     // 床
     Example {
         keywords: &["bed", "床", "sleep", "睡觉", "夜晚"],
         turns: &[
-            ("assistant", "杀 3 只羊得 white_wool:3，砍 4 原木合木板。"),
-            ("system", "Action output:\nGot 3 white_wool, 12 oak_planks."),
-            (
-                "assistant",
-                "open 工作台后 craft_3x3(item=\"bed\", count=1) 合床。",
+            ShotTurn::Assistant(
+                "杀 3 只羊得 white_wool，砍 4 原木合木板。",
+                &[
+                    ("attack", r#"{"target":"sheep"}"#),
+                    ("gather", r#"{"item":"oak_log","count":4}"#),
+                ],
             ),
-            (
-                "system",
-                "Action output:\nSuccessfully crafted bed, you now have 1 bed.",
+            ShotTurn::Tool("Action output:\nGot 3 white_wool, 12 oak_planks."),
+            ShotTurn::Assistant(
+                "open 工作台后 3x3 合床。",
+                &[("craft_3x3", r#"{"item":"bed","count":1}"#)],
             ),
+            ShotTurn::Tool("Action output:\nSuccessfully crafted bed, you now have 1 bed."),
         ],
     },
     // 村民交易
     Example {
         keywords: &["villager", "村民", "trade", "交易"],
         turns: &[
-            (
-                "assistant",
-                "interact_entity(kind=\"villager\") 打开附近村民交易界面。",
+            ShotTurn::Assistant(
+                "打开附近村民交易界面。",
+                &[("interact_entity", r#"{"kind":"villager"}"#)],
             ),
-            ("system", "Action output:\nOpened villager trade UI."),
-            ("assistant", "trade(offer=0) 买第 1 个报价。"),
-            ("system", "Action output:\nTrade completed, got 1 bread."),
+            ShotTurn::Tool("Action output:\nOpened villager trade UI."),
+            ShotTurn::Assistant("买第 1 个报价。", &[("trade", r#"{"offer":0}"#)]),
+            ShotTurn::Tool("Action output:\nTrade completed, got 1 bread."),
         ],
     },
     // 下矿：用 mine_below 挖矿井
     Example {
         keywords: &["mine_below", "下矿", "dig", "挖矿", "挖矿井"],
         turns: &[
-            ("assistant", "mine_below() 挖脚下方块开始下探。"),
-            ("system", "Action output:\nMined block below, now at y=87."),
-            (
-                "assistant",
-                "perceive 看看新方块，发现 iron_ore。mine(x=-489, y=85, z=-144) 挖矿。",
+            ShotTurn::Assistant("挖脚下方块开始下探。", &[("mine_below", "{}")]),
+            ShotTurn::Tool("Action output:\nMined block below, now at y=87."),
+            ShotTurn::Assistant(
+                "perceive 看到 iron_ore，挖它。",
+                &[
+                    ("perceive", "{}"),
+                    ("mine", r#"{"x":-489,"y":85,"z":-144}"#),
+                ],
             ),
-            (
-                "system",
-                "Action output:\nMined block at (-489,85,-144), got iron_ore.",
-            ),
+            ShotTurn::Tool("Action output:\nMined block at (-489,85,-144), got iron_ore."),
         ],
     },
     // 建造：用 build 工具执行蓝图
@@ -347,17 +400,22 @@ const FEW_SHOT_EXAMPLES: &[Example] = &[
             "蓝图",
         ],
         turns: &[
-            (
-                "assistant",
-                "先 gather(item=\"oak_log\", count=16) 准备材料，craft 成 32 oak_planks。",
+            ShotTurn::Assistant(
+                "先准备材料：砍 16 原木合 32 木板。",
+                &[
+                    ("gather", r#"{"item":"oak_log","count":16}"#),
+                    ("craft", r#"{"item":"oak_planks","count":8}"#),
+                ],
             ),
-            ("system", "Action output:\nGot 32 oak_planks."),
-            (
-                "assistant",
-                "build(blueprint=\"{\\\"blocks\\\":[{\\\"x\\\":-489,\\\"y\\\":88,\\\"z\\\":-144,\\\"block\\\":\\\"oak_planks\\\"},{\\\"x\\\":-489,\\\"y\\\":89,\\\"z\\\":-144,\\\"block\\\":\\\"oak_planks\\\"}]}\") 按蓝图放 2 个方块。",
+            ShotTurn::Tool("Action output:\nGot 32 oak_planks."),
+            ShotTurn::Assistant(
+                "按蓝图放 2 个方块。",
+                &[(
+                    "build",
+                    r#"{"blueprint":"{\"blocks\":[{\"x\":-489,\"y\":88,\"z\":-144,\"block\":\"oak_planks\"},{\"x\":-489,\"y\":89,\"z\":-144,\"block\":\"oak_planks\"}]}"}"#,
+                )],
             ),
-            (
-                "system",
+            ShotTurn::Tool(
                 "Action output:\n第1个: placed oak_planks @(-489,88,-144)\n第2个: placed oak_planks @(-489,89,-144)",
             ),
         ],
@@ -366,38 +424,44 @@ const FEW_SHOT_EXAMPLES: &[Example] = &[
     Example {
         keywords: &["enchant", "附魔", "enchanting", "附魔台"],
         turns: &[
-            (
-                "assistant",
-                "需钻石+黑曜石+书。gather(item=\"diamond_ore\", count=2); craft(item=\"enchanting_table\", count=1); place 放置。",
+            ShotTurn::Assistant(
+                "需钻石+黑曜石+书。挖 2 钻石，合附魔台并放置。",
+                &[
+                    ("gather", r#"{"item":"diamond_ore","count":2}"#),
+                    ("craft", r#"{"item":"enchanting_table","count":1}"#),
+                    (
+                        "place",
+                        r#"{"item":"enchanting_table","x":-489,"y":88,"z":-144}"#,
+                    ),
+                ],
             ),
-            (
-                "system",
-                "Action output:\nPlaced enchanting_table at (-489,88,-144).",
+            ShotTurn::Tool("Action output:\nPlaced enchanting_table at (-489,88,-144)."),
+            ShotTurn::Assistant(
+                "打开后给铁剑附魔 2 级。",
+                &[
+                    ("open", r#"{"x":-489,"y":88,"z":-144}"#),
+                    ("enchant", r#"{"item":"iron_sword","level":2}"#),
+                ],
             ),
-            (
-                "assistant",
-                "open(x=-489, y=88, z=-144) 后 enchant(item=\"iron_sword\", level=2) 附魔 2 级。",
-            ),
-            (
-                "system",
-                "Action output:\nEnchanted iron_sword with Sharpness II.",
-            ),
+            ShotTurn::Tool("Action output:\nEnchanted iron_sword with Sharpness II."),
         ],
     },
     // 多步计划：用 run_plan 一次跑多步
     Example {
         keywords: &["plan", "计划", "多步", "step", "run_plan", "依次"],
         turns: &[
-            (
-                "assistant",
+            ShotTurn::Assistant(
                 "用 run_plan 一次执行多步：先走到资源点，再挖矿，回工作台合成。",
+                &[],
             ),
-            (
-                "assistant",
-                "run_plan(steps=[{\"action\":\"goto\",\"x\":-490,\"y\":80,\"z\":-156},{\"action\":\"mine\",\"x\":-490,\"y\":80,\"z\":-156},{\"action\":\"goto\",\"x\":-489,\"y\":88,\"z\":-144},{\"action\":\"craft\",\"item\":\"torch\",\"count\":4}])",
+            ShotTurn::Assistant(
+                "执行多步计划。",
+                &[(
+                    "run_plan",
+                    r#"{"steps":[{"action":"goto","x":-490,"y":80,"z":-156},{"action":"mine","x":-490,"y":80,"z":-156},{"action":"goto","x":-489,"y":88,"z":-144},{"action":"craft","item":"torch","count":4}]}"#,
+                )],
             ),
-            (
-                "system",
+            ShotTurn::Tool(
                 "Action output:\n步骤1 (goto) 完成: 已到达目标 (-490,80,-156)\n步骤2 (mine) 完成: 已挖掉方块 (-490,80,-156), got coal_ore\n步骤3 (goto) 完成: 已到达目标 (-489,88,-144)\n步骤4 (craft) 完成: Successfully crafted 4 torch",
             ),
         ],
@@ -406,12 +470,29 @@ const FEW_SHOT_EXAMPLES: &[Example] = &[
     Example {
         keywords: &["stuck", "卡住", "未移动", "脱困", "trap"],
         turns: &[
-            (
-                "assistant",
+            ShotTurn::Assistant(
                 "perceive 提示「⚠ 卡住! 坐标5轮未移动」。改用 goto 到侧前方 3 格空地脱困。",
+                &[("perceive", "{}")],
             ),
-            ("assistant", "goto(x=-486, y=88, z=-161) 走到附近空地。"),
-            ("system", "Action output:\n已到达目标 (-486,88,-161)"),
+            ShotTurn::Tool("[perceive 结果: ⚠ 卡住! 坐标 5 轮未移动]"),
+            ShotTurn::Assistant(
+                "走到附近空地。",
+                &[("goto", r#"{"x":-486,"y":88,"z":-161}"#)],
+            ),
+            ShotTurn::Tool("Action output:\n已到达目标 (-486,88,-161)"),
+        ],
+    },
+    // 响应玩家指令（带 User turn 的完整闭环：玩家说话 → 确认 → 执行 → 回报）
+    Example {
+        keywords: &["玩家", "指令", "steering", "follow_up", "听从"],
+        turns: &[
+            ShotTurn::User("玩家: 天快黑了，去砍点木头存起来"),
+            ShotTurn::Assistant(
+                "收到，我去收集原木。",
+                &[("gather", r#"{"item":"darkoaklog","count":4}"#)],
+            ),
+            ShotTurn::Tool("gather 完成: 实际获得 darkoaklog x4"),
+            ShotTurn::Assistant("已收集 4 根原木。还需要我做什么吗？", &[]),
         ],
     },
 ];
@@ -480,33 +561,6 @@ impl Agent {
             }
         }
 
-        // Few-shot 示例注入：词重叠检索最相关场景（离线可用，无需 embedding）
-        // 关键：必须明确告诉 LLM 这是「预期 function calling 形态」的示例，
-        // 否则 LLM 会模仿成在 assistant 文字里写 `tool(...)` 伪调用（实测反模式）。
-        let mut scored: Vec<(f64, &Example)> = FEW_SHOT_EXAMPLES
-            .iter()
-            .map(|ex| (word_overlap_score(&recent_perception, ex.keywords), ex))
-            .filter(|(score, _)| *score > 0.0)
-            .collect();
-        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-        if !scored.is_empty() {
-            let mut example_text = String::from(
-                "【参考示例】（以下展示预期的 function calling 形态：assistant 文字简短说明意图 + 真实 tool_calls JSON。**禁止**在 assistant 文字里写 `tool(...)` 伪调用，必须通过 function calling 输出工具调用。）\n",
-            );
-            for (i, (_, ex)) in scored.iter().take(2).enumerate() {
-                example_text.push_str(&format!("场景 {}:\n", i + 1));
-                for (role, content) in ex.turns {
-                    let label = match *role {
-                        "assistant" => "assistant (含 tool_call)",
-                        "system" => "tool result",
-                        _ => "user",
-                    };
-                    example_text.push_str(&format!("  {label}: {content}\n"));
-                }
-            }
-            parts.push(example_text);
-        }
-
         if self.obs_streak >= 5 {
             if self.obs_streak >= 10 {
                 parts.push("【循环警告】你已经连续观察 10+ 步没有实际行动！STOP repeating perceive. Pick a COMPLETELY DIFFERENT tool RIGHT NOW — goto / gather / mine / craft / attack / build — anything but perceive.".to_string());
@@ -523,6 +577,24 @@ impl Agent {
         } else {
             Some(parts.join("\n\n"))
         }
+    }
+
+    /// A1：构建 few-shot 真实消息对（assistant 带 tool_calls JSON + tool 结果）。
+    /// 按最近感知词重叠选 top-2 示例。首轮注入一次后永不剔除（内容/位置固定，
+    /// 与后续真实交互 append 天然形成稳定前缀，DeepSeek 前缀缓存最优）。
+    pub fn build_few_shot_messages(&self) -> Vec<Message> {
+        let recent = self.recent_perception_text();
+        let mut scored: Vec<(f64, usize, &Example)> = FEW_SHOT_EXAMPLES
+            .iter()
+            .enumerate()
+            .map(|(i, ex)| (word_overlap_score(recent, ex.keywords), i, ex))
+            .collect();
+        scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        let mut out = Vec::new();
+        for (_, base, ex) in scored.iter().take(2) {
+            out.extend(example_to_messages(ex, *base));
+        }
+        out
     }
 
     pub fn build_dynamic_instructions_msg(&mut self) -> Option<String> {
@@ -583,14 +655,16 @@ impl Agent {
         }
         let scope = self.config.memory_scope.clone();
         let mut mem = self.semantic_memory.lock().ok()?;
-        let (text, touched) = mem.injection_text(query.trim(), scope.as_deref());
+        let (text, touched) = mem.injection_text(query.trim(), scope.as_deref(), self.turn as i64);
         if touched.is_empty() {
             return None;
         }
-        mem.touch(&touched);
+        mem.touch(&touched, self.turn as i64);
         Some(text)
     }
 
+    /// B5（2026-08-02）：紧凑渲染——待办最多列 8 条（任务链 23 个全列会占
+    /// 大量上下文且 90% 与当前工作无关），超出显示省略行；已完成只计数不列。
     pub fn build_task_progress_msg(&self) -> String {
         if !self.config.enable_task_chain {
             return String::new();
@@ -599,29 +673,38 @@ impl Agent {
         if tm.tasks.is_empty() {
             return String::new();
         }
+        const MAX_SHOWN: u32 = 8;
         let mut lines = Vec::new();
         let mut completed = 0u32;
         let mut pending = 0u32;
+        let mut pending_shown = 0u32;
+        let mut hidden = 0u32;
         for t in &tm.tasks {
             let is_current = tm.current.as_ref().is_some_and(|c| c.task.id == t.id);
             let status = if is_current {
                 match tm.current_status() {
                     Some(crate::task::TaskStatus::Failed { .. }) => {
                         pending += 1;
-                        "✖ 失败"
+                        Some("✖ 失败")
                     }
-                    _ => "▶ 进行中",
+                    _ => Some("▶ 进行中"),
                 }
             } else if matches!(
                 tm.status_for(&t.id),
                 Some(crate::task::TaskStatus::Completed { .. })
             ) {
                 completed += 1;
-                continue; // 已完成的低级任务，不显示
+                None // 已完成的低级任务，只计数不显示
             } else {
                 pending += 1;
-                "⏳ 待完成"
+                Some("⏳ 待完成")
             };
+            let Some(status) = status else { continue };
+            if pending_shown >= MAX_SHOWN {
+                hidden += 1;
+                continue;
+            }
+            pending_shown += 1;
             let desc = if t.description.len() > 60 {
                 let cutoff = t
                     .description
@@ -638,18 +721,75 @@ impl Agent {
         if lines.is_empty() {
             return String::new();
         }
-        let mut out = format!(
-            "已完成 {} 个低级任务，剩余 {} 个待完成:\n",
-            completed, pending
-        );
+        let mut out = format!("已完成 {} 个低级任务，剩余 {} 个待完成", completed, pending);
+        if hidden > 0 {
+            out.push_str(&format!("（已省略 {} 个更远的任务）", hidden));
+        }
+        out.push_str(":\n");
         out.push_str(&lines.join("\n"));
         out
     }
 
+    /// A2（2026-08-02）：分阶段知识注入。按当前任务 tier 聚合所有
+    /// tier ≤ 当前等级的 StageKnowledge 文本（早期少、后期累积），
+    /// 经【阶段知识】user 消息注入（瞬态，轮间剔除）。
+    /// 当前 tier 取 running 任务；无 running 取最低 Pending 任务；全完成 → 6。
+    fn current_knowledge_tier(&self) -> u8 {
+        let tm = &self.task_manager;
+        if let Some(cur) = &tm.current
+            && let crate::task::TaskStatus::Running { .. } = cur.status
+        {
+            return cur.task.tier.clamp(1, 6) as u8;
+        }
+        tm.tasks
+            .iter()
+            .filter(|t| tm.status_for(&t.id) == Some(&crate::task::TaskStatus::Pending))
+            .map(|t| t.tier)
+            .min()
+            .map(|t| t.clamp(1, 6) as u8)
+            .unwrap_or(6)
+    }
+
+    /// 按当前 tier 聚合阶段知识文本；空库或无可注入块时返回 None。
+    pub fn build_stage_knowledge_msg(&self) -> Option<String> {
+        if self.config.stage_knowledge.is_empty() {
+            return None;
+        }
+        let tier = self.current_knowledge_tier();
+        let blocks: Vec<&str> = self
+            .config
+            .stage_knowledge
+            .iter()
+            .filter(|sk| sk.tier == 0 || sk.tier <= tier)
+            .filter(|sk| !sk.text.is_empty())
+            .map(|sk| sk.text.as_str())
+            .collect();
+        if blocks.is_empty() {
+            return None;
+        }
+        let mut out = String::new();
+        for (i, b) in blocks.iter().enumerate() {
+            if i > 0 {
+                out.push_str("\n\n");
+            }
+            out.push_str(b);
+        }
+        Some(out)
+    }
+
     pub fn build_context(&mut self) -> Context {
         use crate::core::message::Message;
-        let jailbreak = "自主行动。工具失败时调整参数重试——不准假装成功。\n\
-            行为准则：收到感知里的「卡住计数」≥3 时，说明坐标连续不变（可能下探被基岩/空气挡住或脚下方块无法破坏）——立即停止当前下探，改用 goto 侧前方 3 格空地或跳跃脱困，再重新 perceive；不要原地反复 perceive 或假装在下探。连续同工具≤3次后应向玩家 chat 汇报进度。工具没回报「实际获得X」就当作没获得，不得虚构成功。";
+        // C7：jailbreak 可经 profile 覆盖（_default.json 的 "jailbreak" 字段，
+        // 三层合并可被模式/个体 profile 覆盖）；None 回退内置默认。
+        let jailbreak = self
+            .config
+            .jailbreak
+            .clone()
+            .unwrap_or_else(|| {
+                "自主行动。工具失败时调整参数重试——不准假装成功。\n\
+                 行为准则：收到感知里的「卡住计数」≥3 时，说明坐标连续不变（可能下探被基岩/空气挡住或脚下方块无法破坏）——立即停止当前下探，改用 goto 侧前方 3 格空地或跳跃脱困，再重新 perceive；不要原地反复 perceive 或假装在下探。连续同工具≤3次后应向玩家 chat 汇报进度。工具没回报「实际获得X」就当作没获得，不得虚构成功。"
+                    .to_string()
+            });
         let knowledge = self.knowledge_string();
 
         let builder = PromptBuilder::new()
@@ -829,5 +969,192 @@ mod tests {
                 stop_reason: crate::core::message::StopReason::Stop,
             })
         }
+    }
+
+    // ── A1: few-shot 真实消息对 ──
+
+    /// A1 回归：few-shot 必须转换为真实消息对——assistant 带 tool_calls JSON
+    /// （id 用 fewshot 前缀防冲突、arguments 为可解析 JSON），tool 结果与调用
+    /// 按顺序配对，且内容带【示例】标记。旧实现是文本拼接（LLM 会模仿成伪调用）。
+    #[test]
+    fn a1_few_shot_messages_are_real_message_pairs() {
+        let tools = crate::core::tool::ToolRegistry::new();
+        let agent = Agent::new(
+            Box::new(StopProvider),
+            tools,
+            crate::agent::AgentConfig::new("a1".into(), 5),
+        );
+        let msgs = agent.build_few_shot_messages();
+        assert!(!msgs.is_empty(), "应注入至少一个示例");
+
+        use crate::core::message::Message;
+        let mut assistant_calls = 0usize;
+        let mut tool_results = 0usize;
+        let mut tool_result_ids: Vec<String> = Vec::new();
+        for m in &msgs {
+            match m {
+                Message::Assistant(a) => {
+                    assistant_calls += a.tool_calls.len();
+                    for tc in &a.tool_calls {
+                        assert!(
+                            tc.id.starts_with("fewshot"),
+                            "调用 id 必须带 fewshot 前缀防冲突: {}",
+                            tc.id
+                        );
+                        assert!(
+                            serde_json::from_str::<serde_json::Value>(&tc.arguments.to_string())
+                                .is_ok(),
+                            "arguments 必须是合法 JSON: {}",
+                            tc.arguments
+                        );
+                    }
+                    if let Some(text) = &a.content {
+                        assert!(text.starts_with("【示例】"), "assistant 文本需带示例标记");
+                    }
+                }
+                Message::ToolResult(t) => {
+                    tool_results += 1;
+                    tool_result_ids.push(t.tool_call_id.clone());
+                    assert!(t.content.starts_with("【示例】"), "tool 结果需带示例标记");
+                }
+                _ => {}
+            }
+        }
+        assert!(assistant_calls >= 1, "示例中必须含真实 tool_calls");
+        assert_eq!(
+            tool_results, assistant_calls,
+            "tool 结果数量必须等于调用数量"
+        );
+        let _ = tool_result_ids;
+    }
+
+    /// A1 回归：示例中的 tool 结果按顺序与调用配对（pending 队列消费），
+    /// 一个 assistant 多调用 → 多个连续 tool 结果。
+    #[test]
+    fn a1_few_shot_tool_results_pair_in_order() {
+        let tools = crate::core::tool::ToolRegistry::new();
+        let agent = Agent::new(
+            Box::new(StopProvider),
+            tools,
+            crate::agent::AgentConfig::new("a1b".into(), 5),
+        );
+        let msgs = agent.build_few_shot_messages();
+        use crate::core::message::Message;
+        let mut i = 0usize;
+        while i < msgs.len() {
+            if let Message::Assistant(a) = &msgs[i] {
+                let n = a.tool_calls.len();
+                if n > 0 {
+                    let ids: Vec<&str> = a.tool_calls.iter().map(|c| c.id.as_str()).collect();
+                    for (j, expect_id) in ids.iter().enumerate() {
+                        let next = msgs.get(i + 1 + j);
+                        match next {
+                            Some(Message::ToolResult(t)) => {
+                                assert_eq!(
+                                    &t.tool_call_id, expect_id,
+                                    "第 {} 个 tool 结果必须配对第 {} 个调用",
+                                    j, j
+                                );
+                                assert_eq!(
+                                    t.tool_name, a.tool_calls[j].name,
+                                    "tool_name 必须与调用名一致"
+                                );
+                            }
+                            other => {
+                                panic!("调用后第 {} 个消息必须是配对 tool 结果，实际: {other:?}", j)
+                            }
+                        }
+                    }
+                    i += 1 + n;
+                    continue;
+                }
+            }
+            i += 1;
+        }
+    }
+
+    // ── A2: 分阶段知识注入 ──
+
+    /// A2 回归：stage_knowledge 按任务 tier 过滤——早期只注入低 tier 块，
+    /// tier 推进后累积注入；无任务（全完成）注入全部块。
+    #[test]
+    fn a2_stage_knowledge_filters_by_tier() {
+        use crate::profile::StageKnowledge;
+        use crate::task::{Task, TaskStatus};
+
+        let config = crate::agent::AgentConfig::new("a2".into(), 5).with_stage_knowledge(vec![
+            StageKnowledge {
+                tier: 1,
+                text: "DAY1".into(),
+            },
+            StageKnowledge {
+                tier: 3,
+                text: "DIAMOND".into(),
+            },
+            StageKnowledge {
+                tier: 6,
+                text: "DRAGON".into(),
+            },
+            StageKnowledge {
+                tier: 0,
+                text: "ALWAYS".into(),
+            },
+        ]);
+        let mut agent = Agent::new(
+            Box::new(StopProvider),
+            crate::core::tool::ToolRegistry::new(),
+            config,
+        );
+
+        // 无任务 → 全完成 → tier 6：全部块注入
+        let msg = agent.build_stage_knowledge_msg().unwrap();
+        assert!(
+            msg.contains("DAY1")
+                && msg.contains("DIAMOND")
+                && msg.contains("DRAGON")
+                && msg.contains("ALWAYS")
+        );
+
+        // running tier3 任务 → 只注入 tier ≤ 3（含 tier0 常驻块）
+        let t = Task {
+            id: "tier3_test".into(),
+            name: "t".into(),
+            description: "d".into(),
+            goal: "g".into(),
+            tier: 3,
+            order: 1,
+            success: crate::task::SuccessCondition::InventoryHas {
+                item: "x".into(),
+                count: 1,
+            },
+            failure: None,
+            timeout_secs: None,
+            reward: None,
+        };
+        agent.task_manager.tasks.push(t.clone());
+        agent.task_manager.current = Some(crate::task::TaskInstance {
+            task: t,
+            status: TaskStatus::Running { started_at: 1 },
+        });
+        let msg = agent.build_stage_knowledge_msg().unwrap();
+        assert!(msg.contains("DAY1"), "tier3 应含 tier1 块");
+        assert!(msg.contains("DIAMOND"), "tier3 应含 tier3 块");
+        assert!(!msg.contains("DRAGON"), "tier3 不应含 tier6 块");
+        assert!(msg.contains("ALWAYS"), "tier0 常驻块始终注入");
+        assert!(
+            msg.find("DAY1").unwrap() < msg.find("DIAMOND").unwrap(),
+            "注入顺序按声明顺序，保持可读性"
+        );
+    }
+
+    /// A2 回归：空 stage_knowledge 不注入任何内容（默认配置零开销）。
+    #[test]
+    fn a2_stage_knowledge_empty_is_noop() {
+        let agent = Agent::new(
+            Box::new(StopProvider),
+            crate::core::tool::ToolRegistry::new(),
+            crate::agent::AgentConfig::new("a2b".into(), 5),
+        );
+        assert!(agent.build_stage_knowledge_msg().is_none());
     }
 }

@@ -31,6 +31,48 @@ use std::sync::{Arc, Mutex};
 // 改为 60 条硬上限 + 每轮 hard_truncate 环形缓冲，内存峰值恒定。
 const MAX_AGENT_MESSAGES: usize = 60;
 
+/// B3（2026-08-02）：轮间注入的瞬态 user 消息前缀——每轮重生，本轮用完后剔除，
+/// 不进历史/压缩摘要。包含：自动感知快照、各记忆信道、动态上下文、全部
+/// nudge/警告/引导类消息。真实交互（steering/[follow_up]/assistant/tool）不受影响。
+/// 注意：剔除名单只匹配 user 消息（`Message::User`），绝不碰 tool 占位消息
+/// （【已中止】等——OpenAI 约束每个 tool_call 必须有响应否则 400）。
+pub(super) const TRANSIENT_USER_PREFIXES: &[&str] = &[
+    "【当前游戏状态（自动注入）】",
+    "【邻近世界记忆】",
+    "【长期记忆】",
+    "【任务进度】",
+    "【阶段知识】",
+    "[当前目标]",
+    // ── 动态上下文（build_dynamic_context_msg 各段）──
+    "【场景提示】",
+    "【经验参考】",
+    "【观察提醒】",
+    "【循环警告】",
+    "【关键警告】",
+    // ── 动态指令 / 引导 ──
+    "【指令】",
+    "【探索建议】",
+    // ── 全部 nudge / 警告 / 纠偏 ──
+    "【纠偏】",
+    "【纠正】",
+    "【最后通牒】",
+    "【严重警告】",
+    "【验证】",
+    "【强制行动】",
+    "【继续】",
+    "【循环异常】",
+    "【死循环警告】",
+    "【P58 拦截】",
+    "【错误驱动重规划】",
+    "【工具失败重规划】",
+    "【新指令中断】",
+    "【工具调用上限】",
+    "【连续失败警告】",
+    // ── 会话级一次性通知（仅当轮有意义，剔除防历史膨胀）──
+    "【自动滚动恢复】",
+    "【系统提示】",
+];
+
 pub use compaction::is_obs_tool;
 
 // ── Provider ──
@@ -426,6 +468,10 @@ pub struct AgentConfig {
     /// 注入时只显示 scope 为 None（全局知识）或与当前 scope 匹配的记忆，
     /// 防止不同世界/服务器的坐标类记忆互相污染。None = 仅注入全局知识。
     pub memory_scope: Option<String>,
+    /// A2：分阶段知识（按任务 tier 注入 user 消息）。空 = 不注入。
+    pub stage_knowledge: Vec<crate::profile::StageKnowledge>,
+    /// C7：后置强制指令（替代硬编码 jailbreak）。None = Rust 内置默认。
+    pub jailbreak: Option<String>,
 }
 impl AgentConfig {
     pub fn new(prompt: String, max_iterations: u32) -> Self {
@@ -454,11 +500,23 @@ impl AgentConfig {
             global_timeout_secs: 300,
             enable_task_chain: false,
             memory_scope: None,
+            stage_knowledge: vec![],
+            jailbreak: None,
         }
     }
     /// 设置静态知识库（`None` 关闭，仅用工具自描述）。
     pub fn with_knowledge_base(mut self, kb: Option<String>) -> Self {
         self.knowledge_base = kb;
+        self
+    }
+    /// A2：设置分阶段知识（按任务 tier 注入）。
+    pub fn with_stage_knowledge(mut self, sk: Vec<crate::profile::StageKnowledge>) -> Self {
+        self.stage_knowledge = sk;
+        self
+    }
+    /// C7：设置后置强制指令（None = Rust 内置默认 jailbreak）。
+    pub fn with_jailbreak(mut self, jb: Option<String>) -> Self {
+        self.jailbreak = jb;
         self
     }
     /// 设置世界信息库（`None` 为空库，不注入任何路线专属提示）。
@@ -643,6 +701,11 @@ pub struct Agent {
     task_manager: TaskManager,
     /// Last task snapshot written to the session custom-entry stream.
     persisted_task_snapshot: Option<String>,
+    /// A1：few-shot 真实消息对已注入标记（首轮一次，永不剔除）。
+    few_shot_injected: bool,
+    /// C8：knowledge_string 缓存（工具集/knowledge_base 不变则结果相同，
+    /// 避免每轮 build_context 重复拼接）。
+    knowledge_cache: Option<String>,
 }
 impl Agent {
     pub fn abort(&self) {
@@ -820,10 +883,16 @@ impl Agent {
         }
     }
 
-    /// 返回知识字符串（工具参考自动从 ToolRegistry 生成），缓存复用保 prefix-cache 稳定
-    pub fn knowledge_string(&self) -> String {
-        // 可通过 cache field 优化，目前每次都生成（工具集不变，结果相同）
-        build_knowledge_string(&self.tools, self.config.knowledge_base.as_deref())
+    /// 返回知识字符串（工具参考自动从 ToolRegistry 生成），C8 缓存复用——
+    /// 工具集与 knowledge_base 在 Agent 生命周期内不变，结果恒定，
+    /// 缓存保证每轮 build_context 与 compaction 估算拿到逐字节相同的字符串。
+    pub fn knowledge_string(&mut self) -> String {
+        if let Some(cached) = &self.knowledge_cache {
+            return cached.clone();
+        }
+        let s = build_knowledge_string(&self.tools, self.config.knowledge_base.as_deref());
+        self.knowledge_cache = Some(s.clone());
+        s
     }
 
     fn persist_task_state(&mut self) {
@@ -923,6 +992,8 @@ impl Agent {
                 tm
             },
             persisted_task_snapshot: None,
+            few_shot_injected: false,
+            knowledge_cache: None,
         }
     }
 
@@ -1205,6 +1276,18 @@ impl Agent {
         self.events.push(AgentEvent::TurnStart { turn });
         self.drain_queues();
 
+        // A1：few-shot 真实消息对——首轮一次性注入（内容固定、位置固定，
+        // 之后历史 append-only → DeepSeek 前缀缓存最优；压缩折叠时自然淘汰）。
+        if !self.few_shot_injected {
+            self.few_shot_injected = true;
+            let fs = self.build_few_shot_messages();
+            let n = fs.len();
+            if n > 0 {
+                self.messages.extend(fs);
+                log.push(format!("[t{turn}] 注入 {n} 条 few-shot 真实消息对"));
+            }
+        }
+
         // P63: pi-agent 级内存管控。
         // 1) 每轮无条件硬截断（环形缓冲）：保证内存峰值恒定，绝不无限增长。
         // 2) 更早触发压缩：token 超过预算 60% 即压缩（不等地到 100% 才压，
@@ -1267,13 +1350,9 @@ impl Agent {
         // 压缩摘要。只删带固定标记前缀的 user 消息，绝不碰 assistant/tool
         // 真实交互历史。
         self.messages.retain(|m| match m {
-            Message::User(u) => {
-                !(u.content.starts_with("【当前游戏状态（自动注入）】")
-                    || u.content.starts_with("【邻近世界记忆】")
-                    || u.content.starts_with("【长期记忆】")
-                    || u.content.starts_with("【任务进度】")
-                    || u.content.starts_with("[当前目标]"))
-            }
+            Message::User(u) => !TRANSIENT_USER_PREFIXES
+                .iter()
+                .any(|p| u.content.starts_with(p)),
             _ => true,
         });
 
@@ -1376,6 +1455,12 @@ impl Agent {
         if !task_progress.is_empty() {
             self.messages
                 .push(Message::user(format!("【任务进度】\n{}", task_progress)));
+        }
+
+        // A2: Stage knowledge — tier 累积注入（瞬态，轮间剔除）。
+        if let Some(sk) = self.build_stage_knowledge_msg() {
+            self.messages
+                .push(Message::user(format!("【阶段知识】\n{sk}")));
         }
 
         // Auto-check task completion using the latest perceive text.
@@ -2698,6 +2783,13 @@ mod tests {
             "Agent::new 应注册 remember 工具"
         );
 
+        // 0) 清理残留：上次失败中断的测试可能在 agent.jsonl 留下同标题记忆
+        // （含 last_injected_turn 状态，会干扰 B4 注入冷却判定）
+        {
+            let mut mem = agent.semantic_memory.lock().unwrap();
+            let _ = mem.forget("钻石镐策略");
+        }
+
         // 2) LLM 调用 remember 写入语义记忆
         let res = agent
             .tools
@@ -2716,7 +2808,7 @@ mod tests {
             )
             .unwrap();
         assert!(
-            res.message.contains("已记录"),
+            res.message.contains("已记录") || res.message.contains("已更新"),
             "remember 应确认写入: {}",
             res.message
         );
@@ -2736,14 +2828,37 @@ mod tests {
         };
         assert!(text.contains("钻石镐策略"), "注入内容应含记忆标题: {text}");
 
-        // 4) 第二轮 run：旧注入被剔除 + 重新注入 → 仍只有 1 条（不累积）
+        // 4) 第二轮 run：旧注入被剔除；B4 注入冷却（5 轮）→ 本轮不再注入
         agent.run("start").unwrap();
         let after: Vec<&Message> = agent
             .messages
             .iter()
             .filter(|m| matches!(m, Message::User(u) if u.content.starts_with("【长期记忆】")))
             .collect();
-        assert_eq!(after.len(), 1, "轮间剔除后不累积，仍 1 条");
+        assert_eq!(
+            after.len(),
+            0,
+            "B4 冷却：轮间剔除后同批记忆 5 轮内不重复注入"
+        );
+
+        // 5) B4 冷却过期后（第 7 轮）重新注入
+        for _ in 0..5 {
+            agent.run("start").unwrap();
+        }
+        let re: Vec<&Message> = agent
+            .messages
+            .iter()
+            .filter(|m| matches!(m, Message::User(u) if u.content.starts_with("【长期记忆】")))
+            .collect();
+        assert_eq!(re.len(), 1, "冷却过期后应重新注入 1 条");
+        let text2 = match re[0] {
+            Message::User(u) => u.content.clone(),
+            _ => unreachable!(),
+        };
+        assert!(
+            text2.contains("钻石镐策略"),
+            "重新注入内容应含记忆标题: {text2}"
+        );
 
         // 清理：forget + 恢复持久化文件原状（测试不污染实机记忆）
         let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
