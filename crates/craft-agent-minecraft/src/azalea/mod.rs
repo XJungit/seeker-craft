@@ -4665,9 +4665,7 @@ mod cancel_tests {
             cmd_queue: Arc::new(Mutex::new(Vec::new())),
             events: Arc::new(tokio::sync::Mutex::new(evt_rx)),
             last_position: Arc::new(Mutex::new(None)),
-            ext: Arc::new(Mutex::new(
-                crate::azalea::ext_state::BotExtState::default(),
-            )),
+            ext: Arc::new(Mutex::new(crate::azalea::ext_state::BotExtState::default())),
             memory: None,
             cancel_flag: Arc::new(AtomicBool::new(false)),
         }

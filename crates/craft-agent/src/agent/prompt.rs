@@ -568,6 +568,29 @@ impl Agent {
         }
     }
 
+    /// P97：渲染语义记忆注入（知识/策略/教训，跨会话持久化）。
+    /// 查询词 = 当前目标 + 最近 3 个工具调用签名，按相关性 top-N 浮现；
+    /// scope 过滤见 AgentConfig::memory_scope（防跨图污染）。无相关记忆
+    /// 返回 None。消费后 touch 更新频率统计（last_used/uses）。
+    pub fn build_semantic_memory_msg(&mut self) -> Option<String> {
+        let mut query = String::new();
+        if let super::PromptState::Active { goal, .. } = &self.prompt_state {
+            query.push_str(goal);
+        }
+        for call in self.recent_calls.iter().rev().take(3) {
+            query.push(' ');
+            query.push_str(call);
+        }
+        let scope = self.config.memory_scope.clone();
+        let mut mem = self.semantic_memory.lock().ok()?;
+        let (text, touched) = mem.injection_text(query.trim(), scope.as_deref());
+        if touched.is_empty() {
+            return None;
+        }
+        mem.touch(&touched);
+        Some(text)
+    }
+
     pub fn build_task_progress_msg(&self) -> String {
         if !self.config.enable_task_chain {
             return String::new();

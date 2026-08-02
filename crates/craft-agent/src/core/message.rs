@@ -386,8 +386,7 @@ mod tests {
         let chatml = msg.to_chatml();
         assert_eq!(chatml["role"], "tool");
         assert_eq!(
-            chatml["content"],
-            "【失败】背包没有 oak_planks",
+            chatml["content"], "【失败】背包没有 oak_planks",
             "is_error=true 应加统一失败前缀"
         );
     }

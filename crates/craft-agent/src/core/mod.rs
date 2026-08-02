@@ -2,6 +2,7 @@ pub mod adapter;
 pub mod memory;
 pub mod message;
 pub mod prompt;
+pub mod semantic_memory;
 pub mod session;
 pub mod skill;
 pub mod tool;

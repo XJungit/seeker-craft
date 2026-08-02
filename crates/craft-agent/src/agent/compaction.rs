@@ -1,8 +1,8 @@
 use crate::core::message::{Message, Usage, system_chatml};
 use crate::core::session::SessionEntry as SessionFileEntry;
 use serde_json::Value;
-use std::sync::atomic::Ordering;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
 use super::{Agent, CompactionResult, LlmProvider, build_knowledge_string};
 
@@ -330,6 +330,7 @@ fn build_cm(messages: &[Message], previous_summary: Option<&str>) -> Vec<Value> 
             Message::User(u) => {
                 !(u.content.starts_with("【当前游戏状态（自动注入）】")
                     || u.content.starts_with("【邻近世界记忆】")
+                    || u.content.starts_with("【长期记忆】")
                     || u.content.starts_with("[当前目标]")
                     // P1 改进5: 过滤 nudge 提示词 — 它们是瞬时纠正，不应进入摘要
                     || u.content.starts_with("【纠正】")
@@ -347,7 +348,9 @@ fn build_cm(messages: &[Message], previous_summary: Option<&str>) -> Vec<Value> 
         .collect();
     let mut prompt = format!("<conversation>\n{}\n</conversation>\n\n", old.join("\n\n"));
     let system = if let Some(prev) = previous_summary {
-        prompt.push_str(&format!("<previous-summary>\n{prev}\n</previous-summary>\n\n"));
+        prompt.push_str(&format!(
+            "<previous-summary>\n{prev}\n</previous-summary>\n\n"
+        ));
         prompt.push_str(super::UPDATE_SUMMARIZATION_PROMPT);
         super::COMPACTION_SYSTEM
     } else {
@@ -372,8 +375,7 @@ fn request_summary(
                 Ok(resp) => {
                     if let Some(t) = resp.content.as_ref().filter(|t| !t.trim().is_empty()) {
                         result = Some(t.clone());
-                    } else if let Some(t) =
-                        resp.reasoning.as_ref().filter(|t| !t.trim().is_empty())
+                    } else if let Some(t) = resp.reasoning.as_ref().filter(|t| !t.trim().is_empty())
                     {
                         result = Some(t.clone());
                     } else {
@@ -386,9 +388,7 @@ fn request_summary(
                 Err(e) => {
                     last_err = Some(format!("{e}"));
                     if attempt < 3 {
-                        std::thread::sleep(std::time::Duration::from_millis(
-                            500 * attempt as u64,
-                        ));
+                        std::thread::sleep(std::time::Duration::from_millis(500 * attempt as u64));
                     }
                 }
             }
@@ -401,7 +401,9 @@ fn request_summary(
             Ok(s) => Ok(s),
             Err(e) => {
                 eprintln!("[compaction] 专用压缩模型失败，回退主模型: {e}");
+                // 保留专用模型失败原因，两者都失败时如实上报（P91 回归锁定）
                 try_summarize(cm, primary)
+                    .map_err(|e2| format!("专用模型({e}) 与主模型({e2}) 均失败"))
             }
         },
         None => try_summarize(cm, primary),
@@ -592,6 +594,28 @@ mod tests {
         );
     }
 
+    // ── P97：build_cm 过滤语义记忆瞬时注入 ──
+
+    #[test]
+    fn build_cm_filters_semantic_memory_injection() {
+        let messages = vec![
+            Message::user("【长期记忆】\n1. [策略] 钻石镐策略：用钻石镐挖钻石最快"),
+            Message::user("【邻近世界记忆】\n钻石矿 @(10,12,-20)"),
+            Message::user("[当前目标] 挖钻石"),
+            Message::assistant_text("好的，先找钻石"),
+            Message::tool_result("c1", "goto", "到达"),
+        ];
+        let cm = build_cm(&messages, None);
+        let joined = serde_json::to_string(&cm).unwrap();
+        assert!(
+            !joined.contains("长期记忆"),
+            "【长期记忆】是每轮重生的瞬时注入，不应进入压缩摘要"
+        );
+        assert!(!joined.contains("邻近世界记忆"));
+        assert!(!joined.contains("当前目标"));
+        assert!(joined.contains("好的，先找钻石"), "真实交互历史应保留");
+    }
+
     // ── P96：后台预压缩（compaction_worker）──
 
     use crate::agent::AgentConfig;
@@ -622,8 +646,7 @@ mod tests {
     }
 
     fn wait_for<F: Fn() -> bool>(timeout_ms: u64, cond: F) -> bool {
-        let deadline = std::time::Instant::now()
-            + std::time::Duration::from_millis(timeout_ms);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
         while std::time::Instant::now() < deadline {
             if cond() {
                 return true;
@@ -651,7 +674,7 @@ mod tests {
             config,
         );
         // 造 400+ tokens 的消息（40 条 × ~20 chars）
-        for i in 0..40 {
+        for _ in 0..40 {
             agent
                 .messages
                 .push(Message::user(format!("早期对话片段 {}", "x".repeat(20))));
@@ -682,16 +705,16 @@ mod tests {
 
         // compact() 直接取用预取摘要，不再调用 LLM
         let result = agent.compact().unwrap();
-        assert!(
-            !result.summary.is_empty(),
-            "compact 应返回预取摘要"
-        );
+        assert!(!result.summary.is_empty(), "compact 应返回预取摘要");
         assert_eq!(
             calls.load(AtomicOrdering::SeqCst),
             1,
             "compact 不得再调用 provider"
         );
-        assert_eq!(agent.previous_summary.as_deref(), Some("后台预压缩摘要内容"));
+        assert_eq!(
+            agent.previous_summary.as_deref(),
+            Some("后台预压缩摘要内容")
+        );
         assert!(
             agent.messages[0]
                 .to_chatml()
@@ -717,7 +740,7 @@ mod tests {
             ToolRegistry::new(),
             config,
         );
-        for i in 0..40 {
+        for _ in 0..40 {
             agent
                 .messages
                 .push(Message::user(format!("早期对话片段 {}", "x".repeat(20))));
@@ -751,6 +774,10 @@ mod tests {
                 .load(AtomicOrdering::Acquire)),
             "消费后应能再次预取"
         );
-        assert_eq!(calls.load(AtomicOrdering::SeqCst), 2, "第二次预取应再次调用");
+        assert_eq!(
+            calls.load(AtomicOrdering::SeqCst),
+            2,
+            "第二次预取应再次调用"
+        );
     }
 }

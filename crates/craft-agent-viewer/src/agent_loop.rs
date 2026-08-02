@@ -497,7 +497,9 @@ fn run_agent(
         .with_knowledge_base(None)
         .with_knowledge_tool(false)
         .with_modes_config(profile.modes)
-        .with_task_chain(true);
+        .with_task_chain(true)
+        // P97：语义记忆按服务器隔离（坐标/基地类记忆不跨世界污染）
+        .with_memory_scope(mc_addr.to_string());
 
     let mut agent = {
         let path = Path::new(session_path);

@@ -206,15 +206,17 @@ DeepSeek 前缀缓存要求每次调用的系统提示完全相同。
   - `【邻近世界记忆】` — 邻近 WorldMemory
   - `[当前目标]` — self_prompt 目标
   - `【参考示例】` — few-shot 示例
-  - `【工具执行】...` — 折叠的工具历史
+
+**缓存规则**（DeepSeek kv_cache 文档）：命中需**完整匹配缓存前缀单元**（请求结束位置/公共前缀/固定间隔落盘）。因此历史消息必须 append-only、绝不重写早期消息（折叠/原地修改会碎前缀）；system + 早期历史稳定 = 前缀命中。命中率由 usage 的 `prompt_cache_hit_tokens`/`prompt_cache_miss_tokens` 观测（decision.rs 解析，Usage 字段）。
 
 **回归测试：** `regression_system_prompt_byte_stable_across_obs_streak`
 
 ## 工具调用（Tool Calling）
 
 - 所有工具使用 OpenAI function calling（JSON `tool_calls`），绝不用文本命令
-- `decision.rs` 中的 `fold_tool_history` 为 DeepSeek 兼容性剥离 tool_calls
-- 将 `tool_calls` + `role:tool` 转换为 `【工具执行】name(args) → result` 文本
+- **原生多轮协议**（官方 DeepSeek 文档即此格式）：`assistant` 消息带 `tool_calls` 数组，结果用 `role:"tool"` + `tool_call_id` 配对，历史逐轮 append
+- **思考模式约束**（官方文档）：携带 `tools` 的请求必须完整回传 `reasoning_content`，否则 400——`to_chatml` 独立字段回传（message.rs）
+- **不做折叠**：曾把 `tool_calls` + `role:tool` 折成 `【工具执行】name(args) → result` 文本，导致 LLM 模仿伪调用（decision.rs:347 注释），已移除
 - 工具返回同步结果
 
 ## 代码执行（Code Execution）

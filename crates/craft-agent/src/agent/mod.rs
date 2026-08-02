@@ -14,6 +14,7 @@ mod session;
 use crate::core::memory::WorldMemory;
 use crate::core::message::{Message, ToolCall, Usage, now_ms};
 use crate::core::prompt::{WorldInfoLib, default_mc_world_info};
+use crate::core::semantic_memory::{SemanticMemory, SemanticMemoryTool};
 use crate::core::session::{Session, SessionRolloverContext};
 use crate::core::skill::SkillLibrary;
 use crate::core::tool::{ToolEffects, ToolRegistry, ToolResult, plan_tool_effect_batches};
@@ -23,8 +24,8 @@ use anyhow::Result;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::VecDeque;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 // P63: pi-agent 级内存上限。原 10_000 条无界 Vec 会在长时运行下 OOM。
 // 改为 60 条硬上限 + 每轮 hard_truncate 环形缓冲，内存峰值恒定。
@@ -421,6 +422,10 @@ pub struct AgentConfig {
     /// Whether the data/tasks task chain should drive the current milestone.
     /// Disabled by default for generic adapters; the Minecraft viewer enables it.
     pub enable_task_chain: bool,
+    /// P97：语义记忆作用域（当前服务器/世界标识，如 "localhost:4444"）。
+    /// 注入时只显示 scope 为 None（全局知识）或与当前 scope 匹配的记忆，
+    /// 防止不同世界/服务器的坐标类记忆互相污染。None = 仅注入全局知识。
+    pub memory_scope: Option<String>,
 }
 impl AgentConfig {
     pub fn new(prompt: String, max_iterations: u32) -> Self {
@@ -448,6 +453,7 @@ impl AgentConfig {
             text_only_stop: 3,
             global_timeout_secs: 300,
             enable_task_chain: false,
+            memory_scope: None,
         }
     }
     /// 设置静态知识库（`None` 关闭，仅用工具自描述）。
@@ -463,6 +469,12 @@ impl AgentConfig {
     /// 设置卡死检测阈值（连续 N 轮失败时停止）。0 = 禁用。
     pub fn with_stuck_threshold(mut self, n: u32) -> Self {
         self.stuck_threshold = n;
+        self
+    }
+    /// P97：设置语义记忆作用域（当前服务器/世界，如 "localhost:4444"）。
+    /// 坐标/基地类记忆按此隔离；None 表示只注入全局知识。
+    pub fn with_memory_scope(mut self, scope: impl Into<String>) -> Self {
+        self.memory_scope = Some(scope.into());
         self
     }
     /// 设置是否注册 manage_knowledge 工具。
@@ -593,6 +605,9 @@ pub struct Agent {
     turn: u32,
     world_info: WorldInfoLib,
     world_memory: WorldMemory,
+    /// P97：语义记忆库（知识/策略/教训，跨会话持久化，`remember` 工具写入，
+    /// 每轮按相关性注入用户消息）。Arc<Mutex> 与 remember 工具共享。
+    semantic_memory: Arc<Mutex<SemanticMemory>>,
     skill_lib: SkillLibrary,
     knowledge_bootstrapped: bool,
     obs_streak: u32,
@@ -842,6 +857,21 @@ impl Agent {
         // P96：Box → Arc（同一 provider 可被后台预压缩 worker 共享；trait 已要求 Send+Sync）
         let provider: Arc<dyn LlmProvider> = Arc::from(provider);
         let compaction_provider: Option<Arc<dyn LlmProvider>> = compaction_provider.map(Arc::from);
+        // P97：语义记忆库加载 + remember 工具注册（核心层工具，跨 MC/非 MC 可用）。
+        let semantic_memory = Arc::new(Mutex::new(
+            SemanticMemory::new().with_path(
+                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join("..")
+                    .join("..")
+                    .join("data")
+                    .join("memory")
+                    .join("agent.jsonl"),
+            ),
+        ));
+        let mut tools = tools;
+        tools.register(Box::new(SemanticMemoryTool {
+            mem: semantic_memory.clone(),
+        }));
         Self {
             provider,
             tools,
@@ -858,6 +888,7 @@ impl Agent {
             turn: 0,
             world_info,
             world_memory,
+            semantic_memory,
             skill_lib: SkillLibrary::new(20),
             knowledge_bootstrapped: false,
             obs_streak: 0,
@@ -1239,6 +1270,7 @@ impl Agent {
             Message::User(u) => {
                 !(u.content.starts_with("【当前游戏状态（自动注入）】")
                     || u.content.starts_with("【邻近世界记忆】")
+                    || u.content.starts_with("【长期记忆】")
                     || u.content.starts_with("【任务进度】")
                     || u.content.starts_with("[当前目标]"))
             }
@@ -1361,6 +1393,15 @@ impl Agent {
         if let Some(mem_msg) = self.build_memory_context_msg() {
             self.messages
                 .push(Message::user(format!("【邻近世界记忆】\n{mem_msg}")));
+        }
+
+        // P97：语义记忆注入（知识/策略/教训，跨会话持久化）。查询词 =
+        // 当前目标 + 最近工具调用，按相关性 top-N 浮现。只注入 user 消息，
+        // 不碰系统提示（DeepSeek 前缀缓存字节稳定）。与 WorldMemory 互补：
+        // 空间坐标走【邻近世界记忆】几何渲染，这里是语义检索。
+        if let Some(mem_msg) = self.build_semantic_memory_msg() {
+            self.messages
+                .push(Message::user(format!("【长期记忆】\n{mem_msg}")));
         }
 
         // Dynamic instructions
@@ -2641,6 +2682,86 @@ mod tests {
         assert!(all_same, "坐标归一化后所有签名应相同: {:?}", normalized);
     }
 
+    // ── P97：语义记忆（remember 工具 → 每轮注入 → 轮间剔除）──
+    #[test]
+    fn semantic_memory_tool_registered_and_injects() {
+        use crate::core::message::Message;
+        let mut agent = Agent::new(
+            Box::new(FakeProvider),
+            ToolRegistry::new(),
+            AgentConfig::new("test".into(), 1),
+        );
+
+        // 1) remember 工具由 Agent::new 自动注册
+        assert!(
+            agent.tools.get("remember").is_some(),
+            "Agent::new 应注册 remember 工具"
+        );
+
+        // 2) LLM 调用 remember 写入语义记忆
+        let res = agent
+            .tools
+            .get("remember")
+            .unwrap()
+            .execute(
+                "c1",
+                serde_json::json!({
+                    "action": "save",
+                    "title": "钻石镐策略",
+                    "content": "用钻石镐挖钻石最快",
+                    "tags": ["diamond", "mining"],
+                    "kind": "strategy"
+                }),
+                None,
+            )
+            .unwrap();
+        assert!(
+            res.message.contains("已记录"),
+            "remember 应确认写入: {}",
+            res.message
+        );
+
+        // 3) 目标激活后 run 一轮 → 【长期记忆】注入（查询词 = goal）
+        agent.set_goal("挖钻石");
+        agent.run("start").unwrap();
+        let injected: Vec<&Message> = agent
+            .messages
+            .iter()
+            .filter(|m| matches!(m, Message::User(u) if u.content.starts_with("【长期记忆】")))
+            .collect();
+        assert_eq!(injected.len(), 1, "本轮应注入 1 条【长期记忆】");
+        let text = match injected[0] {
+            Message::User(u) => u.content.clone(),
+            _ => unreachable!(),
+        };
+        assert!(text.contains("钻石镐策略"), "注入内容应含记忆标题: {text}");
+
+        // 4) 第二轮 run：旧注入被剔除 + 重新注入 → 仍只有 1 条（不累积）
+        agent.run("start").unwrap();
+        let after: Vec<&Message> = agent
+            .messages
+            .iter()
+            .filter(|m| matches!(m, Message::User(u) if u.content.starts_with("【长期记忆】")))
+            .collect();
+        assert_eq!(after.len(), 1, "轮间剔除后不累积，仍 1 条");
+
+        // 清理：forget + 恢复持久化文件原状（测试不污染实机记忆）
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("data")
+            .join("memory")
+            .join("agent.jsonl");
+        let existed = path.exists();
+        {
+            let mut mem = agent.semantic_memory.lock().unwrap();
+            assert!(mem.forget("钻石镐策略"), "清理应删除测试记忆");
+        }
+        if !existed && path.exists() {
+            let _ = std::fs::remove_file(&path);
+        }
+    }
+
     // ── 回归：易变瞬时注入（perceive 状态 / 邻近世界记忆）每轮覆盖，不累积 ──
     #[test]
     fn volatile_injections_are_overwritten_not_accumulated() {
@@ -3049,14 +3170,23 @@ mod tests {
         let steer_q = agent.steering.clone();
         let injector = std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(50));
-            steer_q.lock().unwrap().push_back("去挖铁矿，旧计划作废".to_string());
+            steer_q
+                .lock()
+                .unwrap()
+                .push_back("去挖铁矿，旧计划作废".to_string());
         });
         agent.run("start").unwrap();
         injector.join().unwrap();
 
         // 1) goto 已执行（它所在的批次已开始），craft 被中断未执行
-        assert!(goto_executed.load(Ordering::SeqCst), "goto 所在批次已开始应执行");
-        assert!(!craft_executed.load(Ordering::SeqCst), "craft 应被 steering 中断未执行");
+        assert!(
+            goto_executed.load(Ordering::SeqCst),
+            "goto 所在批次已开始应执行"
+        );
+        assert!(
+            !craft_executed.load(Ordering::SeqCst),
+            "craft 应被 steering 中断未执行"
+        );
         // 2) LLM 调用恰好 2 次（初始 + 同轮重调）
         assert_eq!(call_count.load(Ordering::SeqCst), 2, "应同轮重调 1 次");
         // 3) 消息历史含【已中止】占位
@@ -3128,10 +3258,7 @@ mod tests {
         // 第一次压缩：无 previous-summary（初始摘要路径）
         agent.compact().unwrap();
         let first = last_prompt.lock().unwrap().clone().unwrap();
-        assert!(
-            first.contains("<conversation>"),
-            "首次压缩应走完整对话摘要"
-        );
+        assert!(first.contains("<conversation>"), "首次压缩应走完整对话摘要");
         assert!(
             !first.contains("<previous-summary>"),
             "首次压缩不应有 previous-summary"
