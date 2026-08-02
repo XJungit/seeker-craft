@@ -476,6 +476,9 @@ pub struct BotState {
     pub hunt_pickup_until: Arc<Mutex<u64>>,
     /// P77：战斗模式请求自动装备的武器名（防重复 push Equip；None=无待装备）。
     pub combat_equip_pending: Arc<Mutex<Option<String>>>,
+    /// P87：战斗走位（strafe）冷却 tick——上次走位后 40 tick（2s）内不再提交走位，
+    /// 避免每轮检查都打断寻路。i64 存 ticks_connected 快照。
+    pub combat_strafe_cd: Arc<Mutex<i64>>,
 }
 
 impl Default for BotState {
@@ -503,6 +506,7 @@ impl Default for BotState {
             scanned: Arc::new(Mutex::new(HashMap::new())),
             hunt_pickup_until: Arc::new(Mutex::new(0)),
             combat_equip_pending: Arc::new(Mutex::new(None)),
+            combat_strafe_cd: Arc::new(Mutex::new(0)),
         }
     }
 }
@@ -858,6 +862,7 @@ impl AzaleaBot {
             scanned: Arc::new(Mutex::new(HashMap::new())),
             hunt_pickup_until: Arc::new(Mutex::new(0)),
             combat_equip_pending: Arc::new(Mutex::new(None)),
+            combat_strafe_cd: Arc::new(Mutex::new(0)),
             goto_watchdog: Arc::new(Mutex::new((0, 0, 0, 0))),
             goto_cooldown: Arc::new(Mutex::new(HashMap::new())),
             no_move_ticks: Arc::new(Mutex::new(0)),
@@ -4089,42 +4094,53 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                     })
                                     .unwrap_or(false);
                                 if !held_is_weapon {
-                                    let mut pending = state.combat_equip_pending.lock().unwrap();
-                                    if pending.is_none()
-                                        && let Ok(inv) = bot.get_inventory() {
-                                            let best = [
-                                                "diamond_sword", "iron_sword", "stone_sword",
-                                                "wooden_sword", "diamond_axe", "iron_axe",
-                                                "stone_axe", "wooden_axe",
-                                            ]
-                                            .iter()
-                                            .find_map(|n| {
-                                                ItemKind::from_str(n).ok().filter(|k| {
-                                                    !find_item_slots(&inv, *k).is_empty()
-                                                })
-                                            });
-                                            if let Some(k) = best {
-                                                let name = k.to_str()
-                                                    .strip_prefix("minecraft:")
-                                                    .unwrap_or_else(|| k.to_str())
-                                                    .to_string();
-                                                *pending = Some(name.clone());
-                                                let tick_now = bot.ticks_connected();
-                                                let _ = state.action_mgr.submit(
-                                                    BotCommand::Equip {
-                                                        item: name.clone(),
-                                                        slot: "hand".into(),
-                                                    },
-                                                    Priority::Normal,
-                                                    &cmd_queue,
-                                                    tick_now,
-                                                );
-                                                let _ = evt_tx.send(BotEvent::Chat {
-                                                    content: format!("[MODE:self_defense] 主手无武器，自动装备 {name}"),
+                                    // P87 修复：背包无武器时（best=None）也要徒手攻击——
+                                    // 原实现无条件 continue，导致无武器时每 100 tick 都跳过攻击、
+                                    // bot 面对僵尸站桩挨打永不还手（probe 实测复现）。
+                                    let mut equip_submitted = false;
+                                    {
+                                        let mut pending = state.combat_equip_pending.lock().unwrap();
+                                        if pending.is_none()
+                                            && let Ok(inv) = bot.get_inventory() {
+                                                let best = [
+                                                    "diamond_sword", "iron_sword", "stone_sword",
+                                                    "wooden_sword", "diamond_axe", "iron_axe",
+                                                    "stone_axe", "wooden_axe",
+                                                ]
+                                                .iter()
+                                                .find_map(|n| {
+                                                    ItemKind::from_str(n).ok().filter(|k| {
+                                                        !find_item_slots(&inv, *k).is_empty()
+                                                    })
                                                 });
+                                                if let Some(k) = best {
+                                                    let name = k.to_str()
+                                                        .strip_prefix("minecraft:")
+                                                        .unwrap_or_else(|| k.to_str())
+                                                        .to_string();
+                                                    *pending = Some(name.clone());
+                                                    let tick_now = bot.ticks_connected();
+                                                    let _ = state.action_mgr.submit(
+                                                        BotCommand::Equip {
+                                                            item: name.clone(),
+                                                            slot: "hand".into(),
+                                                        },
+                                                        Priority::Normal,
+                                                        &cmd_queue,
+                                                        tick_now,
+                                                    );
+                                                    let _ = evt_tx.send(BotEvent::Chat {
+                                                        content: format!("[MODE:self_defense] 主手无武器，自动装备 {name}"),
+                                                    });
+                                                    equip_submitted = true;
+                                                }
                                             }
-                                        }
-                                    continue;
+                                    }
+                                    if equip_submitted {
+                                        // 等装备完成，本轮不攻击
+                                        continue;
+                                    }
+                                    // 背包无武器 → 徒手攻击（打总比站桩挨打好）
                                 } else {
                                     *state.combat_equip_pending.lock().unwrap() = None;
                                 }
@@ -4137,6 +4153,35 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                 if indexed && e.get_component::<azalea::entity::EntityKindComponent>().is_some() {
                                     e.attack();
                                     attacked = true;
+                                    // P87：战斗走位（strafe）——攻击后围绕敌人侧向移动，
+                                    // 目标点 = 敌人位置 + 径向 1.8m + 切向 2.0m（保持 ~2.7m 战斗距离），
+                                    // 避免站桩对砍（僵尸挥击/骷髅射箭全吃）。冷却 40 tick 防打断寻路。
+                                    let strafe_cd = *state.combat_strafe_cd.lock().unwrap();
+                                    if (bot.ticks_connected() as i64) >= strafe_cd
+                                        && let (Some(sp), Ok(ep)) = (self_pos, e.position())
+                                    {
+                                        let mut dx = sp.x - ep.x;
+                                        let mut dz = sp.z - ep.z;
+                                        let dl = (dx * dx + dz * dz).sqrt();
+                                        if dl > 0.1 {
+                                            dx /= dl;
+                                            dz /= dl;
+                                            let tx = (ep.x + dx * 1.8 + -dz * 2.0).floor() as i32;
+                                            let ty = sp.y.floor() as i32;
+                                            let tz = (ep.z + dz * 1.8 + dx * 2.0).floor() as i32;
+                                            let tick_now = bot.ticks_connected();
+                                            let _ = state.action_mgr.submit(
+                                                BotCommand::Goto { x: tx, y: ty, z: tz },
+                                                Priority::High,
+                                                &cmd_queue,
+                                                tick_now,
+                                            );
+                                            *state.combat_strafe_cd.lock().unwrap() = tick_now as i64 + 40;
+                                            let _ = evt_tx.send(BotEvent::Chat {
+                                                content: format!("[MODE:self_defense] strafe 走位 ({tx},{ty},{tz})"),
+                                            });
+                                        }
+                                    }
                                     let _ = evt_tx.send(BotEvent::Chat {
                                         content: format!("[MODE] 攻击 {kind:?}"),
                                     });

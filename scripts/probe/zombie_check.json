@@ -1,0 +1,7 @@
+{"between_delay_ms": 3000, "steps": [
+  {"cmd": "chat /difficulty hard"},
+  {"cmd": "chat /time set night"},
+  {"cmd": "chat /summon minecraft:zombie -485 95 -150"},
+  {"wait_ms": 8000},
+  {"state": true}
+]}

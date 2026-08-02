@@ -1906,7 +1906,7 @@ impl GameTool for RunScriptTool {
          equip(item,slot), discard(item,count), consume(item), \
          interact_entity(kind), trade(offer), chat(msg), pickup(), \
          perceive(), list_blueprints(), build_blueprint(name,x,y,z), \
-         sleep(ms), print(msg)。\
+         till_and_sow(x,y,z,seed), harvest(), sleep(ms), print(msg)。\
          脚本最后一行若是动作函数调用会作为返回值；不需要返回值时末尾加分号 `;`。\
          函数返回错误消息字符串（含\"失败\"/\"超时\"/\"未持有\"）不会中断脚本，可用 if 判断：\
          例1（流水线）: walk_to(10, 64, 20); gather(\"oak_log\", 4); craft(\"oak_planks\", 4); pickup();\

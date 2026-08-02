@@ -1,0 +1,9 @@
+{"between_delay_ms": 2500, "steps": [
+  {"cmd": "chat /difficulty"},
+  {"cmd": "chat /difficulty hard"},
+  {"cmd": "chat /kill @e[type=!minecraft:player,distance=..60]"},
+  {"cmd": "chat /summon minecraft:zombie -486 95 -144 {NoAI:0b,CanPickUpLoot:0b}"},
+  {"state": true},
+  {"wait_ms": 8000},
+  {"state": true}
+]}
