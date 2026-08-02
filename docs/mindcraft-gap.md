@@ -154,3 +154,16 @@
 - **P2.3 craft-agent-model 边界**（commit ca2995d）：Cargo.toml 文档标注只依赖 `craft_agent::core::{message,types}`（grep 验证 5 处引用全部落在此域）；CI quality job 新增 `cargo check -p craft-agent-model --no-default-features` 强制防上层渗透。真实边界从源头保证：后续改 model 若 `use craft_agent::agent::` 会连 CI quality 都红。
 
 > P2 后结构：craft-agent 保留原状；craft-agent-minecraft 的 azalea 层 = mod.rs(1995) + commands.rs + handler.rs + 12 子模块（action_manager/auto_craft/chest/craft/...）。P3 按需推进 craft.rs/tools_azalea.rs/agent_loop.rs。
+
+## 最近修复记录（2026-08-03 · P100 实机回归 + LLM harness 观测）
+
+> 触发：P2 重构后按工作流实机观测（probe 工具层 + viewer/LLM 策略层）。
+
+- **P100 till_and_sow 缺自动靠近（commit 8f95890）**：probe 对照实验发现——till_verify2（bot 距目标 2.92m）播种静默失败（无错误返回，验证读 Air），till_face（goto 贴脸 2.12m）成功。根因：P84 实现只做距离检查（≤4.5m 即通过）但**不自动靠近**，force_block 交互（`StartUseItemOn` + 伪造 HitResult）在 2.9m 处被服务端拒收。修复：距离 >2m 自动 `start_goto(target_pos)`（目标格实心，pathfinder 停在相邻格）+ 60×100ms 等待到达 2m 内，超时报错提示换位置。probe 验证：2.55m 外直接 tillandsow → 自动靠近（pos -488.5→-486.4）→ 犁地+播种成功（种子 20→19）✓。**教训：force_block 交互类工具（place/till/open 等）都要贴脸（≤2.5m），仅距离检查不可靠**——后续新增此类工具默认带自动靠近。
+- **LLM harness 实机观测（viewer + 真 LLM，~30 回合）**：确认 P2.1 批执行拆分/P89 失败重规划/P99 慢工具中止/P94 上限在实机全链路正常：
+  - 批分组 ✓：混合批慢工具执行后其余【已中止】占位（L96/L150/L172/L177/L183 多次出现）
+  - 失败重规划 ✓：装备失败→重试→合成 stone_pickaxe→成功装备（L124→L128→L157）
+  - 工具质量 ✓：mine 空气位给最近实心方块提示（L143/L146/L171）；goto 实心方块自动修正为上方可站立点（L138）；攻击>4 格自动拒绝（L110）
+  - 任务验证 ✓：假完成被拦（L130 "当前状态不满足任务条件"）
+  - **观察到的策略弱点（非 harness bug）**：LLM 反复小步试 mine 坐标（-485,60 空气后又试 -484,60），注入明确目标后立即转为连续 mine_below ✓——提示引导有效；背包已持 stone_pickaxe 却先 craft 一个（工具名称时序误判，L124 装备失败后 L128 合成重复）——**LLM 端知识待优化**（可考虑 perceive 背包后决策，非代码问题）
+- 工具层 probe 全量回归 ✓：smoke（goto/minebelow/pickup/equip/chat）+ harvest 全路径（无成熟报错→setblock 成熟→收割 wheat+1）+ till 闭环（真实 farmland 犁地播种成功）。P2.2 拆分后的 parse_chat_command 33 命令全部正常驱动。

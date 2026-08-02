@@ -93,6 +93,13 @@ cargo run -p craft-agent-minecraft --example agent_azalea_demo --features azalea
 4. `azalea/mod.rs::parse_chat_command`（probe 驱动）
 防线：`regression_every_registered_tool_maps_to_action`（漏一处即测试红）。
 
+### force_block 交互贴脸纪律（P100 教训）
+
+`block_interact`（force_block）类交互在 ~2.9m 外会被服务端静默拒收（无错误返回，
+验证时读到旧状态）。**任何 block_interact/交互类工具必须自动靠近 ≤2.5m 再交互**
+（参考 till.rs P100 修复：>2m 自动 start_goto + 60×100ms 等待），仅距离检查不可靠。
+已覆盖：till_and_sow（P100）、place（P29 距离已收紧）。新增交互类工具默认带靠近逻辑。
+
 ## 架构（5 个 crate）
 
 ```
