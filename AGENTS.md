@@ -78,10 +78,10 @@ cargo run -p craft-agent-minecraft --example agent_azalea_demo --features azalea
 ### 架构演进路线图（稳定优先，逐步执行）
 
 - **P1 已完成基线收尾（2026-08-03）**：P1.3 ctl 日志文件名统一 ✓ / P1.2 工具↔MinecraftAction 映射集中（`action_for()` + 47 工具/32 变体登记表）+ 全量回归测试 ✓ / P1.1 瞬态消息统一 `push_transient` helper（debug 断言前缀已登记；顺带修复 P12/P31/P56 nudge 的 `你的目标是:` 公共前缀漏登记 → 此前 nudge 永不剔除混入压缩摘要）✓
-- **P2 结构性（稳定优先逐步执行）**：
-  - P2.1 `run_one_turn` 拆分：`execute_batches`（批分组/READ 并行/WRITE 串行/slow 探测）+ `finalize_aborted`（P89/P90/P94/P99 四分支收敛为 `AbortDecision::{Reroute, Handoff, Done}` 枚举）
-  - P2.2 `azalea/mod.rs`（6340 行）拆分：`azalea/commands.rs`（BotCommand + parse_chat_command）+ `azalea/handler.rs`（tick 主体）
-  - P2.3 `craft-agent-model` 边界：文档标注只依赖 `craft_agent::core::{message,types}`，CI 用 `cargo check -p craft-agent-model --no-default-features` 验证不渗透上层
+- **P2 结构性已完成（2026-08-03）**：
+  - P2.1 `run_one_turn` 拆分 ✓：`execute_batch`（批分组/READ 并行/WRITE 串行/slow 探测）+ `finalize_abort`（P89/P90/P94/P99 四分支收敛为 `AbortDecision::{Reroute, Handoff}` 枚举）
+  - P2.2 `azalea/mod.rs`（6340 行）拆分 ✓：`azalea/commands.rs`（BotCommand 33 变体 + QueuedCommand + parse_chat_command + chat_parser 测试）+ `azalea/handler.rs`（BotState + tick 主体 handle + 专属 helper），mod.rs 1995 行，经 `pub use` re-export 保持外部引用零改动
+  - P2.3 `craft-agent-model` 边界 ✓：Cargo.toml 文档标注只依赖 `craft_agent::core::{message,types}`，CI quality job 用 `cargo check -p craft-agent-model --no-default-features` 验证不渗透上层
 - **P3 按需（不设 deadline）**：`craft.rs`（4730 行）按域拆 craft_table/smelt/brew/enchant/smith；`tools_azalea.rs`（4166 行）按域分组文件保留单一 `register_all_tools()`；`agent_loop.rs` 事件推送/会话保存/滚动抽 helper
 
 ### 新增能力纪律（工具/动作/消息格式的双点同步）
@@ -103,7 +103,9 @@ craft-agent              核心 agent 框架（约 5000 行）
   profile.rs             3 层 prompt 合并（_default → defaults/{mode} → {individual}）
 
 craft-agent-minecraft    MC 适配器（azalea 协议，约 12000+ 行）
-  azalea/mod.rs          AzaleaBot + tick handler、命令队列、BotCommand 变体（6340 行，P2.2 待拆）
+  azalea/mod.rs          AzaleaBot + connect/动作 API/背包三件套（1995 行，P2.2 已拆）
+  azalea/commands.rs     BotCommand 33 变体 + QueuedCommand + parse_chat_command + chat_parser 测试（P2.2 拆出）
+  azalea/handler.rs      BotState + tick 主体 handle + 专属 helper（now_ms/nearby_active_portal/block_memory_meta/record_surroundings/nearby_player_position）（P2.2 拆出）
   azalea/craft.rs        2x2/3x3 合成、熔炼、锻造、切石、酿造、附魔（4730 行）
   azalea/gather.rs       方块扫描 + 工具等级检查 + 自动装备（568 行）
   azalea/auto_craft.rs   递归配方满足 + 工具方块放置（681 行）
@@ -348,7 +350,7 @@ cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot 
 
 脚本格式：`steps` 数组，每项为 `{"cmd": "..."}` / `{"wait_ms": N}` / `{"state": true}`（打印状态快照）。
 probe bot 名 `craftbot_probe`，与 agent bot 共存不冲突。命令文本见
-`parse_chat_command`（azalea/mod.rs:508，支持 goto/mine x y z/minebelow/mineabove/attack/gather/
+`parse_chat_command`（azalea/commands.rs，支持 goto/mine x y z/minebelow/mineabove/attack/gather/
 craft/craft3/smelt/autocraft/place/open/enchant/trade/interact/interactblock x y z/tillandsow x y z seed/chat/chat 消息/
 follow/give/equip/discard/consume/chestview/chestwithdraw/chestdeposit/makeobsidian/pickup/defend/sleep/harvest）。
 需要 LLM 决策的测试（策略/规划/目标分解）才开 viewer+agent。
