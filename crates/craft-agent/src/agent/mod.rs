@@ -71,6 +71,9 @@ pub(super) const TRANSIENT_USER_PREFIXES: &[&str] = &[
     // ── 会话级一次性通知（仅当轮有意义，剔除防历史膨胀）──
     "【自动滚动恢复】",
     "【系统提示】",
+    // P1.1：P12/P31/P56 全部 nudge 的公共前缀（`你的目标是: {g}。` + 登记标签）。
+    // 此前从未登记 → 这些 nudge 永不剔除、混入压缩摘要。登记后每轮重生。
+    "你的目标是: ",
 ];
 
 pub use compaction::is_obs_tool;
@@ -1094,6 +1097,31 @@ impl Agent {
         }
     }
 
+    /// B3/P1.1：轮间瞬态 user 消息的唯一注入入口。
+    /// 注入前校验内容以 `TRANSIENT_USER_PREFIXES` 中已登记的标签开头——漏登记
+    /// 的标签不会在下一轮被剔除（mod.rs:1365 覆盖式清理），会永久污染历史。
+    /// debug 断言失效即崩溃（所有测试都跑在 debug 下，新增瞬态消息漏登记 = 测试红）。
+    pub(super) fn push_transient(&mut self, content: impl Into<String>) {
+        let content = content.into();
+        self.assert_transient_prefix(&content);
+        self.messages.push(Message::user(content));
+    }
+
+    /// 带图片的瞬态注入（VLM：auto-perceive 状态快照需附图）。
+    pub(super) fn push_transient_with_images(&mut self, content: impl Into<String>, images: Vec<String>) {
+        let content = content.into();
+        self.assert_transient_prefix(&content);
+        self.messages.push(Message::user_with_images(content, images));
+    }
+
+    fn assert_transient_prefix(&self, content: &str) {
+        debug_assert!(
+            TRANSIENT_USER_PREFIXES.iter().any(|p| content.starts_with(p)),
+            "push_transient 内容未以已登记前缀开头：`{}...`——必须同步加入 TRANSIENT_USER_PREFIXES",
+            content.chars().take(24).collect::<String>()
+        );
+    }
+
     // ── SelfPrompter 三态状态机 ──
     //
     // 学习自 Mindcraft self_prompter.js：目标有 Stopped/Active/Paused 三态，
@@ -1330,9 +1358,9 @@ impl Agent {
                         log.push(format!("[t{turn}] 压缩失败，改用硬截断: {e}"));
                         // #12 修复：硬截断后注入提示，避免 LLM 对上下文丢失完全无感知
                         self.hard_truncate();
-                        self.messages.push(Message::user(
+                        self.push_transient(
                             "【系统提示】由于上下文压缩失败，早期对话已被截断，仅保留最近片段。请基于当前可见信息继续。".to_string(),
-                        ));
+                        );
                         self.session_msg_offset = self.messages.len();
                     }
                 }
@@ -1373,8 +1401,7 @@ impl Agent {
                         self.last_position_key = Some(pk.clone());
                     }
                     let state_msg = format!("【当前游戏状态（自动注入）】\n{}", result.message);
-                    self.messages
-                        .push(Message::user_with_images(state_msg, result.images));
+                    self.push_transient_with_images(state_msg, result.images);
                 }
                 Err(e) => {
                     eprintln!("[DBG] auto_perceive FAIL: {e}");
@@ -1392,7 +1419,7 @@ impl Agent {
                  3. 如果在做地下挖掘，尝试换一个方向或回到地表",
                 self.position_stale_turns
             );
-            self.messages.push(Message::user(nudge));
+            self.push_transient(nudge);
             log.push(format!(
                 "[t{turn}] 位置卡死 {} 轮，注入探索建议",
                 self.position_stale_turns
@@ -1446,21 +1473,18 @@ impl Agent {
         if self.config.enable_self_prompt
             && let PromptState::Active { goal, .. } = &self.prompt_state
         {
-            self.messages
-                .push(Message::user(format!("[当前目标] {goal}")));
+            self.push_transient(format!("[当前目标] {goal}"));
         }
 
         // Task progress: inject completed/pending tasks when tasks are loaded.
         let task_progress = self.build_task_progress_msg();
         if !task_progress.is_empty() {
-            self.messages
-                .push(Message::user(format!("【任务进度】\n{}", task_progress)));
+            self.push_transient(format!("【任务进度】\n{}", task_progress));
         }
 
         // A2: Stage knowledge — tier 累积注入（瞬态，轮间剔除）。
         if let Some(sk) = self.build_stage_knowledge_msg() {
-            self.messages
-                .push(Message::user(format!("【阶段知识】\n{sk}")));
+            self.push_transient(format!("【阶段知识】\n{sk}"));
         }
 
         // Auto-check task completion using the latest perceive text.
@@ -1471,13 +1495,12 @@ impl Agent {
         if (self.config.enable_world_info || self.config.enable_skill)
             && let Some(dynamic_msg) = self.build_dynamic_context_msg()
         {
-            self.messages.push(Message::user(dynamic_msg));
+            self.push_transient(dynamic_msg);
         }
 
         // WorldMemory 邻近记忆注入（空间-状态长期记忆）
         if let Some(mem_msg) = self.build_memory_context_msg() {
-            self.messages
-                .push(Message::user(format!("【邻近世界记忆】\n{mem_msg}")));
+            self.push_transient(format!("【邻近世界记忆】\n{mem_msg}"));
         }
 
         // P97：语义记忆注入（知识/策略/教训，跨会话持久化）。查询词 =
@@ -1485,13 +1508,12 @@ impl Agent {
         // 不碰系统提示（DeepSeek 前缀缓存字节稳定）。与 WorldMemory 互补：
         // 空间坐标走【邻近世界记忆】几何渲染，这里是语义检索。
         if let Some(mem_msg) = self.build_semantic_memory_msg() {
-            self.messages
-                .push(Message::user(format!("【长期记忆】\n{mem_msg}")));
+            self.push_transient(format!("【长期记忆】\n{mem_msg}"));
         }
 
         // Dynamic instructions
         if let Some(instr) = self.build_dynamic_instructions_msg() {
-            self.messages.push(Message::user(instr));
+            self.push_transient(instr);
         }
 
         // P89：turn 内失败重规划循环（agentic-loop 折中，2026-08-02）。
@@ -1742,7 +1764,7 @@ impl Agent {
                  根据当前状态选一个工具立即行动。"
                     )
                 };
-                self.messages.push(Message::user(nudge));
+                self.push_transient(nudge);
                 log.push(format!(
                     "[t{turn}] 提醒: 纯文字回复 (连续 {} 次)，已注入续跑指令",
                     self.text_only_count
@@ -2135,7 +2157,7 @@ impl Agent {
                                  若 perceive 显示目标未达成，继续调用 gather/mine/craft/smelt 等工具推进。\n\
                                  再用文字说「完成」或 set_goal(\"\") 清空目标将被视为故障。"
                                 );
-                                self.messages.push(Message::user(nudge));
+                                self.push_transient(nudge);
                                 log.push(format!(
                                 "[t{turn}] P58 拦截: set_goal(\"\") + 文字宣告完成，注入强制验证 nudge"
                             ));
@@ -2187,7 +2209,7 @@ impl Agent {
             // 与 tool result 之间导致 DeepSeek/OpenAI 400（P89：nudge 注入移到循环内，
             // 与失败重规划同轮生效；consecutive_failures 分支保留在循环外）。
             if let Some(nudge) = loop_nudge.take() {
-                self.messages.push(Message::user(nudge));
+                self.push_transient(nudge);
             } else if let Some(suggestion) = error_suggestion.take() {
                 // P53：错误驱动重规划 nudge（优先级高于 consecutive_failures）。
                 // 当工具 Err 含「建议：先 X」时，强制 LLM 按 X 执行，禁止重试原工具。
@@ -2200,7 +2222,7 @@ impl Agent {
                  3. 不要宣告任务完成或放弃，按建议链路推进\n\
                  4. 若建议原料不足，先 perceive 查看背包，再 gather 缺的原料"
                 );
-                self.messages.push(Message::user(nudge));
+                self.push_transient(nudge);
                 log.push(format!("[t{turn}] 错误驱动 nudge: 注入强制重规划指令"));
             }
 
@@ -2232,7 +2254,7 @@ impl Agent {
                 if let Some(sug) = extract_error_suggestion(&fmsg) {
                     nudge.push_str(&format!("\n建议：{sug}"));
                 }
-                self.messages.push(Message::user(nudge));
+                self.push_transient(nudge);
                 log.push(format!(
                 "[t{turn}] P89 失败重规划: {ftool} 失败，中止 {} 个调用，同轮重调 LLM ({reroute}/{reroute_max})",
                 aborted_names.len()
@@ -2267,7 +2289,7 @@ impl Agent {
                     aborted_names.join(", "),
                     steers.join("；"),
                 );
-                self.messages.push(Message::user(nudge));
+                self.push_transient(nudge);
                 log.push(format!(
                     "[t{turn}] P90 新指令中断: steering 到达，中止 {} 个调用，同轮重调 LLM ({reroute}/{reroute_max})",
                     aborted_names.len()
@@ -2293,7 +2315,7 @@ impl Agent {
                  先 gather 关键原料再合成），避免大量小步调用。",
                     turn_tool_count
                 );
-                self.messages.push(Message::user(nudge));
+                self.push_transient(nudge);
                 log.push(format!(
                     "[t{turn}] P94 软交棒: 本轮执行 {turn_tool_count} 个工具，达上限 {max_tools_per_turn}，注入收敛指令"
                 ));
@@ -2346,7 +2368,7 @@ impl Agent {
                  {fallback}",
                 self.consecutive_failures
             );
-            self.messages.push(Message::user(nudge));
+            self.push_transient(nudge);
             log.push(format!(
                 "[t{turn}] 连续失败检测: {} 轮失败，注入诊断提示+回退建议",
                 self.consecutive_failures
@@ -2422,6 +2444,48 @@ mod tests {
         let mut agent = Agent::new(Box::new(FakeProvider), tools, config);
         agent.run("hello").unwrap();
         assert!(!agent.messages.is_empty());
+    }
+
+    // P1.1：瞬态注入必须走 push_transient，且前缀必须已登记
+    // （未登记 → 下一轮覆盖式清理漏删 → 历史永久污染）。
+    #[test]
+    #[should_panic(expected = "push_transient 内容未以已登记前缀开头")]
+    fn push_transient_rejects_unregistered_prefix() {
+        let mut agent = Agent::new(
+            Box::new(FakeProvider),
+            ToolRegistry::new(),
+            AgentConfig::new("test".into(), 1),
+        );
+        agent.push_transient("【未登记前缀】内容");
+    }
+
+    #[test]
+    fn push_transient_accepts_registered_prefix() {
+        let mut agent = Agent::new(
+            Box::new(FakeProvider),
+            ToolRegistry::new(),
+            AgentConfig::new("test".into(), 1),
+        );
+        agent.push_transient("【纠偏】回头做正事");
+        assert!(matches!(
+            agent.messages.last(),
+            Some(Message::User(u)) if u.content == "【纠偏】回头做正事"
+        ));
+    }
+
+    #[test]
+    fn push_transient_with_images_keeps_images() {
+        let mut agent = Agent::new(
+            Box::new(FakeProvider),
+            ToolRegistry::new(),
+            AgentConfig::new("test".into(), 1),
+        );
+        agent.push_transient_with_images(
+            "【当前游戏状态（自动注入）】\n生命: 20/20".to_string(),
+            vec!["img1".into()],
+        );
+        let last = agent.messages.last().unwrap();
+        assert!(matches!(last, Message::User(u) if u.images.len() == 1));
     }
 
     #[test]
