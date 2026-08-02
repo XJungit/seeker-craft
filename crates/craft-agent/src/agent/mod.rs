@@ -1628,6 +1628,7 @@ impl Agent {
     /// 无论其是否真的执行），据此注入对应 nudge / log，并决策：
     /// - `Reroute`：同轮重调 LLM（P89 失败 / P90 新指令，reroute 预算未耗尽）
     /// - `Handoff`：停止本轮（P94 预算 / P99 慢动作 / reroute 预算耗尽）
+    #[allow(clippy::too_many_arguments)]
     fn finalize_abort(
         &mut self,
         calls: &[ToolCall],
