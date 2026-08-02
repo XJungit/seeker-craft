@@ -4,7 +4,7 @@
 
 use azalea::BlockPos;
 use azalea::Client;
-use azalea::block::{BlockState, BlockTrait};
+use azalea::block::BlockState;
 use azalea::pathfinder::goals::BlockPosGoal;
 use azalea::prelude::*;
 use azalea_registry::builtin::BlockKind;
@@ -151,6 +151,7 @@ pub(crate) async fn do_harvest(bot: &Client, max_crops: u32) -> Result<String, S
 #[cfg(test)]
 mod tests {
     use super::*;
+    use azalea::block::BlockTrait;
 
     #[test]
     fn harvestable_kinds_are_seed_crops() {
@@ -181,7 +182,7 @@ mod tests {
         assert!(!crop_is_mature(BlockState::from(beet2)));
 
         // 非作物一律不算成熟
-        let stone = BlockState::from(azalea::block::blocks::Stone::default());
+        let stone = BlockState::from(azalea::block::blocks::Stone);
         assert!(!crop_is_mature(stone));
     }
 }
