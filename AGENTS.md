@@ -77,7 +77,7 @@ cargo run -p craft-agent-minecraft --example agent_azalea_demo --features azalea
 
 ### 架构演进路线图（稳定优先，逐步执行）
 
-- **P1 已完成基线收尾**：P1.3 ctl 日志文件名统一 ✓ / P1.2 工具↔MinecraftAction 映射集中 + 全量回归测试 ✓ / P1.1 瞬态消息统一 `push_transient` helper ✓
+- **P1 已完成基线收尾（2026-08-03）**：P1.3 ctl 日志文件名统一 ✓ / P1.2 工具↔MinecraftAction 映射集中（`action_for()` + 47 工具/32 变体登记表）+ 全量回归测试 ✓ / P1.1 瞬态消息统一 `push_transient` helper（debug 断言前缀已登记；顺带修复 P12/P31/P56 nudge 的 `你的目标是:` 公共前缀漏登记 → 此前 nudge 永不剔除混入压缩摘要）✓
 - **P2 结构性（稳定优先逐步执行）**：
   - P2.1 `run_one_turn` 拆分：`execute_batches`（批分组/READ 并行/WRITE 串行/slow 探测）+ `finalize_aborted`（P89/P90/P94/P99 四分支收敛为 `AbortDecision::{Reroute, Handoff, Done}` 枚举）
   - P2.2 `azalea/mod.rs`（6340 行）拆分：`azalea/commands.rs`（BotCommand + parse_chat_command）+ `azalea/handler.rs`（tick 主体）
@@ -98,7 +98,7 @@ cargo run -p craft-agent-minecraft --example agent_azalea_demo --features azalea
 ```
 craft-agent              核心 agent 框架（约 5000 行）
   agent/                 run_one_turn（4098 行含测试）、compaction、prompt、modes、session
-  core/                  types（MinecraftAction 27 变体）、GameTool trait、ToolRegistry、memory（WorldMemory）、skill
+  core/                  types（MinecraftAction 32 变体）、GameTool trait、ToolRegistry、memory（WorldMemory）、skill
   task.rs                Task 系统：23 个 tier1-6 任务，结构化成功条件
   profile.rs             3 层 prompt 合并（_default → defaults/{mode} → {individual}）
 
