@@ -1589,19 +1589,31 @@ impl AzaleaBot {
                             match bot.nearest_entities::<()>() {
                                 Ok(ents) => {
                                     let self_id = bot.entity().id();
+                                    // P88-e：tab_list 查玩家名字，区分幽灵玩家/用户/其他 bot
+                                    let tab = bot.tab_list().ok();
                                     out.push_str(&format!("\nents({}):", ents.len()));
                                     for e in ents.iter() {
                                         let kind = e
                                             .kind()
                                             .map(|k| format!("{k:?}"))
                                             .unwrap_or_else(|_| "?".into());
+                                        let mut name = String::new();
+                                        if kind == "Player"
+                                            && let Ok(uuid) = e.uuid()
+                                            && let Some(tab) = &tab
+                                        {
+                                            name = tab
+                                                .get(&uuid)
+                                                .map(|p| format!(" name={}", p.profile.name))
+                                                .unwrap_or_default();
+                                        }
                                         let pos = e
                                             .position()
                                             .map(|p| format!("({:.1},{:.1},{:.1})", p.x, p.y, p.z))
                                             .unwrap_or_else(|_| "?".into());
                                         let dist = e.distance_to_client().unwrap_or(-1.0);
                                         out.push_str(&format!(
-                                            " id={} kind={kind} pos={pos} dist={dist:.1}m{}",
+                                            " id={} kind={kind}{name} pos={pos} dist={dist:.1}m{}",
                                             e.id(),
                                             if e.id() == self_id { "*self" } else { "" }
                                         ));
