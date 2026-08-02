@@ -12,7 +12,7 @@ mod prompt;
 mod session;
 
 use crate::core::memory::WorldMemory;
-use crate::core::message::{Message, Usage, now_ms};
+use crate::core::message::{Message, ToolCall, Usage, now_ms};
 use crate::core::prompt::{WorldInfoLib, default_mc_world_info};
 use crate::core::session::{Session, SessionRolloverContext};
 use crate::core::skill::SkillLibrary;
@@ -1355,135 +1355,147 @@ impl Agent {
             self.messages.push(Message::user(instr));
         }
 
-        let ctx = self.build_context();
+        // P89：turn 内失败重规划循环（agentic-loop 折中，2026-08-02）。
+        // opencode 式 harness 每次工具结果都回填 LLM 再决策；MC 工具是异步慢动作
+        // （goto/挖矿 1-30s），逐工具循环代价过高。折中：仅当 WRITE 工具失败时
+        // （副作用类调用基于预测状态，失败后剩余调用必然继续无效）中止剩余批次、
+        // 同轮重调 LLM 重新决策，最多 reroute_max 次。只读工具失败不回退
+        // （无副作用，结果照常回填历史）。
+        let reroute_max = 2u32;
+        let mut reroute = 0u32;
+        let mut turn_had_error = false;
+        // P89 循环返回最后一次 LLM 响应的工具调用（纯文字轮为 None）
+        let last_calls: Option<Vec<ToolCall>> = loop {
+            let ctx = self.build_context();
 
-        // LLM call with retry
-        let mut response = None;
-        let mut last_error;
-        let max_attempts = if self.config.enable_retry && self.config.retry.enabled {
-            1 + self.config.retry.max_retries
-        } else {
-            1
-        };
-        for attempt in 1..=max_attempts {
-            match self.provider.complete(&ctx.messages, &ctx.tools) {
-                Ok(resp) => {
-                    response = Some(resp);
-                    if attempt > 1 {
-                        self.events.push(AgentEvent::AutoRetryEnd {
-                            success: true,
-                            attempt,
-                            final_error: None,
-                        });
-                    }
-                    break;
-                }
-                Err(e) => {
-                    last_error = format!("{e}");
-                    let retryable = is_retryable_error(&last_error);
-                    if attempt >= max_attempts || !retryable {
+            // LLM call with retry
+            let mut response = None;
+            let mut last_error;
+            let max_attempts = if self.config.enable_retry && self.config.retry.enabled {
+                1 + self.config.retry.max_retries
+            } else {
+                1
+            };
+            for attempt in 1..=max_attempts {
+                match self.provider.complete(&ctx.messages, &ctx.tools) {
+                    Ok(resp) => {
+                        response = Some(resp);
                         if attempt > 1 {
                             self.events.push(AgentEvent::AutoRetryEnd {
-                                success: false,
+                                success: true,
                                 attempt,
-                                final_error: Some(last_error.clone()),
+                                final_error: None,
                             });
                         }
-                        log.push(format!(
-                            "[t{turn}] LLM 错误 (第{attempt}/{max_attempts}次): {last_error}",
-                        ));
                         break;
                     }
-                    let delay_ms = self.config.retry.delay_ms(attempt);
-                    self.events.push(AgentEvent::AutoRetryStart {
-                        attempt,
-                        max_attempts,
-                        delay_ms,
-                        error_message: last_error.clone(),
-                    });
-                    let ticks = delay_ms / 50;
-                    for _ in 0..ticks {
-                        if self.retry_abort.load(Ordering::Relaxed) {
+                    Err(e) => {
+                        last_error = format!("{e}");
+                        let retryable = is_retryable_error(&last_error);
+                        if attempt >= max_attempts || !retryable {
+                            if attempt > 1 {
+                                self.events.push(AgentEvent::AutoRetryEnd {
+                                    success: false,
+                                    attempt,
+                                    final_error: Some(last_error.clone()),
+                                });
+                            }
+                            log.push(format!(
+                                "[t{turn}] LLM 错误 (第{attempt}/{max_attempts}次): {last_error}",
+                            ));
                             break;
                         }
-                        std::thread::sleep(std::time::Duration::from_millis(50));
-                    }
-                    if self.retry_abort.load(Ordering::Relaxed) {
-                        log.push(format!("[t{turn}] 用户中止重试"));
-                        break;
+                        let delay_ms = self.config.retry.delay_ms(attempt);
+                        self.events.push(AgentEvent::AutoRetryStart {
+                            attempt,
+                            max_attempts,
+                            delay_ms,
+                            error_message: last_error.clone(),
+                        });
+                        let ticks = delay_ms / 50;
+                        for _ in 0..ticks {
+                            if self.retry_abort.load(Ordering::Relaxed) {
+                                break;
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(50));
+                        }
+                        if self.retry_abort.load(Ordering::Relaxed) {
+                            log.push(format!("[t{turn}] 用户中止重试"));
+                            break;
+                        }
                     }
                 }
             }
-        }
 
-        let Some(response) = response else {
-            eprintln!("[DBG] LLM: all attempts failed");
-            self.persist_turn()?;
-            self.events.push(AgentEvent::Done {
-                reason: "LLM call failed after retries".into(),
-            });
-            return Ok((log, false));
-        };
-
-        self.usage = response.usage.clone();
-        log.push(format!(
-            "[t{turn}] tokens: input={} out={} total={} cache_hit={} cache_miss={}",
-            response.usage.input_tokens,
-            response.usage.output_tokens,
-            response.usage.total_tokens,
-            response.usage.cache_hit_tokens,
-            response.usage.cache_miss_tokens,
-        ));
-
-        // Track obs streak — text only
-        let calls = response.tool_calls.clone();
-        if calls.is_empty() {
-            self.obs_streak += 1;
-            // P0 改进1: SelfPrompter 强制执行 — 连续纯文字回复计数
-            self.text_only_count = self.text_only_count.saturating_add(1);
-            // 连续 N 次纯文字回复 → 强制停止（不再 nudge）
-            if self.config.text_only_stop > 0 && self.text_only_count >= self.config.text_only_stop
-            {
-                log.push(format!(
-                    "[卡死检测] 连续 {} 次纯文字回复，强制停止",
-                    self.text_only_count
-                ));
-                self.events.push(AgentEvent::AgentEnd);
-                self.messages.push(Message::assistant_response(&response));
+            let Some(response) = response else {
+                eprintln!("[DBG] LLM: all attempts failed");
+                self.persist_turn()?;
+                self.events.push(AgentEvent::Done {
+                    reason: "LLM call failed after retries".into(),
+                });
                 return Ok((log, false));
-            }
-            self.events.push(AgentEvent::Assistant {
-                content: response.content.clone(),
-                reasoning: response.reasoning.clone(),
-                calls: vec![],
-            });
-            self.messages.push(Message::assistant_response(&response));
-            let content = response.content.as_deref().unwrap_or("");
-            let goal_hint = self
-                .current_goal()
-                .map(|g| format!("你的目标是: {g}。"))
-                .unwrap_or_default();
-            // P12 修复（2026-07-26）：思考用尽 token 的专门检测。
-            // deepseek-v4-flash-free 默认开启 thinking 模式，reasoning_content 会消耗大量 token。
-            // 当 max_tokens 不足以同时容纳 reasoning + content + tool_calls 时，
-            // 会出现 content="" + tool_calls=[] + finish_reason="length" + reasoning_content 非空，
-            // 此时通用的"纯文字回复"nudge 无效（LLM 并没有产出文字，只是在思考），
-            // 需要专门提示 LLM 跳过思考直接输出工具调用。
-            let is_thinking_timeout = matches!(
-                response.stop_reason,
-                crate::core::message::StopReason::Length
-            ) && content.is_empty()
-                && response.reasoning.is_some()
-                && response.reasoning.as_deref().is_some_and(|r| !r.is_empty());
-            // P12 + P56 修复（2026-07-26/27）：过早宣告任务完成检测。
-            // LLM 在纯文字回复里宣告"任务完成/目标完成"但未实际验证，
-            // 此时目标仍在 Active 态，应强制 perceive 验证而非停止行动。
-            //
-            // P56 扩展（2026-07-27）：scan_20260727_205138.md 显示 step 11/14/33/41
-            // 都出现 LLM 宣告"smelt 任务完成 ✅"但无 tool_call，浪费 4 轮。
-            // 原关键词列表漏掉了「✅」「已验证」「最终确认」等总结性措辞，
-            // 现在扩展到任何包含「✅」或总结性关键词的纯文字回复。
-            let is_premature_completion = content.contains("任务完成")
+            };
+
+            self.usage = response.usage.clone();
+            log.push(format!(
+                "[t{turn}] tokens: input={} out={} total={} cache_hit={} cache_miss={}",
+                response.usage.input_tokens,
+                response.usage.output_tokens,
+                response.usage.total_tokens,
+                response.usage.cache_hit_tokens,
+                response.usage.cache_miss_tokens,
+            ));
+
+            // Track obs streak — text only
+            let calls = response.tool_calls.clone();
+            if calls.is_empty() {
+                self.obs_streak += 1;
+                // P0 改进1: SelfPrompter 强制执行 — 连续纯文字回复计数
+                self.text_only_count = self.text_only_count.saturating_add(1);
+                // 连续 N 次纯文字回复 → 强制停止（不再 nudge）
+                if self.config.text_only_stop > 0
+                    && self.text_only_count >= self.config.text_only_stop
+                {
+                    log.push(format!(
+                        "[卡死检测] 连续 {} 次纯文字回复，强制停止",
+                        self.text_only_count
+                    ));
+                    self.events.push(AgentEvent::AgentEnd);
+                    self.messages.push(Message::assistant_response(&response));
+                    return Ok((log, false));
+                }
+                self.events.push(AgentEvent::Assistant {
+                    content: response.content.clone(),
+                    reasoning: response.reasoning.clone(),
+                    calls: vec![],
+                });
+                self.messages.push(Message::assistant_response(&response));
+                let content = response.content.as_deref().unwrap_or("");
+                let goal_hint = self
+                    .current_goal()
+                    .map(|g| format!("你的目标是: {g}。"))
+                    .unwrap_or_default();
+                // P12 修复（2026-07-26）：思考用尽 token 的专门检测。
+                // deepseek-v4-flash-free 默认开启 thinking 模式，reasoning_content 会消耗大量 token。
+                // 当 max_tokens 不足以同时容纳 reasoning + content + tool_calls 时，
+                // 会出现 content="" + tool_calls=[] + finish_reason="length" + reasoning_content 非空，
+                // 此时通用的"纯文字回复"nudge 无效（LLM 并没有产出文字，只是在思考），
+                // 需要专门提示 LLM 跳过思考直接输出工具调用。
+                let is_thinking_timeout = matches!(
+                    response.stop_reason,
+                    crate::core::message::StopReason::Length
+                ) && content.is_empty()
+                    && response.reasoning.is_some()
+                    && response.reasoning.as_deref().is_some_and(|r| !r.is_empty());
+                // P12 + P56 修复（2026-07-26/27）：过早宣告任务完成检测。
+                // LLM 在纯文字回复里宣告"任务完成/目标完成"但未实际验证，
+                // 此时目标仍在 Active 态，应强制 perceive 验证而非停止行动。
+                //
+                // P56 扩展（2026-07-27）：scan_20260727_205138.md 显示 step 11/14/33/41
+                // 都出现 LLM 宣告"smelt 任务完成 ✅"但无 tool_call，浪费 4 轮。
+                // 原关键词列表漏掉了「✅」「已验证」「最终确认」等总结性措辞，
+                // 现在扩展到任何包含「✅」或总结性关键词的纯文字回复。
+                let is_premature_completion = content.contains("任务完成")
                 || content.contains("目标完成")
                 || content.contains("目标已全部完成")
                 || content.contains("全部完成")
@@ -1502,300 +1514,307 @@ impl Agent {
                 || content.contains("craft 任务")
                 || content.contains("gather 任务")
                 || content.contains("mine 任务");
-            // 文字伪调用检测：LLM 在 assistant 文字里写 `tool(...)` 伪调用而不产生真实 tool_calls。
-            let _lower = content.to_lowercase();
-            let is_pseudo_call = content.contains("【工具")
-                || content.contains("【tool")
-                || content.contains("[工具")
-                || content.contains("[tool ")
-                || content.contains("→ 命令完成")
-                || content.contains("→ ok")
-                || content.contains("→ OK")
-                || content.contains("→ 已到达")
-                || content.contains("→ 已完成")
-                || content.contains("工具执行】")
-                || content.contains("工具调用】")
-                || (content.contains("goto(")
-                    || content.contains("mine(")
-                    || content.contains("gather(")
-                    || content.contains("craft(")
-                    || content.contains("attack(")
-                    || content.contains("place("))
-                    && response.tool_calls.is_empty();
-            // P0 改进1: 连续 ≥2 次纯文字回复时注入更强提示，列出可用工具
-            let nudge = if is_thinking_timeout {
-                format!(
-                    "{goal_hint}【纠偏】你上一轮的思考（reasoning）用尽了全部 max_tokens，\
+                // 文字伪调用检测：LLM 在 assistant 文字里写 `tool(...)` 伪调用而不产生真实 tool_calls。
+                let _lower = content.to_lowercase();
+                let is_pseudo_call = content.contains("【工具")
+                    || content.contains("【tool")
+                    || content.contains("[工具")
+                    || content.contains("[tool ")
+                    || content.contains("→ 命令完成")
+                    || content.contains("→ ok")
+                    || content.contains("→ OK")
+                    || content.contains("→ 已到达")
+                    || content.contains("→ 已完成")
+                    || content.contains("工具执行】")
+                    || content.contains("工具调用】")
+                    || (content.contains("goto(")
+                        || content.contains("mine(")
+                        || content.contains("gather(")
+                        || content.contains("craft(")
+                        || content.contains("attack(")
+                        || content.contains("place("))
+                        && response.tool_calls.is_empty();
+                // P0 改进1: 连续 ≥2 次纯文字回复时注入更强提示，列出可用工具
+                let nudge = if is_thinking_timeout {
+                    format!(
+                        "{goal_hint}【纠偏】你上一轮的思考（reasoning）用尽了全部 max_tokens，\
                  没有产出任何文字或工具调用——bot 实际上什么都没做！\n\
                  请立即通过 function calling 输出工具调用，**不要做长篇思考**。\
                  根据当前感知到的状态直接选一个工具调用，1 句话说明意图即可。"
-                )
-            } else if is_pseudo_call {
-                format!(
-                    "{goal_hint}【纠正】你的回复里写了文字伪调用（如 `【工具执行】xxx(...)` 或 `xxx(...) → 命令完成`），\
+                    )
+                } else if is_pseudo_call {
+                    format!(
+                        "{goal_hint}【纠正】你的回复里写了文字伪调用（如 `【工具执行】xxx(...)` 或 `xxx(...) → 命令完成`），\
                  这**不会被执行**——只有 function calling 输出的 tool_calls 才会被真正执行。\
                  你刚才的所有「工具执行」都是幻觉，bot 实际上没做任何动作！\n\
                  必须用 function calling 输出工具调用（系统自动附加 tool_calls 字段，\
                  不要在文字里写任何 tool() 调用）。请重新回复：文字只说 1 句意图，\
                  然后通过 function calling 输出真实 tool_calls。"
-                )
-            } else if is_premature_completion && self.current_goal().is_some() {
-                // P12 + P31：LLM 过早宣告完成但目标仍 Active，强制 perceive 验证。
-                // P31 加强：用 fake_completion_count 计数，连续多次假完成时注入更强 nudge。
-                self.fake_completion_count = self.fake_completion_count.saturating_add(1);
-                let goal = self.current_goal().unwrap_or("");
+                    )
+                } else if is_premature_completion && self.current_goal().is_some() {
+                    // P12 + P31：LLM 过早宣告完成但目标仍 Active，强制 perceive 验证。
+                    // P31 加强：用 fake_completion_count 计数，连续多次假完成时注入更强 nudge。
+                    self.fake_completion_count = self.fake_completion_count.saturating_add(1);
+                    let goal = self.current_goal().unwrap_or("");
 
-                if self.fake_completion_count >= 3 {
-                    // 连续 3+ 次假完成：最后通牒
-                    format!(
-                        "{goal_hint}【最后通牒】你已连续 {} 次宣告「任务完成」，但目标仍在执行中：{goal}\n\
+                    if self.fake_completion_count >= 3 {
+                        // 连续 3+ 次假完成：最后通牒
+                        format!(
+                            "{goal_hint}【最后通牒】你已连续 {} 次宣告「任务完成」，但目标仍在执行中：{goal}\n\
                      **禁止再用任何文字宣告完成！** 文字宣告永远不算完成。\n\
                      你必须立即调用 perceive 工具查看实际状态。如果 perceive 显示目标未达成，\n\
                      继续调用其他工具行动（gather/mine/craft/smelt 等），直到目标真正达成。\n\
                      再用文字说「完成」将被视为故障，系统会强制注入工具调用。",
-                        self.fake_completion_count
-                    )
-                } else if self.fake_completion_count == 2 {
-                    // 连续 2 次假完成：更强警告
-                    format!(
-                        "{goal_hint}【严重警告】你已连续 2 次宣告「任务完成」，但目标仍在执行中：{goal}\n\
+                            self.fake_completion_count
+                        )
+                    } else if self.fake_completion_count == 2 {
+                        // 连续 2 次假完成：更强警告
+                        format!(
+                            "{goal_hint}【严重警告】你已连续 2 次宣告「任务完成」，但目标仍在执行中：{goal}\n\
                      文字宣告**不算完成**——你被禁止再用文字说「完成」「已达成」「全部完成」等词。\n\
                      必须立即调用 perceive 工具验证实际状态。perceive 会显示背包物品和当前位置，\n\
                      你需要对比目标要求，确认每个目标物品都在背包中。若缺少，继续调用 gather/mine/craft/smelt 等工具获取。",
-                    )
-                } else {
-                    // 第 1 次假完成：温和提示
-                    format!(
-                        "{goal_hint}【验证】你宣告「任务完成」，但目标仍在执行中：{goal}\n\
+                        )
+                    } else {
+                        // 第 1 次假完成：温和提示
+                        format!(
+                            "{goal_hint}【验证】你宣告「任务完成」，但目标仍在执行中：{goal}\n\
                      文字宣告**不算完成**——必须通过 function calling 调用 perceive 查看实际状态，\n\
                      确认目标物品在背包/目标位置已到达，才算真正完成。\n\
                      请立即调用 perceive 验证当前状态，不要只用文字说完成了。"
-                    )
-                }
-            } else if self.text_only_count >= 2 {
-                // 连续 2+ 次纯文字：列出可用工具强制行动
-                let tool_list: Vec<&str> = self.tools.tools().iter().map(|t| t.name()).collect();
-                format!(
-                    "{goal_hint}【强制行动】你已连续 {} 次只回复文字而不调用工具！\n\
+                        )
+                    }
+                } else if self.text_only_count >= 2 {
+                    // 连续 2+ 次纯文字：列出可用工具强制行动
+                    let tool_list: Vec<&str> =
+                        self.tools.tools().iter().map(|t| t.name()).collect();
+                    format!(
+                        "{goal_hint}【强制行动】你已连续 {} 次只回复文字而不调用工具！\n\
                  这是不允许的——每轮必须通过 function calling 调用至少一个工具。\n\
                  可用工具: {}\n\
                  根据当前状态立即选择一个工具调用。不要解释，直接调用工具。",
-                    self.text_only_count,
-                    tool_list.join(", ")
-                )
-            } else {
-                format!(
-                    "{goal_hint}【继续】你刚才只用了文字回复，没有产生真正的工具调用。\
+                        self.text_only_count,
+                        tool_list.join(", ")
+                    )
+                } else {
+                    format!(
+                        "{goal_hint}【继续】你刚才只用了文字回复，没有产生真正的工具调用。\
                  请用 function calling 输出工具调用（不要用 markdown 写 `tool()` 伪调用，那不会被执行）。\
                  根据当前状态选一个工具立即行动。"
-                )
-            };
-            self.messages.push(Message::user(nudge));
-            log.push(format!(
-                "[t{turn}] 提醒: 纯文字回复 (连续 {} 次)，已注入续跑指令",
-                self.text_only_count
-            ));
-            self.events.push(AgentEvent::TurnEnd { turn });
-            self.persist_turn()?;
-            return Ok((log, true));
-        }
-        // 有工具调用：重置纯文字计数和假完成计数
-        // P31：LLM 调用了工具（哪怕是 perceive），说明它不再只用文字 fake completion，
-        // 重置 fake_completion_count 给 LLM 重新开始的机会。
-        self.text_only_count = 0;
-        self.fake_completion_count = 0;
-
-        // Track obs streak from tool names
-        let obs_tools: &[&str] = &["perceive", "visual_perceive", "look"];
-        if calls.iter().all(|tc| obs_tools.contains(&tc.name.as_str())) {
-            self.obs_streak += 1;
-        } else {
-            self.obs_streak = 0;
-        }
-        if !self.knowledge_bootstrapped {
-            self.knowledge_bootstrapped = true;
-            if let Some(ref mut sess) = self.session {
-                sess.mark_header_dirty();
+                    )
+                };
+                self.messages.push(Message::user(nudge));
+                log.push(format!(
+                    "[t{turn}] 提醒: 纯文字回复 (连续 {} 次)，已注入续跑指令",
+                    self.text_only_count
+                ));
+                self.events.push(AgentEvent::TurnEnd { turn });
+                self.persist_turn()?;
+                return Ok((log, true));
             }
-        }
+            // 有工具调用：重置纯文字计数和假完成计数
+            // P31：LLM 调用了工具（哪怕是 perceive），说明它不再只用文字 fake completion，
+            // 重置 fake_completion_count 给 LLM 重新开始的机会。
+            self.text_only_count = 0;
+            self.fake_completion_count = 0;
 
-        self.events.push(AgentEvent::Assistant {
-            content: response.content.clone(),
-            reasoning: response.reasoning.clone(),
-            calls: calls.iter().map(|tc| tc.name.clone()).collect(),
-        });
-        self.messages.push(Message::assistant_response(&response));
-
-        // Dead-loop detection
-        // #15 修复：签名归一化——把参数里的数字（坐标等）替换为 #，
-        // 这样"每次换不同坐标的重复 move_to"也能被识别为同一循环，而非永不触发。
-        // P5 修复：位置类工具（goto/mine/place/interact_block/chest_*）的坐标
-        // 不应被归一化——bot 探索时正常会 goto 不同坐标，归一化会导致误报死循环。
-        // 这些工具只在「精确相同参数」重复时才算死循环。
-        let positional_tools: &[&str] = &[
-            "goto",
-            "go",
-            "mine",
-            "place",
-            "interact_block",
-            "chest_view",
-            "chest_withdraw",
-            "chest_deposit",
-            "open",
-        ];
-        let normalize = |arg_json: &str, tool_name: &str| -> String {
-            if positional_tools.contains(&tool_name) {
-                // 位置类工具：保留原参数（坐标不同则视为不同调用）
-                return arg_json.to_string();
+            // Track obs streak from tool names
+            let obs_tools: &[&str] = &["perceive", "visual_perceive", "look"];
+            if calls.iter().all(|tc| obs_tools.contains(&tc.name.as_str())) {
+                self.obs_streak += 1;
+            } else {
+                self.obs_streak = 0;
             }
-            // 其他工具：数字归一化（捕捉"perceive 4 次"等无参数或同参数循环）
-            let mut out = String::with_capacity(arg_json.len());
-            let mut in_num = false;
-            for ch in arg_json.chars() {
-                if ch.is_ascii_digit() {
-                    if !in_num {
-                        out.push('#');
-                        in_num = true;
-                    }
-                } else {
-                    in_num = false;
-                    out.push(ch);
+            if !self.knowledge_bootstrapped {
+                self.knowledge_bootstrapped = true;
+                if let Some(ref mut sess) = self.session {
+                    sess.mark_header_dirty();
                 }
             }
-            out
-        };
-        let call_sig = calls
-            .iter()
-            .map(|tc| {
-                format!(
-                    "{}|{}",
-                    tc.name,
-                    normalize(&tc.arguments.to_string(), &tc.name)
-                )
-            })
-            .collect::<Vec<_>>()
-            .join(";");
-        self.recent_calls.push_back(call_sig.clone());
-        if self.recent_calls.len() > 10 {
-            self.recent_calls.pop_front();
-        }
-        let repeat_count = self.recent_calls.iter().filter(|c| **c == call_sig).count();
-        // P0 改进2: 交替模式检测 (A→B→A→B→A→B)
-        // 即使单个调用没重复 4 次，但两个调用交替出现也是死循环
-        let alternating = detect_alternating_pattern(&self.recent_calls);
-        // 注意：死循环 nudge 不能在 assistant(tool_calls) 与后续 tool result 之间插入
-        // user 消息（否则 DeepSeek/OpenAI 报 400：tool 消息必须紧跟其 tool_calls）。
-        // 故先暂存，待本轮 tool result 全部 push 之后再注入。
-        let mut loop_nudge: Option<String> = None;
-        // P53：错误驱动重规划 nudge（同 loop_nudge 一样，必须延迟到 tool result 之后注入）
-        let mut error_suggestion: Option<String> = None;
-        let incremental_excavation = is_incremental_excavation(&calls);
-        if repeat_count >= 4 && !incremental_excavation {
-            // P12 修复（2026-07-26）：针对 mine_below 的死循环给出具体建议。
-            // mine_below 无参数，连续调用签名必然相同，但 bot 实际在向下挖。
-            // 真正的问题是 LLM 不知道何时停止 mine_below（应该 perceive 检查 Y 坐标和背包）。
-            let tool_names: Vec<&str> = calls.iter().map(|tc| tc.name.as_str()).collect();
-            let specific_hint = if tool_names.contains(&"gather") {
-                "你在反复 gather 同一物品但失败。问题可能是：\n\
+
+            self.events.push(AgentEvent::Assistant {
+                content: response.content.clone(),
+                reasoning: response.reasoning.clone(),
+                calls: calls.iter().map(|tc| tc.name.clone()).collect(),
+            });
+            self.messages.push(Message::assistant_response(&response));
+
+            // Dead-loop detection
+            // #15 修复：签名归一化——把参数里的数字（坐标等）替换为 #，
+            // 这样"每次换不同坐标的重复 move_to"也能被识别为同一循环，而非永不触发。
+            // P5 修复：位置类工具（goto/mine/place/interact_block/chest_*）的坐标
+            // 不应被归一化——bot 探索时正常会 goto 不同坐标，归一化会导致误报死循环。
+            // 这些工具只在「精确相同参数」重复时才算死循环。
+            let positional_tools: &[&str] = &[
+                "goto",
+                "go",
+                "mine",
+                "place",
+                "interact_block",
+                "chest_view",
+                "chest_withdraw",
+                "chest_deposit",
+                "open",
+            ];
+            let normalize = |arg_json: &str, tool_name: &str| -> String {
+                if positional_tools.contains(&tool_name) {
+                    // 位置类工具：保留原参数（坐标不同则视为不同调用）
+                    return arg_json.to_string();
+                }
+                // 其他工具：数字归一化（捕捉"perceive 4 次"等无参数或同参数循环）
+                let mut out = String::with_capacity(arg_json.len());
+                let mut in_num = false;
+                for ch in arg_json.chars() {
+                    if ch.is_ascii_digit() {
+                        if !in_num {
+                            out.push('#');
+                            in_num = true;
+                        }
+                    } else {
+                        in_num = false;
+                        out.push(ch);
+                    }
+                }
+                out
+            };
+            let call_sig = calls
+                .iter()
+                .map(|tc| {
+                    format!(
+                        "{}|{}",
+                        tc.name,
+                        normalize(&tc.arguments.to_string(), &tc.name)
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join(";");
+            self.recent_calls.push_back(call_sig.clone());
+            if self.recent_calls.len() > 10 {
+                self.recent_calls.pop_front();
+            }
+            let repeat_count = self.recent_calls.iter().filter(|c| **c == call_sig).count();
+            // P0 改进2: 交替模式检测 (A→B→A→B→A→B)
+            // 即使单个调用没重复 4 次，但两个调用交替出现也是死循环
+            let alternating = detect_alternating_pattern(&self.recent_calls);
+            // 注意：死循环 nudge 不能在 assistant(tool_calls) 与后续 tool result 之间插入
+            // user 消息（否则 DeepSeek/OpenAI 报 400：tool 消息必须紧跟其 tool_calls）。
+            // 故先暂存，待本轮 tool result 全部 push 之后再注入。
+            let mut loop_nudge: Option<String> = None;
+            // P53：错误驱动重规划 nudge（同 loop_nudge 一样，必须延迟到 tool result 之后注入）。
+            let mut error_suggestion: Option<String> = None;
+            let incremental_excavation = is_incremental_excavation(&calls);
+            if repeat_count >= 4 && !incremental_excavation {
+                // P12 修复（2026-07-26）：针对 mine_below 的死循环给出具体建议。
+                // mine_below 无参数，连续调用签名必然相同，但 bot 实际在向下挖。
+                // 真正的问题是 LLM 不知道何时停止 mine_below（应该 perceive 检查 Y 坐标和背包）。
+                let tool_names: Vec<&str> = calls.iter().map(|tc| tc.name.as_str()).collect();
+                let specific_hint = if tool_names.contains(&"gather") {
+                    "你在反复 gather 同一物品但失败。问题可能是：\n\
                  1. 没装备镐（先 equip wooden_pickaxe/stone_pickaxe/iron_pickaxe）\n\
                  2. 附近没有该方块（先 perceive 看资源标签，或 goto 换区域）\n\
                  3. 工具等级不足（钻石矿需要 iron_pickaxe 以上，参考错误提示合成更高 tier 的镐）\n\
                  立即 perceive 检查状态，再决定下一步"
-            } else if tool_names.iter().any(|n| *n == "goto" || *n == "go") {
-                "你在反复 goto 同一坐标但走不到。问题可能是：\n\
+                } else if tool_names.iter().any(|n| *n == "goto" || *n == "go") {
+                    "你在反复 goto 同一坐标但走不到。问题可能是：\n\
                  1. 距离超过 32m 限制（分段走，或换中间目标）\n\
                  2. 路径被阻挡（先 mine 挖通，或绕路）\n\
                  3. 坐标错误（perceive 确认实际坐标）\n\
                  立即 perceive 检查位置，或换一个目标"
-            } else if tool_names
-                .iter()
-                .any(|n| *n == "craft" || *n == "craft_3x3")
-            {
-                "你在反复 craft 但失败。问题可能是：\n\
+                } else if tool_names
+                    .iter()
+                    .any(|n| *n == "craft" || *n == "craft_3x3")
+                {
+                    "你在反复 craft 但失败。问题可能是：\n\
                  1. 缺少原料（perceive 查看背包，先 gather 采集缺的原料）\n\
                  2. 没有 crafting_table（先 craft('crafting_table') 造一个，或 place 已有的）\n\
                  3. 配方不对（检查 profiles/_default.json 里的配方知识）\n\
                  立即 perceive 查看背包，确认原料后再 craft"
-            } else {
-                ""
-            };
-            let nudge = format!(
-                "【死循环警告】你已连续 {repeat_count} 次执行相同操作 ({}). 请：\n\
+                } else {
+                    ""
+                };
+                let nudge = format!(
+                    "【死循环警告】你已连续 {repeat_count} 次执行相同操作 ({}). 请：\n\
                  1. 检查 perceive 返回的状态，确认当前实际情况\n\
                  2. 换一种完全不同的方法\n\
                  3. 如果在建造，改用 build 蓝图工具而不是手动 place\n\
                  4. 如果在采集，先 goto 到新位置再 gather\n\
                  5. 如果目标已达成，停止调用工具\n\
                  {specific_hint}",
-                calls
-                    .iter()
-                    .map(|tc| tc.name.clone())
-                    .collect::<Vec<_>>()
-                    .join(",")
-            );
-            loop_nudge = Some(nudge);
-            log.push(format!(
-                "[t{turn}] 死循环检测: 相同调用重复 {repeat_count} 次，注入打断指令"
-            ));
-        } else if let Some((a, b, cycles)) = alternating {
-            // 交替模式：A→B→A→B 重复 cycles 轮
-            let nudge = format!(
-                "【死循环警告】你正在交替重复两个操作 ({a} ↔ {b})，已循环 {cycles} 轮。\n\
+                    calls
+                        .iter()
+                        .map(|tc| tc.name.clone())
+                        .collect::<Vec<_>>()
+                        .join(",")
+                );
+                loop_nudge = Some(nudge);
+                log.push(format!(
+                    "[t{turn}] 死循环检测: 相同调用重复 {repeat_count} 次，注入打断指令"
+                ));
+            } else if let Some((a, b, cycles)) = alternating {
+                // 交替模式：A→B→A→B 重复 cycles 轮
+                let nudge = format!(
+                    "【死循环警告】你正在交替重复两个操作 ({a} ↔ {b})，已循环 {cycles} 轮。\n\
                  这种左右摇摆不会推进目标。请：\n\
                  1. 停止在两个操作间来回切换\n\
                  2. 检查 perceive 状态，确认当前实际进度\n\
                  3. 选择一个全新的方法推进目标"
-            );
-            loop_nudge = Some(nudge);
-            log.push(format!(
-                "[t{turn}] 死循环检测: 交替模式 {a}↔{b} 循环 {cycles} 轮，注入打断指令"
-            ));
-        }
+                );
+                loop_nudge = Some(nudge);
+                log.push(format!(
+                    "[t{turn}] 死循环检测: 交替模式 {a}↔{b} 循环 {cycles} 轮，注入打断指令"
+                ));
+            }
 
-        // Execute tool calls
-        let effects: Vec<ToolEffects> = calls
-            .iter()
-            .map(|tc| {
-                self.tools
-                    .get(&tc.name)
-                    .map(|tool| tool.effects())
-                    .unwrap_or(ToolEffects::write())
-            })
-            .collect();
-        let batches = plan_tool_effect_batches(&effects);
-        let mut turn_had_error = false;
+            // Execute tool calls
+            let effects: Vec<ToolEffects> = calls
+                .iter()
+                .map(|tc| {
+                    self.tools
+                        .get(&tc.name)
+                        .map(|tool| tool.effects())
+                        .unwrap_or(ToolEffects::write())
+                })
+                .collect();
+            let batches = plan_tool_effect_batches(&effects);
+            // P89：WRITE 工具失败 → 中止剩余批次；executed 记录已执行索引（补 tool 消息用）
+            let mut executed_indices: Vec<usize> = Vec::new();
+            let mut aborted = false;
+            let mut abort_fail: Option<(String, String)> = None;
 
-        for batch in &batches {
-            let mut parallel_indices = Vec::new();
-            let mut knowledge_work = None;
-            for &idx in batch {
-                if calls[idx].name == MANAGE_KNOWLEDGE {
-                    knowledge_work = Some(idx);
-                } else {
-                    parallel_indices.push(idx);
+            for batch in &batches {
+                if aborted {
+                    break;
                 }
-            }
+                let mut parallel_indices = Vec::new();
+                let mut knowledge_work = None;
+                for &idx in batch {
+                    if calls[idx].name == MANAGE_KNOWLEDGE {
+                        knowledge_work = Some(idx);
+                    } else {
+                        parallel_indices.push(idx);
+                    }
+                }
 
-            let mut batch_results: Vec<(usize, String, bool, String, String)> = Vec::new();
-            if let Some(idx) = knowledge_work {
-                let tc = &calls[idx];
-                let call_id = tc.id.clone();
-                let tool_name = tc.name.clone();
-                let args = tc.arguments.clone();
-                let (msg, _is_err) = self.manage_knowledge(&args);
-                batch_results.push((idx, msg, _is_err, call_id, tool_name));
-            }
+                let mut batch_results: Vec<(usize, String, bool, String, String)> = Vec::new();
+                if let Some(idx) = knowledge_work {
+                    let tc = &calls[idx];
+                    let call_id = tc.id.clone();
+                    let tool_name = tc.name.clone();
+                    let args = tc.arguments.clone();
+                    let (msg, _is_err) = self.manage_knowledge(&args);
+                    batch_results.push((idx, msg, _is_err, call_id, tool_name));
+                }
 
-            if !parallel_indices.is_empty() {
-                std::thread::scope(|s| {
-                    let mut handles = Vec::new();
-                    for &idx in &parallel_indices {
-                        let tc = &calls[idx];
-                        let call_id = tc.id.clone();
-                        let tool_name = tc.name.clone();
-                        let args = tc.arguments.clone();
-                        let tools_ref = &self.tools;
-                        let handle = s.spawn(move || {
+                if !parallel_indices.is_empty() {
+                    std::thread::scope(|s| {
+                        let mut handles = Vec::new();
+                        for &idx in &parallel_indices {
+                            let tc = &calls[idx];
+                            let call_id = tc.id.clone();
+                            let tool_name = tc.name.clone();
+                            let args = tc.arguments.clone();
+                            let tools_ref = &self.tools;
+                            let handle = s.spawn(move || {
                             // P60: 工具执行必须吞掉 panic，否则单个工具崩溃会
                             // 经 join().unwrap() 杀掉整个 agent 主循环（之前 YGoal
                             // 修复后 bot 已脱困，但某工具内部 unwrap 触发 panic，
@@ -1823,162 +1842,231 @@ impl Agent {
                             };
                             (idx, msg, is_err, call_id, tool_name)
                         });
-                        handles.push(handle);
-                    }
-                    for handle in handles {
-                        let result = handle.join().unwrap();
-                        batch_results.push(result);
-                    }
-                });
-            }
+                            handles.push(handle);
+                        }
+                        for handle in handles {
+                            let result = handle.join().unwrap();
+                            batch_results.push(result);
+                        }
+                    });
+                }
 
-            batch_results.sort_by_key(|(idx, _, _, _, _)| *idx);
-            // P53（2026-07-27）：错误驱动重规划 nudge。
-            // 当工具 Err 文本含「建议：先 X」时，agent 主循环注入强制 user 消息
-            // 「上一工具建议立即调用 X，禁止重试原工具」，把建议升级为指令。
-            // 解决 LLM 抄 few-shot 调 auto_craft(furnace) 被拒后原地重试的死循环。
-            for (idx, mut msg, mut is_err, call_id, tool_name) in batch_results {
-                let tc = &calls[idx];
-                if tool_name == "task_complete" && !is_err {
-                    let reason = tc
-                        .arguments
-                        .get("reason")
-                        .and_then(Value::as_str)
-                        .unwrap_or("");
-                    match self.verify_current_task_completion(reason) {
-                        Ok(verification) => msg = verification,
-                        Err(error) => {
-                            msg = format!("任务完成验证失败: {error}");
-                            is_err = true;
+                batch_results.sort_by_key(|(idx, _, _, _, _)| *idx);
+                // P53（2026-07-27）：错误驱动重规划 nudge。
+                // 当工具 Err 文本含「建议：先 X」时，agent 主循环注入强制 user 消息
+                // 「上一工具建议立即调用 X，禁止重试原工具」，把建议升级为指令。
+                // 解决 LLM 抄 few-shot 调 auto_craft(furnace) 被拒后原地重试的死循环。
+                for (idx, mut msg, mut is_err, call_id, tool_name) in batch_results {
+                    executed_indices.push(idx);
+                    let tc = &calls[idx];
+                    if tool_name == "task_complete" && !is_err {
+                        let reason = tc
+                            .arguments
+                            .get("reason")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        match self.verify_current_task_completion(reason) {
+                            Ok(verification) => msg = verification,
+                            Err(error) => {
+                                msg = format!("任务完成验证失败: {error}");
+                                is_err = true;
+                            }
                         }
                     }
-                }
-                if tool_name == "task_retry" && !is_err {
-                    let reason = tc
-                        .arguments
-                        .get("reason")
-                        .and_then(Value::as_str)
-                        .unwrap_or("");
-                    match self.retry_current_task(reason) {
-                        Ok(retry) => msg = retry,
-                        Err(error) => {
-                            msg = format!("任务重试失败: {error}");
-                            is_err = true;
+                    if tool_name == "task_retry" && !is_err {
+                        let reason = tc
+                            .arguments
+                            .get("reason")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        match self.retry_current_task(reason) {
+                            Ok(retry) => msg = retry,
+                            Err(error) => {
+                                msg = format!("任务重试失败: {error}");
+                                is_err = true;
+                            }
                         }
                     }
-                }
-                if is_err {
-                    turn_had_error = true;
-                    // 抽取错误消息中的「建议：...」段（支持中英文冒号）
-                    if error_suggestion.is_none()
-                        && let Some(sug) = extract_error_suggestion(&msg)
+                    if is_err {
+                        turn_had_error = true;
+                        // P89：WRITE（副作用）工具失败 → 中止后续批次，同轮重调 LLM。
+                        // 只读工具失败不回退（无副作用，结果照常回填）。
+                        if effects[idx].writes() && abort_fail.is_none() {
+                            aborted = true;
+                            abort_fail = Some((tool_name.clone(), msg.clone()));
+                        }
+                        // 抽取错误消息中的「建议：...」段（支持中英文冒号）
+                        if error_suggestion.is_none()
+                            && let Some(sug) = extract_error_suggestion(&msg)
+                        {
+                            error_suggestion =
+                                Some(format!("工具 {tool_name} 失败并给出建议：{sug}"));
+                        }
+                    }
+                    self.events.push(AgentEvent::ToolExecutionStart {
+                        tool_call_id: call_id.clone(),
+                        name: tool_name.clone(),
+                        timestamp: now_ms().to_string(),
+                    });
+                    self.events.push(AgentEvent::ToolExecutionUpdate {
+                        tool_call_id: call_id.clone(),
+                        name: tool_name.clone(),
+                        is_error: is_err,
+                    });
+                    self.events.push(AgentEvent::ToolExecutionEnd {
+                        tool_call_id: call_id.clone(),
+                        name: tool_name.clone(),
+                        is_error: is_err,
+                        timestamp: now_ms().to_string(),
+                    });
+                    let details = if is_err {
+                        Some(serde_json::json!({ "error": msg }))
+                    } else {
+                        None
+                    };
+                    let tool_msg = if is_err {
+                        Message::tool_error(&call_id, &tool_name, &msg)
+                    } else {
+                        Message::tool_result(&call_id, &tool_name, &msg)
+                    };
+                    let tool_msg = match tool_msg {
+                        Message::ToolResult(mut tr) => {
+                            tr.details = details;
+                            Message::ToolResult(tr)
+                        }
+                        other => other,
+                    };
+                    self.messages.push(tool_msg);
+
+                    if tool_name == "set_goal"
+                        && !is_err
+                        && let Some(goal_val) = tc.arguments.get("goal")
                     {
-                        error_suggestion = Some(format!("工具 {tool_name} 失败并给出建议：{sug}"));
-                    }
-                }
-                self.events.push(AgentEvent::ToolExecutionStart {
-                    tool_call_id: call_id.clone(),
-                    name: tool_name.clone(),
-                    timestamp: now_ms().to_string(),
-                });
-                self.events.push(AgentEvent::ToolExecutionUpdate {
-                    tool_call_id: call_id.clone(),
-                    name: tool_name.clone(),
-                    is_error: is_err,
-                });
-                self.events.push(AgentEvent::ToolExecutionEnd {
-                    tool_call_id: call_id.clone(),
-                    name: tool_name.clone(),
-                    is_error: is_err,
-                    timestamp: now_ms().to_string(),
-                });
-                let details = if is_err {
-                    Some(serde_json::json!({ "error": msg }))
-                } else {
-                    None
-                };
-                let tool_msg = if is_err {
-                    Message::tool_error(&call_id, &tool_name, &msg)
-                } else {
-                    Message::tool_result(&call_id, &tool_name, &msg)
-                };
-                let tool_msg = match tool_msg {
-                    Message::ToolResult(mut tr) => {
-                        tr.details = details;
-                        Message::ToolResult(tr)
-                    }
-                    other => other,
-                };
-                self.messages.push(tool_msg);
-
-                if tool_name == "set_goal"
-                    && !is_err
-                    && let Some(goal_val) = tc.arguments.get("goal")
-                {
-                    let goal = goal_val.as_str().unwrap_or("");
-                    if goal.is_empty() {
-                        // P58 修复（2026-07-27）：拦截 set_goal("") 绕过 P56 检测。
-                        // 实测：LLM 用 set_goal(goal="") 清空目标来绕过 P56 plain_text_reply 检测，
-                        // 文字说"任务完成 ✅"但同时有 set_goal("") 调用，P56 检测在 `if calls.is_empty()` 块内不触发。
-                        // 修复：如果 LLM 文字包含"任务完成/✅"等关键词，且当前目标仍 Active，
-                        // 拒绝 stop_goal()，注入 nudge 强制 perceive 验证。
-                        let assistant_text = response.content.as_deref().unwrap_or("");
-                        let declares_completion = assistant_text.contains('✅')
-                            || assistant_text.contains("任务完成")
-                            || assistant_text.contains("已验证")
-                            || assistant_text.contains("最终确认")
-                            || assistant_text.contains("目标完成")
-                            || assistant_text.contains("全部完成");
-                        if declares_completion && self.current_goal().is_some() {
-                            // 拒绝清空目标，注入 P58 nudge
-                            let current_goal = self.current_goal().unwrap_or("").to_string();
-                            self.fake_completion_count =
-                                self.fake_completion_count.saturating_add(1);
-                            let nudge = format!(
-                                "【P58 拦截】你调用了 set_goal(\"\") 清空目标，但文字宣告「任务完成 ✅」。\n\
+                        let goal = goal_val.as_str().unwrap_or("");
+                        if goal.is_empty() {
+                            // P58 修复（2026-07-27）：拦截 set_goal("") 绕过 P56 检测。
+                            // 实测：LLM 用 set_goal(goal="") 清空目标来绕过 P56 plain_text_reply 检测，
+                            // 文字说"任务完成 ✅"但同时有 set_goal("") 调用，P56 检测在 `if calls.is_empty()` 块内不触发。
+                            // 修复：如果 LLM 文字包含"任务完成/✅"等关键词，且当前目标仍 Active，
+                            // 拒绝 stop_goal()，注入 nudge 强制 perceive 验证。
+                            let assistant_text = response.content.as_deref().unwrap_or("");
+                            let declares_completion = assistant_text.contains('✅')
+                                || assistant_text.contains("任务完成")
+                                || assistant_text.contains("已验证")
+                                || assistant_text.contains("最终确认")
+                                || assistant_text.contains("目标完成")
+                                || assistant_text.contains("全部完成");
+                            if declares_completion && self.current_goal().is_some() {
+                                // 拒绝清空目标，注入 P58 nudge
+                                let current_goal = self.current_goal().unwrap_or("").to_string();
+                                self.fake_completion_count =
+                                    self.fake_completion_count.saturating_add(1);
+                                let nudge = format!(
+                                    "【P58 拦截】你调用了 set_goal(\"\") 清空目标，但文字宣告「任务完成 ✅」。\n\
                                  当前目标仍在执行中：{current_goal}\n\
                                  **禁止用 set_goal(\"\") 绕过验证！** 文字宣告永远不算完成。\n\
                                  你必须立即调用 perceive 工具查看实际状态，对比目标要求逐项验证。\n\
                                  若 perceive 显示目标未达成，继续调用 gather/mine/craft/smelt 等工具推进。\n\
                                  再用文字说「完成」或 set_goal(\"\") 清空目标将被视为故障。"
-                            );
-                            self.messages.push(Message::user(nudge));
-                            log.push(format!(
+                                );
+                                self.messages.push(Message::user(nudge));
+                                log.push(format!(
                                 "[t{turn}] P58 拦截: set_goal(\"\") + 文字宣告完成，注入强制验证 nudge"
                             ));
-                            // 不调用 stop_goal()，保留原目标
+                                // 不调用 stop_goal()，保留原目标
+                            } else {
+                                // 空目标 → 停止（Stopped）
+                                self.stop_goal();
+                            }
                         } else {
-                            // 空目标 → 停止（Stopped）
-                            self.stop_goal();
+                            // 非空目标 → 进入 Active 态（覆盖任何 Paused/Stopped）
+                            self.set_goal(goal);
                         }
-                    } else {
-                        // 非空目标 → 进入 Active 态（覆盖任何 Paused/Stopped）
-                        self.set_goal(goal);
+                    }
+                    // pause_goal / resume_goal 工具响应（由 LLM 主动控制）
+                    if tool_name == "pause_goal" && !is_err {
+                        self.pause_goal(false); // LLM 主动暂停：auto_paused=false，不会自动恢复
+                    }
+                    if tool_name == "resume_goal" && !is_err {
+                        self.resume_goal();
+                    }
+
+                    self.session_entries.push(SessionEntry {
+                        id: call_id.clone(),
+                        parent_id: Some(format!("call_{turn}")),
+                        turn,
+                        tool: tool_name.clone(),
+                        reasoning: response.reasoning.clone(),
+                        detail: format!("{:.120}", msg),
+                        timestamp: now_ms(),
+                    });
+                    log.push(format!(
+                        "[t{turn}] {}({}) -> {:.100}",
+                        tool_name, tc.arguments, msg
+                    ));
+                }
+            }
+
+            // 死循环 nudge 在所有 tool result 之后注入，避免插在 assistant(tool_calls)
+            // 与 tool result 之间导致 DeepSeek/OpenAI 400（P89：nudge 注入移到循环内，
+            // 与失败重规划同轮生效；consecutive_failures 分支保留在循环外）。
+            if let Some(nudge) = loop_nudge.take() {
+                self.messages.push(Message::user(nudge));
+            } else if let Some(suggestion) = error_suggestion.take() {
+                // P53：错误驱动重规划 nudge（优先级高于 consecutive_failures）。
+                // 当工具 Err 含「建议：先 X」时，强制 LLM 按 X 执行，禁止重试原工具。
+                // 这解决 LLM 抄 few-shot 调 auto_craft(furnace) 被拒后仍原地重试的死循环。
+                let nudge = format!(
+                    "【错误驱动重规划】{suggestion}\n\n\
+                 **强制指令**：\n\
+                 1. 立即按上述建议调用对应工具，**禁止重试刚刚失败的工具**\n\
+                 2. 如果建议包含多个步骤（如「先 X → 再 Y → 重试 Z」），用 run_plan 一次执行\n\
+                 3. 不要宣告任务完成或放弃，按建议链路推进\n\
+                 4. 若建议原料不足，先 perceive 查看背包，再 gather 缺的原料"
+                );
+                self.messages.push(Message::user(nudge));
+                log.push(format!("[t{turn}] 错误驱动 nudge: 注入强制重规划指令"));
+            }
+
+            // P89：WRITE 工具失败 → 中止剩余调用 + 同轮重调 LLM（agentic-loop 折中）。
+            // OpenAI 约束：assistant(tool_calls) 的每个 tool_call 必须有对应 tool 消息，
+            // 否则 400——未执行的调用补「已中止」占位结果。
+            if aborted && reroute < reroute_max {
+                let mut aborted_names: Vec<String> = Vec::new();
+                for (idx, tc) in calls.iter().enumerate() {
+                    if !executed_indices.contains(&idx) {
+                        aborted_names.push(tc.name.clone());
+                        self.messages.push(Message::tool_result(
+                        &tc.id,
+                        &tc.name,
+                        "【已中止】前一工具失败，本批剩余调用未执行（基于预测状态的调用不再有意义）。",
+                    ));
                     }
                 }
-                // pause_goal / resume_goal 工具响应（由 LLM 主动控制）
-                if tool_name == "pause_goal" && !is_err {
-                    self.pause_goal(false); // LLM 主动暂停：auto_paused=false，不会自动恢复
+                reroute += 1;
+                let (ftool, fmsg) = abort_fail.unwrap_or_default();
+                let mut nudge = format!(
+                    "【工具失败重规划】工具 {ftool} 失败：{}\n本批剩余 {} 个调用已中止（{}）。\n\
+                 请基于以上实际失败原因重新决策下一步，**不要重试刚失败的工具**。",
+                    &fmsg[..fmsg.len().min(160)],
+                    aborted_names.len(),
+                    aborted_names.join(", "),
+                );
+                if let Some(sug) = extract_error_suggestion(&fmsg) {
+                    nudge.push_str(&format!("\n建议：{sug}"));
                 }
-                if tool_name == "resume_goal" && !is_err {
-                    self.resume_goal();
-                }
-
-                self.session_entries.push(SessionEntry {
-                    id: call_id.clone(),
-                    parent_id: Some(format!("call_{turn}")),
-                    turn,
-                    tool: tool_name.clone(),
-                    reasoning: response.reasoning.clone(),
-                    detail: format!("{:.120}", msg),
-                    timestamp: now_ms(),
-                });
+                self.messages.push(Message::user(nudge));
                 log.push(format!(
-                    "[t{turn}] {}({}) -> {:.100}",
-                    tool_name, tc.arguments, msg
-                ));
+                "[t{turn}] P89 失败重规划: {ftool} 失败，中止 {} 个调用，同轮重调 LLM ({reroute}/{reroute_max})",
+                aborted_names.len()
+            ));
+                continue;
             }
-        }
+            break Some(calls);
+        }; // end P89 reroute loop
+
+        // 最后一次 LLM 响应的工具调用（P89 重调后取最后成功轮；纯文字轮为空）
+        let last_calls = last_calls.unwrap_or_default();
 
         // P1 改进6: 连续失败检测 — 3+ 轮工具失败时注入诊断提示
         if turn_had_error {
@@ -1986,28 +2074,9 @@ impl Agent {
         } else {
             self.consecutive_failures = 0;
         }
-
-        // 死循环 nudge 在所有 tool result 之后注入，避免插在 assistant(tool_calls)
-        // 与 tool result 之间导致 DeepSeek/OpenAI 400。
-        if let Some(nudge) = loop_nudge.take() {
-            self.messages.push(Message::user(nudge));
-        } else if let Some(suggestion) = error_suggestion.take() {
-            // P53：错误驱动重规划 nudge（优先级高于 consecutive_failures）。
-            // 当工具 Err 含「建议：先 X」时，强制 LLM 按 X 执行，禁止重试原工具。
-            // 这解决 LLM 抄 few-shot 调 auto_craft(furnace) 被拒后仍原地重试的死循环。
-            let nudge = format!(
-                "【错误驱动重规划】{suggestion}\n\n\
-                 **强制指令**：\n\
-                 1. 立即按上述建议调用对应工具，**禁止重试刚刚失败的工具**\n\
-                 2. 如果建议包含多个步骤（如「先 X → 再 Y → 重试 Z」），用 run_plan 一次执行\n\
-                 3. 不要宣告任务完成或放弃，按建议链路推进\n\
-                 4. 若建议原料不足，先 perceive 查看背包，再 gather 缺的原料"
-            );
-            self.messages.push(Message::user(nudge));
-            log.push(format!("[t{turn}] 错误驱动 nudge: 注入强制重规划指令"));
-        } else if self.consecutive_failures >= 3 {
+        if self.consecutive_failures >= 3 {
             // P1 改进4+6: 连续 3+ 轮失败 — 注入诊断提示 + 自动回退链建议
-            let failed_tools: Vec<&str> = calls.iter().map(|tc| tc.name.as_str()).collect();
+            let failed_tools: Vec<&str> = last_calls.iter().map(|tc| tc.name.as_str()).collect();
             let fallback = build_fallback_suggestion(&failed_tools);
             let nudge = format!(
                 "【连续失败警告】你已连续 {} 轮工具调用失败。请：\n\
@@ -2025,8 +2094,8 @@ impl Agent {
         }
 
         // Extract skill
-        if !calls.is_empty() && calls.iter().all(|tc| !is_obs_tool(&tc.name)) {
-            let tool_names: Vec<String> = calls.iter().map(|tc| tc.name.clone()).collect();
+        if !last_calls.is_empty() && last_calls.iter().all(|tc| !is_obs_tool(&tc.name)) {
+            let tool_names: Vec<String> = last_calls.iter().map(|tc| tc.name.clone()).collect();
             let scene = self
                 .messages
                 .iter()
@@ -2616,6 +2685,143 @@ mod tests {
             .iter()
             .any(|m| matches!(m, Message::User(u) if u.content.contains("死循环警告")));
         assert!(nudge_after, "死循环 nudge 应在 tool result 之后注入");
+    }
+
+    // ── P89：WRITE 工具失败 → 中止剩余批次 + 同轮重调 LLM（agentic-loop 折中）──
+    #[test]
+    fn p89_write_failure_aborts_batch_and_reroutes_same_turn() {
+        use crate::core::tool::GameTool;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+        struct SeqProvider {
+            calls: Arc<AtomicU32>,
+        }
+        impl LlmProvider for SeqProvider {
+            fn complete(
+                &self,
+                _messages: &[Value],
+                _tools: &[Value],
+            ) -> Result<crate::core::message::AssistantResponse> {
+                let n = self.calls.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    // 第 1 次：两个 WRITE 调用，goto 会失败 → 应中止 craft 并重调
+                    Ok(AssistantResponse {
+                        content: Some("先去目标点再合成".into()),
+                        reasoning: None,
+                        tool_calls: vec![
+                            ToolCall {
+                                id: "tc_goto".into(),
+                                name: "goto".into(),
+                                arguments: serde_json::json!({ "x": 1, "y": 2, "z": 3 }),
+                            },
+                            ToolCall {
+                                id: "tc_craft".into(),
+                                name: "craft".into(),
+                                arguments: serde_json::json!({ "item": "torch" }),
+                            },
+                        ],
+                        usage: Usage::default(),
+                        stop_reason: StopReason::ToolCalls,
+                    })
+                } else {
+                    // 第 2 次：纯文字（重规划轮）→ text_only_stop=1 直接结束
+                    Ok(AssistantResponse {
+                        content: Some("重规划：改用 mine 挖通路径".into()),
+                        reasoning: None,
+                        tool_calls: vec![],
+                        usage: Usage::default(),
+                        stop_reason: StopReason::Stop,
+                    })
+                }
+            }
+        }
+        struct GotoTool;
+        impl GameTool for GotoTool {
+            fn name(&self) -> &str {
+                "goto"
+            }
+            fn description(&self) -> &str {
+                ""
+            }
+            fn parameters(&self) -> Value {
+                serde_json::json!({})
+            }
+            fn execute(
+                &self,
+                _id: &str,
+                _a: Value,
+                _u: Option<crate::core::tool::ToolUpdateFn>,
+            ) -> anyhow::Result<ToolResult> {
+                anyhow::bail!("无法到达，建议：先 mine 挖通路径")
+            }
+        }
+        struct CraftTool {
+            executed: Arc<AtomicBool>,
+        }
+        impl GameTool for CraftTool {
+            fn name(&self) -> &str {
+                "craft"
+            }
+            fn description(&self) -> &str {
+                ""
+            }
+            fn parameters(&self) -> Value {
+                serde_json::json!({})
+            }
+            fn execute(
+                &self,
+                _id: &str,
+                _a: Value,
+                _u: Option<crate::core::tool::ToolUpdateFn>,
+            ) -> anyhow::Result<ToolResult> {
+                self.executed.store(true, Ordering::SeqCst);
+                Ok(ToolResult {
+                    message: "ok".into(),
+                    is_error: false,
+                    images: vec![],
+                })
+            }
+        }
+        let craft_executed = Arc::new(AtomicBool::new(false));
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(GotoTool));
+        tools.register(Box::new(CraftTool {
+            executed: craft_executed.clone(),
+        }));
+        let mut config = AgentConfig::new("test".into(), 1);
+        config.auto_perceive = false;
+        config.text_only_stop = 1; // 第 1 次纯文字即停，精确断言 LLM 调用次数
+        let call_count = Arc::new(AtomicU32::new(0));
+        let mut agent = Agent::new(
+            Box::new(SeqProvider {
+                calls: call_count.clone(),
+            }),
+            tools,
+            config,
+        );
+        agent.run("start").unwrap();
+
+        // 1) craft 被中止：未执行
+        assert!(
+            !craft_executed.load(Ordering::SeqCst),
+            "craft 应被中止未执行"
+        );
+        // 2) LLM 调用恰好 2 次（初始 + 同轮重调）
+        assert_eq!(call_count.load(Ordering::SeqCst), 2, "应同轮重调 1 次");
+        // 3) 消息历史含【已中止】占位（OpenAI 约束：每个 tool_call 必须有响应）
+        let aborted_msg = agent
+            .messages
+            .iter()
+            .any(|m| matches!(m, Message::ToolResult(tr) if tr.content.contains("【已中止】")));
+        assert!(aborted_msg, "未执行调用应补【已中止】tool 消息");
+        // 4) P89 失败重规划 nudge 已注入（含失败原因 + 建议）
+        let reroute_msg = agent.messages.iter().any(|m| {
+            matches!(m, Message::User(u) if u.content.contains("【工具失败重规划】")
+                && u.content.contains("goto")
+                && u.content.contains("建议：先 mine 挖通路径"))
+        });
+        assert!(reroute_msg, "应注入含失败原因与建议的重规划 nudge");
     }
 
     // ── 回归：上下文压缩摘要不得包含易变 perceive 快照（避免过期坐标污染）──
