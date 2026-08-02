@@ -311,7 +311,14 @@ impl Message {
                 Value::Object(obj)
             }
             Self::ToolResult(m) => {
-                let content = Value::String(m.content.clone());
+                // P92：失败结果统一加【失败】前缀，LLM 一眼识别失败，不被长文本淹没。
+                // 内容已带标记时不重复叠加（P89 【已中止】占位等兼容）。
+                let content = if m.is_error && !m.content.starts_with("【失败】") {
+                    format!("【失败】{}", m.content)
+                } else {
+                    m.content.clone()
+                };
+                let content = Value::String(content);
                 let mut obj = Map::new();
                 obj.insert("role".into(), Value::String("tool".into()));
                 obj.insert("tool_call_id".into(), Value::String(m.tool_call_id.clone()));
@@ -370,6 +377,27 @@ mod tests {
         assert_eq!(chatml["role"], "tool");
         assert_eq!(chatml["tool_call_id"], "call_1");
         assert_eq!(chatml["content"], "检测到tree,stone");
+    }
+
+    #[test]
+    fn tool_error_to_chatml_gets_unified_failure_prefix() {
+        // P92：失败结果统一【失败】前缀，LLM 一眼识别
+        let msg = Message::tool_error("call_1", "craft", "背包没有 oak_planks");
+        let chatml = msg.to_chatml();
+        assert_eq!(chatml["role"], "tool");
+        assert_eq!(
+            chatml["content"],
+            "【失败】背包没有 oak_planks",
+            "is_error=true 应加统一失败前缀"
+        );
+    }
+
+    #[test]
+    fn tool_error_prefix_does_not_duplicate_on_preexisting_marker() {
+        // 已带【失败】开头的内容不应二次叠加前缀（P89 占位文本兼容）
+        let msg = Message::tool_error("call_1", "craft", "【失败】背包没有 oak_planks");
+        let chatml = msg.to_chatml();
+        assert_eq!(chatml["content"], "【失败】背包没有 oak_planks");
     }
 
     #[test]
