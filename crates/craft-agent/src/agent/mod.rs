@@ -23,7 +23,7 @@ use anyhow::Result;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::VecDeque;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 // P63: pi-agent 级内存上限。原 10_000 条无界 Vec 会在长时运行下 OOM。
@@ -583,7 +583,7 @@ pub struct Agent {
     pub events: Vec<AgentEvent>,
     usage: Usage,
     previous_summary: Option<String>,
-    steering: VecDeque<String>,
+    steering: Arc<Mutex<VecDeque<String>>>,
     follow_up: VecDeque<String>,
     turn: u32,
     world_info: WorldInfoLib,
@@ -843,7 +843,7 @@ impl Agent {
             events: vec![],
             usage: Usage::default(),
             previous_summary: None,
-            steering: VecDeque::new(),
+            steering: Arc::new(Mutex::new(VecDeque::new())),
             follow_up: VecDeque::new(),
             turn: 0,
             world_info,
@@ -963,14 +963,17 @@ impl Agent {
     }
 
     // ── Queues ──
-    pub fn queue_steering(&mut self, msg: impl Into<String>) {
-        self.steering.push_back(msg.into());
+    /// 线程安全 steering 队列（P90：viewer/autopilot/ctl 可从任意线程注入，
+    /// 批次执行中的 agent 在批次间隙检查并中断剩余批次）。
+    pub fn queue_steering(&self, msg: impl Into<String>) {
+        self.steering.lock().unwrap().push_back(msg.into());
     }
     pub fn queue_follow_up(&mut self, msg: impl Into<String>) {
         self.follow_up.push_back(msg.into());
     }
     fn drain_queues(&mut self) {
-        while let Some(m) = self.steering.pop_front() {
+        let steers: Vec<String> = self.steering.lock().unwrap().drain(..).collect();
+        for m in steers {
             self.messages.push(Message::user(format!("[steering] {m}")));
         }
         while let Some(m) = self.follow_up.pop_front() {
@@ -1780,9 +1783,16 @@ impl Agent {
             let mut executed_indices: Vec<usize> = Vec::new();
             let mut aborted = false;
             let mut abort_fail: Option<(String, String)> = None;
+            // P90：steering 消息到达 → 中止剩余批次（同轮重调，见循环后分支）
+            let mut steering_hit = false;
 
             for batch in &batches {
                 if aborted {
+                    break;
+                }
+                // P90：新指令到达，剩余批次不再执行（预测状态的调用失去意义）
+                if !self.steering.lock().unwrap().is_empty() {
+                    steering_hit = true;
                     break;
                 }
                 let mut parallel_indices = Vec::new();
@@ -2060,6 +2070,41 @@ impl Agent {
                 "[t{turn}] P89 失败重规划: {ftool} 失败，中止 {} 个调用，同轮重调 LLM ({reroute}/{reroute_max})",
                 aborted_names.len()
             ));
+                continue;
+            }
+            // P90：steering 到达 → 中止剩余批次 + 同轮重调（与 P89 共用 reroute 预算）。
+            // 与 P89 失败中止同构：占位补齐未执行调用，注入新指令后重调 LLM。
+            if steering_hit && reroute < reroute_max {
+                let mut aborted_names: Vec<String> = Vec::new();
+                for (idx, tc) in calls.iter().enumerate() {
+                    if !executed_indices.contains(&idx) {
+                        aborted_names.push(tc.name.clone());
+                        self.messages.push(Message::tool_result(
+                            &tc.id,
+                            &tc.name,
+                            "【已中止】收到新指令（steering），本批剩余调用未执行（基于旧目标的调用不再有意义）。",
+                        ));
+                    }
+                }
+                // 取走 steering 内容注入本轮（避免下轮 drain 重复注入）
+                let mut steers: Vec<String> = Vec::new();
+                while let Some(m) = self.steering.lock().unwrap().pop_front() {
+                    steers.push(m);
+                }
+                reroute += 1;
+                let nudge = format!(
+                    "【新指令中断】收到新指令，本批剩余 {} 个调用已中止（{}）。\n\
+                 新指令：{}\n\
+                 请立即按新指令重新决策下一步，旧的行动计划作废。",
+                    aborted_names.len(),
+                    aborted_names.join(", "),
+                    steers.join("；"),
+                );
+                self.messages.push(Message::user(nudge));
+                log.push(format!(
+                    "[t{turn}] P90 新指令中断: steering 到达，中止 {} 个调用，同轮重调 LLM ({reroute}/{reroute_max})",
+                    aborted_names.len()
+                ));
                 continue;
             }
             break Some(calls);
@@ -2822,6 +2867,165 @@ mod tests {
                 && u.content.contains("建议：先 mine 挖通路径"))
         });
         assert!(reroute_msg, "应注入含失败原因与建议的重规划 nudge");
+    }
+
+    // ── P90：steering 到达 → 中止剩余批次 + 同轮重调（与 P89 共用 reroute 预算）──
+    #[test]
+    fn p90_steering_aborts_remaining_batches_and_reroutes_same_turn() {
+        use crate::core::tool::GameTool;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+        struct SteeringProvider {
+            calls: Arc<AtomicU32>,
+        }
+        impl LlmProvider for SteeringProvider {
+            fn complete(
+                &self,
+                _messages: &[Value],
+                _tools: &[Value],
+            ) -> Result<crate::core::message::AssistantResponse> {
+                let n = self.calls.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    // 第 1 次：goto（慢执行 150ms）+ craft。goto 执行期间 steering 到达，
+                    // 批次循环在 craft 批次前检查 steering → craft 中止。
+                    Ok(AssistantResponse {
+                        content: Some("按旧目标行动".into()),
+                        reasoning: None,
+                        tool_calls: vec![
+                            ToolCall {
+                                id: "tc_goto".into(),
+                                name: "goto".into(),
+                                arguments: serde_json::json!({ "x": 1, "y": 2, "z": 3 }),
+                            },
+                            ToolCall {
+                                id: "tc_craft".into(),
+                                name: "craft".into(),
+                                arguments: serde_json::json!({ "item": "torch" }),
+                            },
+                        ],
+                        usage: Usage::default(),
+                        stop_reason: StopReason::ToolCalls,
+                    })
+                } else {
+                    // 第 2 次：纯文字（按新指令重规划）→ text_only_stop=1 直接结束
+                    Ok(AssistantResponse {
+                        content: Some("收到新指令：去挖铁矿".into()),
+                        reasoning: None,
+                        tool_calls: vec![],
+                        usage: Usage::default(),
+                        stop_reason: StopReason::Stop,
+                    })
+                }
+            }
+        }
+        struct GotoTool {
+            executed: Arc<AtomicBool>,
+        }
+        impl GameTool for GotoTool {
+            fn name(&self) -> &str {
+                "goto"
+            }
+            fn description(&self) -> &str {
+                ""
+            }
+            fn parameters(&self) -> Value {
+                serde_json::json!({})
+            }
+            fn execute(
+                &self,
+                _id: &str,
+                _a: Value,
+                _u: Option<crate::core::tool::ToolUpdateFn>,
+            ) -> anyhow::Result<ToolResult> {
+                // 模拟长时工具：给注入线程留出窗口
+                std::thread::sleep(std::time::Duration::from_millis(150));
+                self.executed.store(true, Ordering::SeqCst);
+                Ok(ToolResult {
+                    message: "ok".into(),
+                    is_error: false,
+                    images: vec![],
+                })
+            }
+        }
+        struct CraftTool {
+            executed: Arc<AtomicBool>,
+        }
+        impl GameTool for CraftTool {
+            fn name(&self) -> &str {
+                "craft"
+            }
+            fn description(&self) -> &str {
+                ""
+            }
+            fn parameters(&self) -> Value {
+                serde_json::json!({})
+            }
+            fn execute(
+                &self,
+                _id: &str,
+                _a: Value,
+                _u: Option<crate::core::tool::ToolUpdateFn>,
+            ) -> anyhow::Result<ToolResult> {
+                self.executed.store(true, Ordering::SeqCst);
+                Ok(ToolResult {
+                    message: "ok".into(),
+                    is_error: false,
+                    images: vec![],
+                })
+            }
+        }
+        let goto_executed = Arc::new(AtomicBool::new(false));
+        let craft_executed = Arc::new(AtomicBool::new(false));
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(GotoTool {
+            executed: goto_executed.clone(),
+        }));
+        tools.register(Box::new(CraftTool {
+            executed: craft_executed.clone(),
+        }));
+        let mut config = AgentConfig::new("test".into(), 1);
+        config.auto_perceive = false;
+        config.text_only_stop = 1;
+        let call_count = Arc::new(AtomicU32::new(0));
+        let mut agent = Agent::new(
+            Box::new(SteeringProvider {
+                calls: call_count.clone(),
+            }),
+            tools,
+            config,
+        );
+        // 注入线程：goto 执行期间（约 50ms 处）注入新指令
+        let steer_q = agent.steering.clone();
+        let injector = std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            steer_q.lock().unwrap().push_back("去挖铁矿，旧计划作废".to_string());
+        });
+        agent.run("start").unwrap();
+        injector.join().unwrap();
+
+        // 1) goto 已执行（它所在的批次已开始），craft 被中断未执行
+        assert!(goto_executed.load(Ordering::SeqCst), "goto 所在批次已开始应执行");
+        assert!(!craft_executed.load(Ordering::SeqCst), "craft 应被 steering 中断未执行");
+        // 2) LLM 调用恰好 2 次（初始 + 同轮重调）
+        assert_eq!(call_count.load(Ordering::SeqCst), 2, "应同轮重调 1 次");
+        // 3) 消息历史含【已中止】占位
+        let aborted_msg = agent
+            .messages
+            .iter()
+            .any(|m| matches!(m, Message::ToolResult(tr) if tr.content.contains("【已中止】")));
+        assert!(aborted_msg, "未执行调用应补【已中止】tool 消息");
+        // 4) P90 nudge 已注入（含新指令文本）
+        let nudge_msg = agent.messages.iter().any(|m| {
+            matches!(m, Message::User(u) if u.content.contains("【新指令中断】")
+                && u.content.contains("去挖铁矿"))
+        });
+        assert!(nudge_msg, "应注入含新指令内容的中断 nudge");
+        // 5) steering 队列已取空（避免下轮重复注入）
+        assert!(
+            agent.steering.lock().unwrap().is_empty(),
+            "steering 应已取走"
+        );
     }
 
     // ── 回归：上下文压缩摘要不得包含易变 perceive 快照（避免过期坐标污染）──
