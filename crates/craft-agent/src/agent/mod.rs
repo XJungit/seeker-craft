@@ -1222,6 +1222,45 @@ const SUMMARIZATION_PROMPT: &str =
 const UPDATE_SUMMARIZATION_PROMPT: &str =
     "Please update the existing summary with new information from the latest conversation segment.";
 
+// ── P2.1：工具批执行 + 中止收敛（2026-08-03 拆分）────────────────────────
+// run_one_turn 的批执行区（READ 并行 / WRITE 串行 / slow 探测 / P89/P90/P94/P99
+// 中止）抽为 execute_batch；中止后的「占位补齐 + nudge + 决策」收敛为
+// finalize_abort + AbortReason。行为与拆分前逐字一致（p89/p89b/p90/p94/p99
+// 五个回归测试 + p99_fast_tools_still_batch_normally 锁定）。
+
+/// 单轮内 LLM 工具调用预算（跨 reroute 的软上限，P94）。
+const MAX_TOOLS_PER_TURN: usize = 20;
+
+/// P89/P90/P94/P99 触发中止后，本轮统一走向。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AbortDecision {
+    /// P89 失败 / P90 新指令（reroute 预算未耗尽）：占位补齐后同轮重调 LLM。
+    Reroute,
+    /// P94 预算耗尽 / P99 慢动作 / reroute 预算耗尽：停止本轮，软交棒下轮决策。
+    Handoff,
+}
+
+/// 批执行阶段检测到的中止原因（决定占位文案、通知、是否同轮重调）。
+#[derive(Debug)]
+enum AbortReason {
+    /// P89：WRITE（副作用）工具失败。
+    ToolFailure { tool: String, message: String },
+    /// P90：批次执行期间队列收到新 steering 指令。
+    Steering,
+    /// P94：本轮累计工具执行数达上限。
+    ToolBudget { executed: usize },
+    /// P99：批内慢动作工具已执行完成。
+    SlowHandoff,
+}
+
+/// execute_batch 的返回值：本轮已执行索引、中止原因、是否出现过工具错误。
+struct BatchExecution {
+    executed_indices: Vec<usize>,
+    abort_reason: Option<AbortReason>,
+    had_error: bool,
+    error_suggestion: Option<String>,
+}
+
 // ── Core orchestration methods ──
 
 impl Agent {
@@ -1302,6 +1341,398 @@ impl Agent {
         }
         self.events.push(AgentEvent::AgentEnd);
         Ok(all_logs)
+    }
+
+    // ── P2.1：工具批执行 + 中止收敛（execute_batch / finalize_abort 见模块级定义）──
+
+    /// P2.1：执行一批 LLM 工具调用。
+    /// READ 工具并行（跨线程，panic 隔离）；WRITE 串行；批内含慢动作工具时
+    /// 执行完本批即中止（P99）。检测 P89（WRITE 失败）/P90（steering）/P94 预算。
+    /// 副作用：回填 assistant/tool 消息、session/event、set_goal 同步。
+    /// 返回未执行的中止原因与已执行索引（供 finalize_abort 补齐 + 决策）。
+    fn execute_batch(
+        &mut self,
+        response: &crate::core::message::AssistantResponse,
+        calls: &[ToolCall],
+        turn: u32,
+        log: &mut Vec<String>,
+    ) -> BatchExecution {
+        let effects: Vec<ToolEffects> = calls
+            .iter()
+            .map(|tc| {
+                self.tools
+                    .get(&tc.name)
+                    .map(|tool| tool.effects())
+                    .unwrap_or(ToolEffects::write())
+            })
+            .collect();
+        let batches = plan_tool_effect_batches(&effects);
+        let mut executed_indices: Vec<usize> = Vec::new();
+        let mut had_error = false;
+        let mut abort_reason: Option<AbortReason> = None;
+        let mut error_suggestion: Option<String> = None;
+
+        for batch in &batches {
+            if abort_reason.is_some() {
+                break;
+            }
+            // P90：新指令到达，剩余批次不再执行（预测状态的调用失去意义）
+            if !self.steering.lock().unwrap().is_empty() {
+                abort_reason = Some(AbortReason::Steering);
+                break;
+            }
+            // P94：单轮工具调用上限 → 软交棒（停止执行，下轮 LLM 回望目标）。
+            // executed_indices 为本批累计数（原 turn_tool_count 每轮 reroute 归零，
+            // 故此处直接用本批执行数即可，行为不变）
+            if executed_indices.len() >= MAX_TOOLS_PER_TURN {
+                abort_reason = Some(AbortReason::ToolBudget {
+                    executed: executed_indices.len(),
+                });
+                break;
+            }
+            // P99：本批含慢动作工具 → 执行完本批后中止剩余批次
+            let batch_has_slow = batch.iter().any(|&idx| {
+                self.tools
+                    .get(&calls[idx].name)
+                    .is_some_and(|t| t.is_slow())
+            });
+            let mut parallel_indices = Vec::new();
+            let mut knowledge_work = None;
+            for &idx in batch {
+                if calls[idx].name == MANAGE_KNOWLEDGE {
+                    knowledge_work = Some(idx);
+                } else {
+                    parallel_indices.push(idx);
+                }
+            }
+
+            let mut batch_results: Vec<(usize, String, bool, String, String)> = Vec::new();
+            if let Some(idx) = knowledge_work {
+                let tc = &calls[idx];
+                let call_id = tc.id.clone();
+                let tool_name = tc.name.clone();
+                let args = tc.arguments.clone();
+                let (msg, _is_err) = self.manage_knowledge(&args);
+                batch_results.push((idx, msg, _is_err, call_id, tool_name));
+            }
+
+            if !parallel_indices.is_empty() {
+                std::thread::scope(|s| {
+                    let mut handles = Vec::new();
+                    for &idx in &parallel_indices {
+                        let tc = &calls[idx];
+                        let call_id = tc.id.clone();
+                        let tool_name = tc.name.clone();
+                        let args = tc.arguments.clone();
+                        let tools_ref = &self.tools;
+                        let handle = s.spawn(move || {
+                            // P60: 工具执行必须吞掉 panic，否则单个工具崩溃会
+                            // 经 join().unwrap() 杀掉整个 agent 主循环（之前 YGoal
+                            // 修复后 bot 已脱困，但某工具内部 unwrap 触发 panic，
+                            // 导致 turn loop 直接退出、running=false）。
+                            let output =
+                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                    match tools_ref.get(&tool_name) {
+                                        Some(tool) => tool.execute(&call_id, args, None),
+                                        None => Ok(ToolResult {
+                                            message: format!("Unknown tool: {tool_name}"),
+                                            is_error: true,
+                                            images: vec![],
+                                        }),
+                                    }
+                                }));
+                            let (msg, is_err) = match output {
+                                Ok(Ok(r)) => (r.message, r.is_error),
+                                Ok(Err(e)) => (format!("Error: {e}"), true),
+                                Err(_) => (
+                                    format!(
+                                        "[工具 {tool_name} 内部 panic，已隔离。请换一种方法继续。]"
+                                    ),
+                                    true,
+                                ),
+                            };
+                            (idx, msg, is_err, call_id, tool_name)
+                        });
+                        handles.push(handle);
+                    }
+                    for handle in handles {
+                        let result = handle.join().unwrap();
+                        batch_results.push(result);
+                    }
+                });
+            }
+
+            batch_results.sort_by_key(|(idx, _, _, _, _)| *idx);
+            // P53（2026-07-27）：错误驱动重规划 nudge。
+            // 当工具 Err 文本含「建议：先 X」时强制 LLM 按 X 行动。
+            for (idx, mut msg, mut is_err, call_id, tool_name) in batch_results {
+                executed_indices.push(idx);
+                let tc = &calls[idx];
+                if tool_name == "task_complete" && !is_err {
+                    let reason = tc
+                        .arguments
+                        .get("reason")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    match self.verify_current_task_completion(reason) {
+                        Ok(verification) => msg = verification,
+                        Err(error) => {
+                            msg = format!("任务完成验证失败: {error}");
+                            is_err = true;
+                        }
+                    }
+                }
+                if tool_name == "task_retry" && !is_err {
+                    let reason = tc
+                        .arguments
+                        .get("reason")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    match self.retry_current_task(reason) {
+                        Ok(retry) => msg = retry,
+                        Err(error) => {
+                            msg = format!("任务重试失败: {error}");
+                            is_err = true;
+                        }
+                    }
+                }
+                if is_err {
+                    had_error = true;
+                    // P89：WRITE（副作用）工具失败 → 中止后续批次。
+                    // 只读工具失败不回退（无副作用，结果照常回填）。
+                    if effects[idx].writes() && abort_reason.is_none() {
+                        abort_reason = Some(AbortReason::ToolFailure {
+                            tool: tool_name.clone(),
+                            message: msg.clone(),
+                        });
+                    }
+                    // 抽取错误消息中的「建议：...」段（支持中英文冒号）
+                    if error_suggestion.is_none()
+                        && let Some(sug) = extract_error_suggestion(&msg)
+                    {
+                        error_suggestion = Some(format!("工具 {tool_name} 失败并给出建议：{sug}"));
+                    }
+                }
+                self.events.push(AgentEvent::ToolExecutionStart {
+                    tool_call_id: call_id.clone(),
+                    name: tool_name.clone(),
+                    timestamp: now_ms().to_string(),
+                });
+                self.events.push(AgentEvent::ToolExecutionUpdate {
+                    tool_call_id: call_id.clone(),
+                    name: tool_name.clone(),
+                    is_error: is_err,
+                });
+                self.events.push(AgentEvent::ToolExecutionEnd {
+                    tool_call_id: call_id.clone(),
+                    name: tool_name.clone(),
+                    is_error: is_err,
+                    timestamp: now_ms().to_string(),
+                });
+                let details = if is_err {
+                    Some(serde_json::json!({ "error": msg }))
+                } else {
+                    None
+                };
+                let tool_msg = if is_err {
+                    Message::tool_error(&call_id, &tool_name, &msg)
+                } else {
+                    Message::tool_result(&call_id, &tool_name, &msg)
+                };
+                let tool_msg = match tool_msg {
+                    Message::ToolResult(mut tr) => {
+                        tr.details = details;
+                        Message::ToolResult(tr)
+                    }
+                    other => other,
+                };
+                self.messages.push(tool_msg);
+
+                if tool_name == "set_goal"
+                    && !is_err
+                    && let Some(goal_val) = tc.arguments.get("goal")
+                {
+                    let goal = goal_val.as_str().unwrap_or("");
+                    if goal.is_empty() {
+                        // P58 修复（2026-07-27）：拦截 set_goal("") 绕过 P56 检测。
+                        let assistant_text = response.content.as_deref().unwrap_or("");
+                        let declares_completion = assistant_text.contains('✅')
+                            || assistant_text.contains("任务完成")
+                            || assistant_text.contains("已验证")
+                            || assistant_text.contains("最终确认")
+                            || assistant_text.contains("目标完成")
+                            || assistant_text.contains("全部完成");
+                        if declares_completion && self.current_goal().is_some() {
+                            let current_goal = self.current_goal().unwrap_or("").to_string();
+                            self.fake_completion_count =
+                                self.fake_completion_count.saturating_add(1);
+                            let nudge = format!(
+                                "【P58 拦截】你调用了 set_goal(\"\") 清空目标，但文字宣告「任务完成 ✅」。\n\
+                             当前目标仍在执行中：{current_goal}\n\
+                             **禁止用 set_goal(\"\") 绕过验证！** 文字宣告永远不算完成。\n\
+                             你必须立即调用 perceive 工具查看实际状态，对比目标要求逐项验证。\n\
+                             若 perceive 显示目标未达成，继续调用 gather/mine/craft/smelt 等工具推进。\n\
+                             再用文字说「完成」或 set_goal(\"\") 清空目标将被视为故障。"
+                            );
+                            self.push_transient(nudge);
+                            log.push(format!(
+                                "[t{turn}] P58 拦截: set_goal(\"\") + 文字宣告完成，注入强制验证 nudge"
+                            ));
+                        } else {
+                            self.stop_goal();
+                        }
+                    } else {
+                        // 非空目标 → 进入 Active 态（覆盖任何 Paused/Stopped）
+                        self.set_goal(goal);
+                    }
+                }
+                // pause_goal / resume_goal 工具响应（由 LLM 主动控制）
+                if tool_name == "pause_goal" && !is_err {
+                    self.pause_goal(false); // LLM 主动暂停：auto_paused=false，不会自动恢复
+                }
+                if tool_name == "resume_goal" && !is_err {
+                    self.resume_goal();
+                }
+
+                self.session_entries.push(SessionEntry {
+                    id: call_id.clone(),
+                    parent_id: Some(format!("call_{turn}")),
+                    turn,
+                    tool: tool_name.clone(),
+                    reasoning: response.reasoning.clone(),
+                    detail: format!("{:.120}", msg),
+                    timestamp: now_ms(),
+                });
+                log.push(format!(
+                    "[t{turn}] {}({}) -> {:.100}",
+                    tool_name, tc.arguments, msg
+                ));
+            }
+            // P99：本批执行了慢动作工具 → 中止剩余批次。慢动作完成后状态已变，
+            // 基于旧状态的后续调用插在占位补齐时由 finalize_abort 统一处理。
+            if batch_has_slow {
+                abort_reason = Some(AbortReason::SlowHandoff);
+                break;
+            }
+        }
+        BatchExecution {
+            executed_indices,
+            abort_reason,
+            had_error,
+            error_suggestion,
+        }
+    }
+
+    /// P2.1：中止后统一收尾（P89/P90/P94/P99 四分支收敛）。
+    /// 占位补齐所有未执行调用（OpenAI 约束：每个 tool_call 必须有 tool 响应，
+    /// 无论其是否真的执行），据此注入对应 nudge / log，并决策：
+    /// - `Reroute`：同轮重调 LLM（P89 失败 / P90 新指令，reroute 预算未耗尽）
+    /// - `Handoff`：停止本轮（P94 预算 / P99 慢动作 / reroute 预算耗尽）
+    fn finalize_abort(
+        &mut self,
+        calls: &[ToolCall],
+        executed_indices: &[usize],
+        reason: AbortReason,
+        turn: u32,
+        reroute: u32,
+        reroute_max: u32,
+        log: &mut Vec<String>,
+    ) -> AbortDecision {
+        let pending_placeholder = match &reason {
+            AbortReason::ToolFailure { .. } => {
+                "【已中止】前一工具失败，本批剩余调用未执行（基于预测状态的调用不再有意义）。"
+            }
+            AbortReason::Steering => {
+                "【已中止】收到新指令（steering），本批剩余调用未执行（基于旧目标的调用不再有意义）。"
+            }
+            AbortReason::ToolBudget { .. } => "【已中止】本轮工具调用已达上限，剩余调用未执行。",
+            AbortReason::SlowHandoff => {
+                "【已中止】前一慢动作工具已执行完成，本批剩余调用未执行（基于动作前状态的预测调用不再有意义，请基于新状态重新决策）。"
+            }
+        };
+        let mut pending_names: Vec<String> = Vec::new();
+        for (idx, tc) in calls.iter().enumerate() {
+            if !executed_indices.contains(&idx) {
+                pending_names.push(tc.name.clone());
+                self.messages
+                    .push(Message::tool_result(&tc.id, &tc.name, pending_placeholder));
+            }
+        }
+
+        match reason {
+            AbortReason::ToolFailure { tool, message } => {
+                if reroute < reroute_max {
+                    // P89：同轮重调。nudge 带失败原因 + 已中止清单。
+                    let fmsg_trim: String = message.chars().take(160).collect();
+                    let mut nudge = format!(
+                        "【工具失败重规划】工具 {tool} 失败：{fmsg_trim}\n本批剩余 {} 个调用已中止（{}）。\n\
+                  请基于以上实际失败原因重新决策下一步，**不要重试刚失败的工具**。",
+                        pending_names.len(),
+                        pending_names.join(", "),
+                    );
+                    if let Some(sug) = extract_error_suggestion(&message) {
+                        nudge.push_str(&format!("\n建议：{sug}"));
+                    }
+                    self.push_transient(nudge);
+                    log.push(format!(
+                        "[t{turn}] P89 失败重规划: {tool} 失败，中止 {} 个调用，同轮重调 LLM ({reroute}/{reroute_max})",
+                        pending_names.len()
+                    ));
+                    AbortDecision::Reroute
+                } else {
+                    // reroute 预算耗尽：占位已补齐，软交棒下轮（不再重调）
+                    AbortDecision::Handoff
+                }
+            }
+            AbortReason::Steering => {
+                if reroute < reroute_max {
+                    // 取走 steering 内容注入本轮（避免下轮 drain 重复注入）
+                    let mut steers: Vec<String> = Vec::new();
+                    while let Some(m) = self.steering.lock().unwrap().pop_front() {
+                        steers.push(m);
+                    }
+                    let nudge = format!(
+                        "【新指令中断】收到新指令，本批剩余 {} 个调用已中止（{}）。\n\
+                         新指令：{}\n\
+                         请立即按新指令重新决策下一步，旧的行动计划作废。",
+                        pending_names.len(),
+                        pending_names.join(", "),
+                        steers.join("；"),
+                    );
+                    self.push_transient(nudge);
+                    log.push(format!(
+                        "[t{turn}] P90 新指令中断: steering 到达，中止 {} 个调用，同轮重调 LLM ({reroute}/{reroute_max})",
+                        pending_names.len()
+                    ));
+                    AbortDecision::Reroute
+                } else {
+                    AbortDecision::Handoff
+                }
+            }
+            AbortReason::ToolBudget { executed } => {
+                let nudge = format!(
+                    "【工具调用上限】本轮已执行 {} 个工具调用（上限 {}）。\n\
+                    如果你还在原地打转或低效调用工具，请先停下：1) perceive 确认当前实际状态 \
+                     2) 回望当前目标 3) 规划一个更直接的方案（如一次 run_plan 完成多步，或 \
+                     先 gather 关键原料再合成），避免大量小步调用。",
+                    executed, MAX_TOOLS_PER_TURN
+                );
+                self.push_transient(nudge);
+                log.push(format!(
+                    "[t{turn}] P94 软交棒: 本轮执行 {} 个工具，达上限 {}，注入收敛指令",
+                    executed, MAX_TOOLS_PER_TURN
+                ));
+                AbortDecision::Handoff
+            }
+            AbortReason::SlowHandoff => {
+                log.push(format!(
+                    "[t{turn}] P99 慢动作单轮: 慢工具执行完成，中止 {} 个预测调用（{}），下轮重新决策",
+                    pending_names.len(),
+                    pending_names.join(", ")
+                ));
+                AbortDecision::Handoff
+            }
+        }
     }
 
     fn run_one_turn(&mut self) -> Result<(Vec<String>, bool)> {
@@ -1868,8 +2299,6 @@ impl Agent {
             // user 消息（否则 DeepSeek/OpenAI 报 400：tool 消息必须紧跟其 tool_calls）。
             // 故先暂存，待本轮 tool result 全部 push 之后再注入。
             let mut loop_nudge: Option<String> = None;
-            // P53：错误驱动重规划 nudge（同 loop_nudge 一样，必须延迟到 tool result 之后注入）。
-            let mut error_suggestion: Option<String> = None;
             let incremental_excavation = is_incremental_excavation(&calls);
             if repeat_count >= 4 && !incremental_excavation {
                 // P12 修复（2026-07-26）：针对 mine_below 的死循环给出具体建议。
@@ -1933,294 +2362,18 @@ impl Agent {
                 ));
             }
 
-            // Execute tool calls
-            let effects: Vec<ToolEffects> = calls
-                .iter()
-                .map(|tc| {
-                    self.tools
-                        .get(&tc.name)
-                        .map(|tool| tool.effects())
-                        .unwrap_or(ToolEffects::write())
-                })
-                .collect();
-            let batches = plan_tool_effect_batches(&effects);
-            // P89：WRITE 工具失败 → 中止剩余批次；executed 记录已执行索引（补 tool 消息用）
-            // P94：轮内工具迭代预算。跨 reroute 累计（LLM 一次可调大量工具，
-            // 失败重调又追加一批）；达到上限中断剩余批次 + 软交棒 nudge，不再重调。
-            let max_tools_per_turn = 20usize;
-            let mut turn_tool_count: usize = 0;
-            let mut handoff_hit = false;
-            let mut executed_indices: Vec<usize> = Vec::new();
-            let mut aborted = false;
-            let mut abort_fail: Option<(String, String)> = None;
-            // P90：steering 消息到达 → 中止剩余批次（同轮重调，见循环后分支）
-            let mut steering_hit = false;
-            // P99：批内执行了慢动作工具（goto/mine/gather 等秒~分钟级）→ 中止
-            // 剩余预测调用（基于旧状态的后续调用失去意义），不重调 LLM——
-            // 结果回填历史，下一轮 LLM 基于动作完成后的真实状态重新决策。
-            let mut slow_handoff = false;
+            // Execute tool calls（P2.1：拆分为 execute_batch——批分组/READ 并行/
+            // WRITE 串行/slow 探测/P89/P90/P94 中止检测 + finalize_abort 收敛）
+            let exec = self.execute_batch(&response, &calls, turn, &mut log);
+            turn_had_error |= exec.had_error;
+            let error_suggestion = exec.error_suggestion;
 
-            for batch in &batches {
-                if aborted {
-                    break;
-                }
-                // P90：新指令到达，剩余批次不再执行（预测状态的调用失去意义）
-                if !self.steering.lock().unwrap().is_empty() {
-                    steering_hit = true;
-                    break;
-                }
-                // P94：单轮工具调用上限 → 软交棒（停止执行，下轮 LLM 回望目标）
-                if turn_tool_count + executed_indices.len() >= max_tools_per_turn {
-                    handoff_hit = true;
-                    break;
-                }
-                // P99：本批含慢动作工具 → 执行完本批后中止剩余批次
-                let batch_has_slow = batch.iter().any(|&idx| {
-                    self.tools
-                        .get(&calls[idx].name)
-                        .is_some_and(|t| t.is_slow())
-                });
-                let mut parallel_indices = Vec::new();
-                let mut knowledge_work = None;
-                for &idx in batch {
-                    if calls[idx].name == MANAGE_KNOWLEDGE {
-                        knowledge_work = Some(idx);
-                    } else {
-                        parallel_indices.push(idx);
-                    }
-                }
-
-                let mut batch_results: Vec<(usize, String, bool, String, String)> = Vec::new();
-                if let Some(idx) = knowledge_work {
-                    let tc = &calls[idx];
-                    let call_id = tc.id.clone();
-                    let tool_name = tc.name.clone();
-                    let args = tc.arguments.clone();
-                    let (msg, _is_err) = self.manage_knowledge(&args);
-                    batch_results.push((idx, msg, _is_err, call_id, tool_name));
-                }
-
-                if !parallel_indices.is_empty() {
-                    std::thread::scope(|s| {
-                        let mut handles = Vec::new();
-                        for &idx in &parallel_indices {
-                            let tc = &calls[idx];
-                            let call_id = tc.id.clone();
-                            let tool_name = tc.name.clone();
-                            let args = tc.arguments.clone();
-                            let tools_ref = &self.tools;
-                            let handle = s.spawn(move || {
-                            // P60: 工具执行必须吞掉 panic，否则单个工具崩溃会
-                            // 经 join().unwrap() 杀掉整个 agent 主循环（之前 YGoal
-                            // 修复后 bot 已脱困，但某工具内部 unwrap 触发 panic，
-                            // 导致 turn loop 直接退出、running=false）。
-                            let output =
-                                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                                    match tools_ref.get(&tool_name) {
-                                        Some(tool) => tool.execute(&call_id, args, None),
-                                        None => Ok(ToolResult {
-                                            message: format!("Unknown tool: {}", tool_name),
-                                            is_error: true,
-                                            images: vec![],
-                                        }),
-                                    }
-                                }));
-                            let (msg, is_err) = match output {
-                                Ok(Ok(r)) => (r.message, r.is_error),
-                                Ok(Err(e)) => (format!("Error: {e}"), true),
-                                Err(_) => (
-                                    format!(
-                                        "[工具 {tool_name} 内部 panic，已隔离。请换一种方法继续。]"
-                                    ),
-                                    true,
-                                ),
-                            };
-                            (idx, msg, is_err, call_id, tool_name)
-                        });
-                            handles.push(handle);
-                        }
-                        for handle in handles {
-                            let result = handle.join().unwrap();
-                            batch_results.push(result);
-                        }
-                    });
-                }
-
-                batch_results.sort_by_key(|(idx, _, _, _, _)| *idx);
-                // P53（2026-07-27）：错误驱动重规划 nudge。
-                // 当工具 Err 文本含「建议：先 X」时，agent 主循环注入强制 user 消息
-                // 「上一工具建议立即调用 X，禁止重试原工具」，把建议升级为指令。
-                // 解决 LLM 抄 few-shot 调 auto_craft(furnace) 被拒后原地重试的死循环。
-                for (idx, mut msg, mut is_err, call_id, tool_name) in batch_results {
-                    executed_indices.push(idx);
-                    let tc = &calls[idx];
-                    if tool_name == "task_complete" && !is_err {
-                        let reason = tc
-                            .arguments
-                            .get("reason")
-                            .and_then(Value::as_str)
-                            .unwrap_or("");
-                        match self.verify_current_task_completion(reason) {
-                            Ok(verification) => msg = verification,
-                            Err(error) => {
-                                msg = format!("任务完成验证失败: {error}");
-                                is_err = true;
-                            }
-                        }
-                    }
-                    if tool_name == "task_retry" && !is_err {
-                        let reason = tc
-                            .arguments
-                            .get("reason")
-                            .and_then(Value::as_str)
-                            .unwrap_or("");
-                        match self.retry_current_task(reason) {
-                            Ok(retry) => msg = retry,
-                            Err(error) => {
-                                msg = format!("任务重试失败: {error}");
-                                is_err = true;
-                            }
-                        }
-                    }
-                    if is_err {
-                        turn_had_error = true;
-                        // P89：WRITE（副作用）工具失败 → 中止后续批次，同轮重调 LLM。
-                        // 只读工具失败不回退（无副作用，结果照常回填）。
-                        if effects[idx].writes() && abort_fail.is_none() {
-                            aborted = true;
-                            abort_fail = Some((tool_name.clone(), msg.clone()));
-                        }
-                        // 抽取错误消息中的「建议：...」段（支持中英文冒号）
-                        if error_suggestion.is_none()
-                            && let Some(sug) = extract_error_suggestion(&msg)
-                        {
-                            error_suggestion =
-                                Some(format!("工具 {tool_name} 失败并给出建议：{sug}"));
-                        }
-                    }
-                    self.events.push(AgentEvent::ToolExecutionStart {
-                        tool_call_id: call_id.clone(),
-                        name: tool_name.clone(),
-                        timestamp: now_ms().to_string(),
-                    });
-                    self.events.push(AgentEvent::ToolExecutionUpdate {
-                        tool_call_id: call_id.clone(),
-                        name: tool_name.clone(),
-                        is_error: is_err,
-                    });
-                    self.events.push(AgentEvent::ToolExecutionEnd {
-                        tool_call_id: call_id.clone(),
-                        name: tool_name.clone(),
-                        is_error: is_err,
-                        timestamp: now_ms().to_string(),
-                    });
-                    let details = if is_err {
-                        Some(serde_json::json!({ "error": msg }))
-                    } else {
-                        None
-                    };
-                    let tool_msg = if is_err {
-                        Message::tool_error(&call_id, &tool_name, &msg)
-                    } else {
-                        Message::tool_result(&call_id, &tool_name, &msg)
-                    };
-                    let tool_msg = match tool_msg {
-                        Message::ToolResult(mut tr) => {
-                            tr.details = details;
-                            Message::ToolResult(tr)
-                        }
-                        other => other,
-                    };
-                    self.messages.push(tool_msg);
-
-                    if tool_name == "set_goal"
-                        && !is_err
-                        && let Some(goal_val) = tc.arguments.get("goal")
-                    {
-                        let goal = goal_val.as_str().unwrap_or("");
-                        if goal.is_empty() {
-                            // P58 修复（2026-07-27）：拦截 set_goal("") 绕过 P56 检测。
-                            // 实测：LLM 用 set_goal(goal="") 清空目标来绕过 P56 plain_text_reply 检测，
-                            // 文字说"任务完成 ✅"但同时有 set_goal("") 调用，P56 检测在 `if calls.is_empty()` 块内不触发。
-                            // 修复：如果 LLM 文字包含"任务完成/✅"等关键词，且当前目标仍 Active，
-                            // 拒绝 stop_goal()，注入 nudge 强制 perceive 验证。
-                            let assistant_text = response.content.as_deref().unwrap_or("");
-                            let declares_completion = assistant_text.contains('✅')
-                                || assistant_text.contains("任务完成")
-                                || assistant_text.contains("已验证")
-                                || assistant_text.contains("最终确认")
-                                || assistant_text.contains("目标完成")
-                                || assistant_text.contains("全部完成");
-                            if declares_completion && self.current_goal().is_some() {
-                                // 拒绝清空目标，注入 P58 nudge
-                                let current_goal = self.current_goal().unwrap_or("").to_string();
-                                self.fake_completion_count =
-                                    self.fake_completion_count.saturating_add(1);
-                                let nudge = format!(
-                                    "【P58 拦截】你调用了 set_goal(\"\") 清空目标，但文字宣告「任务完成 ✅」。\n\
-                                 当前目标仍在执行中：{current_goal}\n\
-                                 **禁止用 set_goal(\"\") 绕过验证！** 文字宣告永远不算完成。\n\
-                                 你必须立即调用 perceive 工具查看实际状态，对比目标要求逐项验证。\n\
-                                 若 perceive 显示目标未达成，继续调用 gather/mine/craft/smelt 等工具推进。\n\
-                                 再用文字说「完成」或 set_goal(\"\") 清空目标将被视为故障。"
-                                );
-                                self.push_transient(nudge);
-                                log.push(format!(
-                                "[t{turn}] P58 拦截: set_goal(\"\") + 文字宣告完成，注入强制验证 nudge"
-                            ));
-                                // 不调用 stop_goal()，保留原目标
-                            } else {
-                                // 空目标 → 停止（Stopped）
-                                self.stop_goal();
-                            }
-                        } else {
-                            // 非空目标 → 进入 Active 态（覆盖任何 Paused/Stopped）
-                            self.set_goal(goal);
-                        }
-                    }
-                    // pause_goal / resume_goal 工具响应（由 LLM 主动控制）
-                    if tool_name == "pause_goal" && !is_err {
-                        self.pause_goal(false); // LLM 主动暂停：auto_paused=false，不会自动恢复
-                    }
-                    if tool_name == "resume_goal" && !is_err {
-                        self.resume_goal();
-                    }
-
-                    self.session_entries.push(SessionEntry {
-                        id: call_id.clone(),
-                        parent_id: Some(format!("call_{turn}")),
-                        turn,
-                        tool: tool_name.clone(),
-                        reasoning: response.reasoning.clone(),
-                        detail: format!("{:.120}", msg),
-                        timestamp: now_ms(),
-                    });
-                    log.push(format!(
-                        "[t{turn}] {}({}) -> {:.100}",
-                        tool_name, tc.arguments, msg
-                    ));
-                }
-                // P99：本批执行了慢动作工具 → 中止剩余批次。慢动作完成后状态已变，
-                // 基于旧状态的后续调用（哪怕快工具）不再有意义；结果已回填历史，
-                // 下一轮 LLM 基于动作完成后的真实状态重新决策（opencode 式等待）。
-                if batch_has_slow {
-                    slow_handoff = true;
-                    break;
-                }
-            }
-
-            // P94：累计本轮已执行工具数（跨 reroute）
-            turn_tool_count += executed_indices.len();
-
-            // 死循环 nudge 在所有 tool result 之后注入，避免插在 assistant(tool_calls)
-            // 与 tool result 之间导致 DeepSeek/OpenAI 400（P89：nudge 注入移到循环内，
-            // 与失败重规划同轮生效；consecutive_failures 分支保留在循环外）。
+            // 死循环 nudge / P53 错误驱动 nudge 在所有 tool_result 之后注入，
+            // 避免插在 assistant(tool_calls) 与 tool 消息之间导致 DeepSeek/OpenAI 400。
             if let Some(nudge) = loop_nudge.take() {
                 self.push_transient(nudge);
-            } else if let Some(suggestion) = error_suggestion.take() {
-                // P53：错误驱动重规划 nudge（优先级高于 consecutive_failures）。
-                // 当工具 Err 含「建议：先 X」时，强制 LLM 按 X 执行，禁止重试原工具。
-                // 这解决 LLM 抄 few-shot 调 auto_craft(furnace) 被拒后仍原地重试的死循环。
+            } else if let Some(suggestion) = error_suggestion {
+                // P53：错误驱动重规划（优先级高于 consecutive_failures）。
                 let nudge = format!(
                     "【错误驱动重规划】{suggestion}\n\n\
                  **强制指令**：\n\
@@ -2233,125 +2386,27 @@ impl Agent {
                 log.push(format!("[t{turn}] 错误驱动 nudge: 注入强制重规划指令"));
             }
 
-            // P89：WRITE 工具失败 → 中止剩余调用 + 同轮重调 LLM（agentic-loop 折中）。
-            // OpenAI 约束：assistant(tool_calls) 的每个 tool_call 必须有对应 tool 消息，
-            // 否则 400——未执行的调用补「已中止」占位结果。
-            if aborted && reroute < reroute_max {
-                let mut aborted_names: Vec<String> = Vec::new();
-                for (idx, tc) in calls.iter().enumerate() {
-                    if !executed_indices.contains(&idx) {
-                        aborted_names.push(tc.name.clone());
-                        self.messages.push(Message::tool_result(
-                        &tc.id,
-                        &tc.name,
-                        "【已中止】前一工具失败，本批剩余调用未执行（基于预测状态的调用不再有意义）。",
-                    ));
+            // P89/P90/P94/P99 中止统一收敛（P2.1：AbortDecision::{Reroute,Handoff}）
+            if let Some(reason) = exec.abort_reason {
+                match self.finalize_abort(
+                    &calls,
+                    &exec.executed_indices,
+                    reason,
+                    turn,
+                    reroute,
+                    reroute_max,
+                    &mut log,
+                ) {
+                    AbortDecision::Reroute => {
+                        // P89 失败 / P90 新指令：占位+ nudge 已注入，同轮重调 LLM
+                        reroute += 1;
+                        continue;
                     }
+                    AbortDecision::Handoff => break Some(calls),
                 }
-                reroute += 1;
-                let (ftool, fmsg) = abort_fail.unwrap_or_default();
-                let fmsg_trim: String = fmsg.chars().take(160).collect();
-                let mut nudge = format!(
-                    "【工具失败重规划】工具 {ftool} 失败：{}\n本批剩余 {} 个调用已中止（{}）。\n\
-                 请基于以上实际失败原因重新决策下一步，**不要重试刚失败的工具**。",
-                    fmsg_trim,
-                    aborted_names.len(),
-                    aborted_names.join(", "),
-                );
-                if let Some(sug) = extract_error_suggestion(&fmsg) {
-                    nudge.push_str(&format!("\n建议：{sug}"));
-                }
-                self.push_transient(nudge);
-                log.push(format!(
-                "[t{turn}] P89 失败重规划: {ftool} 失败，中止 {} 个调用，同轮重调 LLM ({reroute}/{reroute_max})",
-                aborted_names.len()
-            ));
-                continue;
-            }
-            // P90：steering 到达 → 中止剩余批次 + 同轮重调（与 P89 共用 reroute 预算）。
-            // 与 P89 失败中止同构：占位补齐未执行调用，注入新指令后重调 LLM。
-            if steering_hit && reroute < reroute_max {
-                let mut aborted_names: Vec<String> = Vec::new();
-                for (idx, tc) in calls.iter().enumerate() {
-                    if !executed_indices.contains(&idx) {
-                        aborted_names.push(tc.name.clone());
-                        self.messages.push(Message::tool_result(
-                            &tc.id,
-                            &tc.name,
-                            "【已中止】收到新指令（steering），本批剩余调用未执行（基于旧目标的调用不再有意义）。",
-                        ));
-                    }
-                }
-                // 取走 steering 内容注入本轮（避免下轮 drain 重复注入）
-                let mut steers: Vec<String> = Vec::new();
-                while let Some(m) = self.steering.lock().unwrap().pop_front() {
-                    steers.push(m);
-                }
-                reroute += 1;
-                let nudge = format!(
-                    "【新指令中断】收到新指令，本批剩余 {} 个调用已中止（{}）。\n\
-                 新指令：{}\n\
-                 请立即按新指令重新决策下一步，旧的行动计划作废。",
-                    aborted_names.len(),
-                    aborted_names.join(", "),
-                    steers.join("；"),
-                );
-                self.push_transient(nudge);
-                log.push(format!(
-                    "[t{turn}] P90 新指令中断: steering 到达，中止 {} 个调用，同轮重调 LLM ({reroute}/{reroute_max})",
-                    aborted_names.len()
-                ));
-                continue;
-            }
-            // P94：单轮工具调用上限 → 软交棒。占位补齐剩余调用（OpenAI 约束），
-            // 注入「回望目标」nudge，不重调 LLM（预算已耗尽，下轮 LLM 自行收敛）。
-            if handoff_hit {
-                for (idx, tc) in calls.iter().enumerate() {
-                    if !executed_indices.contains(&idx) {
-                        self.messages.push(Message::tool_result(
-                            &tc.id,
-                            &tc.name,
-                            "【已中止】本轮工具调用已达上限，剩余调用未执行。",
-                        ));
-                    }
-                }
-                let nudge = format!(
-                    "【工具调用上限】本轮已执行 {} 个工具调用（上限 {max_tools_per_turn}）。\n\
-                 如果你还在原地打转或低效调用工具，请先停下：1) perceive 确认当前实际状态 \
-                 2) 回望当前目标 3) 规划一个更直接的方案（如一次 run_plan 完成多步，或 \
-                 先 gather 关键原料再合成），避免大量小步调用。",
-                    turn_tool_count
-                );
-                self.push_transient(nudge);
-                log.push(format!(
-                    "[t{turn}] P94 软交棒: 本轮执行 {turn_tool_count} 个工具，达上限 {max_tools_per_turn}，注入收敛指令"
-                ));
+            } else {
                 break Some(calls);
             }
-            // P99：慢动作单动作轮——慢工具已执行完成，中止剩余预测调用。
-            // 占位补齐（OpenAI 约束：每个 tool_call 必须有响应），不重调 LLM：
-            // 结果已回填历史，下一轮 run_one_turn 的 auto-perceive + 结果上下文
-            // 自然让 LLM 基于新状态决策，无需额外 LLM 调用。
-            if slow_handoff {
-                let mut aborted_names: Vec<String> = Vec::new();
-                for (idx, tc) in calls.iter().enumerate() {
-                    if !executed_indices.contains(&idx) {
-                        aborted_names.push(tc.name.clone());
-                        self.messages.push(Message::tool_result(
-                            &tc.id,
-                            &tc.name,
-                            "【已中止】前一慢动作工具已执行完成，本批剩余调用未执行（基于动作前状态的预测调用不再有意义，请基于新状态重新决策）。",
-                        ));
-                    }
-                }
-                log.push(format!(
-                    "[t{turn}] P99 慢动作单轮: 慢工具执行完成，中止 {} 个预测调用（{}），下轮重新决策",
-                    aborted_names.len(),
-                    aborted_names.join(", ")
-                ));
-                break Some(calls);
-            }
-            break Some(calls);
         }; // end P89 reroute loop
 
         // 最后一次 LLM 响应的工具调用（P89 重调后取最后成功轮；纯文字轮为空）
