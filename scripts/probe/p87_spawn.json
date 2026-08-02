@@ -1,0 +1,7 @@
+{"between_delay_ms": 1500, "steps": [
+  {"cmd": "chat /summon minecraft:zombie -500 -27 -154"},
+  {"cmd": "chat /summon minecraft:zombie -499 -25 -154"},
+  {"cmd": "chat /summon minecraft:spider -501 -24 -154"},
+  {"wait_ms": 2000},
+  {"state": true}
+]}

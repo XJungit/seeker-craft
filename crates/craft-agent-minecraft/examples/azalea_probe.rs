@@ -20,10 +20,13 @@
 //!     {"cmd": "equip iron_helmet helmet"},
 //!     {"wait_ms": 3000},
 //!     {"state": true},
+//!     {"raw": true},
 //!     {"cmd": "gather iron_ore 3"}
 //!   ]
 //! }
 //! ```
+//! `{"raw": true}` 直接读 azalea 原始 API（位置/背包逐槽/实体/方块），不经 adapter
+//! 渲染层，作为与 LLM 感知通道相互独立的事实来源（纠错死循环的 ground truth）。
 //! 支持命令文本见 `parse_chat_command`（equip/discard/consume/goto/gather/craft/
 //! craft3/smelt/mine/minebelow/place/open/chestview/chestwithdraw/chestdeposit/
 //! makeobsidian/pickup/defend/attack/...）。
@@ -115,6 +118,7 @@ async fn main() {
         Cmd(String),
         Wait(u64),
         State,
+        Raw,
     }
     let mut steps: Vec<Step> = Vec::new();
     let mut between_delay_ms = 1500u64;
@@ -143,6 +147,8 @@ async fn main() {
                 steps.push(Step::Wait(w));
             } else if step.get("state").and_then(|v| v.as_bool()).unwrap_or(false) {
                 steps.push(Step::State);
+            } else if step.get("raw").and_then(|v| v.as_bool()).unwrap_or(false) {
+                steps.push(Step::Raw);
             } else {
                 println!("[probe] 跳过未知步骤: {step}");
             }
@@ -186,8 +192,25 @@ async fn main() {
                     .lock()
                     .map(|g| g.clone())
                     .unwrap_or(None)
-                    .unwrap_or_else(|| "（暂无状态快照）".to_string());
+                    .unwrap_or_else(|| "尚未收到状态快照".to_string());
                 println!("[probe] 状态: {snap}");
+            }
+            Step::Raw => {
+                println!("[probe] === 原始数据（azalea API 直读，不经渲染）===");
+                let msg = bot.push_cmd_and_wait(
+                    craft_agent_minecraft::azalea::BotCommand::RawState,
+                    timeout_ms,
+                );
+                match msg {
+                    Ok(m) => {
+                        if let Some(raw) = m.split_once("RAW|").map(|(_, raw)| raw) {
+                            println!("{raw}");
+                        } else {
+                            println!("{m}");
+                        }
+                    }
+                    Err(e) => println!("[probe] raw 失败: {e}"),
+                }
             }
         }
     }

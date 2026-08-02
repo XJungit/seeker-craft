@@ -35,7 +35,11 @@ Autonomously optimize and maintain this project. Authority: **full decision powe
 - **本地提交**：每个工作单元完成后 `git add -A && git commit`（必须，保障可回滚）
 - **推送 GitHub**：仅当某一功能/方面**确切完善**（实机验证通过、CI 门槛全绿、gap 回填完成）才 `git push origin main`
 - 中间过程的小修复/实验/未验证改动：只本地提交，不推送（避免 CI 噪音与历史垃圾）
-- 推送前自检：`git log origin/main..HEAD --oneline` 确认待推提交都是"完善"级
+- 推送前自检（**必须全部通过才 push**，2026-08-02 起，P85-P87 推送时因漏跑 fmt/clippy 导致 CI 红两次）：
+  1. `git log origin/main..HEAD --oneline` 确认待推提交都是"完善"级
+  2. `cargo fmt --all -- --check`（CI quality job 门槛）
+  3. `cargo clippy --workspace --all-targets --features craft-agent-minecraft/azalea-bot -- -D warnings`（CI quality job 门槛）
+  4. `cargo test --workspace`（CI test job 门槛）
 
 ## Build & Run
 

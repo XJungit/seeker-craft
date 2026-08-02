@@ -1,0 +1,15 @@
+{
+  "between_delay_ms": 1000,
+  "timeout_ms": 30000,
+  "steps": [
+    {"cmd": "chat /summon minecraft:zombie -501 75 -159 {NoAI:1}"},
+    {"wait_ms": 4000},
+    {"cmd": "rawstate"},
+    {"wait_ms": 8000},
+    {"cmd": "rawstate"},
+    {"wait_ms": 8000},
+    {"cmd": "rawstate"},
+    {"wait_ms": 8000},
+    {"cmd": "rawstate"}
+  ]
+}

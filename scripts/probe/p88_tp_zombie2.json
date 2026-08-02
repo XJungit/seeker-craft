@@ -1,0 +1,13 @@
+{
+  "between_delay_ms": 1000,
+  "timeout_ms": 30000,
+  "steps": [
+    {"cmd": "chat /tp @e[type=zombie,limit=1] -489 70 -154"},
+    {"wait_ms": 2000},
+    {"cmd": "rawstate"},
+    {"wait_ms": 2000},
+    {"cmd": "rawstate"},
+    {"wait_ms": 2000},
+    {"cmd": "rawstate"}
+  ]
+}

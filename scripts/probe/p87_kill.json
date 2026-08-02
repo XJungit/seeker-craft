@@ -1,0 +1,6 @@
+{"between_delay_ms": 1500, "steps": [
+  {"cmd": "chat /time set night"},
+  {"cmd": "chat /kill CraftAgent"},
+  {"wait_ms": 4000},
+  {"state": true}
+]}

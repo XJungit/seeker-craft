@@ -1,0 +1,9 @@
+{"between_delay_ms": 2500, "steps": [
+  {"cmd": "chat /difficulty hard"},
+  {"cmd": "chat /time set night"},
+  {"cmd": "chat /tp CraftAgent -484 95 -151"},
+  {"wait_ms": 3000},
+  {"cmd": "chat /summon minecraft:zombie -484 97 -151 {NoAI:1b,Silent:1b}"},
+  {"wait_ms": 2000},
+  {"state": true}
+]}

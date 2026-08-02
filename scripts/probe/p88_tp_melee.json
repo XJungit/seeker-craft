@@ -1,0 +1,13 @@
+{
+  "between_delay_ms": 1000,
+  "timeout_ms": 30000,
+  "steps": [
+    {"cmd": "chat /tp @e[type=zombie,limit=1] @a[name=CraftAgent]"},
+    {"wait_ms": 3000},
+    {"cmd": "rawstate"},
+    {"wait_ms": 4000},
+    {"cmd": "rawstate"},
+    {"wait_ms": 4000},
+    {"cmd": "rawstate"}
+  ]
+}

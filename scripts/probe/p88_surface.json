@@ -1,0 +1,15 @@
+{
+  "between_delay_ms": 1000,
+  "timeout_ms": 30000,
+  "steps": [
+    {"cmd": "chat /tp @a[name=CraftAgent] -495 96 -150"},
+    {"wait_ms": 2500},
+    {"cmd": "chat /summon minecraft:zombie -496 96 -151"},
+    {"wait_ms": 3000},
+    {"cmd": "rawstate"},
+    {"wait_ms": 5000},
+    {"cmd": "rawstate"},
+    {"wait_ms": 5000},
+    {"cmd": "rawstate"}
+  ]
+}

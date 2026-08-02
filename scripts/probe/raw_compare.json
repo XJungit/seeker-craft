@@ -1,0 +1,8 @@
+{
+  "between_delay_ms": 1000,
+  "timeout_ms": 30000,
+  "steps": [
+    {"cmd": "rawstate"},
+    {"state": true}
+  ]
+}

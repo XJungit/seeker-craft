@@ -1,0 +1,8 @@
+{"between_delay_ms": 1500, "steps": [
+  {"cmd": "chat /summon minecraft:zombie -495 71 -155 {NoAI:1b,Silent:1b}"},
+  {"cmd": "chat /summon minecraft:zombie -494 69 -155 {NoAI:1b,Silent:1b}"},
+  {"cmd": "chat /summon minecraft:zombie -495 69 -156 {NoAI:1b,Silent:1b}"},
+  {"cmd": "chat /summon minecraft:zombie -497 70 -153 {NoAI:1b,Silent:1b}"},
+  {"wait_ms": 1000},
+  {"state": true}
+]}

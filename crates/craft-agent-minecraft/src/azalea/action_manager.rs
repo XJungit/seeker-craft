@@ -259,6 +259,8 @@ pub fn timeout_ticks(cmd: &BotCommand) -> u64 {
         BotCommand::Follow { .. } => 20,
         BotCommand::StopFollow => 20,
         BotCommand::Give { .. } => 400,
+        // P88：raw dump 是调试通道，即时完成。
+        BotCommand::RawState => 20,
     }
 }
 
@@ -310,6 +312,7 @@ pub fn cmd_signature(cmd: &BotCommand) -> String {
         BotCommand::Follow { .. } => "follow".to_string(),
         BotCommand::StopFollow => "stop_follow".to_string(),
         BotCommand::Give { item, count, .. } => format!("give({item},{count})"),
+        BotCommand::RawState => "raw_state".to_string(),
     }
 }
 

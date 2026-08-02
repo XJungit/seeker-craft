@@ -418,6 +418,11 @@ pub enum BotCommand {
         count: u32,
         target: Option<String>,
     },
+    /// P88：原始状态 dump（调试通道）。不经任何渲染/聚合/翻译，直接以原始格式
+    /// 输出 azalea API 数据：精确位置、逐槽背包、全量实体（含玩家 id/坐标/距离）、
+    /// 脚下方块、维度、朝向等。供 probe 作为与 LLM 感知通道相互独立的事实来源
+    /// （LLM 感知数据出错/死循环时用它对撞出真相）。LLM 工具不暴露此命令。
+    RawState,
 }
 
 /// 队列中的命令包装：携带结果回传通道（None 表示 fire-and-forget，如聊天指令）。
@@ -795,6 +800,9 @@ pub fn parse_chat_command(content: &str) -> Option<BotCommand> {
     }
     if content == "defend" {
         return Some(BotCommand::Defend);
+    }
+    if content == "rawstate" {
+        return Some(BotCommand::RawState);
     }
     None
 }
@@ -1503,6 +1511,137 @@ impl AzaleaBot {
                 };
                 if let Some((cmd, result_tx)) = to_run {
                     match cmd {
+                        BotCommand::RawState => {
+                            // P88：原始数据 dump。与 State 快照渲染完全独立，逐槽/逐实体输出。
+                            let mut out = String::new();
+                            match bot.position() {
+                                Ok(p) => out
+                                    .push_str(&format!("pos=({:.3}, {:.3}, {:.3})", p.x, p.y, p.z)),
+                                Err(e) => out.push_str(&format!("pos=ERR {e:?}")),
+                            }
+                            out.push_str(&format!(" health={}", bot.health().unwrap_or(-1.0)));
+                            if let Ok(h) = bot.hunger() {
+                                out.push_str(&format!(
+                                    " food={} saturation={}",
+                                    h.food, h.saturation
+                                ));
+                            }
+                            if let Ok(xp) = bot.experience() {
+                                out.push_str(&format!(
+                                    " xp_level={} xp_progress={:.3}",
+                                    xp.level, xp.progress
+                                ));
+                            }
+                            out.push_str(&format!(
+                                " dimension={}",
+                                bot.world_name()
+                                    .map(|n| n.to_string())
+                                    .unwrap_or_else(|_| "unknown".into())
+                            ));
+                            if let Ok(p) = bot.position() {
+                                let biome = bot
+                                    .world()
+                                    .ok()
+                                    .and_then(|w| {
+                                        w.read().get_biome(BlockPos::new(
+                                            p.x.floor() as i32,
+                                            p.y.floor() as i32,
+                                            p.z.floor() as i32,
+                                        ))
+                                    })
+                                    .and_then(|b| bot.resolve_registry_key(&b).ok().flatten())
+                                    .map(|key| key.into_ident().to_string())
+                                    .unwrap_or_else(|| "unknown".into());
+                                out.push_str(&format!(" biome={biome}"));
+                            }
+                            if let Ok(d) = bot.direction() {
+                                out.push_str(&format!(" dir={d:?}"));
+                            }
+                            match bot.get_held_item() {
+                                Ok(it) if !it.is_empty() => out.push_str(&format!(
+                                    " held={} x{}",
+                                    it.kind().to_str(),
+                                    it.count()
+                                )),
+                                _ => out.push_str(" held=air"),
+                            }
+                            out.push_str(&format!(
+                                " selected_slot={}",
+                                bot.selected_hotbar_slot().unwrap_or(0)
+                            ));
+                            out.push_str("\ninv:");
+                            match bot.get_inventory() {
+                                Ok(inv) => {
+                                    if let Some(slots) = inv.slots() {
+                                        for (i, s) in slots.iter().enumerate() {
+                                            if !s.is_empty() {
+                                                out.push_str(&format!(
+                                                    " slot[{i}]={} x{}",
+                                                    s.kind().to_str(),
+                                                    s.count()
+                                                ));
+                                            }
+                                        }
+                                    }
+                                }
+                                Err(e) => out.push_str(&format!(" ERR {e:?}")),
+                            }
+                            match bot.nearest_entities::<()>() {
+                                Ok(ents) => {
+                                    let self_id = bot.entity().id();
+                                    out.push_str(&format!("\nents({}):", ents.len()));
+                                    for e in ents.iter() {
+                                        let kind = e
+                                            .kind()
+                                            .map(|k| format!("{k:?}"))
+                                            .unwrap_or_else(|_| "?".into());
+                                        let pos = e
+                                            .position()
+                                            .map(|p| format!("({:.1},{:.1},{:.1})", p.x, p.y, p.z))
+                                            .unwrap_or_else(|_| "?".into());
+                                        let dist = e.distance_to_client().unwrap_or(-1.0);
+                                        out.push_str(&format!(
+                                            " id={} kind={kind} pos={pos} dist={dist:.1}m{}",
+                                            e.id(),
+                                            if e.id() == self_id { "*self" } else { "" }
+                                        ));
+                                    }
+                                }
+                                Err(e) => out.push_str(&format!(" ERR {e:?}")),
+                            }
+                            if let (Ok(p), Ok(world)) = (bot.position(), bot.world()) {
+                                let fx = p.x.floor() as i32;
+                                let fy = (p.y - 1.0).floor() as i32;
+                                let fz = p.z.floor() as i32;
+                                out.push_str(&format!("\nfeet(y={fy}):"));
+                                for dx in -1..=1 {
+                                    for dz in -1..=1 {
+                                        let bp = BlockPos::new(fx + dx, fy, fz + dz);
+                                        let name = match world.read().get_block_state(bp) {
+                                            Some(s) if s.is_air() => "air".to_string(),
+                                            Some(s) => {
+                                                let bk: BlockKind = s.into();
+                                                bk.to_str().to_string()
+                                            }
+                                            None => "unloaded".to_string(),
+                                        };
+                                        out.push_str(&format!(
+                                            " ({},{},{})={name}",
+                                            fx + dx,
+                                            fy,
+                                            fz + dz
+                                        ));
+                                    }
+                                }
+                            }
+                            out.push_str(&format!(
+                                "\nplayers={}",
+                                bot.nearby_players().map(|p| p.len()).unwrap_or(0)
+                            ));
+                            if let Some(tx) = &result_tx {
+                                let _ = tx.send(format!("Action output:\nRAW|{out}"));
+                            }
+                        }
                         BotCommand::Goto { x, y, z } => {
                             *state.mining_below.lock().unwrap() = false;
                             // P66：冷却拦截。按 bot 当前格子检查冷却（而非目标坐标，
@@ -4012,10 +4151,18 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                 // P77：主手非武器且背包有剑/斧 → 自动装备（Mindcraft pvp 插件默认行为），
                 // 装备请求期间跳过攻击（等 5s 后下一轮装备好再打）。
                 // P77：creeper ≤3m（爆炸半径）→ 撤离优先于攻击。
+                // P87-2：移除「mining_below 时跳过 self_defense」——bot 深挖（MineBelow）期间
+                // 僵尸贴脸会站桩挨打（实机验证 P87 时暴露：LLM 持续 mine_below，8m 内僵尸无人管）。
+                // 挖矿中同样先保命：仅 busy=true（Craft/Gather/Smelt 异步命令）时退出。
+                // P88-b：检查间隔 100 tick(5s) → 20 tick(1s)。实机验证 P88 暴露：
+                // 僵尸贴脸 5s 内咬 5 击（~12 伤害），等 100 tick 检查时 bot 已 hp<10，
+                // self_defense 让位 cowardice 逃跑——永远来不及反击，站桩被咬死。
+                // 1s 检查一次，僵尸贴脸后第一轮就能攻击（攻击冷却由 MC 服务端控制）。
+                // P88-c：hp 条件移到内层——低血只放弃「远处逼近」，
+                // 贴脸（≤3.2m）怪照打：cowardice 逃跑途中被贴脸怪追着咬，
+                // 不反击只会越逃越死（实机验证 P88-b 时 bot 8/20 全程逃跑被追）。
                 if !state.action_mgr.is_busy()
-                    && !*state.mining_below.lock().unwrap()
-                    && bot.health().unwrap_or(20.0) >= 10.0
-                    && bot.ticks_connected().is_multiple_of(100)
+                    && bot.ticks_connected().is_multiple_of(20)
                     && let Ok(entities) = bot.nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>() {
                     let self_id = bot.entity().id();
                     let self_pos = bot.position().ok();
@@ -4064,7 +4211,7 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                             break;
                                         }
                                     }
-                                // 距离检查：8 格内才攻击（远距离敌人由 LLM 决策是否拉近或撤退）
+                                // 距离检查：8 格内才处理（远距离敌人由 LLM 决策是否拉近或撤退）
                                 let in_range = if let Some(sp) = self_pos {
                                     if let Ok(ep) = e.position() {
                                         let d = ((sp.x - ep.x).powi(2)
@@ -4078,6 +4225,64 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                     false
                                 };
                                 if !in_range { continue; }
+                                // P88：MC 近战 reach=3.0，4~8m 直接 e.attack() 是无效攻击
+                                // （包发出但服务器判定 miss）。实机验证 P87-2 暴露：僵尸 4.6m
+                                // 时 MODE 攻击 + strafe 全触发但僵尸一直不死——攻击全部 miss。
+                                // 改为：>3.2m 先 High 优先级 goto 逼近到僵尸 2m 处，下一轮再打。
+                                // P88-b：垂直差 >4m 不逼近（phantom/ghast 在头顶几十格时
+                                // goto 空中目标必然失败乱跑——飞行怪交给 LLM 决策）。
+                                let dist = self_pos.and_then(|sp| {
+                                    e.position()
+                                        .ok()
+                                        .map(|ep| {
+                                            ((sp.x - ep.x).powi(2)
+                                                + (sp.y - ep.y).powi(2)
+                                                + (sp.z - ep.z).powi(2))
+                                                .sqrt()
+                                        })
+                                });
+                                if let Some(d) = dist
+                                    && d > 3.2
+                                {
+                                    // P88-d：>3.2m 时只有两种结局——(a) 满足条件就 goto 逼近，
+                                    // (b) 不满足（低血/垂直差大）就 continue 跳过攻击——
+                                    // 否则会走到下方攻击分支，在 4~8m 直接 e.attack() 必 miss
+                                    // （实机验证 P88-c：bot 8/20 时对 4m+ 苦力怕连续攻击 7 次
+                                    // 全 miss——低血不逼近但又直接攻击，无效输出）。
+                                    if let (Some(sp), Ok(ep)) = (self_pos, e.position())
+                                        && (ep.y - sp.y).abs() <= 4.0
+                                        // P88-c：低血不逼近远处怪（cowardice 逃跑优先，
+                                        // 逼近途中反而吃更多攻击）；贴脸怪照打（下方分支）。
+                                        && bot.health().unwrap_or(0.0) >= 10.0
+                                    {
+                                        let mut dx = sp.x - ep.x;
+                                        let mut dz = sp.z - ep.z;
+                                        let dl = (dx * dx + dz * dz).sqrt();
+                                        if dl > 0.1 {
+                                            dx /= dl;
+                                            dz /= dl;
+                                            let tx = (ep.x + dx * 2.0).floor() as i32;
+                                            let ty = ep.y.floor() as i32;
+                                            let tz = (ep.z + dz * 2.0).floor() as i32;
+                                            let tick_now = bot.ticks_connected();
+                                            let _ = state.action_mgr.submit(
+                                                BotCommand::Goto { x: tx, y: ty, z: tz },
+                                                Priority::High,
+                                                &cmd_queue,
+                                                tick_now,
+                                            );
+                                            let _ = evt_tx.send(BotEvent::Chat {
+                                                content: format!(
+                                                    "[MODE:self_defense] 敌人 {kind:?} {d:.1}m 超近战范围，逼近 ({tx},{ty},{tz})"
+                                                ),
+                                            });
+                                            continue;
+                                        }
+                                    }
+                                    // 无法逼近：>3.2m 攻击必 miss，直接跳过（交给 LLM/cowardice）
+                                    continue;
+                                }
+                                // 至此 d ≤ 3.2m：近战范围内，直接攻击（贴脸怪低血也打）
                                 // 自动换武器：主手非武器且背包有剑/斧 → Equip（防重复，本轮跳过攻击）
                                 let held_is_weapon = bot
                                     .get_held_item()
@@ -4148,21 +4353,24 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                     e.attack();
                                     attacked = true;
                                     // P87：战斗走位（strafe）——攻击后围绕敌人侧向移动，
-                                    // 目标点 = 敌人位置 + 径向 1.8m + 切向 2.0m（保持 ~2.7m 战斗距离），
-                                    // 避免站桩对砍（僵尸挥击/骷髅射箭全吃）。冷却 40 tick 防打断寻路。
+                                    // 目标点 = 敌人位置 + 径向 1.2m + 切向 1.5m（保持 ~1.9m 战斗距离，
+                                    // 在近战 reach 3m 内能打中，又不贴脸吃全部挥击）。
+                                    // y 取敌人所在层（P88：原 sp.y 在竖井里会差层，走位到 3.6m
+                                    // 依然打不中——实机验证 P87-2 时的 miss 根因之一）。
+                                    // 冷却 40 tick 防打断寻路。
                                     let strafe_cd = *state.combat_strafe_cd.lock().unwrap();
                                     if (bot.ticks_connected() as i64) >= strafe_cd
-                                        && let (Some(sp), Ok(ep)) = (self_pos, e.position())
+                                        && let (Some(_sp), Ok(ep)) = (self_pos, e.position())
                                     {
-                                        let mut dx = sp.x - ep.x;
-                                        let mut dz = sp.z - ep.z;
+                                        let mut dx = _sp.x - ep.x;
+                                        let mut dz = _sp.z - ep.z;
                                         let dl = (dx * dx + dz * dz).sqrt();
                                         if dl > 0.1 {
                                             dx /= dl;
                                             dz /= dl;
-                                            let tx = (ep.x + dx * 1.8 + -dz * 2.0).floor() as i32;
-                                            let ty = sp.y.floor() as i32;
-                                            let tz = (ep.z + dz * 1.8 + dx * 2.0).floor() as i32;
+                                            let tx = (ep.x + dx * 1.2 + -dz * 1.5).floor() as i32;
+                                            let ty = ep.y.floor() as i32;
+                                            let tz = (ep.z + dz * 1.2 + dx * 1.5).floor() as i32;
                                             let tick_now = bot.ticks_connected();
                                             let _ = state.action_mgr.submit(
                                                 BotCommand::Goto { x: tx, y: ty, z: tz },
