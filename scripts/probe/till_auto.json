@@ -1,0 +1,7 @@
+{"between_delay_ms": 2000, "timeout_ms": 150000, "steps": [
+  {"cmd": "chat /setblock -486 95 -150 minecraft:air"},
+  {"cmd": "chat /setblock -486 96 -150 minecraft:air"},
+  {"cmd": "chat /setblock -486 95 -150 minecraft:dirt"},
+  {"cmd": "tillandsow -486 95 -150 wheat_seeds"},
+  {"state": true}
+]}

@@ -4,6 +4,8 @@
 
 use azalea::BlockPos;
 use azalea::Client;
+use azalea::pathfinder::goals::BlockPosGoal;
+use azalea::prelude::*;
 use azalea_registry::builtin::BlockKind;
 use azalea_registry::builtin::ItemKind;
 use std::time::Duration;
@@ -118,14 +120,38 @@ pub(crate) async fn do_till_and_sow(
         ));
     }
 
-    // 3. 距离检查（服务器交互距离 4.5m）
+    // 3. 距离检查 + 自动靠近（P100：force_block 交互需贴近，2.9m 外播种静默失败）
     let p = bot.position().map_err(|e| format!("读取位置失败: {e:?}"))?;
     let dist =
         ((p.x - x as f64).powi(2) + (p.y - y as f64).powi(2) + (p.z - z as f64).powi(2)).sqrt();
-    if dist > 4.5 {
+    if dist > 8.0 {
         return Err(format!(
             "({x},{y},{z}) 距离 {dist:.1}m 过远（交互距离 4.5m）——请先 goto 到目标旁再 till_and_sow"
         ));
+    }
+    if dist > 2.0 {
+        // 自动走到目标旁（站在目标格，pathfinder 会在其相邻格停下）
+        bot.start_goto(BlockPosGoal(target_pos));
+        let mut reached = false;
+        for _ in 0..60 {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            if let Ok(p) = bot.position() {
+                let d = ((p.x - x as f64).powi(2)
+                    + (p.y - y as f64).powi(2)
+                    + (p.z - z as f64).powi(2))
+                .sqrt();
+                if d <= 2.0 {
+                    reached = true;
+                    break;
+                }
+            }
+        }
+        bot.stop_pathfinding();
+        if !reached {
+            return Err(format!(
+                "无法走近目标 ({x},{y},{z})（6s 内未到达 2m 内，当前 {dist:.1}m）——路径可能被阻挡，请换位置"
+            ));
+        }
     }
 
     // 4. 犁地（非 farmland 时）
