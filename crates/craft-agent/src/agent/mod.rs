@@ -1108,15 +1108,22 @@ impl Agent {
     }
 
     /// 带图片的瞬态注入（VLM：auto-perceive 状态快照需附图）。
-    pub(super) fn push_transient_with_images(&mut self, content: impl Into<String>, images: Vec<String>) {
+    pub(super) fn push_transient_with_images(
+        &mut self,
+        content: impl Into<String>,
+        images: Vec<String>,
+    ) {
         let content = content.into();
         self.assert_transient_prefix(&content);
-        self.messages.push(Message::user_with_images(content, images));
+        self.messages
+            .push(Message::user_with_images(content, images));
     }
 
     fn assert_transient_prefix(&self, content: &str) {
         debug_assert!(
-            TRANSIENT_USER_PREFIXES.iter().any(|p| content.starts_with(p)),
+            TRANSIENT_USER_PREFIXES
+                .iter()
+                .any(|p| content.starts_with(p)),
             "push_transient 内容未以已登记前缀开头：`{}...`——必须同步加入 TRANSIENT_USER_PREFIXES",
             content.chars().take(24).collect::<String>()
         );

@@ -1,4 +1,4 @@
-﻿//! Minecraft azalea 工具集（仅 `azalea-bot` 特性编译）。
+//! Minecraft azalea 工具集（仅 `azalea-bot` 特性编译）。
 //!
 //! 把 `MinecraftAzaleaAdapter`（GameAdapter）封装成 LLM 可调用的 `GameTool`。
 //! 这是 Phase 6 的关键：LLM 通过工具名输出 Action，adapter 翻译执行。
@@ -4231,7 +4231,11 @@ mod tool_mapping_tests {
         let mut sorted: Vec<&str> = ALL_TOOL_NAMES.to_vec();
         sorted.sort();
         sorted.dedup();
-        assert_eq!(sorted.len(), ALL_TOOL_NAMES.len(), "ALL_TOOL_NAMES 存在重复");
+        assert_eq!(
+            sorted.len(),
+            ALL_TOOL_NAMES.len(),
+            "ALL_TOOL_NAMES 存在重复"
+        );
     }
 
     /// run_plan 支持的 action 名与 action_for 动作工具集一致（parse_step 漏分支 → 红）。
@@ -4246,13 +4250,44 @@ mod tool_mapping_tests {
             "level": 1, "table_x": 0, "table_y": 0, "table_z": 0,
         });
         for action in [
-            "goto", "mine", "mine_block", "mine_below", "mine_above", "interact",
-            "interact_block", "till_and_sow", "tillandsow", "sleep", "harvest",
-            "chat", "attack", "craft", "craft_2x2", "craft_3x3", "smelt",
-            "gather", "collect", "place", "open", "open_container", "auto_craft",
-            "enchant", "trade", "interact_entity", "pickup", "defend",
-            "make_obsidian", "equip", "discard", "consume", "chest_view",
-            "chest_withdraw", "chest_deposit", "follow", "stop_follow", "give",
+            "goto",
+            "mine",
+            "mine_block",
+            "mine_below",
+            "mine_above",
+            "interact",
+            "interact_block",
+            "till_and_sow",
+            "tillandsow",
+            "sleep",
+            "harvest",
+            "chat",
+            "attack",
+            "craft",
+            "craft_2x2",
+            "craft_3x3",
+            "smelt",
+            "gather",
+            "collect",
+            "place",
+            "open",
+            "open_container",
+            "auto_craft",
+            "enchant",
+            "trade",
+            "interact_entity",
+            "pickup",
+            "defend",
+            "make_obsidian",
+            "equip",
+            "discard",
+            "consume",
+            "chest_view",
+            "chest_withdraw",
+            "chest_deposit",
+            "follow",
+            "stop_follow",
+            "give",
         ] {
             assert!(
                 parse_step(action, &step).is_ok(),
