@@ -29,6 +29,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: cargo clippy (strict, incl. azalea-bot)
         run: cargo clippy --workspace --all-targets --features craft-agent-minecraft/azalea-bot -- -D warnings
+      - name: cargo check craft-agent-model boundary (no default features)
+        run: cargo check -p craft-agent-model --no-default-features
 
   test:
     name: test

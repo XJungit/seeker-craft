@@ -6,6 +6,9 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+# 边界约束（P2.3）：本 crate 只允许依赖 `craft_agent::core::{message, types}`，
+# 绝不渗透 agent/（run_one_turn/compaction 等上层）。CI 用
+# `cargo check -p craft-agent-model --no-default-features` 强制验证该边界。
 craft-agent.workspace = true
 anyhow.workspace = true
 serde.workspace = true
