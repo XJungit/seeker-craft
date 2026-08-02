@@ -261,16 +261,26 @@ impl SemanticMemory {
         s
     }
 
+    /// scope 语义归一：None/空串/"global"/"any"/"*" 都视为全局通用知识。
+    /// LLM 自由填值时常用 "global" 表示通用（工具描述只引导了"留空"），
+    /// 若不归一化，全局记忆会被服务器 scope 过滤永不注入（实机验证发现）。
+    pub fn scope_is_global(scope: &Option<String>) -> bool {
+        matches!(
+            scope.as_deref(),
+            None | Some("") | Some("global") | Some("any") | Some("*")
+        )
+    }
+
     /// 按相关性取 top-N 条（query 空时按 recency 取最近）。
-    /// `scope`（当前服务器/世界）：只返回全局条目（scope=None）或与当前
-    /// scope 匹配的条目，杜绝跨图记忆污染（如别的世界的坐标）。
+    /// `scope`（当前服务器/世界）：只返回全局条目（见 [`scope_is_global`]）
+    /// 或与当前 scope 匹配的条目，杜绝跨图记忆污染（如别的世界的坐标）。
     pub fn relevant(&self, query: &str, scope: Option<&str>, limit: usize) -> Vec<&MemoryEntry> {
         let q = tokens(query);
         let mut ranked: Vec<(&MemoryEntry, f64, usize)> = self
             .entries
             .iter()
             .enumerate()
-            .filter(|(_, e)| e.scope.is_none() || e.scope.as_deref() == scope)
+            .filter(|(_, e)| Self::scope_is_global(&e.scope) || e.scope.as_deref() == scope)
             .map(|(i, e)| (e, self.score(e, &q), i))
             .collect();
         if q.is_empty() {
@@ -621,6 +631,37 @@ mod tests {
         m.remember("新", "新内容", &[], MemoryKind::Fact, None);
         let top = m.relevant("", None, 1);
         assert_eq!(top[0].title, "新");
+    }
+
+    #[test]
+    fn scope_global_string_is_treated_as_universal() {
+        let mut m = mem();
+        // LLM 自由填值：用 "global" 字符串表示通用知识（非空 scope）
+        m.remember(
+            "通用策略",
+            "先做工具再砍树",
+            &["wood".into()],
+            MemoryKind::Strategy,
+            Some("global"),
+        );
+        m.remember(
+            "服务器坐标",
+            "基地在 (10,64,-20)",
+            &["base".into()],
+            MemoryKind::Fact,
+            Some("s1"),
+        );
+        // 当前服务器 s2：global 应注入，s1 应隔离
+        let (text, touched) = m.injection_text("工具 砍树", Some("s2"));
+        assert!(
+            text.contains("通用策略"),
+            "scope=global 应视为全局知识注入: {text}"
+        );
+        assert!(!text.contains("服务器坐标"), "其他服务器坐标仍隔离");
+        assert_eq!(touched.len(), 1);
+        // 空 scope（无服务器会话）：global 同样注入
+        let (text2, _) = m.injection_text("工具 砍树", None);
+        assert!(text2.contains("通用策略"));
     }
 
     #[test]

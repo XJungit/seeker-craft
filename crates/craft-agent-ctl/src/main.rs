@@ -74,12 +74,16 @@ fn list_procs() -> Vec<(u32, String)> {
 }
 
 fn kill_all() {
+    let self_pid = std::process::id();
     let procs = list_procs();
     if procs.is_empty() {
         println!("[ctl] no craft-agent processes running");
         return;
     }
     for (pid, name) in &procs {
+        if *pid == self_pid {
+            continue; // 不杀自己（deploy/viewer 子命令内调用时）
+        }
         let _ = Command::new("taskkill")
             .args(["/F", "/PID", &pid.to_string()])
             .stdout(Stdio::null())
@@ -220,6 +224,36 @@ fn cmd_start() {
     }
 }
 
+/// 只启动 viewer（不起 autopilot）：用于按需观测（probe 级别不可达时），
+/// 观测完 `ctl stop`。goal/steps 可选（默认常驻 GOAL/40 步）。
+fn cmd_viewer(goal: Option<&str>, steps: Option<&str>) {
+    kill_all();
+    std::thread::sleep(Duration::from_secs(2));
+    let goal = goal.unwrap_or(GOAL);
+    let steps = steps.unwrap_or("40");
+    let spawned = spawn_detached(
+        VIEWER_EXE,
+        &[
+            "--goal",
+            goal,
+            "--steps",
+            steps,
+            "--port",
+            "8080",
+            "--mc",
+            "localhost:4444",
+            "--username",
+            "CraftAgent",
+        ],
+        "viewer_run.log",
+    );
+    if !spawned {
+        return;
+    }
+    std::thread::sleep(Duration::from_secs(6));
+    cmd_status();
+}
+
 fn cmd_build() {
     for pkg in ["craft-agent-viewer", "craft-agent-autopilot"] {
         let mut cmd = Command::new("cargo");
@@ -317,7 +351,10 @@ fn truncate(s: &str, n: usize) -> String {
 }
 
 fn usage() {
-    println!("usage: craft-agent-ctl <status|stop|build|deploy|goal|start|session|tail|health>");
+    println!(
+        "usage: craft-agent-ctl <status|stop|build|deploy|goal|start|viewer|session|tail|health>"
+    );
+    println!("  viewer [goal] [steps]   # 只启动 viewer（不起 autopilot），按需观测");
 }
 
 fn main() {
@@ -336,6 +373,10 @@ fn main() {
             }
         }
         "start" => cmd_start(),
+        "viewer" => cmd_viewer(
+            args.get(2).map(|s| s.as_str()),
+            args.get(3).map(|s| s.as_str()),
+        ),
         "session" => {
             let n = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(10);
             cmd_session(n);
