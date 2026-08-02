@@ -1,4 +1,4 @@
-//! Minecraft azalea 工具集（仅 `azalea-bot` 特性编译）。
+﻿//! Minecraft azalea 工具集（仅 `azalea-bot` 特性编译）。
 //!
 //! 把 `MinecraftAzaleaAdapter`（GameAdapter）封装成 LLM 可调用的 `GameTool`。
 //! 这是 Phase 6 的关键：LLM 通过工具名输出 Action，adapter 翻译执行。
@@ -105,6 +105,9 @@ impl GameTool for GotoTool {
     fn name(&self) -> &str {
         "goto"
     }
+    fn is_slow(&self) -> bool {
+        true
+    }
     fn description(&self) -> &str {
         "走到世界坐标 (x, y, z)。bot 使用内置 A* pathfinder 自动导航。参数：x,y,z 整数。"
     }
@@ -162,6 +165,9 @@ impl GameTool for MineBelowTool {
     fn name(&self) -> &str {
         "mine_below"
     }
+    fn is_slow(&self) -> bool {
+        true
+    }
     fn description(&self) -> &str {
         "挖掉 bot 脚下的方块（向下挖矿井）。无参数。bot 自动挖掘并可能拾取掉落物。"
     }
@@ -207,6 +213,9 @@ impl MineAboveTool {
 impl GameTool for MineAboveTool {
     fn name(&self) -> &str {
         "mine_above"
+    }
+    fn is_slow(&self) -> bool {
+        true
     }
     fn description(&self) -> &str {
         "向上挖：从 bot 头顶逐格挖到空气，用于地下脱困/上到地表。无参数。\
@@ -306,6 +315,9 @@ impl MineTool {
 impl GameTool for MineTool {
     fn name(&self) -> &str {
         "mine"
+    }
+    fn is_slow(&self) -> bool {
+        true
     }
     fn description(&self) -> &str {
         "挖掉指定世界坐标 (x,y,z) 的方块。bot 会对该方块发起挖掘（需在其可达范围内）。参数：x,y,z 整数。"
@@ -432,6 +444,9 @@ impl GameTool for TillAndSowTool {
     fn name(&self) -> &str {
         "till_and_sow"
     }
+    fn is_slow(&self) -> bool {
+        true
+    }
     fn description(&self) -> &str {
         "在指定世界坐标 (x,y,z) 犁地并播种。目标必须是草方块/泥土/已耕地；需背包有锄头和种子。种子支持 wheat_seeds/beetroot_seeds/carrot/potato/melon_seeds/pumpkin_seeds。若目标过远需先 goto 靠近。"
     }
@@ -543,6 +558,9 @@ impl GameTool for HarvestTool {
     fn name(&self) -> &str {
         "harvest"
     }
+    fn is_slow(&self) -> bool {
+        true
+    }
     fn description(&self) -> &str {
         "收割附近 32m 内所有成熟的农作物（小麦/胡萝卜/土豆/甜菜/下界疣），自动走到并徒手挖取，掉落物自动拾取。未成熟的作物不会掉落，需要等待。"
     }
@@ -582,6 +600,9 @@ impl AttackTool {
 impl GameTool for AttackTool {
     fn name(&self) -> &str {
         "attack"
+    }
+    fn is_slow(&self) -> bool {
+        true
     }
     fn description(&self) -> &str {
         "攻击近战距离内最近的指定生物。target 必填，如 cow、zombie、creeper。若目标不在近战距离，先 goto 接近或撤退。"
@@ -844,6 +865,9 @@ impl GameTool for GatherTool {
     fn name(&self) -> &str {
         "gather"
     }
+    fn is_slow(&self) -> bool {
+        true
+    }
     fn description(&self) -> &str {
         "走到最近的指定方块并挖掘，直到背包有 count 个（早期游戏采集：砍树/挖石/挖矿）。\n\
          item 为方块物品 id（如 \"oak_log\" / \"stone\" / \"coal_ore\"），count 为期望数量（默认 1）。"
@@ -898,6 +922,9 @@ impl MakeObsidianTool {
 impl GameTool for MakeObsidianTool {
     fn name(&self) -> &str {
         "make_obsidian"
+    }
+    fn is_slow(&self) -> bool {
+        true
     }
     fn description(&self) -> &str {
         "自动制造黑曜石（用于下界传送门框架）。\n\
@@ -3065,6 +3092,9 @@ impl GameTool for PickupTool {
     fn name(&self) -> &str {
         "pickup"
     }
+    fn is_slow(&self) -> bool {
+        true
+    }
     fn description(&self) -> &str {
         "捡起附近掉落物。bot 走 4 个方向扫一圈，让物理引擎吸取掉落物（vanilla 自动捡半径 1.5）。\n\
          挖矿/战斗后调用一次，避免\"挖了 8 个石头但只捡到 3 个\"。\n\
@@ -3107,6 +3137,9 @@ impl DefendTool {
 impl GameTool for DefendTool {
     fn name(&self) -> &str {
         "defend"
+    }
+    fn is_slow(&self) -> bool {
+        true
     }
     fn description(&self) -> &str {
         "自动防御 5 秒：等待 handler 层 self_defense mode 自动攻击附近敌对生物。\n\
@@ -3274,6 +3307,9 @@ impl FollowTool {
 impl GameTool for FollowTool {
     fn name(&self) -> &str {
         "follow"
+    }
+    fn is_slow(&self) -> bool {
+        true
     }
     fn description(&self) -> &str {
         "跟随玩家（实现\"跟着我\"）。\n\

@@ -1926,6 +1926,10 @@ impl Agent {
             let mut abort_fail: Option<(String, String)> = None;
             // P90：steering 消息到达 → 中止剩余批次（同轮重调，见循环后分支）
             let mut steering_hit = false;
+            // P99：批内执行了慢动作工具（goto/mine/gather 等秒~分钟级）→ 中止
+            // 剩余预测调用（基于旧状态的后续调用失去意义），不重调 LLM——
+            // 结果回填历史，下一轮 LLM 基于动作完成后的真实状态重新决策。
+            let mut slow_handoff = false;
 
             for batch in &batches {
                 if aborted {
@@ -1941,6 +1945,12 @@ impl Agent {
                     handoff_hit = true;
                     break;
                 }
+                // P99：本批含慢动作工具 → 执行完本批后中止剩余批次
+                let batch_has_slow = batch.iter().any(|&idx| {
+                    self.tools
+                        .get(&calls[idx].name)
+                        .is_some_and(|t| t.is_slow())
+                });
                 let mut parallel_indices = Vec::new();
                 let mut knowledge_work = None;
                 for &idx in batch {
@@ -2161,6 +2171,13 @@ impl Agent {
                         tool_name, tc.arguments, msg
                     ));
                 }
+                // P99：本批执行了慢动作工具 → 中止剩余批次。慢动作完成后状态已变，
+                // 基于旧状态的后续调用（哪怕快工具）不再有意义；结果已回填历史，
+                // 下一轮 LLM 基于动作完成后的真实状态重新决策（opencode 式等待）。
+                if batch_has_slow {
+                    slow_handoff = true;
+                    break;
+                }
             }
 
             // P94：累计本轮已执行工具数（跨 reroute）
@@ -2278,6 +2295,29 @@ impl Agent {
                 self.messages.push(Message::user(nudge));
                 log.push(format!(
                     "[t{turn}] P94 软交棒: 本轮执行 {turn_tool_count} 个工具，达上限 {max_tools_per_turn}，注入收敛指令"
+                ));
+                break Some(calls);
+            }
+            // P99：慢动作单动作轮——慢工具已执行完成，中止剩余预测调用。
+            // 占位补齐（OpenAI 约束：每个 tool_call 必须有响应），不重调 LLM：
+            // 结果已回填历史，下一轮 run_one_turn 的 auto-perceive + 结果上下文
+            // 自然让 LLM 基于新状态决策，无需额外 LLM 调用。
+            if slow_handoff {
+                let mut aborted_names: Vec<String> = Vec::new();
+                for (idx, tc) in calls.iter().enumerate() {
+                    if !executed_indices.contains(&idx) {
+                        aborted_names.push(tc.name.clone());
+                        self.messages.push(Message::tool_result(
+                            &tc.id,
+                            &tc.name,
+                            "【已中止】前一慢动作工具已执行完成，本批剩余调用未执行（基于动作前状态的预测调用不再有意义，请基于新状态重新决策）。",
+                        ));
+                    }
+                }
+                log.push(format!(
+                    "[t{turn}] P99 慢动作单轮: 慢工具执行完成，中止 {} 个预测调用（{}），下轮重新决策",
+                    aborted_names.len(),
+                    aborted_names.join(", ")
                 ));
                 break Some(calls);
             }
@@ -3505,6 +3545,298 @@ mod tests {
                 && u.content.contains("回望当前目标"))
         });
         assert!(nudge_msg, "应注入含回望目标的收敛 nudge");
+    }
+
+    // ── P99：慢工具单动作轮（opencode 式等待：慢动作执行后中止预测调用）──
+    #[test]
+    fn p99_slow_tool_handoff_aborts_remaining_calls_and_does_not_reroute() {
+        use crate::core::tool::GameTool;
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        struct SequenceProvider {
+            calls: Arc<AtomicU32>,
+        }
+        impl LlmProvider for SequenceProvider {
+            fn complete(
+                &self,
+                _messages: &[Value],
+                _tools: &[Value],
+            ) -> Result<crate::core::message::AssistantResponse> {
+                let n = self.calls.fetch_add(1, Ordering::SeqCst);
+                let tool_calls = if n == 0 {
+                    // 第 1 次：快(perceive) + 慢(goto) + 慢(mine) 混合
+                    vec![
+                        ToolCall {
+                            id: "tc_perceive".into(),
+                            name: "perceive".into(),
+                            arguments: serde_json::json!({}),
+                        },
+                        ToolCall {
+                            id: "tc_goto".into(),
+                            name: "goto".into(),
+                            arguments: serde_json::json!({ "x": 1, "y": 2, "z": 3 }),
+                        },
+                        ToolCall {
+                            id: "tc_mine".into(),
+                            name: "mine".into(),
+                            arguments: serde_json::json!({ "x": 1, "y": 2, "z": 3 }),
+                        },
+                    ]
+                } else {
+                    vec![]
+                };
+                Ok(AssistantResponse {
+                    content: Some("动作".into()),
+                    reasoning: None,
+                    tool_calls,
+                    usage: Usage::default(),
+                    stop_reason: StopReason::ToolCalls,
+                })
+            }
+        }
+
+        struct GotoTool {
+            executed: Arc<AtomicU32>,
+        }
+        impl GameTool for GotoTool {
+            fn name(&self) -> &str {
+                "goto"
+            }
+            fn description(&self) -> &str {
+                ""
+            }
+            fn parameters(&self) -> Value {
+                serde_json::json!({})
+            }
+            fn is_slow(&self) -> bool {
+                true
+            }
+            fn execute(
+                &self,
+                _id: &str,
+                _a: Value,
+                _u: Option<crate::core::tool::ToolUpdateFn>,
+            ) -> anyhow::Result<ToolResult> {
+                self.executed.fetch_add(1, Ordering::SeqCst);
+                Ok(ToolResult {
+                    message: "已到达目标".into(),
+                    is_error: false,
+                    images: vec![],
+                })
+            }
+        }
+        struct MineTool {
+            executed: Arc<AtomicU32>,
+        }
+        impl GameTool for MineTool {
+            fn name(&self) -> &str {
+                "mine"
+            }
+            fn description(&self) -> &str {
+                ""
+            }
+            fn parameters(&self) -> Value {
+                serde_json::json!({})
+            }
+            fn is_slow(&self) -> bool {
+                true
+            }
+            fn execute(
+                &self,
+                _id: &str,
+                _a: Value,
+                _u: Option<crate::core::tool::ToolUpdateFn>,
+            ) -> anyhow::Result<ToolResult> {
+                self.executed.fetch_add(1, Ordering::SeqCst);
+                Ok(ToolResult {
+                    message: "挖掉方块".into(),
+                    is_error: false,
+                    images: vec![],
+                })
+            }
+        }
+        struct PerceiveTool2 {}
+        impl GameTool for PerceiveTool2 {
+            fn name(&self) -> &str {
+                "perceive"
+            }
+            fn description(&self) -> &str {
+                ""
+            }
+            fn parameters(&self) -> Value {
+                serde_json::json!({})
+            }
+            fn effects(&self) -> ToolEffects {
+                ToolEffects::read()
+            }
+            fn execute(
+                &self,
+                _id: &str,
+                _a: Value,
+                _u: Option<crate::core::tool::ToolUpdateFn>,
+            ) -> anyhow::Result<ToolResult> {
+                Ok(ToolResult {
+                    message: "位置: (1, 2, 3)".into(),
+                    is_error: false,
+                    images: vec![],
+                })
+            }
+        }
+
+        let goto_exec = Arc::new(AtomicU32::new(0));
+        let mine_exec = Arc::new(AtomicU32::new(0));
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(GotoTool {
+            executed: goto_exec.clone(),
+        }));
+        tools.register(Box::new(MineTool {
+            executed: mine_exec.clone(),
+        }));
+        tools.register(Box::new(PerceiveTool2 {}));
+        let mut config = AgentConfig::new("test".into(), 2);
+        config.auto_perceive = false;
+        let call_count = Arc::new(AtomicU32::new(0));
+        let mut agent = Agent::new(
+            Box::new(SequenceProvider {
+                calls: call_count.clone(),
+            }),
+            tools,
+            config,
+        );
+        agent.run("start").unwrap();
+
+        // 1) 慢工具只执行第一个（goto），第二个慢工具（mine）被中止
+        assert_eq!(
+            goto_exec.load(Ordering::SeqCst),
+            1,
+            "goto 应执行（第一个慢工具）"
+        );
+        assert_eq!(mine_exec.load(Ordering::SeqCst), 0, "mine 应被中止");
+        // 2) 不重调 LLM：慢动作结果回填历史后下一轮决策（provider 第 2 次纯文字 = 下轮）
+        assert_eq!(
+            call_count.load(Ordering::SeqCst),
+            2,
+            "本轮不重调，下一轮正常决策"
+        );
+        // 3) mine 补【已中止】占位（OpenAI 约束：每个 tool_call 必须有响应）
+        let aborted_mine = agent.messages.iter().any(|m| {
+            matches!(m, Message::ToolResult(tr) if tr.tool_name == "mine"
+                && tr.content.contains("【已中止】"))
+        });
+        assert!(aborted_mine, "mine 应有【已中止】占位");
+        // 4) 慢工具结果回填历史
+        let goto_result = agent.messages.iter().any(|m| {
+            matches!(m, Message::ToolResult(tr) if tr.tool_name == "goto"
+                && tr.content.contains("已到达目标"))
+        });
+        assert!(goto_result, "goto 结果应回填历史");
+    }
+
+    // ── P99：快工具不受影响，同批照常批量执行 ──
+    #[test]
+    fn p99_fast_tools_still_batch_normally() {
+        use crate::core::tool::GameTool;
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        struct TwoFastProvider;
+        impl LlmProvider for TwoFastProvider {
+            fn complete(
+                &self,
+                _messages: &[Value],
+                _tools: &[Value],
+            ) -> Result<crate::core::message::AssistantResponse> {
+                Ok(AssistantResponse {
+                    content: Some("快工具批量".into()),
+                    reasoning: None,
+                    tool_calls: vec![
+                        ToolCall {
+                            id: "tc_1".into(),
+                            name: "equip".into(),
+                            arguments: serde_json::json!({}),
+                        },
+                        ToolCall {
+                            id: "tc_2".into(),
+                            name: "perceive".into(),
+                            arguments: serde_json::json!({}),
+                        },
+                    ],
+                    usage: Usage::default(),
+                    stop_reason: StopReason::ToolCalls,
+                })
+            }
+        }
+        struct EquipTool {
+            executed: Arc<AtomicU32>,
+        }
+        impl GameTool for EquipTool {
+            fn name(&self) -> &str {
+                "equip"
+            }
+            fn description(&self) -> &str {
+                ""
+            }
+            fn parameters(&self) -> Value {
+                serde_json::json!({})
+            }
+            fn execute(
+                &self,
+                _id: &str,
+                _a: Value,
+                _u: Option<crate::core::tool::ToolUpdateFn>,
+            ) -> anyhow::Result<ToolResult> {
+                self.executed.fetch_add(1, Ordering::SeqCst);
+                Ok(ToolResult {
+                    message: "装备完成".into(),
+                    is_error: false,
+                    images: vec![],
+                })
+            }
+        }
+        struct PerceiveTool3 {}
+        impl GameTool for PerceiveTool3 {
+            fn name(&self) -> &str {
+                "perceive"
+            }
+            fn description(&self) -> &str {
+                ""
+            }
+            fn parameters(&self) -> Value {
+                serde_json::json!({})
+            }
+            fn effects(&self) -> ToolEffects {
+                ToolEffects::read()
+            }
+            fn execute(
+                &self,
+                _id: &str,
+                _a: Value,
+                _u: Option<crate::core::tool::ToolUpdateFn>,
+            ) -> anyhow::Result<ToolResult> {
+                Ok(ToolResult {
+                    message: "ok".into(),
+                    is_error: false,
+                    images: vec![],
+                })
+            }
+        }
+        let equip_exec = Arc::new(AtomicU32::new(0));
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(EquipTool {
+            executed: equip_exec.clone(),
+        }));
+        tools.register(Box::new(PerceiveTool3 {}));
+        let mut config = AgentConfig::new("test".into(), 2);
+        config.auto_perceive = false;
+        let mut agent = Agent::new(Box::new(TwoFastProvider), tools, config);
+        agent.run("start").unwrap();
+
+        assert!(equip_exec.load(Ordering::SeqCst) >= 1, "快工具照常执行");
+        // 无【已中止】占位
+        let aborted = agent
+            .messages
+            .iter()
+            .any(|m| matches!(m, Message::ToolResult(tr) if tr.content.contains("【已中止】")));
+        assert!(!aborted, "快工具批不应中止");
     }
 
     // ── 回归：上下文压缩摘要不得包含易变 perceive 快照（避免过期坐标污染）──

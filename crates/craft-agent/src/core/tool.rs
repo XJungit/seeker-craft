@@ -144,6 +144,15 @@ pub trait GameTool: Send + Sync {
         ToolEffects::write()
     }
 
+    /// 慢动作标记（P99，2026-08-02）：工具执行耗时秒~分钟级（MC 的 goto/mine/
+    /// gather 等异步命令）。标记后 agent 在批处理中执行完该工具即中止剩余
+    /// 预测调用（基于旧状态的后续调用不再有意义），结果回填历史，下一轮
+    /// LLM 基于动作完成后的真实状态重新决策（opencode 式等待慢命令结果）。
+    /// 快工具（perceive/equip/craft 等毫秒~秒级）保持批量，不受影响。
+    fn is_slow(&self) -> bool {
+        false
+    }
+
     /// 执行工具 (pi: tool.execute(&tool_call_id, input, on_update))
     fn execute(
         &self,
