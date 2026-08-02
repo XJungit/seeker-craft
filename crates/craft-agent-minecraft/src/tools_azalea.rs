@@ -1646,6 +1646,156 @@ impl GameTool for RunPlanTool {
     }
 }
 
+/// ── P1.2 工具↔动作映射表（集中登记）──────────────────────────────────────
+/// 每个 LLM 工具名 → 它构造/产生的主要 MinecraftAction 变体名。
+/// 元工具（感知/记忆/规划/脚本/蓝图/任务声明/目标管理）不产生 MinecraftAction → None。
+/// **新增工具必须同时**：1) 加入 `create_mc_azalea_tools_full` 的 vec；
+/// 2) 登记到 `ALL_TOOL_NAMES`；3) 在 `action_for` 或 `META_TOOL_NAMES` 登记。
+/// 防线：`regression_every_registered_tool_maps_to_action`（漏登记即红）。
+pub fn action_for(name: &str) -> Option<&'static str> {
+    match name {
+        "goto" => Some("Goto"),
+        "mine" => Some("MineBlock"),
+        "mine_below" => Some("MineBelow"),
+        "mine_above" => Some("MineAbove"),
+        "interact_block" => Some("InteractBlock"),
+        "till_and_sow" => Some("TillAndSow"),
+        "sleep" => Some("Sleep"),
+        "harvest" => Some("Harvest"),
+        "chat" => Some("Chat"),
+        "attack" => Some("Attack"),
+        "craft" => Some("Craft"),
+        "craft_3x3" => Some("Craft3x3"),
+        "smelt" => Some("Smelt"),
+        "gather" => Some("Gather"),
+        "make_obsidian" => Some("MakeObsidian"),
+        "place" => Some("Place"),
+        "open" => Some("OpenContainer"),
+        "auto_craft" => Some("AutoCraft"),
+        "enchant" => Some("Enchant"),
+        "trade" => Some("Trade"),
+        "interact_entity" => Some("InteractEntity"),
+        "pickup" => Some("Pickup"),
+        "defend" => Some("Defend"),
+        "equip" => Some("Equip"),
+        "discard" => Some("Discard"),
+        "consume" => Some("Consume"),
+        "chest_view" => Some("ChestView"),
+        "chest_withdraw" => Some("ChestWithdraw"),
+        "chest_deposit" => Some("ChestDeposit"),
+        "follow" => Some("Follow"),
+        "stop_follow" => Some("StopFollow"),
+        "give" => Some("Give"),
+        _ => None,
+    }
+}
+
+/// 不产生 MinecraftAction 的元工具（感知/记忆/规划/脚本/蓝图/任务声明/目标管理）。
+pub const META_TOOL_NAMES: &[&str] = &[
+    "perceive",
+    "memory",
+    "set_goal",
+    "run_plan",
+    "search_wiki",
+    "run_script",
+    "build",
+    "build_blueprint",
+    "list_blueprints",
+    "task_complete",
+    "task_retry",
+    "pause_goal",
+    "resume_goal",
+    "new_action",
+    "list_actions",
+];
+
+/// 全部已注册 LLM 工具名（与 `create_mc_azalea_tools_full` 的 vec 一一对应，顺序一致）。
+pub const ALL_TOOL_NAMES: &[&str] = &[
+    "perceive",
+    "goto",
+    "mine_below",
+    "mine_above",
+    "mine",
+    "interact_block",
+    "till_and_sow",
+    "sleep",
+    "harvest",
+    "attack",
+    "craft",
+    "craft_3x3",
+    "smelt",
+    "gather",
+    "make_obsidian",
+    "place",
+    "open",
+    "auto_craft",
+    "enchant",
+    "trade",
+    "interact_entity",
+    "chat",
+    "memory",
+    "set_goal",
+    "run_plan",
+    "search_wiki",
+    "run_script",
+    "build",
+    "build_blueprint",
+    "list_blueprints",
+    "pickup",
+    "defend",
+    "equip",
+    "discard",
+    "follow",
+    "stop_follow",
+    "give",
+    "consume",
+    "chest_view",
+    "chest_withdraw",
+    "chest_deposit",
+    "pause_goal",
+    "resume_goal",
+    "new_action",
+    "list_actions",
+    "task_complete",
+    "task_retry",
+];
+
+/// MinecraftAction 全部变体名（core/types.rs，新增变体时同步更新；映射表合法性校验用）。
+pub const MINECRAFT_ACTION_VARIANTS: &[&str] = &[
+    "Goto",
+    "MineBlock",
+    "MineBelow",
+    "MineAbove",
+    "InteractBlock",
+    "TillAndSow",
+    "Sleep",
+    "Harvest",
+    "Chat",
+    "Attack",
+    "Craft",
+    "Craft3x3",
+    "Smelt",
+    "Gather",
+    "MakeObsidian",
+    "Place",
+    "OpenContainer",
+    "AutoCraft",
+    "Enchant",
+    "Trade",
+    "InteractEntity",
+    "Pickup",
+    "Defend",
+    "Equip",
+    "Discard",
+    "Consume",
+    "ChestView",
+    "ChestWithdraw",
+    "ChestDeposit",
+    "Follow",
+    "StopFollow",
+    "Give",
+];
+
 /// 将 plan 步骤中的 action 名和参数解析为 MinecraftAction。
 fn parse_step(action: &str, step: &serde_json::Value) -> anyhow::Result<MinecraftAction> {
     let i64 = |key: &str| step.get(key).and_then(|v| v.as_i64()).map(|v| v as i32);
@@ -4037,6 +4187,78 @@ impl GameTool for ListActionsTool {
             is_error: false,
             images: vec![],
         })
+    }
+}
+
+#[cfg(test)]
+mod tool_mapping_tests {
+    use super::*;
+
+    /// 防线：每个注册工具必须有动作映射（action_for）或显式登记为元工具（META）。
+    /// 新增工具漏登记 → 红。反向校验：映射表无僵尸条目。
+    #[test]
+    fn regression_every_registered_tool_maps_to_action() {
+        // 1) 每个注册工具名：有动作映射 或 在元工具清单
+        for name in ALL_TOOL_NAMES {
+            let mapped = action_for(name).is_some();
+            let meta = META_TOOL_NAMES.contains(name);
+            assert!(
+                mapped || meta,
+                "工具 `{name}` 未登记：必须加入 action_for 或 META_TOOL_NAMES"
+            );
+            assert!(
+                !(mapped && meta),
+                "工具 `{name}` 同时出现在 action_for 与 META_TOOL_NAMES（应二选一）"
+            );
+        }
+        // 2) 反向：META_TOOL_NAMES 里没有未注册的名字（防僵尸条目）
+        for name in META_TOOL_NAMES {
+            assert!(
+                ALL_TOOL_NAMES.contains(name),
+                "META_TOOL_NAMES 含未注册工具 `{name}`"
+            );
+        }
+        // 3) 动作映射值必须是 MinecraftAction 真实变体名
+        for name in ALL_TOOL_NAMES {
+            if let Some(variant) = action_for(name) {
+                assert!(
+                    MINECRAFT_ACTION_VARIANTS.contains(&variant),
+                    "工具 `{name}` 映射到未知变体 `{variant}`（MINECRAFT_ACTION_VARIANTS 未登记或变体不存在）"
+                );
+            }
+        }
+        // 4) 无重复注册名
+        let mut sorted: Vec<&str> = ALL_TOOL_NAMES.to_vec();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(sorted.len(), ALL_TOOL_NAMES.len(), "ALL_TOOL_NAMES 存在重复");
+    }
+
+    /// run_plan 支持的 action 名与 action_for 动作工具集一致（parse_step 漏分支 → 红）。
+    /// 这里验证 parse_step 的每个可解析 action 都有对应工具名登记。
+    #[test]
+    fn regression_run_plan_actions_covered_by_tool_names() {
+        let step = serde_json::json!({
+            "x": 0, "y": 0, "z": 0,
+            "item": "stick", "count": 1, "output": "iron_ingot", "fuel": "coal",
+            "seed": "wheat_seeds", "content": "hi", "target": "nearest",
+            "goal": "g", "offer": 0, "kind": "villager", "slot": "hand",
+            "level": 1, "table_x": 0, "table_y": 0, "table_z": 0,
+        });
+        for action in [
+            "goto", "mine", "mine_block", "mine_below", "mine_above", "interact",
+            "interact_block", "till_and_sow", "tillandsow", "sleep", "harvest",
+            "chat", "attack", "craft", "craft_2x2", "craft_3x3", "smelt",
+            "gather", "collect", "place", "open", "open_container", "auto_craft",
+            "enchant", "trade", "interact_entity", "pickup", "defend",
+            "make_obsidian", "equip", "discard", "consume", "chest_view",
+            "chest_withdraw", "chest_deposit", "follow", "stop_follow", "give",
+        ] {
+            assert!(
+                parse_step(action, &step).is_ok(),
+                "run_plan action `{action}` 解析失败（parse_step 分支与工具登记不一致？）"
+            );
+        }
     }
 }
 
