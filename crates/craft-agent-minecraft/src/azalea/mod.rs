@@ -38,6 +38,7 @@ use azalea_registry::builtin::{BlockKind, EntityKind};
 use bevy_ecs::component::Component;
 use craft_agent::core::memory::{MemoryKind, MemoryPos, WorldMemory};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc;
@@ -484,6 +485,9 @@ pub struct BotState {
     /// P87：战斗走位（strafe）冷却 tick——上次走位后 40 tick（2s）内不再提交走位，
     /// 避免每轮检查都打断寻路。i64 存 ticks_connected 快照。
     pub combat_strafe_cd: Arc<Mutex<i64>>,
+    /// P95：取消请求标志。外部 `AzaleaBot::cancel_commands` 置位，
+    /// handler 每 tick 检查并执行真正的中止（强停寻路/清槽/回复取消）。
+    pub cancel_flag: Arc<AtomicBool>,
 }
 
 impl Default for BotState {
@@ -512,6 +516,7 @@ impl Default for BotState {
             hunt_pickup_until: Arc::new(Mutex::new(0)),
             combat_equip_pending: Arc::new(Mutex::new(None)),
             combat_strafe_cd: Arc::new(Mutex::new(0)),
+            cancel_flag: Arc::new(AtomicBool::new(false)),
         }
     }
 }
@@ -526,6 +531,8 @@ pub struct AzaleaBot {
     pub ext: crate::azalea::ext_state::SharedExt,
     /// 共享世界记忆库（与适配器/工具/Agent 共用同一实例）。
     pub memory: Option<craft_agent::core::memory::WorldMemory>,
+    /// P95：取消请求标志（与 handler 内 BotState.cancel_flag 同一实例）。
+    pub cancel_flag: Arc<AtomicBool>,
 }
 
 impl AzaleaBot {
@@ -848,6 +855,7 @@ impl AzaleaBot {
         let evt_tx = Arc::new(evt_tx);
         let cmd_queue: Arc<Mutex<Vec<QueuedCommand>>> = Arc::new(Mutex::new(Vec::new()));
         let last_position: Arc<Mutex<Option<azalea::Vec3>>> = Arc::new(Mutex::new(None));
+        let cancel_flag: Arc<AtomicBool> = Arc::new(AtomicBool::new(false));
         let ext: crate::azalea::ext_state::SharedExt =
             Arc::new(Mutex::new(crate::azalea::ext_state::BotExtState::default()));
         // 用本地内置配方库（vanilla 26.2）填充配方书，作为 auto_craft 权威数据源。
@@ -876,6 +884,7 @@ impl AzaleaBot {
             no_move_ticks: Arc::new(Mutex::new(0)),
             last_seen_pos: Arc::new(Mutex::new((0, 0, 0))),
             make_obsidian: Arc::new(Mutex::new(None)),
+            cancel_flag: cancel_flag.clone(),
         };
 
         let addr = address.to_string();
@@ -902,6 +911,7 @@ impl AzaleaBot {
             last_position,
             ext: ext_for_bot,
             memory: None,
+            cancel_flag,
         })
     }
 
@@ -1485,6 +1495,32 @@ impl AzaleaBot {
                     if let Some(nudge) = state.action_mgr.take_loop_nudge() {
                         let _ = evt_tx.send(BotEvent::Chat { content: nudge });
                     }
+                }
+                // P95：取消请求处理——外部 cancel_commands 置位后执行真正的中止。
+                if state.cancel_flag.swap(false, Ordering::SeqCst) {
+                    // 持续挖矿标志复位，防取消后仍自动下挖/上挖
+                    *state.mining_below.lock().unwrap() = false;
+                    *state.mining_above.lock().unwrap() = false;
+                    if !state.action_mgr.is_busy() {
+                        // 非异步执行中：强停寻路 + 清槽 + 回复取消
+                        if let Some(qc) = state.action_mgr.peek_pending() {
+                            if matches!(
+                                &qc.cmd,
+                                BotCommand::Goto { .. }
+                                    | BotCommand::Mine { .. }
+                                    | BotCommand::MineBelow
+                                    | BotCommand::MineAbove
+                            ) {
+                                bot.force_stop_pathfinding();
+                            }
+                            if let Some(tx) = &qc.result_tx {
+                                let _ = tx.send("已取消（cancel_commands）".to_string());
+                            }
+                        }
+                        state.action_mgr.clear_pending();
+                    }
+                    // busy=true：异步命令执行中，不中断执行体（世界状态半途不可恢复），
+                    // 等其自然完成；队列已空，完成后自然停止。
                 }
                 // 取当前要执行的命令：pending 里的命令每 tick 都（重）执行其 start，
                 // 非阻塞命令（Goto/Mine）重复 start 是幂等的（重设同一目标），由
@@ -4533,6 +4569,27 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
         });
     }
 
+    /// P95：取消所有排队命令 + 请求中断当前执行中的命令。
+    ///
+    /// - 队列中未执行的命令全部丢弃，其 `result_tx` 收到「已取消」文本（若存在）。
+    /// - 置位 `cancel_flag`，由 handler 下一 tick 执行真正的中止：
+    ///   轮询命令（Goto/Mine）强停寻路并清槽；异步命令（Craft/Gather 等）无法
+    ///   中断执行体，等其自然完成后因队列已空而停止。
+    /// - 返回被取消的排队命令数。
+    pub fn cancel_commands(&self) -> usize {
+        let drained: Vec<QueuedCommand> = {
+            let mut q = self.cmd_queue.lock().unwrap();
+            q.drain(..).collect()
+        };
+        for qc in &drained {
+            if let Some(tx) = &qc.result_tx {
+                let _ = tx.send("已取消（cancel_commands）".to_string());
+            }
+        }
+        self.cancel_flag.store(true, Ordering::SeqCst);
+        drained.len()
+    }
+
     /// 推送动作指令并等待执行结果（同步阻塞，超时默认 120s）。
     /// 返回命令执行后的结果描述字符串。
     pub fn push_cmd_and_wait(&self, cmd: BotCommand, timeout_ms: u64) -> anyhow::Result<String> {
@@ -4548,6 +4605,61 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
             }
             Err(e) => Err(anyhow::anyhow!("命令结果通道错误: {}", e)),
         }
+    }
+}
+
+#[cfg(test)]
+mod cancel_tests {
+    use super::*;
+
+    fn offline_bot() -> AzaleaBot {
+        let (_, evt_rx) = mpsc::unbounded_channel::<BotEvent>();
+        AzaleaBot {
+            cmd_queue: Arc::new(Mutex::new(Vec::new())),
+            events: Arc::new(tokio::sync::Mutex::new(evt_rx)),
+            last_position: Arc::new(Mutex::new(None)),
+            ext: Arc::new(Mutex::new(
+                crate::azalea::ext_state::BotExtState::default(),
+            )),
+            memory: None,
+            cancel_flag: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    #[test]
+    fn cancel_commands_drains_queue_and_notifies_waiters() {
+        let bot = offline_bot();
+        let (tx, rx) = std::sync::mpsc::channel::<String>();
+        bot.cmd_queue.lock().unwrap().push(QueuedCommand {
+            cmd: BotCommand::Goto { x: 1, y: 2, z: 3 },
+            result_tx: Some(tx),
+        });
+        bot.cmd_queue.lock().unwrap().push(QueuedCommand {
+            cmd: BotCommand::Gather {
+                item: "oak_log".into(),
+                count: 4,
+            },
+            result_tx: None,
+        });
+        let cancelled = bot.cancel_commands();
+        assert_eq!(cancelled, 2, "应返回被取消的排队命令数");
+        assert!(bot.cmd_queue.lock().unwrap().is_empty(), "队列应清空");
+        assert!(
+            bot.cancel_flag.load(Ordering::SeqCst),
+            "cancel_flag 应置位供 handler 取走"
+        );
+        let msg = rx.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(msg.contains("已取消"), "等待者应收到取消文本, got: {msg}");
+    }
+
+    #[test]
+    fn cancel_flag_is_taken_by_handler_semantics() {
+        // 模拟 handler tick 的 swap：第二次检查应为 false（只处理一次）。
+        let flag = Arc::new(AtomicBool::new(false));
+        assert!(!flag.swap(false, Ordering::SeqCst));
+        flag.store(true, Ordering::SeqCst);
+        assert!(flag.swap(false, Ordering::SeqCst), "第一次应取到取消请求");
+        assert!(!flag.swap(false, Ordering::SeqCst), "取走后不再重复处理");
     }
 }
 
