@@ -98,6 +98,7 @@ fn spawn_detached(exe: &str, args: &[&str], out_log: &str) -> bool {
     let err = std::fs::File::create(format!("{LOG_DIR}\\{out_log}.err")).ok();
     let mut cmd = Command::new(exe);
     cmd.args(args);
+    cmd.stdin(Stdio::null());
     if let Some(f) = out {
         cmd.stdout(f);
     }
@@ -156,7 +157,7 @@ fn cmd_status() {
     } else {
         println!("[status] game-state unavailable");
     }
-    for (name, path) in [("autopilot", "auto5_out.log"), ("viewer", "viewer_out.log")] {
+    for (name, path) in [("autopilot", "auto5_out.log"), ("viewer", "viewer_run.log")] {
         let lines = tail_file(&format!("{LOG_DIR}\\{path}"), 3);
         if !lines.is_empty() {
             println!("[status] --- {name} log tail ---");

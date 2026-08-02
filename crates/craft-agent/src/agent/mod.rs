@@ -2221,10 +2221,11 @@ impl Agent {
                 }
                 reroute += 1;
                 let (ftool, fmsg) = abort_fail.unwrap_or_default();
+                let fmsg_trim: String = fmsg.chars().take(160).collect();
                 let mut nudge = format!(
                     "【工具失败重规划】工具 {ftool} 失败：{}\n本批剩余 {} 个调用已中止（{}）。\n\
                  请基于以上实际失败原因重新决策下一步，**不要重试刚失败的工具**。",
-                    &fmsg[..fmsg.len().min(160)],
+                    fmsg_trim,
                     aborted_names.len(),
                     aborted_names.join(", "),
                 );
@@ -3193,6 +3194,97 @@ mod tests {
                 && u.content.contains("建议：先 mine 挖通路径"))
         });
         assert!(reroute_msg, "应注入含失败原因与建议的重规划 nudge");
+    }
+
+    // ── P89b：中文长错误消息的字节切片 panic 回归（fmsg.len().min(160) 曾切爆 UTF-8）──
+    #[test]
+    fn p89b_chinese_error_message_does_not_panic_on_reroute() {
+        use crate::core::tool::GameTool;
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicU32, Ordering};
+
+        struct SeqProvider {
+            calls: Arc<AtomicU32>,
+        }
+        impl LlmProvider for SeqProvider {
+            fn complete(
+                &self,
+                _messages: &[Value],
+                _tools: &[Value],
+            ) -> Result<crate::core::message::AssistantResponse> {
+                let n = self.calls.fetch_add(1, Ordering::SeqCst);
+                if n == 0 {
+                    // 第 1 次：goto 失败（超长中文错误）→ 应触发 P89 重规划且不 panic
+                    Ok(AssistantResponse {
+                        content: Some("去挖矿".into()),
+                        reasoning: None,
+                        tool_calls: vec![ToolCall {
+                            id: "tc_goto".into(),
+                            name: "goto".into(),
+                            arguments: serde_json::json!({ "x": 1, "y": 2, "z": 3 }),
+                        }],
+                        usage: Usage::default(),
+                        stop_reason: StopReason::ToolCalls,
+                    })
+                } else {
+                    Ok(AssistantResponse {
+                        content: Some("重规划".into()),
+                        reasoning: None,
+                        tool_calls: vec![],
+                        usage: Usage::default(),
+                        stop_reason: StopReason::Stop,
+                    })
+                }
+            }
+        }
+        struct GotoTool;
+        impl GameTool for GotoTool {
+            fn name(&self) -> &str {
+                "goto"
+            }
+            fn description(&self) -> &str {
+                ""
+            }
+            fn parameters(&self) -> Value {
+                serde_json::json!({})
+            }
+            fn execute(
+                &self,
+                _id: &str,
+                _a: Value,
+                _u: Option<crate::core::tool::ToolUpdateFn>,
+            ) -> anyhow::Result<ToolResult> {
+                // 中文长消息（超过 160 字节，含多字节字符）——旧代码字节切片会 panic
+                anyhow::bail!(
+                    "采集 iron_ore 失败：背包无镐且自动合成 wooden_pickaxe 失败（可能缺原料：需要 oak_log 或 oak_planks）。\
+                     解决步骤：1. 调用 gather('oak_log') 获取原木 2. craft('oak_planks') 再 craft('stick') \
+                     3. craft_3x3('wooden_pickaxe') 4. equip 后重新 gather('iron_ore')"
+                )
+            }
+        }
+        let mut tools = ToolRegistry::new();
+        tools.register(Box::new(GotoTool));
+        let mut config = AgentConfig::new("test".into(), 1);
+        config.auto_perceive = false;
+        config.text_only_stop = 1;
+        let call_count = Arc::new(AtomicU32::new(0));
+        let mut agent = Agent::new(
+            Box::new(SeqProvider {
+                calls: call_count.clone(),
+            }),
+            tools,
+            config,
+        );
+        // 核心断言：中文长错误消息下 P89 重规划路径不 panic、正常完成
+        agent.run("start").unwrap();
+        assert_eq!(call_count.load(Ordering::SeqCst), 2, "应同轮重调 1 次");
+        // nudge 注入且中文内容完整保留（未在字节边界截断产生非法字符）
+        let reroute_msg = agent.messages.iter().any(|m| {
+            matches!(m, Message::User(u) if u.content.contains("【工具失败重规划】")
+                && u.content.contains("iron_ore")
+                && !u.content.contains('\u{FFFD}'))
+        });
+        assert!(reroute_msg, "重规划 nudge 应包含完整中文失败原因");
     }
 
     // ── P90：steering 到达 → 中止剩余批次 + 同轮重调（与 P89 共用 reroute 预算）──
