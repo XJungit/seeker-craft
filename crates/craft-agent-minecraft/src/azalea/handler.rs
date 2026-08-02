@@ -54,6 +54,38 @@ fn nearby_active_portal(bot: &Client, center: BlockPos) -> bool {
     false
 }
 
+/// 在 target 周围 4 格范围内找最近的实心方块（空气/水/岩浆排除）。
+/// P101：mine 目标为空气时自动修正到最近实心方块，根治 LLM 盲猜坐标死循环。
+fn nearest_solid_block(bot: &Client, x: i32, y: i32, z: i32) -> Option<BlockPos> {
+    let world = bot.world().ok()?;
+    let mut best: Option<(i64, BlockPos)> = None;
+    for d in 1i32..=4 {
+        for dx in -d..=d {
+            for dy in -1..=2 {
+                for dz in -d..=d {
+                    let pos = BlockPos::new(x + dx, y + dy, z + dz);
+                    let bk: Option<BlockKind> = world.read().get_block_state(pos).map(|b| b.into());
+                    let solid = bk
+                        .map(|k| {
+                            k != BlockKind::Air && k != BlockKind::Water && k != BlockKind::Lava
+                        })
+                        .unwrap_or(false);
+                    if solid {
+                        let dist = (dx as i64).pow(2) + (dy as i64).pow(2) + (dz as i64).pow(2);
+                        if best.as_ref().map(|(bd, _)| dist < *bd).unwrap_or(true) {
+                            best = Some((dist, pos));
+                        }
+                    }
+                }
+            }
+        }
+        if best.is_some() {
+            break;
+        }
+    }
+    best.map(|(_, pos)| pos)
+}
+
 /// 把感兴趣的 BlockKind 映射为记忆元数据（item, 标签, 类别）。
 /// 返回 None 表示该方块不值得记忆。
 fn block_memory_meta(bk: BlockKind) -> Option<(String, &'static str, MemoryKind)> {
@@ -1342,17 +1374,45 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             // P5 修复：挖矿前自动装备最好的镐。否则 bot 拿面包挖石头
                             // 既慢又不掉落物，且 LLM 不会主动 equip（挖矿工具隐含前提）。
                             let _ = auto_equip_best_pickaxe(&bot).await;
-                            bot.start_mining(BlockPos::new(x, y, z));
+                            // P101 修复：目标格是空气时自动修正到最近实心方块。
+                            // 实机观测：LLM 盲猜坐标连续 15+ 次 mine 空气格（每次换坐标，
+                            // 死循环检测不触发），工具返回的"最近实心方块"提示被无视。
+                            // 与其报错让 LLM 猜，不如直接挖最近的实心方块——行为不变契约：
+                            // 正常情况目标即实心方块，修正仅在空气目标时生效。
+                            let mine_pos = if let Ok(world) = bot.world() {
+                                let target_is_air = world
+                                    .read()
+                                    .get_block_state(BlockPos::new(x, y, z))
+                                    .map(|b| b.is_air())
+                                    .unwrap_or(true);
+                                if target_is_air {
+                                    nearest_solid_block(&bot, x, y, z)
+                                        .unwrap_or(BlockPos::new(x, y, z))
+                                } else {
+                                    BlockPos::new(x, y, z)
+                                }
+                            } else {
+                                BlockPos::new(x, y, z)
+                            };
+                            let (mx, my, mz) = (mine_pos.x, mine_pos.y, mine_pos.z);
+                            if (mx, my, mz) != (x, y, z)
+                                && let Some(tx) = &result_tx
+                            {
+                                let _ = tx.send(format!(
+                                    "目标 ({x},{y},{z}) 已是空气，自动修正为最近实心方块 ({mx},{my},{mz}) 开始挖掘"
+                                ));
+                            }
+                            bot.start_mining(mine_pos);
                             // P93：mine 进度流式事件（每 20 tick 一次）
                             if bot.ticks_connected().is_multiple_of(20)
                                 && let Ok(p) = bot.position()
                             {
-                                let dist = ((p.x - x as f64).powi(2)
-                                    + (p.y - y as f64).powi(2)
-                                    + (p.z - z as f64).powi(2))
+                                let dist = ((p.x - mx as f64).powi(2)
+                                    + (p.y - my as f64).powi(2)
+                                    + (p.z - mz as f64).powi(2))
                                 .sqrt();
                                 let _ = evt_tx.send(BotEvent::Progress {
-                                    command: format!("mine ({x},{y},{z})"),
+                                    command: format!("mine ({mx},{my},{mz})"),
                                     detail: format!(
                                         "挖掘目标距当前位置 {:.1}m，bot 位置 ({:.1},{:.1},{:.1})",
                                         dist, p.x, p.y, p.z
