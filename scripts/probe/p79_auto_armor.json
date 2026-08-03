@@ -1,0 +1,11 @@
+{
+  "between_delay_ms": 1500,
+  "timeout_ms": 25000,
+  "steps": [
+    { "wait_ms": 30000 },
+    { "raw": true },
+    { "cmd": "chat /give craftbot_probe minecraft:leather_chestplate 1" },
+    { "wait_ms": 12000 },
+    { "raw": true }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "between_delay_ms": 2000,
+  "timeout_ms": 25000,
+  "steps": [
+    { "state": true },
+    { "cmd": "chat /give craftbot_probe minecraft:iron_ingot 1" },
+    { "state": true },
+    { "cmd": "discard iron_ingot 1" },
+    { "state": true },
+    { "wait_ms": 15000 },
+    { "state": true }
+  ]
+}

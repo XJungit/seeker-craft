@@ -92,8 +92,8 @@
 3. ✅ goToBed 睡觉——跳夜（P85 完成，2026-08-02 probe 实测通过）
 4. ✅ 收割（harvest 工具）——farmland 成熟后挖取+拾取（P86 完成，2026-08-02 probe 实测通过）
 5. ✅ pvp 走位（strafe）+ 近战修复全套——P87+P88 完成，2026-08-02 实机验证（逼近/1s 反击/低血反击/攻击只发生在可命中距离）
-6. 🟡 自动穿甲（P79）待实机验证损坏甲/新甲替换
-7. 🟡 item_collecting（P80）待实机验证挖矿掉落物自动拾取
+6. ✅ 自动穿甲（P79）——2026-08-03 probe 实机验证通过（give leather_chestplate → 自动装备 slot[6]；iron_helmet 自动装 slot[5]）
+7. ✅ item_collecting（P80）——2026-08-03 probe 实机验证通过（discard iron_ingot → 15s 内自动拾取回背包）
 8. ✅ turn 内失败重规划（P89）——WRITE 工具失败→中止剩余批次→同轮重调 LLM，2026-08-02 单测通过
 9. ✅ 上下文管理重构（P98，2026-08-02 提交 002d748）——A1 few-shot 真实消息对 / B3 瞬态统一剔除 / B4 记忆注入冷却 / B5 任务进度紧凑渲染 / A2 分阶段知识 / C7 jailbreak 可配 / C8 knowledge 缓存；实机验证：prompt_cache_hit_tokens 42624-43584 / miss 2796-3326（**前缀缓存命中 >93%**）；下一步 harness 慢工具单动作轮 + subagent 委派
 10. ✅ 慢工具单动作轮（P99，2026-08-02 提交 6da6f6c）——GameTool::is_slow() + 12 个慢工具（goto/mine/mine_below/mine_above/gather/till_and_sow/harvest/attack/make_obsidian/pickup/defend/follow）；批内含慢工具 → 慢动作执行完立即中止剩余预测调用（【已中止】占位补齐 OpenAI 配对），**不重调 LLM**（结果已回填，下轮 auto-perceive 驱动新决策）。2026-08-02 实机验证：混合批 [goto+pickup] → goto 执行 → pickup 【已中止】→ 下轮重新决策 ✓；快工具批不受影响。实机同时发现并修复 P89 潜在 panic：失败重规划 nudge 的 fmsg 字节切片 `&fmsg[..len.min(160)]` 在中文长错误消息上切爆 UTF-8 边界 → agent 线程 panic 退出（running=false）；改为 `chars().take(160)`（P89b 回归测试：中文长错误不 panic + nudge 无非法字符）。另修 ctl 运维：spawn_detached 继承 stdin 导致 opencode 管道句柄被 viewer 持有 → 命令永不返回；加 `stdin(Stdio::null())`；status tail 文件名错指 viewer_out.log → viewer_run.log。
@@ -239,3 +239,12 @@
 - **P3.3 agent_loop.rs 拆分（commit 3db7202）**：830 行 → `agent_loop/events.rs`（AgentEvent + EventSender 推送 helper，`ev.log()/step()/error()` 取代 `let _ = tx.send(AgentEvent::...)` 样板）+ `agent_loop/session.rs`（open_or_create / save_full / save_incremental / auto_rollover helper）+ 主文件仅剩控制器/启动/主循环/观测文本。行为不变（事件文本逐字保留）。
 - **门槛**：workspace 全绿（craft-agent 171 + craft-agent-minecraft 146 + model 23 + viewer 编译）；fmt/clippy `-D warnings` 全绿。纯移动重构，无功能改动，无需 LLM 实机回测。
 - **P3 后续**：P3 已全部完成。架构大文件拆分收官，后续按主线收益进 gap 队列（goToSurface 强化实机确认 / item_collecting 拾取验证 / 自动穿甲验证）。
+
+## 修复记录：2026-08-03 · P79/P80 实机验证闭环（probe，秒级）
+
+> 触发：P3 收官后按工作流回归 gap 队列剩余验证项（自动穿甲 / item_collecting 均为"待实机验证"状态）。
+
+- **P80 item_collecting 实机验证 ✓（probe p80_item_collect.json）**：`/give iron_ingot 1` → `discard iron_ingot 1`（背包消失）→ 等待 15s（200 tick 检查点 ×2+）→ 状态快照背包恢复 `iron_ingot:1`。8m 内 Item 实体 + 空闲 + 空位≥2 → 自动拾取链路全通。
+- **P79 auto_armor 实机验证 ✓（probe p79_auto_armor.json）**：等 bot 完全 idle（30s）→ `/give leather_chestplate 1` → 等待 12s → `[MODE:auto_armor] 已装备 leather_chestplate 到 chestplate（left_click slot 9）` + RawState 确认 `slot[6]=minecraft:leather_chestplate`（胸甲槽已穿上）。iron_helmet 同样自动装上 `slot[5]`。材料升级链（空槽→leather）与 200 tick 触发正常。
+- **验证要点**：auto_armor 需 `action_mgr.is_idle()`——give 后若 bot 忙于 pickup/寻路，检查点会错过；验证前先等 idle。RawState 已含 armor 槽（slot 5-8）输出，无需额外改动。
+- **gap 队列更新**：#6 自动穿甲 ✅ / #7 item_collecting ✅（两者从"待实机验证"转"完成"）。剩余 #2 goToSurface 强化仍待 LLM 实机确认脱困成功率。
