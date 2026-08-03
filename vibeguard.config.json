@@ -1,0 +1,22 @@
+{
+  "enabled": true,
+  "debug": false,
+  "placeholder_prefix": "__VG_",
+  "session": {
+    "ttl": "1h",
+    "max_mappings": 100000
+  },
+  "patterns": {
+    "keywords": [],
+    "regex": [
+      { "pattern": "lis_[A-Za-z0-9_-]{50,}", "category": "MINICPM_KEY" },
+      { "pattern": "ak_2[A-Za-z0-9_-]{15,}", "category": "LONGCAT_KEY" },
+      { "pattern": "64Fq[A-Za-z0-9_-]{40,}", "category": "STEPFUN_KEY" },
+      { "pattern": "sk-[A-Za-z0-9]{48}", "category": "OPENAI_KEY" },
+      { "pattern": "(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]+", "category": "GITHUB_TOKEN" },
+      { "pattern": "AKIA[0-9A-Z]{16}", "category": "AWS_ACCESS_KEY" }
+    ],
+    "builtin": ["email", "china_phone", "uuid", "ipv4", "mac"],
+    "exclude": ["example.com", "localhost", "127.0.0.1", "0.0.0.0"]
+  }
+}
