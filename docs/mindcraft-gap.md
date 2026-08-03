@@ -88,7 +88,7 @@
 ## 优先级队列（按主线收益排序）
 
 1. ✅ tillAndSow 种植——食物农场（P84 完成，2026-08-02 probe 全路径实测通过）【原实机问题：bot 捡到 wheat_seeds 因无法种植而 discard】
-2. ❌ goToSurface 强化——P83 信号已给（overhead_solid→mine_above），待实机确认 LLM 脱困成功率
+2. 🟡 goToSurface 强化——P83 信号已给（overhead_solid→mine_above），P107 天花板扫描已修（2026-08-03），待实机确认 LLM 脱困成功率
 3. ✅ goToBed 睡觉——跳夜（P85 完成，2026-08-02 probe 实测通过）
 4. ✅ 收割（harvest 工具）——farmland 成熟后挖取+拾取（P86 完成，2026-08-02 probe 实测通过）
 5. ✅ pvp 走位（strafe）+ 近战修复全套——P87+P88 完成，2026-08-02 实机验证（逼近/1s 反击/低血反击/攻击只发生在可命中距离）
@@ -229,6 +229,16 @@
 - **门槛**：fmt/clippy -D warnings/全 workspace 测试全绿（craft-agent-minecraft lib 146 测试）。
 
 > 当前主线：mine_above 脱困路径已闭环（P105 无镐提前终止 + P106 YGoal 上升）。下一轮观察重点：craft 顺序、工作台摆放策略、run_script 实机使用。
+
+## 修复记录：2026-08-03 P107 mine_above 高穹顶腔体天花板扫描（gap #2 实机闭环）
+
+> 触发点：#2 goToSurface 实机确认（tier3_bread，~25 分钟观测）：P106 修复后 bot 在 lush_caves 洞穴腔体仍卡死——头顶 y+1 空气、y+2 空气（P105 只查 y+2 单格被跳过）、y+3+ 是 stone 天花板 → P60b 走 P106 YGoal(y+2) 上升，但高穹顶没有可挖的 y+2 方块 → 反复 "mine_above failed: Y did not increase within 10 seconds. The ascent path is blocked" + 盲猜 goto 地表坐标 → pathfinder "incomplete path" 无限重试。根因：P60b 只处理"y+2 是硬方块"（P105），未覆盖"y+2 空气但更高处有硬天花板"。
+
+- **P107 天花板扫描（handler.rs P60b `!above_is_solid` 分支）**：改挖 y+2 前先扫描 `y+2..=y+8` 找第一格实心方块（`let ceiling = (2..=8).find_map(|dy| ...)`）。三种情形：(a) 扫到天花板 → 挖那一格（`start_mining(ceiling)`），逐层凿穿直通地表；(b) 天花板是硬方块且背包无镐 → `abort_mine_above` 提前终止，反馈明确建议（先 craft wooden_pickaxe 或 stone_pickaxe，或横向找软方块通道）；(c) y+2..y+8 全空气 → 回落 P106 原 YGoal(y+2) 强制上升逻辑（t.is_multiple_of(4) 节流）。
+- **`abort_mine_above` helper 抽取（handler.rs）**：P105 的终止样板（清 mining_above 标志/mining_above_start_y、force_stop_pathfinding、peek_pending MineAbove 回填 result_tx、clear_pending、推 BotEvent::Chat）抽为独立 helper，P105/P107 共用——避免终止逻辑不一致。终止消息用 `❌ mine_above 失败` 前缀，不用 "MineAbove progressed"（tools_movement.rs:154 依赖该子串才 forget_pos）。
+- **门槛**：cargo check/test（craft-agent-minecraft lib 146 全绿）/fmt/clippy `-D warnings` 全绿。待实机重验（按 P103 流程重启 viewer 后让 LLM 在洞穴腔体重跑 mine_above）。
+
+> 当前主线：mine_above 高穹顶天花板脱困已修复（P107），待实机确认。下一轮观察重点：craft 顺序、工作台摆放策略、run_script 实机使用。
 
 ## 修复记录：2026-08-03 P3 架构演进（大文件按域拆分收官）
 

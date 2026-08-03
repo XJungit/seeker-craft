@@ -33,6 +33,29 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// P107：终止当前 MineAbove 命令并回报结果（清标志/停寻路/回填 result_tx/推送事件）。
+/// P105 无镐提前终止与 P107 天花板扫描共用，避免重复的终止样板。
+fn abort_mine_above(state: &BotState, bot: &Client, msg: &str) {
+    *state.mining_above.lock().unwrap() = false;
+    *state.mining_above_start_y.lock().unwrap() = None;
+    bot.force_stop_pathfinding();
+    let mut is_mine_above = false;
+    if let Some(qc) = state.action_mgr.peek_pending()
+        && matches!(qc.cmd, BotCommand::MineAbove)
+    {
+        is_mine_above = true;
+        if let Some(tx) = qc.result_tx {
+            let _ = tx.send(msg.to_string());
+        }
+    }
+    if is_mine_above {
+        state.action_mgr.clear_pending();
+    }
+    let _ = state.evt_tx.send(BotEvent::Chat {
+        content: msg.to_string(),
+    });
+}
+
 fn nearby_active_portal(bot: &Client, center: BlockPos) -> bool {
     let Ok(world) = bot.world() else {
         return false;
@@ -2473,49 +2496,85 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                 && t.is_multiple_of(20)
                                 && !has_any_pickaxe_in_inventory(&bot).await;
                             if no_pick {
-                                *state.mining_above.lock().unwrap() = false;
-                                *state.mining_above_start_y.lock().unwrap() = None;
-                                bot.force_stop_pathfinding();
-                                let msg = "Action output:\n❌ mine_above 失败：头顶是空气但上方 y+2 是硬方块（石头/深板岩/矿石等）且背包里没有镐！\
-                                   徒手挖硬方块极慢（~8秒/格）且不掉落。\
-                                   建议：(1) 先 craft 一把镐（wooden_pickaxe 或 stone_pickaxe）再重试 mine_above；\
-                                   (2) 横向挖台阶/找软方块通道脱困。"
-                                    .to_string();
-                                let mut is_mine_above = false;
-                                if let Some(qc) = state.action_mgr.peek_pending()
-                                    && matches!(qc.cmd, BotCommand::MineAbove)
-                                {
-                                    is_mine_above = true;
-                                    if let Some(tx) = qc.result_tx {
-                                        let _ = tx.send(msg.clone());
-                                    }
-                                }
-                                if is_mine_above {
-                                    state.action_mgr.clear_pending();
-                                }
-                                let _ = state.evt_tx.send(BotEvent::Chat { content: msg });
+                                abort_mine_above(
+                                    &state,
+                                    &bot,
+                                    "Action output:\n❌ mine_above 失败：头顶是空气但上方是硬方块天花板（石头/深板岩/矿石等）且背包里没有镐！\
+                                       徒手挖硬方块极慢（~8秒/格）且不掉落。\
+                                       建议：(1) 先 craft 一把镐（wooden_pickaxe 或 stone_pickaxe）再重试 mine_above；\
+                                       (2) 横向挖楼梯/找软方块通道透顶。",
+                                );
                             } else {
                                 bot.start_mining(above_head);
                             }
-                        } else if !above_is_solid && t.is_multiple_of(4) {
-                            // 头顶上方已空：强制上升，真正脱困。P106：绝不能用
-                            // BlockPosGoal(y+1)——目标格是 bot 头部所在格（空气），
-                            // pathfinder 算不出站立路径 → empty path 卡满 10s，
-                            // 且反复 goto 阻塞 40-tick 主循环的 YGoal(y+5) 兜底
-                            // （L121 "Y did not increase" 真实根因）。
-                            // 用 YGoal 只要求到达 y+2 高度（任意水平位置），
-                            // pathfinder 可自由挖墙/找楼梯上升（同 P60 主循环）。
-                            if !bot.is_calculating_path() && !bot.is_executing_path() {
-                                use azalea::pathfinder::PathfinderOpts;
-                                use std::time::Duration;
-                                let opts = PathfinderOpts::new()
-                                    .allow_mining(true)
-                                    .min_timeout(Duration::from_secs(1))
-                                    .max_timeout(Duration::from_secs(10));
-                                bot.start_goto_with_opts(
-                                    YGoal::from(BlockPos::new(cx, y + 2, cz)),
-                                    opts,
-                                );
+                        } else if !above_is_solid {
+                            // P107: 头顶 y+2 也是空气——可能身处高穹顶洞穴腔体
+                            // （空气袋不止 2 格高，上方远处才是硬方块天花板）。
+                            // 实机复现（2026-08-03 tier3_bread）：mine_above 在
+                            // lush_caves 腔体 10s 空转超时，pathfinder 反复
+                            // "incomplete path"——LLM 盲猜 goto 地表坐标反而更糟。
+                            // 这里向上扫描 y+2..y+8 找第一个实心方块（天花板）：
+                            //   1. 天花板存在 → 挖穿它（若硬方块且无镐，P105 同款
+                            //      提前终止给明确反馈，不再空转 10s）；
+                            //   2. 0..8 全空气 → 已到开阔空间/地表，交给 YGoal 上升
+                            //      （P106 原逻辑）。
+                            // 每 4 tick 扫描一次（与 P60b 原节流一致）。
+                            let ceiling = (2..=8).find_map(|dy| {
+                                let check = BlockPos::new(cx, y + dy, cz);
+                                bot.world()
+                                    .ok()
+                                    .and_then(|w| w.read().get_block_state(check))
+                                    .filter(|s| !s.is_air())
+                                    .map(|_| check)
+                            });
+                            if let Some(_cpos) = ceiling {
+                                // 有天花板：优先挖穿（软硬方块都用镐/徒手，由
+                                // is_hard_block + 镐检查决定是否值得挖）。
+                                let cpos = _cpos;
+                                let chard = bot
+                                    .world()
+                                    .ok()
+                                    .and_then(|w| w.read().get_block_state(cpos))
+                                    .map(is_hard_block)
+                                    .unwrap_or(false);
+                                let no_pick = chard
+                                    && t.is_multiple_of(20)
+                                    && !has_any_pickaxe_in_inventory(&bot).await;
+                                if no_pick {
+                                    abort_mine_above(
+                                        &state,
+                                        &bot,
+                                        &format!(
+                                            "Action output:\n❌ mine_above 失败：头顶是空气但上方 y+{} 是硬方块天花板（石头/深板岩/矿石等）且背包里没有镐！\
+                                               徒手挖硬方块极慢（~8秒/格）且不掉落。\
+                                               建议：(1) 先 craft 一把镐（wooden_pickaxe 或 stone_pickaxe）再重试 mine_above；\
+                                               (2) 横向挖楼梯/找软方块通道透顶。",
+                                            cpos.y - y
+                                        ),
+                                    );
+                                } else if !bot.is_mining() {
+                                    bot.start_mining(cpos);
+                                }
+                            } else if t.is_multiple_of(4) {
+                                // 头顶上方已空：强制上升，真正脱困。P106：绝不能用
+                                // BlockPosGoal(y+1)——目标格是 bot 头部所在格（空气），
+                                // pathfinder 算不出站立路径 → empty path 卡满 10s，
+                                // 且反复 goto 阻塞 40-tick 主循环的 YGoal(y+5) 兜底
+                                // （L121 "Y did not increase" 真实根因）。
+                                // 用 YGoal 只要求到达 y+2 高度（任意水平位置），
+                                // pathfinder 可自由挖墙/找楼梯上升（同 P60 主循环）。
+                                if !bot.is_calculating_path() && !bot.is_executing_path() {
+                                    use azalea::pathfinder::PathfinderOpts;
+                                    use std::time::Duration;
+                                    let opts = PathfinderOpts::new()
+                                        .allow_mining(true)
+                                        .min_timeout(Duration::from_secs(1))
+                                        .max_timeout(Duration::from_secs(10));
+                                    bot.start_goto_with_opts(
+                                        YGoal::from(BlockPos::new(cx, y + 2, cz)),
+                                        opts,
+                                    );
+                                }
                             }
                         }
                     }
