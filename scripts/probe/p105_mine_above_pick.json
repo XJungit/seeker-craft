@@ -1,0 +1,5 @@
+{"between_delay_ms": 4000, "timeout_ms": 150000, "steps": [
+  {"state": true},
+  {"cmd": "mineabove"},
+  {"state": true}
+]}

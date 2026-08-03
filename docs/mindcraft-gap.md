@@ -217,3 +217,15 @@
   - **未观测到 run_script 使用**：本轮 LLM 未写 pos_x 脚本（决策走工具链而非脚本），pos 函数验证停留在单测层，后续遇到 run_script 场景再实测
 
 > 当前主线：harness 修正类优化已覆盖 mine（P101）/till（P102）/Auto-tp 移除（P104）/mushroom_stew 配方（P104）/rhai 位置函数（P104）。下一轮观测重点：craft 顺序、工作台放置策略、run_script 实际使用。
+
+## 修复记录：2026-08-03 P105/P106 mine_above 无镐提前终止 + 脱困目标 YGoal 修复
+
+> 触发点：P104 移除 Auto-tp 后 LLM 实机观察（tier3_bread，~30 回合）出现 L121 "mine_above failed: Y did not increase within 10 seconds. The ascent path is blocked"——此前 Auto-tp 掩盖了脱困路径的真实缺陷。
+
+- **P105 mine_above 无镐提前终止（handler.rs P60b 分支）**：入口的镐检查只看头顶（head_is_hard），头顶是空气时被跳过——但 y+2 可能是硬方块（石头/深板岩/矿石），无镐徒手挖 ~8s/格 → 空转 10s 超时，且失败消息误导 LLM 横向找路。修复：P60b 挖 y+2 前检查 `is_hard_block(y+2)` + `has_any_pickaxe_in_inventory()`（节流 20 tick），无镐时提前终止 mine_above 并发明确反馈（craft 镐 / 横向软方块脱困）。回归测试 `regression_is_hard_block_above_head_requires_pickaxe`（Stone/Deepslate/CobbledDeepslate/Granite hard；Dirt/OakLog/Air not hard）。
+- **P106 P60b/P60c 脱困目标 BlockPosGoal → YGoal（L121 真正根因）**：P60b else 分支 `BlockPosGoal(BlockPos::new(cx, y+1, cz))` 目标格是 bot 头部所在格（空气）——pathfinder 算不出站立路径 → `No best node found / empty path` 卡满 10s，且每次 4 tick 反复 goto、阻塞 40-tick 主循环的 YGoal(y+5) 兜底（probe 复现：bot 在开阔地表 Y=82 卡死）。修复：改用 `YGoal::from(BlockPos::new(cx, y+2, cz))`（同 P60 主循环思路，pathfinder 可自由挖墙/找楼梯上升）。两处：P60b（mine_above 内）+ P60c（地下强制脱困）。
+- **probe 实机验证 ✓（p105_mine_above_pick.json）**：修复后 bot 从 Y=82 真正上升到 Y=83（"MineAbove progressed to Y=83"，此前 empty path 原地不动），随后 P105 正确触发——头顶是空气但 y+2 是硬方块且背包无镐 → 提前终止并给出明确建议。L121 场景完整闭环。
+- **经验**：BlockPosGoal 目标格必须是可站立方块（实心），绝不能指空气格（bot 头部/身体所在格）；脱困/上升类路径一律用 YGoal（P60 教训再次验证）。
+- **门槛**：fmt/clippy -D warnings/全 workspace 测试全绿（craft-agent-minecraft lib 146 测试）。
+
+> 当前主线：mine_above 脱困路径已闭环（P105 无镐提前终止 + P106 YGoal 上升）。下一轮观察重点：craft 顺序、工作台摆放策略、run_script 实机使用。

@@ -2459,9 +2459,52 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             .map(|s| !s.is_air())
                             .unwrap_or(false);
                         if above_is_solid && !bot.is_mining() {
-                            bot.start_mining(above_head);
+                            // P105：P60b 挖 y+2 前检查镐。入口的镐检查只看头顶（head_is_hard），
+                            // 头顶是空气时被跳过——但 y+2 可能是硬方块，无镐徒手挖不动
+                            // （~8s/格）→ 空转 10s 后超时，且失败消息误导 LLM 横向找路。
+                            // 这里提前终止 mine_above 并给明确反馈（镐检查节流到 20 tick）。
+                            let above_hard = bot
+                                .world()
+                                .ok()
+                                .and_then(|w| w.read().get_block_state(above_head))
+                                .map(is_hard_block)
+                                .unwrap_or(false);
+                            let no_pick = above_hard
+                                && t.is_multiple_of(20)
+                                && !has_any_pickaxe_in_inventory(&bot).await;
+                            if no_pick {
+                                *state.mining_above.lock().unwrap() = false;
+                                *state.mining_above_start_y.lock().unwrap() = None;
+                                bot.force_stop_pathfinding();
+                                let msg = "Action output:\n❌ mine_above 失败：头顶是空气但上方 y+2 是硬方块（石头/深板岩/矿石等）且背包里没有镐！\
+                                   徒手挖硬方块极慢（~8秒/格）且不掉落。\
+                                   建议：(1) 先 craft 一把镐（wooden_pickaxe 或 stone_pickaxe）再重试 mine_above；\
+                                   (2) 横向挖台阶/找软方块通道脱困。"
+                                    .to_string();
+                                let mut is_mine_above = false;
+                                if let Some(qc) = state.action_mgr.peek_pending()
+                                    && matches!(qc.cmd, BotCommand::MineAbove)
+                                {
+                                    is_mine_above = true;
+                                    if let Some(tx) = qc.result_tx {
+                                        let _ = tx.send(msg.clone());
+                                    }
+                                }
+                                if is_mine_above {
+                                    state.action_mgr.clear_pending();
+                                }
+                                let _ = state.evt_tx.send(BotEvent::Chat { content: msg });
+                            } else {
+                                bot.start_mining(above_head);
+                            }
                         } else if !above_is_solid && t.is_multiple_of(4) {
-                            // 头顶上方已空：强制走到上方一格，真正上升。
+                            // 头顶上方已空：强制上升，真正脱困。P106：绝不能用
+                            // BlockPosGoal(y+1)——目标格是 bot 头部所在格（空气），
+                            // pathfinder 算不出站立路径 → empty path 卡满 10s，
+                            // 且反复 goto 阻塞 40-tick 主循环的 YGoal(y+5) 兜底
+                            // （L121 "Y did not increase" 真实根因）。
+                            // 用 YGoal 只要求到达 y+2 高度（任意水平位置），
+                            // pathfinder 可自由挖墙/找楼梯上升（同 P60 主循环）。
                             if !bot.is_calculating_path() && !bot.is_executing_path() {
                                 use azalea::pathfinder::PathfinderOpts;
                                 use std::time::Duration;
@@ -2470,7 +2513,7 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                     .min_timeout(Duration::from_secs(1))
                                     .max_timeout(Duration::from_secs(10));
                                 bot.start_goto_with_opts(
-                                    BlockPosGoal(BlockPos::new(cx, y + 1, cz)),
+                                    YGoal::from(BlockPos::new(cx, y + 2, cz)),
                                     opts,
                                 );
                             }
@@ -2767,7 +2810,8 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             if above_is_solid && !bot.is_mining() {
                                 bot.start_mining(above_head);
                             } else if !above_is_solid {
-                                // 头顶上方已空：直接走上去一格，真正上升。
+                                // 头顶上方已空：强制上升。P106：同 P60b，用 YGoal 而非
+                                // BlockPosGoal(y+1)（目标格是空气，pathfinder empty path）。
                                 use azalea::pathfinder::PathfinderOpts;
                                 use std::time::Duration;
                                 let opts = PathfinderOpts::new()
@@ -2775,7 +2819,7 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                     .min_timeout(Duration::from_secs(1))
                                     .max_timeout(Duration::from_secs(10));
                                 bot.start_goto_with_opts(
-                                    BlockPosGoal(BlockPos::new(cx, y + 1, cz)),
+                                    YGoal::from(BlockPos::new(cx, y + 2, cz)),
                                     opts,
                                 );
                             }

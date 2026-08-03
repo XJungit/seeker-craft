@@ -1986,4 +1986,22 @@ mod tests {
             "挖 deepslate_iron_ore 方块也必须统计 raw_iron 数量"
         );
     }
+
+    /// P105 回归测试：mine_above P60b 分支的镐检查依赖 is_hard_block 正确判定
+    /// 上方 y+2 方块——头顶是空气时入口的 head_is_hard 检查被跳过，石头/深板岩等
+    /// 硬方块必须被判为 hard（否则无镐也会继续徒手挖，空转 10s 后误导报错）。
+    #[test]
+    fn regression_is_hard_block_above_head_requires_pickaxe() {
+        use azalea::block::BlockState;
+        // P60b 场景：头顶(y+1)是空气、y+2 是石头/深板岩——必须判定为硬块触发镐检查
+        assert!(is_hard_block(BlockState::from(B::Stone)));
+        assert!(is_hard_block(BlockState::from(B::Deepslate)));
+        assert!(is_hard_block(BlockState::from(B::CobbledDeepslate)));
+        assert!(is_hard_block(BlockState::from(B::Granite)));
+        // 软方块不应误判为硬块（否则有镐检查被无谓触发——但行为无害，仅防逻辑反转）
+        assert!(!is_hard_block(BlockState::from(B::Dirt)));
+        assert!(!is_hard_block(BlockState::from(B::OakLog)));
+        // 空气也不应判定为硬块（P60b 分支 only 在 above_is_solid 时检查）
+        assert!(!is_hard_block(BlockState::from(B::Air)));
+    }
 }
