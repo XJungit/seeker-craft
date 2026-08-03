@@ -209,5 +209,11 @@
 - **P104 mushroom_stew 2×2 配方补齐（commit c23c486）**：craft.rs `RECIPES` 表追加 `("mushroom_stew", [("bowl",1),("red_mushroom",1),("brown_mushroom",1)], 1)`（shapeless 任意排列匹配）——此前只有 prompt 知识层教 LLM 做蘑菇炖菜（craft_3x3），RecipeBook 与手写配方表均无此配方，craft_3x3 失败提示误导。**知识→能力断裂修复：prompt 教的能力 harness 必须实现。** 联动：3×3 合成失败时若物品实为 2×2 配方，引导 "改用 craft(item, count) 工具（2×2 玩家网格合成）"；prompt `_default.json` "Underground & Cave Survival" 同步修正（mushroom_stew 改 craft 2×2、新增"下挖前规划脱困：记录入口坐标、勿盲挖直下、事后 mine_above 回地表"引导）；mine_below 工具描述补"下挖前先规划脱困"提醒。回归测试 +1（lookup_recipe 查 mushroom_stew，2×2 顺序填充 3 原料）。probe 实机验证 ✓：setblock red_mushroom → mine 拾取 → 背包已有 bowl/brown_mushroom → craft mushroom_stew 1 成功（inv 出现 mushroom_stew:1）。
 - **LLM 实机观测残留问题（策略层，非 harness bug，排队）**：① LLM 饥饿时挖矿找小麦偏航（应优先 crafting/farming）；② 装备 wooden_hoe 失败（hotbar 满 shift_click 后找不到，L102）；③ run_script "Function not found: pos_x ()"（rhai 引擎缺 pos_x/pos_y/pos_z 注册，L57）。
 - **P104 run_script 位置函数补齐（commit 后置）**：rhai 引擎注册 `pos_x()/pos_y()/pos_z()`（读 `bot.last_position` 每 tick 缓存，轻量不触发感知扫描；新增 `ArcAzaleaAdapter::current_position()` getter）。LLM 脚本写 `pos_x()` 取坐标不再报 Function not found。回归测试 +1（无参 f64 签名可注册可调用）。probe 无法直接驱动 run_script（parse_chat_command 不含），实机由 LLM 观测验证。
+- **P104 实机验证（LLM 观测轮，~30 回合）**：
+  - prompt 知识层生效 ✓：LLM 明确引用"蘑菇煲（2×2: 1 棕蘑菇 + 1 红蘑菇 + 1 碗）"（L142）——不再教 craft_3x3
+  - 决策正确 ✓：缺 brown_mushroom（背包 bowl×16 + red_mushroom×11）时先 gather brown_mushroom（半径内无 → 失败报错准确），不瞎合成
+  - equip 报错准确 ✓：stone_pickaxe 背包确实没有（L86 曾装备成功 → 耐久耗尽消失），L129/L130 报"重试 3 次找不到 + 列出背包实际槽位"非误报
+  - 非 harness bug 确认：反复装备 diamond_sword（L142-L149 三次）是防御准备（3 creeper 逼近），装备本身每次都成功
+  - **未观测到 run_script 使用**：本轮 LLM 未写 pos_x 脚本（决策走工具链而非脚本），pos 函数验证停留在单测层，后续遇到 run_script 场景再实测
 
-> 当前主线：harness 修正类优化已覆盖 mine（P101）/till（P102）/Auto-tp 移除（P104）/mushroom_stew 配方（P104）。下一轮观测重点：craft 顺序、工作台放置策略、装备失败诊断、rhai 坐标函数补全。
+> 当前主线：harness 修正类优化已覆盖 mine（P101）/till（P102）/Auto-tp 移除（P104）/mushroom_stew 配方（P104）/rhai 位置函数（P104）。下一轮观测重点：craft 顺序、工作台放置策略、run_script 实际使用。
