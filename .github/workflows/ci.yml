@@ -5,6 +5,9 @@ on:
     branches: [main, master]
   pull_request:
   workflow_dispatch:
+  # 每日定时构建：防止依赖/工具链漂移在 push 前积累
+  schedule:
+    - cron: "0 0 * * *"
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -31,6 +34,53 @@ jobs:
         run: cargo clippy --workspace --all-targets --features craft-agent-minecraft/azalea-bot -- -D warnings
       - name: cargo check craft-agent-model boundary (no default features)
         run: cargo check -p craft-agent-model --no-default-features
+      - name: validate data JSON (tasks/profiles/blueprints/actions)
+        run: python scripts/ci/validate_data_json.py
+
+  security:
+    name: cargo audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-audit
+        uses: cargo-bins/cargo-binstall@main
+        with:
+          args: cargo-audit --no-confirm
+      - name: Run cargo audit
+        run: cargo audit
+
+  docs:
+    name: rustdoc + GitHub Pages
+    runs-on: windows-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install nightly-2026-07-21 toolchain
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "nightly-2026-07-21"
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo doc (workspace, incl. azalea-bot)
+        run: cargo doc --workspace --no-deps --features craft-agent-minecraft/azalea-bot
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: target/doc
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
 
   test:
     name: test
