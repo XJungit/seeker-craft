@@ -401,11 +401,22 @@ cargo run -p craft-agent-ctl -- session 10 # 会话最近 10 个工具结果
 cargo run -p craft-agent-ctl -- tail <log> <N>
 ```
 
+**启动 viewer 只用 `ctl viewer`（2026-08-03 教训）**：PowerShell `Start-Process
+-ArgumentList` 会把参数数组 join 成单字符串，含空格/中文的 goal 被拆分导致 clap
+解析失败、进程静默退出（反复出现"viewer 没起来"的根因）。`ctl viewer` 用 Rust
+`Command::args` 逐参传递，无引号问题：
+
+```bash
+cargo run -p craft-agent-ctl -- viewer "goal 文本" <steps 默认40>
+# 随后 cargo run -p craft-agent-ctl -- start  # agent 不会自动 start
+# 日志在 C:\Windows\TEMP\opencode\viewer_run.log(.err)
+```
+
 部署流程（ctl deploy 的 build 阶段可能超时，分步执行更稳）：
 1. `craft-agent-ctl stop`
 2. `craft-agent-ctl build`
-3. `Start-Process target\debug\craft-agent-viewer.exe -ArgumentList '--goal','...','--steps','0','--port','8080','--mc','localhost:4444','--username','CraftAgent' -WindowStyle Hidden`（不带重定向参数）
-4. `Start-Process target\debug\craft-agent-autopilot.exe -WindowStyle Hidden`（autopilot 会自动 start agent）
+3. `craft-agent-ctl viewer "goal 文本" 0`（steps=0 无限循环；只起 viewer 不起 autopilot）
+4. `craft-agent-ctl start`（viewer 不会自动 start agent，必须手动）
 5. `craft-agent-ctl status` 验证 running=true
 
 ## 参考项目
