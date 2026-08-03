@@ -3,6 +3,9 @@
 //!
 //! 唯一路线：Azalea 客户端协议层（Rust 全栈 bot 连入普通 MC 服务器）。
 //! 旧 mod-bridge / real（Fabric mod TCP 桥接 + 真机 VLM 键鼠）路线已从源码删除。
+//!
+//! P3.3 拆分：`AgentEvent`/事件推送 helper → `events` 子模块；
+//! 会话保存/滚动 helper → `session` 子模块。
 
 use craft_agent::agent::{Agent, AgentConfig, CompactionConfig, LlmProvider, RetryConfig};
 use craft_agent::core::message::AssistantResponse;
@@ -24,6 +27,12 @@ use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::sync::broadcast;
 
+mod events;
+mod session;
+
+pub use events::AgentEvent;
+use events::EventSender;
+
 /// 前端可获取的运行状态快照。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Status {
@@ -33,42 +42,6 @@ pub struct Status {
     pub max_steps: u32,
     pub goal: String,
     pub session_path: String,
-}
-
-/// agent 循环发出的事件（通过 SSE 推给前端）。
-#[derive(Debug, Clone, Serialize)]
-#[serde(tag = "kind")]
-pub enum AgentEvent {
-    #[serde(rename = "log")]
-    Log { text: String },
-    #[serde(rename = "step")]
-    Step {
-        step: u32,
-        action: String,
-        detail: String,
-    },
-    #[serde(rename = "compaction")]
-    Compaction { summary: String, tokens_before: u64 },
-    #[serde(rename = "done")]
-    Done { reason: String },
-    #[serde(rename = "error")]
-    Error { message: String },
-    /// 当前游戏状态（perceive 快照），实时推送给前端展示 LLM 视角。
-    #[serde(rename = "perceive")]
-    Perceive {
-        /// 结构化状态文本（同 LLM 收到的 perceive 注入内容）。
-        state: String,
-    },
-    /// 世界记忆库快照（资源点/结构/容器/锚点），供前端可视化。
-    #[serde(rename = "memory")]
-    Memory {
-        /// 完整 JSON（cells + anchors），前端按需渲染。
-        json: String,
-        /// 坐标记忆条数。
-        cells: usize,
-        /// 锚点数。
-        anchors: usize,
-    },
 }
 
 /// Agent 生命周期控制器。
@@ -268,6 +241,7 @@ fn run_agent(
     mc_addr: &str,
     username: &str,
 ) -> anyhow::Result<()> {
+    let ev = EventSender::new(event_tx.clone());
     let model_cfg = ModelConfig::load(cfg_path)?;
     let perceive_cfg = model_cfg.perceive.unwrap_or_default();
     let _ = &perceive_cfg; // azalea 路线无需 image_max_side
@@ -285,7 +259,7 @@ fn run_agent(
     // 记忆可视化：后台线程每 2s 把世界记忆快照推送到前端（SSE "memory" 事件）。
     {
         let wm = world_mem.clone();
-        let tx = event_tx.clone();
+        let ev = ev.clone();
         let stop_flag = ctrl.stop.clone();
         std::thread::spawn(move || {
             loop {
@@ -295,11 +269,7 @@ fn run_agent(
                 let snapshot = wm.to_json();
                 let cells = wm.len();
                 let anchors = wm.anchors().len();
-                let _ = tx.send(AgentEvent::Memory {
-                    json: snapshot,
-                    cells,
-                    anchors,
-                });
+                ev.memory(snapshot, cells, anchors);
                 std::thread::sleep(std::time::Duration::from_secs(2));
             }
         });
@@ -351,14 +321,12 @@ fn run_agent(
             hunger: state.hunger,
         };
         if let Some(result) = Session::rollover_to(path, &archive_dir, context)? {
-            let _ = event_tx.send(AgentEvent::Log {
-                text: format!(
-                    "Session rollover: {} -> {} (archive {})",
-                    result.archived_session_id,
-                    result.active_session_id,
-                    result.archive_path.display()
-                ),
-            });
+            ev.log(format!(
+                "Session rollover: {} -> {} (archive {})",
+                result.archived_session_id,
+                result.active_session_id,
+                result.archive_path.display()
+            ));
         }
     }
 
@@ -418,17 +386,13 @@ fn run_agent(
                 let keep_recent = (comp_cw as f64 * 0.5) as u32;
                 compaction.reserve = reserve;
                 compaction.keep_recent = keep_recent;
-                let _ = event_tx.send(AgentEvent::Log {
-                    text: format!(
-                        "🗜 专用压缩模型: {} (thinking={}, 窗口={}tok, 单次压旧≤{}tok)",
-                        comp_backend.model, thinking, comp_cw, keep_recent
-                    ),
-                });
+                ev.log(format!(
+                    "🗜 专用压缩模型: {} (thinking={}, 窗口={}tok, 单次压旧≤{}tok)",
+                    comp_backend.model, thinking, comp_cw, keep_recent
+                ));
             }
             Err(e) => {
-                let _ = event_tx.send(AgentEvent::Log {
-                    text: format!("⚠ 压缩模型构造失败，回退主模型: {e}"),
-                });
+                ev.log(format!("⚠ 压缩模型构造失败，回退主模型: {e}"));
             }
         }
     }
@@ -450,21 +414,17 @@ fn run_agent(
         ctrl.individual_profile.as_deref(),
     )
     .unwrap_or_else(|e| {
-        let _ = event_tx.send(AgentEvent::Log {
-            text: format!("⚠ Profile 加载失败，回退默认空 prompt: {e}"),
-        });
+        ev.log(format!("⚠ Profile 加载失败，回退默认空 prompt: {e}"));
         craft_agent::profile::Profile::default()
     });
 
-    let _ = event_tx.send(AgentEvent::Log {
-        text: format!(
-            "📄 Profile 加载: name={} modes={:?} cooldown={}ms examples={}",
-            profile.name,
-            profile.modes,
-            profile.cooldown_ms,
-            profile.conversation_examples.len()
-        ),
-    });
+    ev.log(format!(
+        "📄 Profile 加载: name={} modes={:?} cooldown={}ms examples={}",
+        profile.name,
+        profile.modes,
+        profile.cooldown_ms,
+        profile.conversation_examples.len()
+    ));
 
     // 渲染最终 system prompt（替换 $NAME / $SELF_PROMPT 等占位符）
     let mut replacements = std::collections::HashMap::new();
@@ -477,12 +437,10 @@ fn run_agent(
     replacements.insert("EXAMPLES".to_string(), "".to_string());
     let system_prompt = profile.render(&replacements);
 
-    let _ = event_tx.send(AgentEvent::Log {
-        text: format!(
-            "📄 System prompt 长度: {} 字符",
-            system_prompt.chars().count()
-        ),
-    });
+    ev.log(format!(
+        "📄 System prompt 长度: {} 字符",
+        system_prompt.chars().count()
+    ));
     let agent_cfg = AgentConfig::new(system_prompt, 1) // 每步 1 轮，外循环控制步数
         .with_compaction(compaction)
         .with_retry(RetryConfig {
@@ -507,28 +465,7 @@ fn run_agent(
 
     let mut agent = {
         let path = Path::new(session_path);
-        let sess = if path.exists() && path.metadata().map(|m| m.len() > 0).unwrap_or(false) {
-            // 尝试加载现有 session，失败则创建新的
-            match Session::open(path) {
-                Ok(s) => s,
-                Err(e) => {
-                    eprintln!("[agent_loop] session 文件损坏，创建新 session: {e}");
-                    let mut s = Session::new("minecraft-control-panel");
-                    if let Some(parent) = path.parent() {
-                        let _ = std::fs::create_dir_all(parent);
-                    }
-                    let _ = s.save_to(path);
-                    s
-                }
-            }
-        } else {
-            let mut s = Session::new("minecraft-control-panel");
-            if let Some(parent) = path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            let _ = s.save_to(path);
-            s
-        };
+        let sess = session::open_or_create(path);
         let mut agent = Agent::new(Box::new(Lp { llm }), registry, agent_cfg)
             .with_world_memory(world_mem)
             .with_session(sess);
@@ -536,60 +473,38 @@ fn run_agent(
         agent
     };
 
-    let _ = event_tx.send(AgentEvent::Log {
-        text: format!("已连接 azalea | LLM: {}", llm_backend.model),
-    });
+    ev.log(format!("已连接 azalea | LLM: {}", llm_backend.model));
 
     // 第一步: push goal message + run 1 turn
-    let _ = event_tx.send(AgentEvent::Log {
-        text: "🤔 正在思考...".into(),
-    });
+    ev.log("🤔 正在思考...");
     let log = agent.run(goal.to_string())?;
     for line in &log {
-        let _ = event_tx.send(AgentEvent::Log { text: line.clone() });
+        ev.log(line.clone());
     }
 
     let mut step = 1u32;
     ctrl.status.lock().unwrap().step = step;
-    let _ = event_tx.send(AgentEvent::Step {
-        step,
-        action: format!("第 {step} 步"),
-        detail: String::new(),
-    });
+    ev.step(step);
     if let Some(ref mut sess) = agent.session {
-        let _ = std::fs::create_dir_all(Path::new(session_path).parent().unwrap_or(Path::new(".")));
-        if let Err(e) = sess.save_to(Path::new(session_path)) {
-            let _ = event_tx.send(AgentEvent::Error {
-                message: format!("session 保存失败: {e}"),
-            });
-            eprintln!("[agent_loop] session save_to 失败: {e}");
-        }
+        session::save_full(sess, Path::new(session_path), &ev);
     }
 
     loop {
         if ctrl.stop.load(Ordering::Relaxed) {
-            let _ = event_tx.send(AgentEvent::Done {
-                reason: "用户手动停止".into(),
-            });
+            ev.done("用户手动停止");
             break;
         }
         // P4 修复：max_steps=0 表示无限循环；>0 时达到上限自动停止。
         // 原 bug：参数名为 _max_steps（被忽略），导致 step 计数超过 max_steps 仍继续跑。
         if max_steps > 0 && step >= max_steps {
-            let _ = event_tx.send(AgentEvent::Done {
-                reason: format!("已达到最大步数 {max_steps}"),
-            });
+            ev.done(format!("已达到最大步数 {max_steps}"));
             break;
         }
         if ctrl.pause.load(Ordering::Relaxed) {
-            let _ = event_tx.send(AgentEvent::Log {
-                text: "⏸ 已暂停".into(),
-            });
+            ev.log("⏸ 已暂停");
             while ctrl.pause.load(Ordering::Relaxed) {
                 if ctrl.stop.load(Ordering::Relaxed) {
-                    let _ = event_tx.send(AgentEvent::Done {
-                        reason: "用户手动停止".into(),
-                    });
+                    ev.done("用户手动停止");
                     break;
                 }
                 std::thread::sleep(std::time::Duration::from_millis(200));
@@ -597,9 +512,7 @@ fn run_agent(
             if ctrl.stop.load(Ordering::Relaxed) {
                 break;
             }
-            let _ = event_tx.send(AgentEvent::Log {
-                text: "▶ 恢复运行".into(),
-            });
+            ev.log("▶ 恢复运行");
         }
 
         step += 1;
@@ -609,17 +522,13 @@ fn run_agent(
         for new_goal in ctrl.drain_goals() {
             agent.queue_steering(format!("【目标更新】{new_goal}"));
             agent.set_self_prompt(&new_goal);
-            let _ = event_tx.send(AgentEvent::Log {
-                text: format!("📋 目标已更新 (SelfPrompter 已设置): {new_goal}"),
-            });
+            ev.log(format!("📋 目标已更新 (SelfPrompter 已设置): {new_goal}"));
         }
 
         // 单步执行
-        let _ = event_tx.send(AgentEvent::Log {
-            text: format!("🤔 第 {step} 步: 正在思考..."),
-        });
+        ev.log(format!("🤔 第 {step} 步: 正在思考..."));
         let step_stop = Arc::new(AtomicBool::new(false));
-        let progress_tx = event_tx.clone();
+        let progress_ev = ev.clone();
         let progress_step = step;
         let progress_abort = abort.clone();
         let progress_handle = {
@@ -629,16 +538,14 @@ fn run_agent(
                 std::thread::sleep(std::time::Duration::from_secs(10));
                 while !stop_flag.load(Ordering::Relaxed) {
                     waited_secs += 10;
-                    let _ = progress_tx.send(AgentEvent::Log {
-                        text: format!("⏳ 第 {progress_step} 步: LLM 思考中 (已等 {waited_secs}s)"),
-                    });
+                    progress_ev.log(format!(
+                        "⏳ 第 {progress_step} 步: LLM 思考中 (已等 {waited_secs}s)"
+                    ));
                     if waited_secs >= 45 && !progress_abort.load(Ordering::Relaxed) {
                         progress_abort.store(true, Ordering::Relaxed);
-                        let _ = progress_tx.send(AgentEvent::Log {
-                            text: format!(
-                                "⚠ 第 {progress_step} 步: 已等 {waited_secs}s，自动中止 LLM 重试（判定卡死）"
-                            ),
-                        });
+                        progress_ev.log(format!(
+                            "⚠ 第 {progress_step} 步: 已等 {waited_secs}s，自动中止 LLM 重试（判定卡死）"
+                        ));
                     }
                     if waited_secs >= 60 {
                         break;
@@ -656,9 +563,7 @@ fn run_agent(
                 "玩家在游戏聊天框对你说：「{msg}」。这是玩家的直接指令（可能是中文），请用你的工具执行：\
                  跟随他就调用 follow，给物品就调用 give，砍树/挖矿用 gather/minebelow，等等。不要只回复，要真正行动。"
             ));
-            let _ = event_tx.send(AgentEvent::Log {
-                text: format!("💬 收到聊天: {msg}"),
-            });
+            ev.log(format!("💬 收到聊天: {msg}"));
         }
 
         let step_result = agent.step();
@@ -672,73 +577,42 @@ fn run_agent(
         let (step_log, _should_continue) = match step_result {
             Ok(v) => v,
             Err(e) => {
-                let _ = event_tx.send(AgentEvent::Error {
-                    message: format!("单步执行出错（已跳过本轮，循环继续）: {e}"),
-                });
+                ev.error(format!("单步执行出错（已跳过本轮，循环继续）: {e}"));
                 continue;
             }
         };
         for line in &step_log {
-            let _ = event_tx.send(AgentEvent::Log { text: line.clone() });
+            ev.log(line.clone());
         }
 
         // 实时推送 perceive 状态给前端（LLM 当前看到的游戏世界）
         if let Ok(ws) = adapter.perceive_shared() {
-            let _ = event_tx.send(AgentEvent::Perceive {
-                state: ws.scene_desc,
-            });
+            ev.perceive(ws.scene_desc);
         }
 
         // 实时反馈：压缩事件
         if let Some(comp) = agent.last_compaction.take() {
-            let _ = event_tx.send(AgentEvent::Compaction {
-                summary: comp.summary,
-                tokens_before: comp.tokens_before,
-            });
+            ev.compaction(comp.summary, comp.tokens_before);
         }
 
-        let _ = event_tx.send(AgentEvent::Step {
-            step,
-            action: format!("第 {step} 步"),
-            detail: String::new(),
-        });
+        ev.step(step);
 
         // 保存 session（走增量 append，避免每次全量重写）
-        if let Some(ref mut sess) = agent.session
-            && let Err(e) = sess.save()
-        {
-            eprintln!("[agent_loop] session save 失败: {e}");
-            if let Err(e2) = sess.save_to(Path::new(session_path)) {
-                let _ = event_tx.send(AgentEvent::Error {
-                    message: format!("session 保存失败: {e2}"),
-                });
-            }
+        if let Some(ref mut sess) = agent.session {
+            session::save_incremental(sess, Path::new(session_path), &ev);
         }
 
         // P62: 防 OOM 自动滚动。每 40 步或会话文件 > 12MB 时，原地归档并重置
         // 内存消息历史（保留 world_memory 与 bot 连接），避免长时间运行被系统
         // OOM kill。滚动后 bot 继续推进当前目标。
-        let session_too_big = std::fs::metadata(session_path)
-            .map(|m| m.len() > 12 * 1024 * 1024)
-            .unwrap_or(false);
-        if step.is_multiple_of(40) || session_too_big {
-            let goal_snapshot = agent.current_goal_snapshot().to_string();
-            let did = agent.rollover_in_place(session_path, &goal_snapshot);
-            if did {
-                let _ = event_tx.send(AgentEvent::Log {
-                    text: "♻️ 会话自动滚动（防 OOM）：已归档并重置内存历史，bot 继续运行。"
-                        .to_string(),
-                });
-            }
+        if session::auto_rollover(&mut agent, session_path, step) {
+            ev.log("♻️ 会话自动滚动（防 OOM）：已归档并重置内存历史，bot 继续运行。");
         }
 
         if !_should_continue {
             // P61: 原逻辑在此 break 退出循环，但自主通关任务要求 loop 永不停。
             // task_complete / AgentEnd 现在只记录，不退出——继续推进下一轮。
-            let _ = event_tx.send(AgentEvent::Log {
-                text: "🎯 目标达成信号（task_complete），但自主循环继续运行以推进下一阶段任务。"
-                    .into(),
-            });
+            ev.log("🎯 目标达成信号（task_complete），但自主循环继续运行以推进下一阶段任务。");
         }
 
         // 空闲自提示循环：有目标时自动持续推进，无需用户输入
