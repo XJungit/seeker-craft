@@ -182,3 +182,16 @@
   - 超时/取消路径清空 last_mine_eff（防残留污染下一命令判定）；未派发帧返回 not-done（防 dispatch 前误报）
   - probe 验证三场景全通过：setblock dirt → mine 空气格 → 修正通知 1 次 + 挖掉 dirt +1 + 报修正成功；mine 实心 dirt → Mined block at +1；mine 远处空气 → 建议提示 ✓
 - **P57 遗留缺陷顺带根治**：挖掘成功后目标当然是空气，旧 done 分支却报"可能之前已挖掉或坐标错误"——LLM 误以为没挖到，9 次连续 mine 同一格。现场景 1 正确报 Mined block at。
+
+## 最近修复记录（2026-08-03 · P102 till 空气修正 + LLM 实机效果评估）
+
+> 触发：LLM 实机观测（viewer + 真 LLM）确认 P101 双场景实机生效，同时发现 till_and_sow 连续 4 次犁空气格失败。
+
+- **P102 till_and_sow 目标不可犁自动修正（commit aa58f84）**：LLM 坐标记忆偏差导致连续对空气格 till_and_sow（L55/L104/L106/L148，"目标 X 是 Air，只能犁草方块/泥土/已耕地"）。对齐 P101 mine 修正模式：目标格非可犁 → 半径 4（y±1）找最近可犁且上方无阻挡方块 → **修正后继续犁地+播种**，成功消息明确告知修正（"原目标 X 是 Air，已自动修正犁最近可犁方块 Y 并完成"）；找不到合法位置才报错并建议 place dirt 铺土；距离检查/自动靠近改用修正后坐标。probe 实测（p102_till_correction.json）：空气目标+附近 dirt → 修正犁 dirt 并种下 Wheat（上方已长）✓；正常目标 → 幂等不重种 ✓。
+- **LLM 实机效果评估（~170 回合累积观测）**：
+  - **P101 双场景实机验证 ✓**：L76 "Mined block at (-495,95,-149)"（场景 1）+ L78 "目标 (-497,95,-150) 是空气，已自动修正挖掘最近实心方块 (-497,95,-151) 并成功移除"（场景 2）——LLM 不再反复挖同一格，P57 误报根治实机确认
+  - **harness 全链路稳定 ✓**：攻击距离拒绝（L66/L72 远处 zombie 自动拒）、批中止占位（L121/L127/L163）、goto 实心自动修正（L78）、goto 超时自动挖路（L80）、place 无效坐标自动重定位（L57/L111）、mine/goto/equip 高频成功
+  - **新观察到的策略弱点（非 harness bug，已由 P102 缓解一类）**：① craft 顺序颠倒（先 craft wooden_hoe 缺 planks 失败→后 craft dark_oak_planks 成功，但忘了再合成 hoe）；② 工作台放置位置反复试错（挡住农田 L148）；③ task_retry 空转（"当前任务尚未失败" L152/L173）——均属 LLM 决策层，harness 已给明确错误提示，持续观测
+- 工具层 probe 回归 ✓：P101 三场景 + P102 修正/幂等 + smoke 全通（0/6 失败）。
+
+> 当前主线：harness 层修正类优化已覆盖 mine（P101）/till（P102）坐标盲猜，place 已有 P5/P11 自动重定位。下一轮观测重点：craft 顺序、工作台放置策略、task_retry 引导。
