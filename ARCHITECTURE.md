@@ -43,12 +43,19 @@ Step  8: WorldMemory nearby          — render 64-block radius around __self__
 Step  9: LLM complete                — with RetryConfig backoff
 Step 10: plain-text reply detection  — inject continue nudge
 Step 11: dead-loop detection         — 4+ repeat signatures → nudge
-Step 12: parallel tool execution     — group by side effects, parallel within batch
+Step 12: execute_batch              — group by side effects: READ parallel, WRITE serial;
+                                       slow tools (is_slow) run alone then abort the rest;
+                                       failures abort the batch (finalize_abort → Reroute/Handoff)
 Step 13: skill extraction            — non-obs tool calls extracted as experience
 ```
 
 **Nudge injection rule**: nudges must be injected AFTER all tool results, never
 between `assistant(tool_calls)` and `tool` messages (triggers DeepSeek/OpenAI 400).
+
+**Batch execution (P2.1)**: `run_one_turn` delegates to `execute_batch` +
+`finalize_abort`. `AbortDecision::{Reroute, Handoff}` unifies P89 (WRITE failure
+→ re-plan same turn), P90 (steering interrupt → re-plan), P94 (tool budget 20 →
+convergence nudge), P99 (slow tool finished → hand off, no re-call).
 
 ### Two-Layer Modes Reaction System
 
@@ -61,11 +68,18 @@ Agent Layer (modes.rs)
   └── dedup: same mode_id consecutive triggers inject only once
   └── priority: self_preservation(1) > self_defense(2) > unstuck(3) > ...
 
-Handler Layer (azalea/mod.rs Tick)
+Handler Layer (azalea/handler.rs Tick)
   └── directly executes actions without LLM involvement
   └── self_preservation: fire/lava → auto Goto escape (every tick)
   └── self_defense: hostile mob ≤4 blocks + !is_busy() → auto attack (every 100 tick)
 ```
+
+> **P2.2 module layout**: the azalea adapter is split across
+> `azalea/mod.rs` (AzaleaBot + connect + action API, ~2000 lines),
+> `azalea/commands.rs` (BotCommand 33 variants + QueuedCommand + parse_chat_command),
+> `azalea/handler.rs` (BotState + tick handler + helpers), plus domain modules:
+> craft / place / gather / auto_craft / recipes / till / harvest / sleep /
+> perception / actions / smart_actions.
 
 ## Key Abstractions
 

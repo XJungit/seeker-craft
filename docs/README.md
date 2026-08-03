@@ -2,6 +2,14 @@
 
 Start with `tutorials/INDEX.md` for the full guide map.
 
+## Reference
+
+- `../docs/CHANGELOG.md` — change log (P-series fixes & features)
+- `../docs/mindcraft-gap.md` — Mindcraft parity audit + priority queue
+- `../docs/adr.md` — architecture decision records
+- `../ARCHITECTURE.md` — current architecture (13-step loop, batch execution, module layout)
+- `../PLAN.md` — project plan & current status
+
 ## Tutorials
 
 - `tutorials/new-contributor-guide.md` — fastest onboarding
@@ -24,5 +32,3 @@ Start with `tutorials/INDEX.md` for the full guide map.
 ## Design Archive
 
 - `design/README.md` — historical design docs (may be outdated)
-
-For the current architecture see `../ARCHITECTURE.md`.

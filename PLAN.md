@@ -21,27 +21,29 @@ LLM 大模型控制 bot 通过 Minecraft（抵达末地 + 击败末影龙）。
 
 ---
 
-## 当前状态（2026-07-27）
+## 当前状态（2026-08-03）
 
 ### 已完成
 
-- **架构落地**：三层 crate（craft-agent / craft-agent-minecraft / craft-agent-model / craft-agent-viewer）
-- **44 个 LLM 工具**：覆盖感知/记忆/移动/挖掘/战斗/合成/熔炼/采集/放置/容器/装备/交易/给予/跟随/建造/计划/脚本/自定义动作/任务链/知识搜索
-- **Agent 主循环 13 步**：drain_queues → 压缩检查 → 易变注入清理 → auto_perceive → modes 反应 → SelfPrompter → 动态上下文 → WorldMemory → LLM → 纯文字检测 → 死循环检测 → 并行执行 → 技能抽取
-- **两层 modes 反应系统**：Agent 层注入提示 + Handler 层直接执行（火/岩浆脱困、自动反击）
+- **架构落地**：5+2 crate（craft-agent / craft-agent-minecraft / craft-agent-model / craft-agent-viewer / craft-agent-autopilot / craft-agent-ctl）
+- **44 个 LLM 工具**：覆盖感知/记忆/移动/挖掘/战斗/合成/熔炼/采集/种植/收割/睡觉/放置/容器/装备/交易/给予/跟随/建造/计划/脚本/自定义动作/任务链/知识搜索
+- **Agent 主循环 13 步**：drain_queues → 压缩检查 → 易变注入清理 → auto_perceive → modes 反应 → SelfPrompter → 动态上下文 → WorldMemory → LLM → 纯文字检测 → 死循环检测 → execute_batch（READ 并行/WRITE 串行/慢工具单动作/失败重规划）→ 技能抽取
+- **两层 modes 反应系统**：Agent 层注入提示 + Handler 层直接执行（火/岩浆脱困、自动反击+走位）
 - **WorldMemory 空间记忆**：坐标主键 + 分块索引 + 6 种记忆类型 + 每 20 tick 扫描
 - **配方知识库（双层）**：RecipeBook（vanilla 26.2 全量）+ 手写 SHAPED_RECIPES fallback
 - **蓝图系统**：可复用建筑模板
 - **自定义动作**：rhai 嵌入式脚本引擎
 - **Web 仪表盘**：Axum + SSE 实时观察 bot 状态
-- **全自动化测试工具链**：cargo test 234 个测试 + PowerShell 诊断脚本 + LLM 实机测试 + scan/diag 报告
+- **全自动化测试工具链**：cargo test 395 个测试全绿 + probe 工具层秒级验证 + LLM 实机测试 + ctl 运维控制台 + autopilot 自主开发循环
+- **P2 结构性重构（2026-08-03）**：run_one_turn 批执行拆分 / azalea/mod.rs 模块拆分（commands.rs + handler.rs）/ craft-agent-model 边界收口——行为不变，全量测试+fmt+clippy 全绿
 
-### P55-P58 最新修复（2026-07-27）
+### 最新修复（2026-08-01 → 08-03）
 
-- **P55**：gather 部分成功返回 Ok 而非 Err（修复 100% 失败率）
-- **P56**：plain_text_reply 治理（9 个关键词 + profile 规则禁止宣告完成）
-- **P57**：smelt 分批熔炼（单次上限 8 个，避免 120s 工具超时）
-- **P58**：拦截 set_goal("") 绕过 P56 检测
+- **P81-P88**：unstuck 强化 / hotbar 缓存兜底 / 头顶实心感知 / till_and_sow 种植 / sleep 睡觉 / harvest 收割 / pvp 走位 / RawState 原始通道 + 近战修复全套
+- **P89-P99**：turn 内失败重规划 / steering 中断 / 增量摘要 / 失败前缀统一 / progress 事件 / 工具预算上限 / cancel API / 后台预压缩 / 语义记忆 / 上下文管理重构 / 慢工具单动作轮
+- **P100**：till_and_sow 自动靠近（force_block 贴脸纪律）
+- **P101**：mine 空气目标自动修正 + P57 误报根治（done 判定改用实际挖掘目标）
+- **P102**：till_and_sow 目标不可犁自动修正到附近可犁方块
 
 ### 系统性重构（9.3 节方向 A-D 全部完成）
 
@@ -69,9 +71,6 @@ P49 takeOutput 循环依赖 `furnace.outputItem()` 真实读取，azalea 的 Con
 - **下界传送门**：需要 lava + obsidian（或水浇岩浆）+ flint_and_steel
 - **末地传送门**：需要 ender_pearl + blaze_powder → ender_eye + 找要塞
 - **击败末影龙**：需要 bow + bed 爆炸战术
-
----
-
 ## 自动化测试协议
 
 ### 测试命令
