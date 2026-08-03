@@ -167,3 +167,18 @@
   - 任务验证 ✓：假完成被拦（L130 "当前状态不满足任务条件"）
   - **观察到的策略弱点（非 harness bug）**：LLM 反复小步试 mine 坐标（-485,60 空气后又试 -484,60），注入明确目标后立即转为连续 mine_below ✓——提示引导有效；背包已持 stone_pickaxe 却先 craft 一个（工具名称时序误判，L124 装备失败后 L128 合成重复）——**LLM 端知识待优化**（可考虑 perceive 背包后决策，非代码问题）
 - 工具层 probe 全量回归 ✓：smoke（goto/minebelow/pickup/equip/chat）+ harvest 全路径（无成熟报错→setblock 成熟→收割 wheat+1）+ till 闭环（真实 farmland 犁地播种成功）。P2.2 拆分后的 parse_chat_command 33 命令全部正常驱动。
+
+## 最近修复记录（2026-08-03 · P101 mine 空气盲猜根治 + P57 误报修复）
+
+> 触发：LLM 实机观测发现真实盲区——LLM 连续 15+ 次 mine 空气格（每次换坐标，死循环检测不触发）。
+
+- **P101 mine 空气目标自动修正（commit 3eca90a + 本轮完成分支）**：
+  - 派发分支：目标格是空气 → `nearest_solid_block`（半径 4，排除 Air/Water/Lava，最近优先）自动修正到实心方块再挖，修正通知经 evt_tx 事件流推送（首帧一次，不消费 result_tx）
+  - **关键发现（完成分支重构）**：done 轮询判定原用**原目标** is_air——原目标本就是空气时 done 立即成立，修正挖掘在下一 tick 就被终结（probe 实测 dirt 未被挖掉）；且旧 P57 逻辑把"挖成功的空气"误报为"该位置已是空气"（LLM 反复挖同一格的根源）
+  - 修复：BotState 新增 `last_mine_eff`（实际挖掘目标 + 原目标是否空气），done 判定/反馈全部改用实际目标，三场景分流：
+    1. 原目标实心挖掉 → `Mined block at (x,y,z)`（成功，P57 误报根治）
+    2. 空气修正挖掉 → `已自动修正挖掘最近实心方块 (p) 并成功移除`
+    3. 空气且无实心可修正 → P57 建议提示（附最近实心坐标）
+  - 超时/取消路径清空 last_mine_eff（防残留污染下一命令判定）；未派发帧返回 not-done（防 dispatch 前误报）
+  - probe 验证三场景全通过：setblock dirt → mine 空气格 → 修正通知 1 次 + 挖掉 dirt +1 + 报修正成功；mine 实心 dirt → Mined block at +1；mine 远处空气 → 建议提示 ✓
+- **P57 遗留缺陷顺带根治**：挖掘成功后目标当然是空气，旧 done 分支却报"可能之前已挖掉或坐标错误"——LLM 误以为没挖到，9 次连续 mine 同一格。现场景 1 正确报 Mined block at。

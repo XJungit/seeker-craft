@@ -100,6 +100,16 @@ cargo run -p craft-agent-minecraft --example agent_azalea_demo --features azalea
 （参考 till.rs P100 修复：>2m 自动 start_goto + 60×100ms 等待），仅距离检查不可靠。
 已覆盖：till_and_sow（P100）、place（P29 距离已收紧）。新增交互类工具默认带靠近逻辑。
 
+### mine 目标修正纪律（P101 教训）
+
+LLM 会盲猜坐标连续 mine 空气格（每次换坐标绕过死循环检测）。**mine 工具必须在
+派发时自动修正**：目标格是空气 → `nearest_solid_block`（半径 4）自动改挖最近实心方块，
+修正通知走事件流（首帧一次，不消费 result_tx）。**done 判定与反馈必须基于实际挖掘目标**
+（`BotState.last_mine_eff`），绝不能用原目标判空气——原目标本就是空气时 done 立即成立、
+修正挖掘被终结；挖掘成功后目标是空气属正常（报"Mined block at"），误报"该位置已是空气"
+会让 LLM 反复挖同一格（P57 根源）。三场景：实心挖掉→成功 / 空气修正挖掉→修正成功 /
+空气无实心→建议提示。
+
 ## 架构（5 个 crate）
 
 ```
