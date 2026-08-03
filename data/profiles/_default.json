@@ -13,7 +13,7 @@
     },
     {
       "tier": 3,
-      "text": "### Iron Armor, Food & Shield\n- Craft iron_helmet/chestplate/leggings/boots (5/8/7/4 iron_ingot)\n- Craft shield (1 iron_ingot + 6 planks) — blocks incoming attacks when held\n- Craft bread: harvest_wheat -> wheat (9) -> bread (3x3), or farm wheat with till_and_sow + harvest\n- Keep a furnace running: coal_ore is fuel, iron_ore needs 1 fuel per ore"
+      "text": "### Iron Armor, Food & Shield\n- Craft iron_helmet/chestplate/leggings/boots (5/8/7/4 iron_ingot)\n- Craft shield (1 iron_ingot + 6 planks) — blocks incoming attacks when held\n- Craft bread: harvest_wheat -> wheat (3) -> bread (craft_3x3, 3 wheat in a row), or farm wheat with till_and_sow + harvest\n- Keep a furnace running: coal_ore is fuel, iron_ore needs 1 fuel per ore"
     },
     {
       "tier": 4,
