@@ -180,6 +180,7 @@ impl AzaleaBot {
             last_seen_pos: Arc::new(Mutex::new((0, 0, 0))),
             make_obsidian: Arc::new(Mutex::new(None)),
             cancel_flag: cancel_flag.clone(),
+            last_mine_eff: Arc::new(Mutex::new(None)),
         };
 
         let addr = address.to_string();

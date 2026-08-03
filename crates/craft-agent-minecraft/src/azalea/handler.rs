@@ -254,6 +254,10 @@ pub struct BotState {
     /// P95：取消请求标志。外部 `AzaleaBot::cancel_commands` 置位，
     /// handler 每 tick 检查并执行真正的中止（强停寻路/清槽/回复取消）。
     pub cancel_flag: Arc<AtomicBool>,
+    /// P101：当前 mine 命令的实际挖掘目标（派发时修正后）+ 派发时原目标是否空气。
+    /// 解决 done 判定与反馈歧义：done 轮询用实际目标判空气（否则修正挖掘被
+    /// 立即终结），done 分支据 original_air 区分"成功挖掉/修正成功/空气 no-op"。
+    pub last_mine_eff: Arc<Mutex<Option<(BlockPos, bool)>>>,
 }
 
 impl Default for BotState {
@@ -282,6 +286,7 @@ impl Default for BotState {
             hunt_pickup_until: Arc::new(Mutex::new(0)),
             combat_equip_pending: Arc::new(Mutex::new(None)),
             combat_strafe_cd: Arc::new(Mutex::new(0)),
+            last_mine_eff: Arc::new(Mutex::new(None)),
             cancel_flag: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -468,18 +473,34 @@ impl AzaleaBot {
                     // 轮询非阻塞命令（Goto/Mine）完成状态 + 按命令类型超时
                     if let Some(qc) = state.action_mgr.peek_pending() {
                         let done = match &qc.cmd {
-                            BotCommand::Mine { x, y, z } => {
-                                if let Ok(world) = bot.world() {
-                                    let s = world.read().get_block_state(BlockPos::new(*x, *y, *z));
-                                    let is_air =
-                                        s.is_none() || s.map(|b| b.is_air()).unwrap_or(false);
-                                    // P4 修复：start_mining 只在命令派发时调一次，但挖掘可能被
-                                    // 重力/移动/伤害中断后不再恢复。这里每 20 tick 重新发起挖掘，
-                                    // 确保方块还在就持续挖（对齐 MineBelow 的持续触发逻辑）。
-                                    if !is_air && !bot.is_mining() && tick_now.is_multiple_of(20) {
-                                        bot.start_mining(BlockPos::new(*x, *y, *z));
+                            BotCommand::Mine { x: _, y: _, z: _ } => {
+                                // P101：done 判定必须用派发时确定的实际挖掘目标
+                                // （可能是修正后的实心方块）。若仍按原目标 (x,y,z) 判
+                                // 空气——原目标本就是空气时 done 立即成立，修正挖掘
+                                // 在下一 tick 就被终结（实测 dirt 未被挖掉）。
+                                // 若 last_mine_eff 为 None（命令刚入队、派发前抢占的那
+                                // 一帧），不视为完成，避免 dispatch 前就误报 done。
+                                let eff = *state.last_mine_eff.lock().unwrap();
+                                if let Some((eff_target, _)) = eff {
+                                    let (ex, ey, ez) = (eff_target.x, eff_target.y, eff_target.z);
+                                    if let Ok(world) = bot.world() {
+                                        let s =
+                                            world.read().get_block_state(BlockPos::new(ex, ey, ez));
+                                        let is_air =
+                                            s.is_none() || s.map(|b| b.is_air()).unwrap_or(false);
+                                        // P4 修复：start_mining 只在命令派发时调一次，但挖掘可能被
+                                        // 重力/移动/伤害中断后不再恢复。这里每 20 tick 重新发起挖掘，
+                                        // 确保方块还在就持续挖（对齐 MineBelow 的持续触发逻辑）。
+                                        if !is_air
+                                            && !bot.is_mining()
+                                            && tick_now.is_multiple_of(20)
+                                        {
+                                            bot.start_mining(BlockPos::new(ex, ey, ez));
+                                        }
+                                        is_air
+                                    } else {
+                                        false
                                     }
-                                    is_air
                                 } else {
                                     false
                                 }
@@ -750,85 +771,95 @@ impl AzaleaBot {
                                         .ok()
                                         .map(|p| (p.x, p.y, p.z))
                                         .unwrap_or((0.0, 0.0, 0.0));
-                                    // P57：目标方块已是空气（可能是之前就挖掉了）→ 明确告知，
-                                    // 避免 LLM 反复 mine 同一坐标（实测死循环：9 次连续 mine 同一格）。
-                                    let target_is_air = bot
-                                        .world()
-                                        .ok()
-                                        .map(|w| {
-                                            w.read()
-                                                .get_block_state(BlockPos::new(*x, *y, *z))
-                                                .map(|b| b.is_air())
-                                                .unwrap_or(true)
-                                        })
-                                        .unwrap_or(true);
-                                    if target_is_air {
-                                        // P71：拒绝时附上附近最近的实心方块建议坐标——LLM 经常盲猜
-                                        // 坐标连续挖空气（实测 10 次连续 mine 空气死循环），
-                                        // 直接给出可挖目标比让它自己 perceive 猜更高效。
-                                        let mut suggestions: Vec<(i32, i32, i32)> = Vec::new();
-                                        if let Ok(world) = bot.world() {
-                                            'outer: for d in 1i32..=4 {
-                                                for dx in -d..=d {
-                                                    for dz in -d..=d {
-                                                        for dy in -1..=2 {
-                                                            if dx.abs() != d
-                                                                && dz.abs() != d
-                                                                && dy != -1
-                                                                && dy != 2
-                                                            {
-                                                                continue;
-                                                            }
-                                                            let pos = BlockPos::new(
-                                                                x + dx,
-                                                                y + dy,
-                                                                z + dz,
-                                                            );
-                                                            let bk: Option<BlockKind> = world
-                                                                .read()
-                                                                .get_block_state(pos)
-                                                                .map(|b| b.into());
-                                                            let solid = bk
-                                                                .map(|k| {
-                                                                    k != BlockKind::Air
-                                                                        && k != BlockKind::Water
-                                                                        && k != BlockKind::Lava
-                                                                })
-                                                                .unwrap_or(false);
-                                                            if solid {
-                                                                suggestions.push((
+                                    // P101：done 由派发时的实际挖掘目标触发，这里取回该目标
+                                    // 与原目标是否空气的记录，区分三种反馈：
+                                    //   1) 原目标实心且已挖掉 → "Mined block at"（成功）
+                                    //   2) 原目标空气但修正挖掉了实心方块 → 报修正成功
+                                    //   3) 原目标空气且无实心可修正（no-op）→ P57 空气错误 + 建议
+                                    // 旧逻辑（P57）只看 done 时原目标是否空气：挖掘成功后目标
+                                    // 当然是空气，却报"该位置已是空气"——LLM 反复 mine 同一格。
+                                    let mine_eff = state.last_mine_eff.lock().unwrap().take();
+                                    let (ex, ey, ez) = mine_eff
+                                        .map(|(p, _)| (p.x, p.y, p.z))
+                                        .unwrap_or((*x, *y, *z));
+                                    let original_was_air =
+                                        mine_eff.map(|(_, air)| air).unwrap_or(true);
+                                    if original_was_air {
+                                        if (ex, ey, ez) == (*x, *y, *z) {
+                                            // 场景 3：原目标空气且无实心可修正（或修正失败）→ P57 建议
+                                            let mut suggestions: Vec<(i32, i32, i32)> = Vec::new();
+                                            if let Ok(world) = bot.world() {
+                                                'outer: for d in 1i32..=4 {
+                                                    for dx in -d..=d {
+                                                        for dz in -d..=d {
+                                                            for dy in -1..=2 {
+                                                                if dx.abs() != d
+                                                                    && dz.abs() != d
+                                                                    && dy != -1
+                                                                    && dy != 2
+                                                                {
+                                                                    continue;
+                                                                }
+                                                                let pos = BlockPos::new(
                                                                     x + dx,
                                                                     y + dy,
                                                                     z + dz,
-                                                                ));
-                                                                if suggestions.len() >= 4 {
-                                                                    break 'outer;
+                                                                );
+                                                                let bk: Option<BlockKind> = world
+                                                                    .read()
+                                                                    .get_block_state(pos)
+                                                                    .map(|b| b.into());
+                                                                let solid = bk
+                                                                    .map(|k| {
+                                                                        k != BlockKind::Air
+                                                                            && k != BlockKind::Water
+                                                                            && k != BlockKind::Lava
+                                                                    })
+                                                                    .unwrap_or(false);
+                                                                if solid {
+                                                                    suggestions.push((
+                                                                        x + dx,
+                                                                        y + dy,
+                                                                        z + dz,
+                                                                    ));
+                                                                    if suggestions.len() >= 4 {
+                                                                        break 'outer;
+                                                                    }
                                                                 }
                                                             }
                                                         }
                                                     }
                                                 }
                                             }
-                                        }
-                                        let hint = if suggestions.is_empty() {
-                                            "附近 4 格内无实心方块，请先 perceive 确认位置。"
-                                                .to_string()
-                                        } else {
+                                            let hint = if suggestions.is_empty() {
+                                                "附近 4 格内无实心方块，请先 perceive 确认位置。"
+                                                    .to_string()
+                                            } else {
+                                                format!(
+                                                    "附近最近的实心方块（可挖）：{}。",
+                                                    suggestions
+                                                        .iter()
+                                                        .map(|(sx, sy, sz)| format!(
+                                                            "({sx},{sy},{sz})"
+                                                        ))
+                                                        .collect::<Vec<_>>()
+                                                        .join(", ")
+                                                )
+                                            };
                                             format!(
-                                                "附近最近的实心方块（可挖）：{}。",
-                                                suggestions
-                                                    .iter()
-                                                    .map(|(sx, sy, sz)| format!("({sx},{sy},{sz})"))
-                                                    .collect::<Vec<_>>()
-                                                    .join(", ")
+                                                "Action output:\nmine ({},{},{}): 该位置已是空气/方块不存在（可能之前已挖掉或坐标错误）。{hint}\
+                                                 直接 mine 上述坐标即可。",
+                                                x, y, z
                                             )
-                                        };
-                                        format!(
-                                            "Action output:\nmine ({},{},{}): 该位置已是空气/方块不存在（可能之前已挖掉或坐标错误）。{hint}\
-                                             直接 mine 上述坐标即可。",
-                                            x, y, z
-                                        )
+                                        } else {
+                                            // 场景 2：修正目标已被挖掉 → 报修正成功
+                                            format!(
+                                                "Action output:\n目标 ({},{},{}) 是空气，已自动修正挖掘最近实心方块 ({},{},{}) 并成功移除。",
+                                                x, y, z, ex, ey, ez
+                                            )
+                                        }
                                     } else {
+                                        // 场景 1：原目标实心、现已挖掉 → 正常成功
                                         format!(
                                             "Action output:\nMined block at ({},{},{}). Block removed. Bot still at ({:.0},{:.0},{:.0}) — 挖完不会自动掉进洞，无需 goto 刚挖的位置。",
                                             x, y, z, cx, cy, cz
@@ -836,6 +867,9 @@ impl AzaleaBot {
                                     }
                                 }
                                 BotCommand::Mine { x, y, z } => {
+                                    // P101：命令结束（超时/取消路径）必须清空实际目标记录，
+                                    // 否则残留状态会让下一个 mine 命令的 done 判定错位。
+                                    *state.last_mine_eff.lock().unwrap() = None;
                                     format!(
                                         "Action output:\nmine ({},{},{}) 超时——可能方块太硬（需更高品质镐）或距离太远。建议 gather(item=..., count=...) 自动寻路挖掘。",
                                         x, y, z
@@ -913,6 +947,10 @@ impl AzaleaBot {
                                     | BotCommand::MineAbove
                             ) {
                                 bot.force_stop_pathfinding();
+                                // P101：取消 mine 时清空实际目标记录，防止残留污染下一命令判定。
+                                if matches!(&qc.cmd, BotCommand::Mine { .. }) {
+                                    *state.last_mine_eff.lock().unwrap() = None;
+                                }
                             }
                             if let Some(tx) = &qc.result_tx {
                                 let _ = tx.send("已取消（cancel_commands）".to_string());
@@ -1379,28 +1417,40 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             // 死循环检测不触发），工具返回的"最近实心方块"提示被无视。
                             // 与其报错让 LLM 猜，不如直接挖最近的实心方块——行为不变契约：
                             // 正常情况目标即实心方块，修正仅在空气目标时生效。
-                            let mine_pos = if let Ok(world) = bot.world() {
+                            let mine_eff = if let Ok(world) = bot.world() {
                                 let target_is_air = world
                                     .read()
                                     .get_block_state(BlockPos::new(x, y, z))
                                     .map(|b| b.is_air())
                                     .unwrap_or(true);
                                 if target_is_air {
-                                    nearest_solid_block(&bot, x, y, z)
-                                        .unwrap_or(BlockPos::new(x, y, z))
+                                    let eff = nearest_solid_block(&bot, x, y, z)
+                                        .unwrap_or(BlockPos::new(x, y, z));
+                                    (eff, true)
                                 } else {
-                                    BlockPos::new(x, y, z)
+                                    (BlockPos::new(x, y, z), false)
                                 }
                             } else {
-                                BlockPos::new(x, y, z)
+                                (BlockPos::new(x, y, z), false)
                             };
+                            let (mine_pos, original_was_air) = mine_eff;
                             let (mx, my, mz) = (mine_pos.x, mine_pos.y, mine_pos.z);
-                            if (mx, my, mz) != (x, y, z)
-                                && let Some(tx) = &result_tx
-                            {
-                                let _ = tx.send(format!(
-                                    "目标 ({x},{y},{z}) 已是空气，自动修正为最近实心方块 ({mx},{my},{mz}) 开始挖掘"
-                                ));
+                            // P101：记录实际挖掘目标——done 轮询判定与完成反馈都依赖它
+                            // （否则空气原目标会让 done 立即成立，修正挖掘被终结）。
+                            let mut eff_guard = state.last_mine_eff.lock().unwrap();
+                            let already_recorded =
+                                eff_guard.map(|(p, _)| (p.x, p.y, p.z) == (mx, my, mz));
+                            *eff_guard = Some((BlockPos::new(mx, my, mz), original_was_air));
+                            drop(eff_guard);
+                            // P101 修正通知走事件流（瞬态），不消费 result_tx——
+                            // 最终成功/超时结果必须由 done 分支发送。且每 tick 重复派发
+                            // 会重复发通知（实测 14 次），只在目标变更的首帧发一次。
+                            if (mx, my, mz) != (x, y, z) && already_recorded != Some(true) {
+                                let _ = evt_tx.send(BotEvent::Chat {
+                                    content: format!(
+                                        "目标 ({x},{y},{z}) 已是空气，自动修正为最近实心方块 ({mx},{my},{mz}) 开始挖掘"
+                                    ),
+                                });
                             }
                             bot.start_mining(mine_pos);
                             // P93：mine 进度流式事件（每 20 tick 一次）

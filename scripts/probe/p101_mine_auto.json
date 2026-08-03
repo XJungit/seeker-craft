@@ -1,0 +1,7 @@
+{"between_delay_ms": 3000, "timeout_ms": 120000, "steps": [
+  {"cmd": "chat /setblock -490 103 -157 minecraft:dirt"},
+  {"cmd": "mine -490 103 -157"},
+  {"state": true},
+  {"cmd": "mine -500 200 -200"},
+  {"state": true}
+]}
