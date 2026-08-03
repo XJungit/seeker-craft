@@ -217,8 +217,6 @@ pub struct BotState {
     /// Direction tried by deterministic staircase ascent. Rotated whenever a
     /// concrete adjacent-up goal makes no progress.
     pub mining_above_direction: Arc<Mutex<usize>>,
-    /// Whether mine_above already tried /tp rescue. Reset on new MineAbove.
-    pub mine_above_tried_tp: Arc<Mutex<bool>>,
     /// ActionManager：封装 pending 槽 + 按命令类型超时 + 抢占 + 快循环检测。
     /// 取代原硬编码 60-tick 超时（合成/采集/熔炼等长任务被误杀）。
     /// 字段保留 pending/pending_since/busy 的 Arc 引用，供旧代码兼容访问。
@@ -279,7 +277,6 @@ impl Default for BotState {
             mining_above: Arc::new(Mutex::new(false)),
             mining_above_start_y: Arc::new(Mutex::new(None)),
             mining_above_direction: Arc::new(Mutex::new(0)),
-            mine_above_tried_tp: Arc::new(Mutex::new(false)),
             action_mgr: ActionManager::new(),
             memory: None,
             scanned: Arc::new(Mutex::new(HashMap::new())),
@@ -565,7 +562,6 @@ impl AzaleaBot {
                                     *state.mining_above_start_y.lock().unwrap() =
                                         Some(bot.position().map_or(0, |p| p.y.floor() as i32));
                                     *state.mining_above_direction.lock().unwrap() = 0;
-                                    *state.mine_above_tried_tp.lock().unwrap() = false;
                                     bot.force_stop_pathfinding();
                                     if let Some(tx) = &qc.result_tx {
                                         let _ = tx.send(
@@ -641,7 +637,6 @@ impl AzaleaBot {
                                                 *state.mining_above_start_y.lock().unwrap() =
                                                     Some(p.y.floor() as i32);
                                                 *state.mining_above_direction.lock().unwrap() = 0;
-                                                *state.mine_above_tried_tp.lock().unwrap() = false;
                                             } else if let Ok(world) = bot.world() {
                                                 let world = world.read();
                                                 // 挖开目标方块（若非空气）和脚下/身旁可能阻挡的方块
@@ -672,7 +667,6 @@ impl AzaleaBot {
                                             *state.mining_above_start_y.lock().unwrap() =
                                                 Some(p.y.floor() as i32);
                                             *state.mining_above_direction.lock().unwrap() = 0;
-                                            *state.mine_above_tried_tp.lock().unwrap() = false;
                                             bot.force_stop_pathfinding();
                                             format!(
                                                 "Action output:\ngoto ({},{},{}) 超时——bot 在地下口袋里被挡住（Y={:.0}）。已自动转为 mine_above 向上挖出脱困，到地表后请用 goto 重试目标。",
@@ -1232,7 +1226,6 @@ impl AzaleaBot {
                                         *state.mining_above_start_y.lock().unwrap() =
                                             Some(p.y.floor() as i32);
                                         *state.mining_above_direction.lock().unwrap() = 0;
-                                        *state.mine_above_tried_tp.lock().unwrap() = false;
                                         bot.force_stop_pathfinding();
                                     }
                                     state.action_mgr.clear_pending();
@@ -2435,15 +2428,6 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                     p.x, p.z
                                 ),
                             });
-                        } else {
-                            // Auto-tp rescue: when stuck in a cave air pocket below
-                            // surface, try /tp once to unblock the workflow. If cheats
-                            // are not enabled the staircase attempt below still runs.
-                            if head_is_air && y < 62 && !*state.mine_above_tried_tp.lock().unwrap()
-                            {
-                                *state.mine_above_tried_tp.lock().unwrap() = true;
-                                bot.chat(format!("/tp @s ~ {} ~", 70));
-                            }
                         }
                     }
                     // auto_equip is expensive (inventory scan), throttle to every 20 ticks.
@@ -2805,7 +2789,6 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             *state.mining_above.lock().unwrap() = true;
                             *state.mining_above_start_y.lock().unwrap() = Some(y);
                             *state.mining_above_direction.lock().unwrap() = 0;
-                            *state.mine_above_tried_tp.lock().unwrap() = false;
                         }
                     }
                 }
@@ -3678,7 +3661,6 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                     *state.mining_above_start_y.lock().unwrap() =
                                         Some(p.y.floor() as i32);
                                     *state.mining_above_direction.lock().unwrap() = 0;
-                                    *state.mine_above_tried_tp.lock().unwrap() = false;
                                     bot.force_stop_pathfinding();
                                     let _ = evt_tx.send(BotEvent::Chat {
                                         content: format!(

@@ -42,6 +42,14 @@ const RECIPES: &[RecipeEntry] = &[
     ("crafting_table", &[("oak_planks", 4)], 1),
     ("torch", &[("coal", 1), ("stick", 1)], 4),
     ("torch", &[("charcoal", 1), ("stick", 1)], 4),
+    // P104: mushroom_stew 是 shapeless 2×2（bowl + red_mushroom + brown_mushroom）。
+    // 此前仅 prompt 知识层教 LLM 做蘑菇炖菜、harness 无配方 → "RecipeBook 和手写配方表均无此配方"
+    // 失败误导 LLM（P83 知识→能力断裂）。顺序填充 3 格即可（shapeless 任意排列匹配）。
+    (
+        "mushroom_stew",
+        &[("bowl", 1), ("red_mushroom", 1), ("brown_mushroom", 1)],
+        1,
+    ),
 ];
 
 /// 2×2 形状配方表（P12 新增，2026-07-26）。
@@ -1461,6 +1469,15 @@ pub async fn do_craft_3x3(
                 r
             }
             None => {
+                // P104: 3×3 失败时若该物品实际是 2×2 配方，明确引导改用 craft，
+                // 避免"RecipeBook 和手写配方表均无此配方"误导 LLM（mushroom_stew 教训）。
+                let is_2x2 = lookup_shaped_2x2(item).is_empty() && lookup_recipe(item).is_some();
+                if is_2x2 {
+                    return Err(format!(
+                        "不支持的 3×3 合成目标 {item}：该物品是 2×2 配方（无需工作台）。\
+                         请改用 craft(item, count) 工具（2×2 玩家网格合成）。"
+                    ));
+                }
                 return Err(format!(
                     "不支持的 3×3 合成目标 {item}（RecipeBook 和手写配方表均无此配方）。\
                      可能原因：1) 物品名拼写错误；2) 该物品不可合成（如 air/bedrock）；\
@@ -3047,6 +3064,31 @@ mod tests {
             "带前缀也应能查到"
         );
         assert!(lookup_recipe("minecraft:crafting_table").is_some());
+    }
+
+    /// P104 回归测试：mushroom_stew 是 2×2 shapeless 配方（bowl + red + brown），
+    /// 必须能被 lookup_recipe（2×2 顺序填充）查到——此前只有 prompt 知识层教 LLM
+    /// 做蘑菇炖菜、harness 无配方，导致 craft_3x3 失败且提示误导（P83 知识→能力断裂）。
+    #[test]
+    fn regression_lookup_recipe_finds_mushroom_stew() {
+        let stew = lookup_recipe("mushroom_stew").expect("mushroom_stew 必须可查（2×2 shapeless）");
+        assert_eq!(stew.output_per_craft, 1, "1 次合成产出 1 碗炖菜");
+        let ings: Vec<&str> = stew.ingredients.iter().map(|(k, _)| k.to_str()).collect();
+        assert_eq!(ings.len(), 3, "需要 3 种原料");
+        assert!(ings.contains(&"minecraft:bowl"), "需要 bowl");
+        assert!(
+            ings.contains(&"minecraft:red_mushroom"),
+            "需要 red_mushroom"
+        );
+        assert!(
+            ings.contains(&"minecraft:brown_mushroom"),
+            "需要 brown_mushroom"
+        );
+        // 带前缀也应能查到
+        assert!(
+            lookup_recipe("minecraft:mushroom_stew").is_some(),
+            "带前缀也应能查到"
+        );
     }
 
     /// P12 回归测试：planks_plan_for 动态派生——所有原木种类都能合成对应木板。

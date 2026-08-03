@@ -169,7 +169,9 @@ impl GameTool for MineBelowTool {
         true
     }
     fn description(&self) -> &str {
-        "挖掉 bot 脚下的方块（向下挖矿井）。无参数。bot 自动挖掘并可能拾取掉落物。"
+        "挖掉 bot 脚下的方块（向下挖矿井）。无参数。bot 自动挖掘并可能拾取掉落物。\
+         \n注意：垂直下挖前先规划脱困——记录入口坐标，挖完用 mine_above 回地表；\
+         不要盲目连续垂直下挖（下去容易上来难）。"
     }
     fn parameters(&self) -> Value {
         serde_json::json!({})

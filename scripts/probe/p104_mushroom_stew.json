@@ -1,0 +1,6 @@
+{"between_delay_ms": 4000, "timeout_ms": 150000, "steps": [
+  {"cmd": "chat /setblock -489 85 -163 minecraft:red_mushroom"},
+  {"cmd": "mine -489 85 -163"},
+  {"cmd": "craft mushroom_stew 1"},
+  {"state": true}
+]}

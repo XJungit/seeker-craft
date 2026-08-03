@@ -167,7 +167,6 @@ impl AzaleaBot {
             mining_above: Arc::new(Mutex::new(false)),
             mining_above_start_y: Arc::new(Mutex::new(None)),
             mining_above_direction: Arc::new(Mutex::new(0)),
-            mine_above_tried_tp: Arc::new(Mutex::new(false)),
             action_mgr: ActionManager::new(),
             memory,
             scanned: Arc::new(Mutex::new(HashMap::new())),
