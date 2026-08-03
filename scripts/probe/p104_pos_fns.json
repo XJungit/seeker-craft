@@ -1,0 +1,4 @@
+{"between_delay_ms": 4000, "timeout_ms": 120000, "steps": [
+  {"cmd": "run_script let x = pos_x(); let y = pos_y(); let z = pos_z(); print(`pos=(${x},${y},${z})`)"},
+  {"state": true}
+]}

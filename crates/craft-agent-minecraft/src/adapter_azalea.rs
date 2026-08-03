@@ -85,6 +85,17 @@ impl ArcAzaleaAdapter {
     pub fn perceive_shared(&self) -> Result<WorldState> {
         self.0.lock().unwrap().perceive()
     }
+    /// 轻量实时位置（读 `bot.last_position` 每 tick 缓存，不做感知扫描）。
+    /// 返回 `Some((x, y, z))`；未连上/无位置时 `None`。
+    pub fn current_position(&self) -> Option<(f64, f64, f64)> {
+        let guard = self.0.lock().unwrap();
+        guard
+            .bot
+            .last_position
+            .lock()
+            .unwrap()
+            .map(|p| (p.x, p.y, p.z))
+    }
     /// 消费玩家聊天消息队列
     pub fn drain_chat(&self) -> Vec<String> {
         let guard = self.0.lock().unwrap();

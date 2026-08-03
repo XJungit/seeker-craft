@@ -2060,6 +2060,7 @@ fn _exec_action(adapter: &Arc<Mutex<MinecraftAzaleaAdapter>>, mc: MinecraftActio
 /// - 装备/消耗：`equip(item,slot)` `discard(item,count)` `consume(item)`
 /// - 交互：`interact_entity(kind)` `trade(offer)` `chat(msg)` `pickup()`
 /// - 工具：`perceive()` 返回结构化世界状态文本 / `list_blueprints()` 列出蓝图 / `build_blueprint(name,x,y,z)` 建造蓝图
+/// - 位置：`pos_x()` `pos_y()` `pos_z()` 返回当前坐标（P104 补齐，轻量读缓存）
 /// - 元：`sleep(ms)` `print(msg)`
 ///
 /// **注意**：
@@ -2496,6 +2497,29 @@ fn build_rhai_engine(ctx: &Arc<AzaleaToolCtx>) -> rhai::Engine {
             Ok(st) => st.self_hint.to_string(),
             Err(e) => format!("perceive 错误: {e}"),
         }
+    });
+    // P104: 位置读取函数（轻量，读每 tick 缓存，不触发感知扫描）。
+    // LLM 脚本常写 pos_x()/pos_y()/pos_z() 取当前坐标（此前报 Function not found）。
+    let adapter_for_pos = ctx.adapter.clone();
+    engine.register_fn("pos_x", move || -> f64 {
+        adapter_for_pos
+            .current_position()
+            .map(|p| p.0)
+            .unwrap_or(0.0)
+    });
+    let adapter_for_pos = ctx.adapter.clone();
+    engine.register_fn("pos_y", move || -> f64 {
+        adapter_for_pos
+            .current_position()
+            .map(|p| p.1)
+            .unwrap_or(0.0)
+    });
+    let adapter_for_pos = ctx.adapter.clone();
+    engine.register_fn("pos_z", move || -> f64 {
+        adapter_for_pos
+            .current_position()
+            .map(|p| p.2)
+            .unwrap_or(0.0)
     });
     let bp_for_list = blueprints.clone();
     engine.register_fn("list_blueprints", move || -> String {
@@ -4421,5 +4445,20 @@ mod run_script_tests {
             err.contains("reserved") || err.contains("'go'"),
             "错误信息应提到 reserved/go，实际: {err}"
         );
+    }
+
+    /// P104 回归测试：pos_x/pos_y/pos_z 作为无参返回 f64 的函数注册后，
+    /// 脚本可正常调用（LLM 曾写 pos_x() 报 Function not found）。
+    /// 这里复现 build_rhai_engine 的注册签名，防止签名/命名回归。
+    #[test]
+    fn rhai_pos_functions_registrable() {
+        let mut engine = rhai::Engine::new();
+        engine.register_fn("pos_x", || -> f64 { -490.5 });
+        engine.register_fn("pos_y", || -> f64 { 103.0 });
+        engine.register_fn("pos_z", || -> f64 { -155.7 });
+        let out: String = engine
+            .eval("let x = pos_x(); let y = pos_y(); let z = pos_z(); `(${x},${y},${z})`")
+            .expect("pos_x/pos_y/pos_z 应可调用");
+        assert_eq!(out, "(-490.5,103.0,-155.7)");
     }
 }
