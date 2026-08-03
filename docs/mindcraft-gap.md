@@ -200,3 +200,13 @@
 
 - **P103 "viewer 没起来"根因破案**（commit 后置）：反复出现 viewer 启动失败，多次换参数重试未根治。前台运行正常（`& target\debug\craft-agent-viewer.exe ...` 阻塞运行=正常），但 PowerShell `Start-Process -ArgumentList` 启动的进程静默退出。根因：**`-ArgumentList` 数组被 join 成单字符串，含空格/中文的 goal 被拆分 → clap 解析失败进程立即退出**。而 `ctl viewer` 子命令（Rust `Command::args` 逐参传递）启动成功——同一 exe、同一参数，两种启动方式结果不同。**修复：启动 viewer 一律用 `craft-agent-ctl viewer "goal" <steps>`，禁用 PowerShell Start-Process；部署流程同步改为 ctl 分步（stop → build → viewer → start → status），消除 AGENTS.md 中自相矛盾的 Start-Process 步骤。**
 - **教训**：重复出现的问题必须查根因（前台 vs 后台启动对照实验），不能只换参数重试；AGENTS.md 工作流文档与实操必须一致（文档曾同时写"不要用 Start-Process"和"部署用 Start-Process"，自相矛盾导致错误路径被反复使用）。
+
+## 最近修复记录（2026-08-03 · P104 调试后门移除 + 知识→能力断裂修复）
+
+> 触发：LLM 实机观测（tier3_bread，饥饿 4-5/20）发现 bot 频繁垂直下挖且脱困失败；顺带确认 prompt 知识层教 LLM 做 mushroom_stew 但 harness 无此配方（知识→能力断裂，P83 同模式）。
+
+- **P104 Auto-tp 调试后门移除（commit c23c486）**：`handler.rs` 的 `mine_above_tried_tp` 字段（2026-07-30 efe18f9 引入的调试残留）——mine_above 卡洞穴空气袋（头顶空气 + Y<62 + 未试过）时自动 `bot.chat("/tp @s ~ 70 ~")` 传送。实机无 cheats 环境该指令静默失败，且使 LLM 脱困表现为"传送到空中"而非自主攀爬。已彻底移除（字段定义/初始化/6 处 reset/tp 逻辑块）；P60b 楼梯脱困（挖头顶 y+2 → goto 上升 → 40 tick 换方向 YGoal+5）成为唯一脱困路径。**教训：调试用后门绝不允许进产品路径——效果同 cheat，却掩盖真实能力缺陷。**
+- **P104 mushroom_stew 2×2 配方补齐（commit c23c486）**：craft.rs `RECIPES` 表追加 `("mushroom_stew", [("bowl",1),("red_mushroom",1),("brown_mushroom",1)], 1)`（shapeless 任意排列匹配）——此前只有 prompt 知识层教 LLM 做蘑菇炖菜（craft_3x3），RecipeBook 与手写配方表均无此配方，craft_3x3 失败提示误导。**知识→能力断裂修复：prompt 教的能力 harness 必须实现。** 联动：3×3 合成失败时若物品实为 2×2 配方，引导 "改用 craft(item, count) 工具（2×2 玩家网格合成）"；prompt `_default.json` "Underground & Cave Survival" 同步修正（mushroom_stew 改 craft 2×2、新增"下挖前规划脱困：记录入口坐标、勿盲挖直下、事后 mine_above 回地表"引导）；mine_below 工具描述补"下挖前先规划脱困"提醒。回归测试 +1（lookup_recipe 查 mushroom_stew，2×2 顺序填充 3 原料）。probe 实机验证 ✓：setblock red_mushroom → mine 拾取 → 背包已有 bowl/brown_mushroom → craft mushroom_stew 1 成功（inv 出现 mushroom_stew:1）。
+- **LLM 实机观测残留问题（策略层，非 harness bug，排队）**：① LLM 饥饿时挖矿找小麦偏航（应优先 crafting/farming）；② 装备 wooden_hoe 失败（hotbar 满 shift_click 后找不到，L102）；③ run_script "Function not found: pos_x ()"（rhai 引擎缺 pos_x/pos_y/pos_z 注册，L57）。
+
+> 当前主线：harness 修正类优化已覆盖 mine（P101）/till（P102）/Auto-tp 移除（P104）/mushroom_stew 配方（P104）。下一轮观测重点：craft 顺序、工作台放置策略、装备失败诊断、rhai 坐标函数补全。
