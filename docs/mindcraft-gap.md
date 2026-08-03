@@ -229,3 +229,13 @@
 - **门槛**：fmt/clippy -D warnings/全 workspace 测试全绿（craft-agent-minecraft lib 146 测试）。
 
 > 当前主线：mine_above 脱困路径已闭环（P105 无镐提前终止 + P106 YGoal 上升）。下一轮观察重点：craft 顺序、工作台摆放策略、run_script 实机使用。
+
+## 修复记录：2026-08-03 P3 架构演进（大文件按域拆分收官）
+
+> 对应 AGENTS.md「架构演进路线图」P3 全部三项（按需推进，稳定优先，无 deadline）。
+
+- **P3.1 craft.rs 拆分（commit 49d0328）**：`azalea/craft.rs`（4730 行）→ `azalea/craft/` 下 craft_table/smelt/smith/brew/enchant 5 个域模块 + craft.rs 聚合入口 re-export。craft-agent-minecraft lib 146 + craft-agent 171 全绿。
+- **P3.2 tools_azalea.rs 拆分（commit 1bbdd08）**：4464 行 → `tools_azalea/` 11 个域模块（perceive/movement/mining/interact/crafting/farming/placement/container/inventory/social/meta，最大 tools_meta 1332 行）+ 主文件 738 行。47 工具名与 `create_mc_azalea_tools_full` 工厂签名零改动（LLM prompt 兼容性契约未破）。用脚本 `split_tools_azalea.ps1`（C:\Windows\TEMP）两阶段（plan/-Write）驱动：块边界 Get-BlockStart 回溯 doc 注释、主文件仅保留 imports/映射表/parse_step/_exec_action/三工厂/测试区；lint 工具函数改 `pub(crate)` + 主文件 `#[cfg(test)] pub(crate) use` 门控（仅测试引用，非测试构建不再 unused）。外部引用（agent_loop.rs:15 / agent_console_demo.rs:18）零改动。
+- **P3.3 agent_loop.rs 拆分（commit 3db7202）**：830 行 → `agent_loop/events.rs`（AgentEvent + EventSender 推送 helper，`ev.log()/step()/error()` 取代 `let _ = tx.send(AgentEvent::...)` 样板）+ `agent_loop/session.rs`（open_or_create / save_full / save_incremental / auto_rollover helper）+ 主文件仅剩控制器/启动/主循环/观测文本。行为不变（事件文本逐字保留）。
+- **门槛**：workspace 全绿（craft-agent 171 + craft-agent-minecraft 146 + model 23 + viewer 编译）；fmt/clippy `-D warnings` 全绿。纯移动重构，无功能改动，无需 LLM 实机回测。
+- **P3 后续**：P3 已全部完成。架构大文件拆分收官，后续按主线收益进 gap 队列（goToSurface 强化实机确认 / item_collecting 拾取验证 / 自动穿甲验证）。
