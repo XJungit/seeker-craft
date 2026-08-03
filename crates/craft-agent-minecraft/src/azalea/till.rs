@@ -67,8 +67,43 @@ pub(crate) fn find_hoe_in_inventory(bot: &Client) -> Option<String> {
     best.map(|(_, name)| name)
 }
 
+/// 在目标附近（半径 4，y±1）找可犁且上方无阻挡的方块。
+/// P102 新增：LLM 常传错一格坐标（记忆/感知偏差），目标格是空气/草而非 dirt，
+/// 直接报错会让 LLM 反复试错（实机 4 次连续失败）。自动修正到最近合法位置。
+fn find_tillable_nearby(bot: &Client, target: BlockPos) -> Option<(BlockPos, BlockKind)> {
+    let world = bot.world().ok()?;
+    let mut best: Option<(i32, BlockPos, BlockKind)> = None;
+    for dy in -1..=1i32 {
+        for dx in -4..=4i32 {
+            for dz in -4..=4i32 {
+                let pos = BlockPos::new(target.x + dx, target.y + dy, target.z + dz);
+                let w = world.read();
+                let Some(kind): Option<BlockKind> = w.get_block_state(pos).map(Into::into) else {
+                    continue;
+                };
+                if !is_tillable(kind) {
+                    continue;
+                }
+                let above = w
+                    .get_block_state(pos.up(1))
+                    .map(Into::into)
+                    .unwrap_or(BlockKind::Air);
+                if above != BlockKind::Air {
+                    continue;
+                }
+                let d = dx.abs() + dy.abs() + dz.abs();
+                if best.as_ref().map(|(bd, _, _)| d < *bd).unwrap_or(true) {
+                    best = Some((d, pos, kind));
+                }
+            }
+        }
+    }
+    best.map(|(_, pos, kind)| (pos, kind))
+}
+
 /// 执行犁地+播种。返回 Err(msg) 时 msg 面向 LLM，可直接展示。
 /// 幂等：目标已是 farmland 且上方有作物 → Ok（不重复种）。
+/// P102：目标不可犁时自动修正到附近（半径 4，y±1）合法位置并通知 LLM。
 pub(crate) async fn do_till_and_sow(
     bot: &Client,
     x: i32,
@@ -80,26 +115,56 @@ pub(crate) async fn do_till_and_sow(
     let crop = seed_to_crop_kind(seed)
         .ok_or_else(|| format!("不支持的种子 {seed}（支持 wheat_seeds/beetroot_seeds/carrot/potato/melon_seeds/pumpkin_seeds）"))?;
 
-    let target_pos = BlockPos::new(x, y, z);
-    let above_pos = BlockPos::new(x, y + 1, z);
-
-    // 1. 目标方块校验
-    let world = bot.world().map_err(|e| format!("读取世界失败: {e:?}"))?;
-    let target_kind: BlockKind = {
+    let (target_pos, target_kind, corrected) = {
+        let world = bot.world().map_err(|e| format!("读取世界失败: {e:?}"))?;
         let w = world.read();
-        w.get_block_state(target_pos)
-            .map(Into::into)
-            .ok_or("目标方块未加载")?
+        let orig_pos = BlockPos::new(x, y, z);
+        match w.get_block_state(orig_pos).map(Into::into) {
+            Some(kind) if is_tillable(kind) => (orig_pos, kind, None),
+            Some(other) => {
+                // P102：目标不可犁（空气/其他方块）→ 自动修正到附近可犁位置并继续
+                drop(w);
+                let (fixed, k) = find_tillable_nearby(bot, orig_pos).ok_or_else(|| {
+                    format!(
+                        "({x},{y},{z}) 是 {:?}，且附近 4 格内无可用草方块/泥土/已耕地——\
+                         只能犁草方块/泥土/已耕地，请换位置或用 place dirt 先铺泥土",
+                        other
+                    )
+                })?;
+                (fixed, k, Some((orig_pos, other)))
+            }
+            None => {
+                // 未加载：交给下方统一处理（会报"目标方块未加载"）
+                drop(w);
+                (orig_pos, BlockKind::Air, None)
+            }
+        }
     };
+    let above_pos = target_pos.up(1);
+
+    // 1. 目标方块校验（修正后位置）
     if !is_tillable(target_kind) {
+        let world = bot.world().map_err(|e| format!("读取世界失败: {e:?}"))?;
+        let w = world.read();
+        let cur = w
+            .get_block_state(target_pos)
+            .map(Into::into)
+            .unwrap_or(BlockKind::Air);
         return Err(format!(
-            "({x},{y},{z}) 是 {:?}，只能犁草方块/泥土/已耕地",
-            target_kind
+            "({},{},{}) 是 {:?}，只能犁草方块/泥土/已耕地",
+            target_pos.x, target_pos.y, target_pos.z, cur
         ));
+    }
+    if let Some((orig, other)) = corrected {
+        eprintln!(
+            "[till] P102 修正：原目标 ({},{},{}) 是 {:?}，改犁 ({},{},{}) 是 {:?}",
+            orig.x, orig.y, orig.z, other, target_pos.x, target_pos.y, target_pos.z, target_kind
+        );
     }
 
     // 2. 上方方块校验
     let above_kind: BlockKind = {
+        let world = bot.world().map_err(|e| format!("读取世界失败: {e:?}"))?;
         let w = world.read();
         w.get_block_state(above_pos)
             .map(Into::into)
@@ -121,12 +186,16 @@ pub(crate) async fn do_till_and_sow(
     }
 
     // 3. 距离检查 + 自动靠近（P100：force_block 交互需贴近，2.9m 外播种静默失败）
+    //    距离以修正后的 target_pos 为准（P102 修正后坐标可能偏移）。
     let p = bot.position().map_err(|e| format!("读取位置失败: {e:?}"))?;
-    let dist =
-        ((p.x - x as f64).powi(2) + (p.y - y as f64).powi(2) + (p.z - z as f64).powi(2)).sqrt();
+    let dist = ((p.x - target_pos.x as f64).powi(2)
+        + (p.y - target_pos.y as f64).powi(2)
+        + (p.z - target_pos.z as f64).powi(2))
+    .sqrt();
     if dist > 8.0 {
         return Err(format!(
-            "({x},{y},{z}) 距离 {dist:.1}m 过远（交互距离 4.5m）——请先 goto 到目标旁再 till_and_sow"
+            "({},{},{}) 距离 {dist:.1}m 过远（交互距离 4.5m）——请先 goto 到目标旁再 till_and_sow",
+            target_pos.x, target_pos.y, target_pos.z
         ));
     }
     if dist > 2.0 {
@@ -136,9 +205,9 @@ pub(crate) async fn do_till_and_sow(
         for _ in 0..60 {
             tokio::time::sleep(Duration::from_millis(100)).await;
             if let Ok(p) = bot.position() {
-                let d = ((p.x - x as f64).powi(2)
-                    + (p.y - y as f64).powi(2)
-                    + (p.z - z as f64).powi(2))
+                let d = ((p.x - target_pos.x as f64).powi(2)
+                    + (p.y - target_pos.y as f64).powi(2)
+                    + (p.z - target_pos.z as f64).powi(2))
                 .sqrt();
                 if d <= 2.0 {
                     reached = true;
@@ -149,7 +218,8 @@ pub(crate) async fn do_till_and_sow(
         bot.stop_pathfinding();
         if !reached {
             return Err(format!(
-                "无法走近目标 ({x},{y},{z})（6s 内未到达 2m 内，当前 {dist:.1}m）——路径可能被阻挡，请换位置"
+                "无法走近目标 ({},{},{})（6s 内未到达 2m 内，当前 {dist:.1}m）——路径可能被阻挡，请换位置",
+                target_pos.x, target_pos.y, target_pos.z
             ));
         }
     }
@@ -203,10 +273,17 @@ pub(crate) async fn do_till_and_sow(
         ));
     }
 
-    Ok(format!(
-        "已犁地并种下 {seed} @ ({x},{y},{z})（上方已长 {:?}，等待成熟后收割）",
-        crop
-    ))
+    let mut msg = format!(
+        "已犁地并种下 {seed} @ ({},{},{})（上方已长 {:?}，等待成熟后收割）",
+        target_pos.x, target_pos.y, target_pos.z, crop
+    );
+    if let Some((orig, other)) = corrected {
+        msg = format!(
+            "原目标 ({},{},{}) 是 {:?}（非可犁方块），已自动修正犁最近可犁方块 ({},{},{}) 并完成。{}",
+            orig.x, orig.y, orig.z, other, target_pos.x, target_pos.y, target_pos.z, msg
+        );
+    }
+    Ok(msg)
 }
 
 #[cfg(test)]
