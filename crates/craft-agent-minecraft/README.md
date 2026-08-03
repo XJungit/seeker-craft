@@ -13,7 +13,7 @@ Minecraft 游戏适配器与工具集（Azalea 客户端路线）。
 craft-agent-minecraft = { features = ["azalea-bot"] }
 ```
 
-## 44 个 LLM 工具
+## 47 个 LLM 工具
 
 工具注册于 `create_mc_azalea_tools`，按副作用分组并行执行（READ 同批、NETWORK+READ 同批、
 WRITE/APPEND/PROCESS 各自单独一批，BARRIER 切批）。
@@ -30,11 +30,13 @@ WRITE/APPEND/PROCESS 各自单独一批，BARRIER 切批）。
 | 熔炼 | `smelt` | WRITE (等待) |
 | 自动合成 | `auto_craft` | WRITE (递归) |
 | 附魔 | `enchant` | WRITE |
-| 采集 | `gather` | WRITE (寻路) |
+| 采集 | `gather` / `harvest` | WRITE (寻路) |
+| 种植 | `till_and_sow` | WRITE |
 | 放置 | `place` | WRITE |
 | 容器 | `open` / `chest_view` / `chest_withdraw` / `chest_deposit` | READ/WRITE |
 | 装备 | `equip` / `discard` | WRITE |
 | 食用 | `consume` | WRITE (长按) |
+| 睡觉 | `sleep` | WRITE |
 | 实体交互 | `interact_entity` | WRITE |
 | 交易 | `trade` | WRITE |
 | 聊天 | `chat` | NETWORK |
@@ -52,10 +54,21 @@ WRITE/APPEND/PROCESS 各自单独一批，BARRIER 切批）。
 | 模块 | 作用 |
 |------|------|
 | `adapter_azalea.rs` | `GameAdapter` 实现：perceive / execute / state snapshot |
-| `tools_azalea.rs` | 44 个 LLM 工具定义 |
-| `azalea/mod.rs` | `AzaleaBot` + handler + 两层 modes 反应系统（Handler 层） |
+| `tools_azalea.rs` | 47 个 LLM 工具定义 |
+| `azalea/mod.rs` | `AzaleaBot` + connect + 动作 API + 背包三件套（1995 行，P2.2 已拆出 commands.rs / handler.rs） |
+| `azalea/commands.rs` | `BotCommand` 33 变体 + `QueuedCommand` + `parse_chat_command`（probe 驱动） |
+| `azalea/handler.rs` | `BotState` + tick 主体 handle + 两层 modes 反应系统（P2.2 拆出） |
 | `azalea/craft.rs` | 合成/熔炼/附魔/切石机（含 mock 容器测试，对齐 mindcraft skills.js） |
 | `azalea/gather.rs` | 自动采集：寻路+挖+掉落物统计（P55 部分成功返回 Ok） |
+| `azalea/till.rs` | 种植：犁地+播种（P84/P100 自动靠近/P102 目标修正） |
+| `azalea/harvest.rs` | 收割成熟作物（P86） |
+| `azalea/sleep.rs` | 睡觉跳夜（P85） |
+| `azalea/auto_craft.rs` | 递归配方满足 + 工具方块放置 |
+| `azalea/place.rs` | 方块放置 + 容器开启 + 触及范围检查（P5/P11/P29 自动重定位） |
+| `azalea/recipes.rs` | 配方知识库 |
+| `azalea/perception.rs` | 位置读取 |
+| `azalea/actions.rs` | 基础 bot 动作（goto/mine/chat） |
+| `azalea/smart_actions.rs` | 多工具聚合动作 |
 | `azalea/action_manager.rs` | 命令队列调度 |
 | `azalea/table_flow.rs` | 工作台/熔炉自动放置 + open + 用完回收 |
 | `azalea/recipe_book.rs` | vanilla 26.2 全量配方书（P48 替代手写表） |
