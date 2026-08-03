@@ -246,7 +246,16 @@
 - **回归**：workspace 全绿（craft-agent 171 + craft-agent-minecraft 146 + model 23 + viewer）；fmt/clippy -D warnings 全绿。
 - **经验**：测试读共享持久化文件 = 定时炸弹。凡持久化路径，配置层必须支持注入（builder/环境变量），测试一律用临时路径——既隔离又被断言（测试读写同文件易测）。
 
-> 当前主线：mine_above 高穹顶天花板脱困已验证（P107 probe 闭环）+ 语义记忆测试隔离（P108）。下一轮观察重点：craft 顺序、工作台摆放策略、run_script 实机使用。
+> 当前主线：mine_above 高穹顶天花板脱困已验证（P107 probe 闭环）+ 语义记忆测试隔离（P108）+ 阶段知识配方矛盾修复（P109，见下）。
+
+## 修复记录：2026-08-03 P109 阶段知识与任务目标配方矛盾（3 小麦 vs 9 小麦死锁）
+
+> 触发：P108 后重启实机，LLM 在地表反复确认"收集 3 个小麦"goal 与阶段知识 `wheat (9) -> bread (3x3)` 矛盾，数十轮原地打转（每轮自我反驳 3 vs 9）。根因：`data/profiles/_default.json` tier3 阶段知识写错——面包配方是 3 小麦横排（`builtin_recipes.json:87` `["WWW"]` pattern），不是 9。**阶段知识必须与任务 goal（tier3_bread.json: gather wheat count=3）和配方真值一致**，否则 LLM 决策死锁。
+
+- **P109 修复（data/profiles/_default.json，commit 2a376a3）**：tier3 阶段知识 `wheat (9) -> bread (3x3)` → `wheat (3) -> bread (craft_3x3, 3 wheat in a row)`。
+- **实机验证**：重启后 LLM 不再纠缠配方，转而规划小麦农场（找草丛、till_and_sow、记忆锚点 wheat_farm_base、背包 wheat 2/3）。
+- **经验**：profile 阶段知识是 prompt 的一部分，任何配方/数值写法都要对照 `builtin_recipes.json` 真值 + 同 tier 任务 goal 双校验（写 9 小麦的根因是没查配方表）。
+- **观察记录（本工作单元收尾）**：P107/P108/P109 组合效果实机可见——LLM 从洞穴 Y=44 经 dirt 扶梯（采纳 P107 abort 建议）攀至地表 Y=62-79；但后续出现决策漂移（砍树叶 0/4、徒手砍树 0/3、远距离挖铜矿反复超时、丢树叶被 1.5m 吸回），工具层均正确返回可操作建议，属 LLM 策略质量问题非 harness bug，留待后续工作单元。
 
 ## 修复记录：2026-08-03 P3 架构演进（大文件按域拆分收官）
 
