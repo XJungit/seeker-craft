@@ -1,0 +1,14 @@
+# cargo audit 配置（随仓库提交，CI 与本地一致）
+# 忽略清单：仅当 advisory 无法在本项目修复（上游传递依赖无补丁）且攻击面不可达时加入。
+[output]
+quiet = false
+format = "terminal"
+
+[advisories]
+# RUSTSEC-2023-0071 rsa <0.10.0-rc.18 前：Marvin Attack（私钥时序侧信道）。
+# 来源：azalea-auth（azalea 上游传递依赖，用于微软账号认证），无补丁版本。
+# 本项目 bot 仅连局域网 vanilla 服务器（离线/局域网认证），不走微软账号认证，
+# 攻击面不可达；azalea 上游修复前无法在本仓库解除，故忽略并在每次升级 azalea 时复查。
+ignore = [
+    "RUSTSEC-2023-0071",
+]
