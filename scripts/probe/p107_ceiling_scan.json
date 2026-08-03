@@ -1,0 +1,22 @@
+{"between_delay_ms": 3000, "timeout_ms": 150000, "steps": [
+  {"cmd": "chat /setblock -489 84 -163 minecraft:air"},
+  {"cmd": "chat /setblock -489 85 -163 minecraft:air"},
+  {"cmd": "chat /setblock -489 86 -163 minecraft:stone"},
+  {"cmd": "chat /setblock -489 87 -163 minecraft:stone"},
+  {"cmd": "chat /setblock -489 88 -163 minecraft:stone"},
+  {"state": true},
+  {"cmd": "mineabove"},
+  {"wait_ms": 3000},
+  {"state": true},
+  {"cmd": "chat /give @s wooden_pickaxe 1"},
+  {"wait_ms": 2000},
+  {"cmd": "equip wooden_pickaxe pick"},
+  {"cmd": "chat /setblock -489 84 -163 minecraft:air"},
+  {"cmd": "chat /setblock -489 85 -163 minecraft:air"},
+  {"cmd": "chat /setblock -489 86 -163 minecraft:stone"},
+  {"cmd": "chat /setblock -489 87 -163 minecraft:stone"},
+  {"cmd": "chat /setblock -489 88 -163 minecraft:stone"},
+  {"cmd": "mineabove"},
+  {"wait_ms": 10000},
+  {"state": true}
+]}

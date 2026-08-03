@@ -24,6 +24,7 @@ use anyhow::Result;
 use serde::Serialize;
 use serde_json::Value;
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -475,6 +476,9 @@ pub struct AgentConfig {
     pub stage_knowledge: Vec<crate::profile::StageKnowledge>,
     /// C7：后置强制指令（替代硬编码 jailbreak）。None = Rust 内置默认。
     pub jailbreak: Option<String>,
+    /// 语义记忆持久化路径（JSONL）。None = 默认 `data/memory/agent.jsonl`。
+    /// 测试注入临时路径隔离，避免与实机运行共享文件互相污染。
+    pub memory_path: Option<PathBuf>,
 }
 impl AgentConfig {
     pub fn new(prompt: String, max_iterations: u32) -> Self {
@@ -505,6 +509,7 @@ impl AgentConfig {
             memory_scope: None,
             stage_knowledge: vec![],
             jailbreak: None,
+            memory_path: None,
         }
     }
     /// 设置静态知识库（`None` 关闭，仅用工具自描述）。
@@ -536,6 +541,11 @@ impl AgentConfig {
     /// 坐标/基地类记忆按此隔离；None 表示只注入全局知识。
     pub fn with_memory_scope(mut self, scope: impl Into<String>) -> Self {
         self.memory_scope = Some(scope.into());
+        self
+    }
+    /// P108：设置语义记忆持久化路径（测试隔离用；None = 默认 data/memory/agent.jsonl）。
+    pub fn with_memory_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.memory_path = Some(path.into());
         self
     }
     /// 设置是否注册 manage_knowledge 工具。
@@ -930,15 +940,16 @@ impl Agent {
         let provider: Arc<dyn LlmProvider> = Arc::from(provider);
         let compaction_provider: Option<Arc<dyn LlmProvider>> = compaction_provider.map(Arc::from);
         // P97：语义记忆库加载 + remember 工具注册（核心层工具，跨 MC/非 MC 可用）。
+        // P108：路径可注入（None = 默认 data/memory/agent.jsonl），测试用临时路径隔离。
+        let default_memory_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("data")
+            .join("memory")
+            .join("agent.jsonl");
         let semantic_memory = Arc::new(Mutex::new(
-            SemanticMemory::new().with_path(
-                std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("..")
-                    .join("..")
-                    .join("data")
-                    .join("memory")
-                    .join("agent.jsonl"),
-            ),
+            SemanticMemory::new()
+                .with_path(config.memory_path.clone().unwrap_or(default_memory_path)),
         ));
         let mut tools = tools;
         tools.register(Box::new(SemanticMemoryTool {
@@ -2939,10 +2950,13 @@ mod tests {
     #[test]
     fn semantic_memory_tool_registered_and_injects() {
         use crate::core::message::Message;
+        // P108：临时记忆文件隔离——实机 agent 运行会向 data/memory/agent.jsonl
+        // 写入真实记忆（如 lush_caves 教训），共享文件会让本测试查询被污染。
+        let tmp_mem = std::env::temp_dir().join(format!("sem_agent_test_{}.jsonl", now_ms()));
         let mut agent = Agent::new(
             Box::new(FakeProvider),
             ToolRegistry::new(),
-            AgentConfig::new("test".into(), 1),
+            AgentConfig::new("test".into(), 1).with_memory_path(&tmp_mem),
         );
 
         // 1) remember 工具由 Agent::new 自动注册

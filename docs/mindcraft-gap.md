@@ -88,7 +88,7 @@
 ## 优先级队列（按主线收益排序）
 
 1. ✅ tillAndSow 种植——食物农场（P84 完成，2026-08-02 probe 全路径实测通过）【原实机问题：bot 捡到 wheat_seeds 因无法种植而 discard】
-2. 🟡 goToSurface 强化——P83 信号已给（overhead_solid→mine_above），P107 天花板扫描已修（2026-08-03），待实机确认 LLM 脱困成功率
+2. ✅ goToSurface 强化——P83 信号已给（overhead_solid→mine_above），P105/P106/P107 三层修复闭环（2026-08-03，probe 实机验证）
 3. ✅ goToBed 睡觉——跳夜（P85 完成，2026-08-02 probe 实测通过）
 4. ✅ 收割（harvest 工具）——farmland 成熟后挖取+拾取（P86 完成，2026-08-02 probe 实测通过）
 5. ✅ pvp 走位（strafe）+ 近战修复全套——P87+P88 完成，2026-08-02 实机验证（逼近/1s 反击/低血反击/攻击只发生在可命中距离）
@@ -236,9 +236,17 @@
 
 - **P107 天花板扫描（handler.rs P60b `!above_is_solid` 分支）**：改挖 y+2 前先扫描 `y+2..=y+8` 找第一格实心方块（`let ceiling = (2..=8).find_map(|dy| ...)`）。三种情形：(a) 扫到天花板 → 挖那一格（`start_mining(ceiling)`），逐层凿穿直通地表；(b) 天花板是硬方块且背包无镐 → `abort_mine_above` 提前终止，反馈明确建议（先 craft wooden_pickaxe 或 stone_pickaxe，或横向找软方块通道）；(c) y+2..y+8 全空气 → 回落 P106 原 YGoal(y+2) 强制上升逻辑（t.is_multiple_of(4) 节流）。
 - **`abort_mine_above` helper 抽取（handler.rs）**：P105 的终止样板（清 mining_above 标志/mining_above_start_y、force_stop_pathfinding、peek_pending MineAbove 回填 result_tx、clear_pending、推 BotEvent::Chat）抽为独立 helper，P105/P107 共用——避免终止逻辑不一致。终止消息用 `❌ mine_above 失败` 前缀，不用 "MineAbove progressed"（tools_movement.rs:154 依赖该子串才 forget_pos）。
-- **门槛**：cargo check/test（craft-agent-minecraft lib 146 全绿）/fmt/clippy `-D warnings` 全绿。待实机重验（按 P103 流程重启 viewer 后让 LLM 在洞穴腔体重跑 mine_above）。
+- **门槛**：cargo check/test（craft-agent-minecraft lib 146 全绿）/fmt/clippy `-D warnings` 全绿。probe 实机验证 ✓（p107_ceiling_scan.json）：场景=头顶 y+1/y+2 空气、y+3..y+5 石头天花板（setblock 构造）、背包无镐 → mine_above 秒级返回 `❌ mine_above 失败：头顶是空气但上方 y+3 是硬方块天花板...`（不再空转 10s）；随后 `/give wooden_pickaxe` + equip → 同场景 mine_above → 自动 start_mining 天花板并挖穿（cobblestone x3 入包 + "Stone Age" 成就）→ "MineAbove done" 脱困闭环。
 
-> 当前主线：mine_above 高穹顶天花板脱困已修复（P107），待实机确认。下一轮观察重点：craft 顺序、工作台摆放策略、run_script 实机使用。
+## 修复记录：2026-08-03 P108 语义记忆测试隔离（data/memory/agent.jsonl 共享污染）
+
+> 触发：P107 提交后全 workspace 测试红——`semantic_memory_tool_registered_and_injects` 断言"注入内容应含记忆标题: 钻石镐策略"失败。根因：Agent::new 硬编码语义记忆持久化路径 `data/memory/agent.jsonl`，测试与实机 agent 共享该文件；LLM 实机 run 期间 bot 写入真实记忆（"lush_caves 洞穴无小麦种子"等教训），查询"挖钻石"时实测记忆评分更高、把测试记忆挤出注入。**测试与实机共享持久化状态缺陷**。
+
+- **P108 修复（craft-agent/agent/mod.rs）**：`AgentConfig` 新增 `memory_path: Option<PathBuf>`（None = 默认 data/memory/agent.jsonl，生产零改动）+ `with_memory_path()` builder；`Agent::new` 加载时优先用注入路径。测试改为临时文件（`temp_dir()/sem_agent_test_{now_ms}.jsonl`）→ 与实机彻底隔离。
+- **回归**：workspace 全绿（craft-agent 171 + craft-agent-minecraft 146 + model 23 + viewer）；fmt/clippy -D warnings 全绿。
+- **经验**：测试读共享持久化文件 = 定时炸弹。凡持久化路径，配置层必须支持注入（builder/环境变量），测试一律用临时路径——既隔离又被断言（测试读写同文件易测）。
+
+> 当前主线：mine_above 高穹顶天花板脱困已验证（P107 probe 闭环）+ 语义记忆测试隔离（P108）。下一轮观察重点：craft 顺序、工作台摆放策略、run_script 实机使用。
 
 ## 修复记录：2026-08-03 P3 架构演进（大文件按域拆分收官）
 
