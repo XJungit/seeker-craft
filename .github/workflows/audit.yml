@@ -27,3 +27,6 @@ jobs:
         uses: rustsec/audit-check@v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          # 仅上传 SARIF（checks: write）；informational warnings（unmaintained/unsound）
+          # 不开 issue，GITHUB_TOKEN 未授予 issues: write，避免 job 标红
+          create-issues: false
