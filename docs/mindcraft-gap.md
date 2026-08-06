@@ -251,6 +251,17 @@
 - **probe 实机验证 ✓（scripts/probe/p114_attack_ghost.json）**：summon zombie 夜晚战斗（`[MODE] 攻击 Zombie` + strafe + Pillager 乱入 + cowardice hp 4/20 逃逸全程）→ 日志 `isn't in our EntityIdIndex` 条数 = **0**（修复前同场景 27+ 条/30s）。
 - **门槛**：cargo check 通过 + workspace 测试待全量跑（vendor 仅 attack 失败路径，无 API 变更）。
 
+## 修复记录：2026-08-06 P115 LLM 策略层实机观测（craft/挖矿/目标追踪）
+
+> 触发：命令层 ❌ 清零后主线转向 LLM 策略层（此前工具层 probe 全绿，策略行为需 viewer+LLM 实机验证）。工作流按"按需观测、观测完即停"执行（起 viewer+agent 观测 ~40 分钟，ctl stop 收束）。
+
+- **观测会话**（viewer + agent，goal="制作石镐并挖到至少 10 个石头，完成后停下汇报"）：
+  - **工具层全链路正常**：P101 mine 空气修正 ×4（LLM 凭记忆盲猜坐标，修正自动兜底）✓ / craft 3×3 合成石镐 ✓ / place 自动重定位（原坐标无效→附近合法位置）✓ / pickup 拾取 ✓ / run_script 批量执行 ✓ / mine_above 失败反馈（"Y did not increase...clear a horizontal staircase"）✓ / goto 实心方块失败提示 ✓
+  - **LLM 策略行为**：mine_above 反复失败（竖井被堵）→ 改用 run_script 横向挖矿 → 深挖至 y=34 矿石层后陷入"挖矿舒适区"：目标早已达成（石镐 + cobblestone 29+）却持续挖矿 30+ 分钟不汇报收尾
+  - **steering 提醒验证**：注入"目标已达成请停止并汇报"→ LLM 响应为继续行动（开始向上挖阶梯 y 33→39 脱困），未直接 chat 收尾——"停止类"指令响应弱是 LLM 本性（Mindcraft 同病），非 harness 缺陷；[当前目标] 每轮注入 + steering 中断（P90）机制本身工作正常
+- **结论**：策略层无 harness bug；目标达成自动收尾属 LLM 行为约束问题，可通过任务系统结构化完成检测（task.rs）在 harness 层给 LLM 显式"目标达成信号"改进（待后续优先级评估，Mindcraft 亦未解决）。
+- **门槛**：无代码改动；观测全程无 panic/400/崩溃。
+
 ## 最近修复记录（2026-08-03 · P103 viewer 启动根因 + 工作流固化）
 
 - **P103 "viewer 没起来"根因破案**（commit 后置）：反复出现 viewer 启动失败，多次换参数重试未根治。前台运行正常（`& target\debug\craft-agent-viewer.exe ...` 阻塞运行=正常），但 PowerShell `Start-Process -ArgumentList` 启动的进程静默退出。根因：**`-ArgumentList` 数组被 join 成单字符串，含空格/中文的 goal 被拆分 → clap 解析失败进程立即退出**。而 `ctl viewer` 子命令（Rust `Command::args` 逐参传递）启动成功——同一 exe、同一参数，两种启动方式结果不同。**修复：启动 viewer 一律用 `craft-agent-ctl viewer "goal" <steps>`，禁用 PowerShell Start-Process；部署流程同步改为 ctl 分步（stop → build → viewer → start → status），消除 AGENTS.md 中自相矛盾的 Start-Process 步骤。**
