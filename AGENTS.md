@@ -313,9 +313,14 @@ DeepSeek 前缀缓存要求每次调用的系统提示完全相同。
 ## 关键约束
 
 ### 不要修改 vendor/azalea
-- `vendor/azalea` 是独立的 git 仓库 + workspace
+- `vendor/azalea` 是独立的 git 仓库 + workspace（需先设 local 身份：`git -C vendor/azalea config user.name/email`）
 - 所有改动只能使用 azalea 的公开 API
-- 若要修改：在 vendor 中提交 → 同步更新 `.cargo/config.toml` [patch] 与 `Cargo.toml` 中的 SHA
+- 若要修改（P114 实测流程 2026-08-06）：
+  1. 在 vendor/azalea 改代码 → `git commit`（新 commit）
+  2. **只更新** `.cargo/config.toml` [patch] 条目的 rev 为新 SHA；`craft-agent-minecraft/Cargo.toml` 声明的 rev 保持不动（必须是 github 上存在的 commit，lock 更新时 cargo 会 fetch https 源它；patch 条目 rev 与声明 rev 可以不同）
+  3. 清缓存：`Remove-Item -Recurse "$env:USERPROFILE\.cargo\git\checkouts" -Force`
+  4. `cargo check -p craft-agent-minecraft --features azalea-bot` 验证（输出显示 `file:///D:/Craft-Agent/vendor/azalea?rev=<新SHA>` 即生效）
+  5. 父仓库提交时把 vendor 的 gitlink 更新一并提交（`git add vendor/azalea`）
 
 ### Cargo 网络
 - 使用 `rsproxy.cn` 镜像（sparse index）

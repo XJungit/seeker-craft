@@ -241,6 +241,16 @@
 
 > 当前主线：命令层差距表已全部清零（✅/🟡/➖ 之外无 ❌）。下一轮可选：LLM 策略层实机观测（craft 顺序/工作台放置/task_retry 引导，需 viewer+LLM），或配置层 !setMode。
 
+## 修复记录：2026-08-06 P114 self_defense 幽灵实体攻击刷屏（vendor azalea bug 修复）
+
+> 触发：P113 probe 实机时发现 zombie 死后日志连续 30s+ 刷 `tried to attack entity which isn't in our EntityIdIndex`（每次 ~30ms 一条）。定位为 azalea 上游 bug + 首例 vendor 魔改实践。
+
+- **根因（vendor azalea-client/src/plugins/attack.rs）**：`handle_attack_queued` 查 `EntityIdIndex.get_by_ecs_entity` 失败（目标在攻击包入队与处理窗口期死亡/卸载）时 `continue` 且**不清理 `AttackQueued` 组件** → 残留组件让系统每 tick 重试 → 永久 WARN 刷屏。handler 层已有存在性检查（P87 时期），但窗口期竞态无法在调用侧消除。
+- **修复（vendor commit 5c93171）**：失败分支补 `commands.entity(client_entity).remove::<AttackQueued>()`（保留一次 warn 作一次性诊断）。
+- **vendor 魔改流程实测**（rev 策略首次验证）：vendor 新 commit → **只更新** `.cargo/config.toml` [patch] 条目 rev（7 处）→ `craft-agent-minecraft/Cargo.toml` 声明 rev 保持 c35b57e 不动（github 存在，lock 更新 fetch 它；patch 条目 rev 与声明 rev 可不同，编译以 patch 条目为准）→ 清 `~/.cargo/git/checkouts` → cargo check 显示 `file:///.../vendor/azalea?rev=5c93171` 生效。AGENTS.md vendor 小节与 .cargo/config.toml 注释已同步（旧 amend/update-ref 流程作废）。
+- **probe 实机验证 ✓（scripts/probe/p114_attack_ghost.json）**：summon zombie 夜晚战斗（`[MODE] 攻击 Zombie` + strafe + Pillager 乱入 + cowardice hp 4/20 逃逸全程）→ 日志 `isn't in our EntityIdIndex` 条数 = **0**（修复前同场景 27+ 条/30s）。
+- **门槛**：cargo check 通过 + workspace 测试待全量跑（vendor 仅 attack 失败路径，无 API 变更）。
+
 ## 最近修复记录（2026-08-03 · P103 viewer 启动根因 + 工作流固化）
 
 - **P103 "viewer 没起来"根因破案**（commit 后置）：反复出现 viewer 启动失败，多次换参数重试未根治。前台运行正常（`& target\debug\craft-agent-viewer.exe ...` 阻塞运行=正常），但 PowerShell `Start-Process -ArgumentList` 启动的进程静默退出。根因：**`-ArgumentList` 数组被 join 成单字符串，含空格/中文的 goal 被拆分 → clap 解析失败进程立即退出**。而 `ctl viewer` 子命令（Rust `Command::args` 逐参传递）启动成功——同一 exe、同一参数，两种启动方式结果不同。**修复：启动 viewer 一律用 `craft-agent-ctl viewer "goal" <steps>`，禁用 PowerShell Start-Process；部署流程同步改为 ctl 分步（stop → build → viewer → start → status），消除 AGENTS.md 中自相矛盾的 Start-Process 步骤。**
