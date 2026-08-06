@@ -303,6 +303,65 @@ impl GameTool for FollowTool {
     }
 }
 
+/// P111：按玩家名单次导航（对齐 Mindcraft goToPlayer）。解析玩家当前坐标后按
+/// goto 导航一次，不持续跟随（持续跟随用 follow；无参时导航到最近的其他玩家）。
+pub struct GotoPlayerTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl GotoPlayerTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for GotoPlayerTool {
+    fn name(&self) -> &str {
+        "goto_player"
+    }
+    fn is_slow(&self) -> bool {
+        true
+    }
+    fn description(&self) -> &str {
+        "按玩家名单次导航到该玩家所在位置（实现\"去玩家那边\"）。\n\
+         bot 会解析玩家当前坐标并走过去（同 goto 的导航逻辑，到达后即停）。\n\
+         需要持续跟着玩家走用 follow，本工具只走一次。\n\
+         target 为玩家名（可选，留空则导航到最近的其他玩家）。\n\
+         也可以在游戏聊天框直接打 \"gotoplayer [玩家名]\" 触发。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "target": { "type": "string", "description": "玩家名（可选，留空=最近的其他玩家）" }
+            },
+            "required": []
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let target = args
+            .get("target")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::GotoPlayer { target }))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}
+
 /// P68：停止跟随。
 pub struct StopFollowTool {
     ctx: Arc<AzaleaToolCtx>,

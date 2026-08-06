@@ -1237,6 +1237,44 @@ impl AzaleaBot {
                                 }
                             }
                         }
+                        // P111: 按玩家名单次导航（gotoplayer <名字>）。复用 P110 模式：
+                        // 解析玩家当前坐标 → 替换 pending 槽为 Goto（保留原 result_tx）。
+                        // 玩家移动时到达点即目标当时坐标；不持续跟随（持续跟随用 follow）。
+                        BotCommand::GotoPlayer { name } => {
+                            let name_ref = name.as_deref();
+                            match nearby_player_position(&bot, name_ref) {
+                                Some(p) => {
+                                    let (px, py, pz) = (
+                                        p.x.floor() as i32,
+                                        p.y.floor() as i32,
+                                        p.z.floor() as i32,
+                                    );
+                                    *state.action_mgr.pending.lock().unwrap() =
+                                        Some(QueuedCommand {
+                                            cmd: BotCommand::Goto {
+                                                x: px,
+                                                y: py,
+                                                z: pz,
+                                            },
+                                            result_tx: result_tx.clone(),
+                                        });
+                                    let who = name_ref.unwrap_or("最近的玩家");
+                                    let _ = evt_tx.send(BotEvent::Chat {
+                                        content: format!(
+                                            "[goto] 玩家 {who} @ ({px},{py},{pz})，开始导航"
+                                        ),
+                                    });
+                                }
+                                None => {
+                                    let who = name_ref.unwrap_or("任何玩家");
+                                    let msg = format!("未找到玩家 {who}（不在附近扫描范围）。");
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!("Action output:\n{msg}"));
+                                    }
+                                    state.action_mgr.clear_pending();
+                                }
+                            }
+                        }
                         BotCommand::Goto { x, y, z } => {
                             *state.mining_below.lock().unwrap() = false;
                             // P66：冷却拦截。按 bot 当前格子检查冷却（而非目标坐标，

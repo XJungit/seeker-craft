@@ -224,6 +224,9 @@ pub enum MinecraftAction {
     },
     /// P68：跟随玩家。target 为玩家名（None=最近的玩家）。
     Follow { target: Option<String> },
+    /// P111：按玩家名单次导航（对齐 Mindcraft goToPlayer）。target 为玩家名
+    ///（None=最近的玩家）。只导航一次到目标当前坐标，不持续跟随（持续跟随用 Follow）。
+    GotoPlayer { target: Option<String> },
     /// P68：停止跟随。
     StopFollow,
     /// P68：把物品丢在玩家脚边（给予）。item 为物品 id，count 为数量（0=全部），

@@ -637,6 +637,15 @@ fn build_rhai_engine(ctx: &Arc<AzaleaToolCtx>) -> rhai::Engine {
         _exec_action(&a, MinecraftAction::Follow { target })
     });
     let a = adapter.clone();
+    engine.register_fn("goto_player", move |target: String| -> String {
+        let target = if target.is_empty() {
+            None
+        } else {
+            Some(target)
+        };
+        _exec_action(&a, MinecraftAction::GotoPlayer { target })
+    });
+    let a = adapter.clone();
     engine.register_fn("stop_follow", move || -> String {
         _exec_action(&a, MinecraftAction::StopFollow)
     });

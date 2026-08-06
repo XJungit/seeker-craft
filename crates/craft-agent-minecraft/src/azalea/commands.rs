@@ -171,6 +171,12 @@ pub enum BotCommand {
     Follow {
         target: Option<String>,
     },
+    /// P111：按玩家名单次导航（对齐 Mindcraft goToPlayer）。name 为玩家名
+    ///（None 表示最近的其他玩家）。解析玩家当前坐标后按 Goto 执行一次，
+    /// 不持续跟随（持续跟随用 Follow）。
+    GotoPlayer {
+        name: Option<String>,
+    },
     /// P68：停止跟随（解除 Follow 模式）。
     StopFollow,
     /// P68：把物品丢在指定玩家脚边（玩家拾取）。item 为物品 id，count 为数量（0=全部）。
@@ -390,6 +396,15 @@ pub fn parse_chat_command(content: &str) -> Option<BotCommand> {
             target: (!rest.trim().is_empty()).then(|| rest.trim().to_string()),
         });
     }
+    // P111：按玩家名单次导航（gotoplayer / gotoplayer <名字>）。
+    if content == "gotoplayer" {
+        return Some(BotCommand::GotoPlayer { name: None });
+    }
+    if let Some(rest) = content.strip_prefix("gotoplayer ") {
+        return Some(BotCommand::GotoPlayer {
+            name: (!rest.trim().is_empty()).then(|| rest.trim().to_string()),
+        });
+    }
     if content == "stopfollow" || content == "stop" {
         return Some(BotCommand::StopFollow);
     }
@@ -569,6 +584,26 @@ mod chat_parser_tests {
         ));
         assert!(parse_chat_command("harvest 3").is_none());
         assert!(parse_chat_command("tillandsow 1 2").is_none());
+    }
+
+    /// P111：gotoplayer 按玩家名单次导航解析。
+    #[test]
+    fn chat_parser_goto_player() {
+        assert!(matches!(
+            parse_chat_command("gotoplayer"),
+            Some(BotCommand::GotoPlayer { name: None })
+        ));
+        assert!(matches!(
+            parse_chat_command("gotoplayer Jun"),
+            Some(BotCommand::GotoPlayer {
+                name: Some(name),
+            }) if name == "Jun"
+        ));
+        // goto 单 token 仍走锚点（P110），gotoplayer 是独立命令不冲突
+        assert!(matches!(
+            parse_chat_command("goto Jun"),
+            Some(BotCommand::GotoAnchor { name }) if name == "Jun"
+        ));
     }
 
     /// P110：goto 单 token 非数字 → GotoAnchor；数字坐标仍走 Goto。

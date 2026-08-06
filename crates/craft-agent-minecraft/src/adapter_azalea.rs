@@ -599,6 +599,7 @@ fn mc_to_cmd(mc: MinecraftAction) -> BotCommand {
             count,
         },
         MinecraftAction::Follow { target } => BotCommand::Follow { target },
+        MinecraftAction::GotoPlayer { target } => BotCommand::GotoPlayer { name: target },
         MinecraftAction::StopFollow => BotCommand::StopFollow,
         MinecraftAction::Give {
             item,

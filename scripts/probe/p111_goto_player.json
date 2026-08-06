@@ -1,0 +1,13 @@
+{"between_delay_ms": 3000, "timeout_ms": 240000, "steps": [
+  {"cmd": "chat /tp @a[name=craftbot_probe] -520 94 -140"},
+  {"wait_ms": 2000},
+  {"cmd": "gotoplayer nobody_xyz_404"},
+  {"wait_ms": 3000},
+  {"state": true},
+  {"cmd": "gotoplayer"},
+  {"wait_ms": 10000},
+  {"state": true},
+  {"cmd": "gotoplayer Jun"},
+  {"wait_ms": 10000},
+  {"state": true}
+]}

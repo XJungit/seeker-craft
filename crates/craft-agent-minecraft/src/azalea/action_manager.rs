@@ -261,6 +261,8 @@ pub fn timeout_ticks(cmd: &BotCommand) -> u64 {
         // P68：跟随/停止跟随是持续模式（handler 每 tick 自行推进），不需要长超时；
         // give 基于 discard，给 20s 余量。
         BotCommand::Follow { .. } => 20,
+        // P111：按玩家名单次导航——先解析玩家坐标再走 Goto，给 30s（同 GotoAnchor）。
+        BotCommand::GotoPlayer { .. } => 30,
         BotCommand::StopFollow => 20,
         BotCommand::Give { .. } => 400,
         // P88：raw dump 是调试通道，即时完成。
@@ -318,6 +320,11 @@ pub fn cmd_signature(cmd: &BotCommand) -> String {
         BotCommand::ChestWithdraw { item, count, .. } => format!("chest_withdraw({item},{count})"),
         BotCommand::ChestDeposit { item, count, .. } => format!("chest_deposit({item},{count})"),
         BotCommand::Follow { .. } => "follow".to_string(),
+        // P111：签名含玩家名（不同玩家不算重复导航循环）。
+        BotCommand::GotoPlayer { name } => match name {
+            Some(n) => format!("goto_player({n})"),
+            None => "goto_player(any)".to_string(),
+        },
         BotCommand::StopFollow => "stop_follow".to_string(),
         BotCommand::Give { item, count, .. } => format!("give({item},{count})"),
         BotCommand::RawState => "raw_state".to_string(),
