@@ -1,0 +1,15 @@
+{
+  "steps": [
+    { "cmd": "setmode list", "wait_ms": 3000 },
+    { "cmd": "setmode hunting off", "wait_ms": 3000 },
+    { "cmd": "setmode list", "wait_ms": 3000 },
+    { "cmd": "setmode hunting off", "wait_ms": 3000 },
+    { "cmd": "setmode self_defense off", "wait_ms": 3000 },
+    { "cmd": "setmode list", "wait_ms": 3000 },
+    { "cmd": "setmode hunting on", "wait_ms": 3000 },
+    { "cmd": "setmode hunting on", "wait_ms": 3000 },
+    { "cmd": "setmode list", "wait_ms": 3000 },
+    { "cmd": "setmode nonsense on", "wait_ms": 3000 },
+    { "cmd": "setmode list", "wait_ms": 3000 }
+  ]
+}

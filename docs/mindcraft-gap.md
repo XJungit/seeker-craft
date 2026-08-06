@@ -26,7 +26,7 @@
 | !attack / !attackPlayer | attack / interact_entity | ✅ | attackPlayer 不需要 |
 | !goToBed | sleep | ✅ | P85 完成，2026-08-02 probe 实测通过 |
 | !stay | pause_goal | 🟡 | |
-| !setMode | — | ❌ | 模式开关（配置层，非 LLM） |
+| !setMode | set_mode | ✅ | P116 完成，2026-08-06 probe 实测通过（5 模式开关 + list） |
 | !goal / !endGoal | set_goal / task_complete | ✅ | |
 | !showVillagerTrades / !tradeWithVillager | trade | ✅ | |
 | !startConversation / !endConversation | chat | 🟡 | 对话无需双端 |
@@ -341,3 +341,18 @@
 - **P79 auto_armor 实机验证 ✓（probe p79_auto_armor.json）**：等 bot 完全 idle（30s）→ `/give leather_chestplate 1` → 等待 12s → `[MODE:auto_armor] 已装备 leather_chestplate 到 chestplate（left_click slot 9）` + RawState 确认 `slot[6]=minecraft:leather_chestplate`（胸甲槽已穿上）。iron_helmet 同样自动装上 `slot[5]`。材料升级链（空槽→leather）与 200 tick 触发正常。
 - **验证要点**：auto_armor 需 `action_mgr.is_idle()`——give 后若 bot 忙于 pickup/寻路，检查点会错过；验证前先等 idle。RawState 已含 armor 槽（slot 5-8）输出，无需额外改动。
 - **gap 队列更新**：#6 自动穿甲 ✅ / #7 item_collecting ✅（两者从"待实机验证"转"完成"）。剩余 #2 goToSurface 强化仍待 LLM 实机确认脱困成功率。
+
+## 修复记录：2026-08-06 P116 set_mode 自动模式开关（gap !setMode 闭环，差距表全部 ❌ 清零）
+
+> 触发：P115 后扫差距表——!setMode 是最后一个非取舍 ❌ 项（此前判断"配置层非 LLM"）。LLM 实机观测（P115）证明 LLM 确实需要控制模式（如 hunting 保护动物、self_defense 安静潜入），实现为命令层 + LLM 工具双通道。
+
+- **P116 set_mode（commit b28a98e）**：
+  - `MinecraftAction::SetMode { mode: String, enabled: bool }` + `BotCommand::SetMode` + parse_chat_command `setmode <模式> on|off`（`setmode list` 查询；无 flag 默认 on；off/0/false 识别）+ chat_parser_set_mode 测试（5 断言）
+  - BotState 新字段 `mode_switches: Arc<Mutex<HashSet<String>>>`（被禁用模式名集合）+ `mode_disabled(mode)` 查询方法
+  - handler dispatch：SWITCHABLE 5 模式（self_preservation/self_defense/cowardice/hunting/item_collecting）；list 查询当前禁用集合；开关 insert/remove（重复操作提示"本来就被禁用/本来就是启用的"）；仅实际变更时推 `[模式] 自动模式 X 已启用/禁用` Chat 事件；不支持模式报错（列出可开关集合）
+  - **5 处模式守卫接入 `mode_disabled`**：hunting、item_collecting、cowardice、self_defense、self_preservation 的 tick 逻辑入口（搜注释 "P116：set_mode 可禁用" 定位）——禁用后 tick 级不再自动执行
+  - LLM 工具 `set_mode`（mode 必填，enabled 默认 true；mode="list" 查禁用列表）+ run_plan parse_step `set_mode` + action_manager timeout 20 tick + cmd_signature `set_mode({mode},{on|off})`（不同模式/开关不算重复操作）+ adapter mc_to_cmd 映射 + ACTION_NAMES 同步
+- **probe 实机验证 ✓（scripts/probe/p116_set_mode.json，11 步 0 失败）**：`setmode list` → 全部启用 ✓；`setmode hunting off` → 已禁用 + [模式] 事件 ✓；list → hunting ✓；重复 off → "本来就被禁用" ✓；`setmode self_defense off` → list 显示 hunting, self_defense（排序）✓；`setmode hunting on` → 已启用 + 事件 ✓；重复 on → "本来就是启用的" ✓；list → 只剩 self_defense ✓；`setmode nonsense on` → "不支持的自动模式: nonsense（可开关: self_preservation/self_defense/cowardice/hunting/item_collecting）" ✓；list 不受无效操作影响 ✓。顺带观测：probe 在洞穴低血（HP 5/20）时 cowardice 自动 mine_above 脱困正常跑（未禁用，守卫精确性验证）。
+- **门槛**：workspace 全绿（craft-agent 171 + craft-agent-minecraft 153 + model 23 + regression 29）+ fmt/clippy `-D warnings` 全绿。
+
+> **当前主线：差距表 ❌ 全部清零**（命令层/技能层/模式层 ✅ + 🟡 取舍项 + ➖ 记录；!stay 等 🟡 为设计取舍）。下一轮可选：① LLM 策略层持续优化（P115 结论：目标达成自动收尾需 task.rs 结构化完成检测，Mindcraft 亦未解决）；② 末地通关路径推进（tier6 → 末地 → 龙）；③ 架构演进 P2 剩余项。
