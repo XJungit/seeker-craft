@@ -6,12 +6,13 @@
 
 use super::{
     ActionManager, AzaleaBot, BotCommand, BotEvent, ChunkPos, EntityAgg, ObsidianTask, Priority,
-    QueuedCommand, SubmitOutcome, auto_equip_best_pickaxe, count_overhead_solid, do_consume,
-    do_discard, do_equip, entity_kind_name, find_hotbar_slot_for, find_item_slots,
+    QueuedCommand, SubmitOutcome, auto_equip_best_pickaxe, count_item, count_overhead_solid,
+    do_consume, do_discard, do_equip, entity_kind_name, find_hotbar_slot_for, find_item_slots,
     has_any_pickaxe_in_inventory, is_hard_block, mine_above_reached_surface,
     normalize_entity_target, parse_chat_command,
 };
 use azalea::BlockPos;
+use azalea::core::hit_result::HitResult;
 use azalea::pathfinder::goals::{BlockPosGoal, RadiusGoal, YGoal};
 use azalea::player::GameProfileComponent;
 use azalea::prelude::*;
@@ -24,6 +25,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc;
+use tokio::time::sleep;
 
 fn now_ms() -> u64 {
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -2082,6 +2084,94 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                 let _ = evt_tx.send(BotEvent::Chat { content: chat });
                             }
                             state.action_mgr.clear_pending();
+                        }
+                        // P118：使用/投掷手持物品（末影之眼定位要塞等）。
+                        // 装备 → 可选转视角 → 右键使用一次 → 验证物品消耗。
+                        BotCommand::UseItem { item, yaw, pitch } => {
+                            match ItemKind::from_str(&crate::azalea::recipe_book::normalize_item(
+                                &item,
+                            ))
+                            .or_else(|_| ItemKind::from_str(&item))
+                            {
+                                Ok(kind) => {
+                                    let eq = do_equip(&bot, &item, "hand").await;
+                                    if !eq.starts_with("已装备") {
+                                        let msg = format!("使用 {item} 失败：{eq}");
+                                        if let Some(tx) = &result_tx {
+                                            let _ = tx.send(format!("Action output:\n{msg}"));
+                                        }
+                                        let _ = evt_tx.send(BotEvent::Chat {
+                                            content: format!("[使用] {msg}"),
+                                        });
+                                        state.action_mgr.clear_pending();
+                                    } else {
+                                        let orig = bot.direction().ok();
+                                        if let (Some(y), Some(p)) = (yaw, pitch) {
+                                            let _ = bot.set_direction(y, p);
+                                            sleep(Duration::from_millis(150)).await;
+                                        }
+                                        // P118 修复：azalea 的 start_use_item() 会 raycast，
+                                        // 命中方块时发 ServerboundUseItemOn（右键方块），服务端
+                                        // 不会消耗/投掷投掷物（末影之眼等）——表现为"数量未变化"。
+                                        // 检测 hit_result，命中方块/实体时自动改向上瞄准（P8 同款），
+                                        // 保证发 ServerboundUseItem（右键空气）。
+                                        let mut aim_up = false;
+                                        if let Ok(hit) = bot.hit_result() {
+                                            match hit {
+                                                HitResult::Block(r) => aim_up = !r.miss,
+                                                HitResult::Entity(_) => aim_up = true,
+                                            }
+                                        }
+                                        if aim_up {
+                                            let y = orig.map(|o| o.y_rot()).unwrap_or(0.0);
+                                            let _ = bot.set_direction(y, -89.0);
+                                            sleep(Duration::from_millis(150)).await;
+                                        }
+                                        let before = count_item(&bot, kind);
+                                        bot.start_use_item();
+                                        // 服务端消耗同步可能有延迟，最多等 1.5s 确认消耗
+                                        let mut after = count_item(&bot, kind);
+                                        for _ in 0..5 {
+                                            if after < before {
+                                                break;
+                                            }
+                                            sleep(Duration::from_millis(300)).await;
+                                            after = count_item(&bot, kind);
+                                        }
+                                        if let Some(o) = orig {
+                                            let _ = bot.set_direction(o.y_rot(), o.x_rot());
+                                        }
+                                        let msg = if after < before {
+                                            format!("已使用 {item}（消耗 1，背包剩余 {after}）")
+                                        } else if aim_up {
+                                            format!(
+                                                "已使用 {item}（朝向命中方块/实体，已自动改向上使用；物品数量未变化，可能未消耗）"
+                                            )
+                                        } else {
+                                            format!(
+                                                "已右键使用 {item}（物品数量未变化，可能未消耗）"
+                                            )
+                                        };
+                                        if let Some(tx) = &result_tx {
+                                            let _ = tx.send(format!("Action output:\n{msg}"));
+                                        }
+                                        let _ = evt_tx.send(BotEvent::Chat {
+                                            content: format!("[使用] {msg}"),
+                                        });
+                                        state.action_mgr.clear_pending();
+                                    }
+                                }
+                                Err(_) => {
+                                    let msg = format!("未知物品 {item}");
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!("Action output:\n{msg}"));
+                                    }
+                                    let _ = evt_tx.send(BotEvent::Chat {
+                                        content: format!("[使用] {msg}"),
+                                    });
+                                    state.action_mgr.clear_pending();
+                                }
+                            }
                         }
                         BotCommand::Craft2x2 { item, count } => {
                             match crate::azalea::craft::do_craft_2x2(&bot, &item, count).await {

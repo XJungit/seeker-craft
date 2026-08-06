@@ -253,3 +253,69 @@ impl GameTool for DefendTool {
         })
     }
 }
+
+/// P118：使用/投掷手持物品（对齐 MC 右键使用）。末影之眼投掷定位要塞、
+/// 雪球/末影珍珠投掷等。装备物品 → 可选转视角 → 右键使用一次。
+pub struct UseItemTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl UseItemTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for UseItemTool {
+    fn name(&self) -> &str {
+        "use_item"
+    }
+    fn is_slow(&self) -> bool {
+        false
+    }
+    fn description(&self) -> &str {
+        "使用（右键）手持物品一次。\n\
+         主要用途：投掷末影之眼（ender_eye）定位要塞、投掷投掷物、使用可 '启用' 物品。\n\
+         装备物品 → 可选转向（yaw/pitch）→ 右键使用一次，自动验证物品消耗。\n\
+         注意：水桶装水/对方块使用请用 interact_block（右键方块）。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "item": { "type": "string", "description": "物品 id（如 ender_eye / snowball）" },
+                "yaw": { "type": "number", "description": "水平朝向（度，可选，默认保持当前）" },
+                "pitch": { "type": "number", "description": "垂直俯仰（度，可选，默认保持当前）" }
+            },
+            "required": ["item"]
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let item = args
+            .get("item")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("缺少 item"))?
+            .to_string();
+        let yaw = args.get("yaw").and_then(|v| v.as_f64()).map(|v| v as f32);
+        let pitch = args.get("pitch").and_then(|v| v.as_f64()).map(|v| v as f32);
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::UseItem {
+                item,
+                yaw,
+                pitch,
+            }))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}

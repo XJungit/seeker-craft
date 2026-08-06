@@ -198,6 +198,13 @@ pub enum BotCommand {
         mode: String,
         enabled: bool,
     },
+    /// P118：使用/投掷手持物品（对齐 MC 右键使用）。item 为目标物品 id
+    ///（末影之眼投掷定位要塞/雪球等），yaw/pitch 可选（不传=保持当前视角）。
+    UseItem {
+        item: String,
+        yaw: Option<f32>,
+        pitch: Option<f32>,
+    },
     /// P68：把物品丢在指定玩家脚边（玩家拾取）。item 为物品 id，count 为数量（0=全部）。
     /// target 为玩家名（None 表示最近的其他玩家）。基于现有 Discard 能力，但丢在玩家坐标而非 bot 脚边。
     Give {
@@ -305,6 +312,14 @@ pub fn parse_chat_command(content: &str) -> Option<BotCommand> {
         let flag = parts.next().unwrap_or("on");
         let enabled = flag != "off" && flag != "0" && flag != "false";
         return Some(BotCommand::SetMode { mode, enabled });
+    }
+    // P118: useitem <物品> [yaw] [pitch] —— 使用/投掷手持物品（末影之眼定位要塞等）。
+    if let Some(rest) = content.strip_prefix("useitem") {
+        let mut parts = rest.split_whitespace();
+        let item = parts.next()?.to_string();
+        let yaw = parts.next().and_then(|v| v.parse::<f32>().ok());
+        let pitch = parts.next().and_then(|v| v.parse::<f32>().ok());
+        return Some(BotCommand::UseItem { item, yaw, pitch });
     }
     if let Some(rest) = content.strip_prefix("craft3 ") {
         let mut parts = rest.split_whitespace();
@@ -733,6 +748,21 @@ mod chat_parser_tests {
             parse_chat_command("setmode cowardice 0"),
             Some(BotCommand::SetMode { mode, enabled: false }) if mode == "cowardice"
         ));
+    }
+
+    /// P118：useitem 用/投掷物品解析。
+    #[test]
+    fn chat_parser_useitem() {
+        assert!(matches!(
+            parse_chat_command("useitem ender_eye"),
+            Some(BotCommand::UseItem { item, yaw: None, pitch: None }) if item == "ender_eye"
+        ));
+        assert!(matches!(
+            parse_chat_command("useitem ender_pearl 90.0 0.0"),
+            Some(BotCommand::UseItem { item, yaw: Some(y), pitch: Some(p) })
+                if item == "ender_pearl" && y == 90.0 && p == 0.0
+        ));
+        assert!(parse_chat_command("useitem").is_none());
     }
 
     /// P110：goto 单 token 非数字 → GotoAnchor；数字坐标仍走 Goto。

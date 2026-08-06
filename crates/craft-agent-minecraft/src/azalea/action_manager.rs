@@ -270,6 +270,8 @@ pub fn timeout_ticks(cmd: &BotCommand) -> u64 {
         BotCommand::StopFollow => 20,
         // P116：模式开关即时生效。
         BotCommand::SetMode { .. } => 20,
+        // P118：右键使用/投掷物品即时生效。
+        BotCommand::UseItem { .. } => 20,
         BotCommand::Give { .. } => 400,
         // P88：raw dump 是调试通道，即时完成。
         BotCommand::RawState => 20,
@@ -343,6 +345,8 @@ pub fn cmd_signature(cmd: &BotCommand) -> String {
         BotCommand::SetMode { mode, enabled } => {
             format!("set_mode({mode},{})", if *enabled { "on" } else { "off" })
         }
+        // P118：签名含物品（不同物品不算重复使用）。
+        BotCommand::UseItem { item, yaw, pitch } => format!("use_item({item},{yaw:?},{pitch:?})"),
         BotCommand::Give { item, count, .. } => format!("give({item},{count})"),
         BotCommand::RawState => "raw_state".to_string(),
     }

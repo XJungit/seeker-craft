@@ -369,3 +369,16 @@
 - **门槛**：workspace 全绿（craft-agent 171 + craft-agent-minecraft 156 + model 23 + regression 29）+ fmt/clippy `-D warnings` 干净（未全量跑，P117 后补跑）。
 
 > **当前主线：末地路径断裂修复进行中**。末地链路盘点（obsidian→flint_and_steel→下界→blaze_rod→blaze_powder→ender_pearl→ender_eye→要塞→传送门→龙战）：2×2 配方断裂已闭环；**能力缺口候选：① 投掷末影之眼（要塞定位，harness 无 use/throw 工具）；② 远程攻击（bow+arrow，龙战必需，attack 仅近战）**。下一轮实施候选 ① 或 ②（4 处同步 + probe 命令）。
+
+## 修复记录：2026-08-06 P118 use_item 工具（投掷末影之眼定位要塞）
+
+> 缺口：末地链路中"投掷末影之眼"无对应工具（要塞定位必需）。实施 4 处同步 + probe 命令 + rhai 注册，probe 实机验证发现并修复 ServerboundUseItemOn 误发问题。
+
+- **MinecraftAction::UseItem { item, yaw: Option<f32>, pitch: Option<f32> }**（types.rs，SetMode 后）+ BotCommand::UseItem（commands.rs，parse `useitem <物品> [yaw] [pitch]` + 测试 chat_parser_useitem，minecraft 156→157）+ adapter mc_to_cmd 映射 + action_manager timeout 20 + cmd_signature `use_item({item},{yaw:?},{pitch:?})`（不同物品不算重复使用）。
+- **handler dispatch**：装备（"已装备"前缀判成功）→ 可选 set_direction(yaw,pitch) → count_item 前后对比验证消耗（最多等 1.5s 应对服务端同步延迟）→ 恢复原方向。装备失败/未知物品走 result_tx + `[使用]` Chat 事件 + clear_pending。
+- **实机验证发现的关键 bug（ServerboundUseItemOn 误发）**：azalea `start_use_item()` 会 raycast，命中方块时发 ServerboundUseItemOn（右键方块）而非 ServerboundUseItem（右键空气）——服务端不消耗/不投掷投掷物，表现"数量未变化"（probe 首轮 2 次投掷 0 消耗复现）。修复：用公开 API `bot.hit_result()`（azalea-core HitResult）检测，命中方块/实体时自动改向上瞄准（pitch -89，P8 同款思路）再使用，保证包类型正确；消息明确告知"朝向命中方块/实体，已自动改向上使用"。
+- **probe 实机验证 ✓（scripts/probe/p118_use_item.json）**：`useitem ender_eye`（洞穴内）→ 命中方块自动改向上 ✓；`useitem ender_eye 90 -30`（tp 高空）→ **消耗 1（背包 10→9）** ✓ 投掷真实生效；`useitem diamond`（未持有）→ 装备失败报错 + 背包诊断 ✓。
+- **工具注册（tools_azalea.rs）**：pub use UseItemTool（tools_interact.rs，slow=false）+ 工厂注册 + tool_name `"use_item" => Some("UseItem")` + ACTION_NAMES + run_plan parse_step `use_item`（f32 helper）+ 不支持列表 + rhai `use_item(item[, yaw, pitch])` 双签名（tools_meta.rs）。
+- **门槛**：workspace 全绿（craft-agent 171 + craft-agent-minecraft 157 + model 23 + regression 29）+ fmt/clippy `-D warnings` 干净。
+
+> **当前主线：末地路径能力补齐进行中**。use_item 已闭环（要塞定位可用）；**下一候选：远程攻击（bow+arrow，龙战必需，attack 仅近战）**——弓的拉弦/放箭协议是独立机制（ServerboundPlayerAction start_use_item + release_using_item），比 use_item 更复杂，实施前需先搜 azalea 对 release_using_item 的支持。其余候选：② 末地传送门搭建（框架 12 obsidian + 点火）；③ 龙战策略（水晶破坏 → 龙本体，MODE/策略层）。

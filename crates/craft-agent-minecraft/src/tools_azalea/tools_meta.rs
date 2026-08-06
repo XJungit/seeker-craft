@@ -434,6 +434,31 @@ fn build_rhai_engine(ctx: &Arc<AzaleaToolCtx>) -> rhai::Engine {
     engine.register_fn("defend", move || -> String {
         _exec_action(&a, MinecraftAction::Defend)
     });
+    let a = adapter.clone();
+    engine.register_fn(
+        "use_item",
+        move |item: String, yaw: Option<f64>, pitch: Option<f64>| -> String {
+            _exec_action(
+                &a,
+                MinecraftAction::UseItem {
+                    item,
+                    yaw: yaw.map(|v| v as f32),
+                    pitch: pitch.map(|v| v as f32),
+                },
+            )
+        },
+    );
+    let a = adapter.clone();
+    engine.register_fn("use_item", move |item: String| -> String {
+        _exec_action(
+            &a,
+            MinecraftAction::UseItem {
+                item,
+                yaw: None,
+                pitch: None,
+            },
+        )
+    });
 
     // ===== 合成/熔炼/附魔 =====
     let a = adapter.clone();

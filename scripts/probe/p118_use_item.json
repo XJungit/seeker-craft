@@ -1,0 +1,9 @@
+{
+  "steps": [
+    { "cmd": "chat /give @s ender_eye 3", "wait_ms": 2000 },
+    { "cmd": "useitem ender_eye", "wait_ms": 4000 },
+    { "cmd": "chat /tp @s ~ 130 ~", "wait_ms": 3000 },
+    { "cmd": "useitem ender_eye 90 -30", "wait_ms": 6000 },
+    { "state": true }
+  ]
+}

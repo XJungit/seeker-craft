@@ -242,6 +242,14 @@ pub enum MinecraftAction {
     ///（self_preservation/self_defense/cowardice/hunting/item_collecting），
     /// enabled=true 开（默认）/false 关。关闭后 handler 不再自动执行该模式动作。
     SetMode { mode: String, enabled: bool },
+    /// P118：使用/投掷手持物品（对齐 MC 右键使用）。item 为目标物品 id
+    ///（末影之眼投掷定位要塞/雪球等），yaw/pitch 可选（不传=保持当前视角）。
+    /// 装备物品 → 可选转视角 → 右键使用一次（消耗 1 个）。
+    UseItem {
+        item: String,
+        yaw: Option<f32>,
+        pitch: Option<f32>,
+    },
     /// P68：把物品丢在玩家脚边（给予）。item 为物品 id，count 为数量（0=全部），
     /// target 为玩家名（None=最近的玩家）。
     Give {

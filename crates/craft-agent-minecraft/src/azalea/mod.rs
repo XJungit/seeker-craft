@@ -1692,7 +1692,7 @@ pub async fn do_consume(bot: &Client, item: &str) -> String {
 }
 
 /// 统计背包中指定物品的总数。
-fn count_item(bot: &Client, kind: ItemKind) -> u32 {
+pub(crate) fn count_item(bot: &Client, kind: ItemKind) -> u32 {
     let Some(slots) = bot.get_inventory().ok().and_then(|i| i.slots()) else {
         return 0;
     };

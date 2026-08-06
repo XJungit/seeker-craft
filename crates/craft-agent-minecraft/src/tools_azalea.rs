@@ -75,7 +75,7 @@ pub use tools_container::{ChestDepositTool, ChestViewTool, ChestWithdrawTool, Op
 pub use tools_crafting::{AutoCraftTool, Craft3x3Tool, CraftTool, EnchantTool, SmeltTool};
 pub use tools_farming::{GatherTool, HarvestTool, TillAndSowTool};
 pub use tools_interact::{
-    AttackTool, DefendTool, InteractBlockTool, InteractEntityTool, SleepTool,
+    AttackTool, DefendTool, InteractBlockTool, InteractEntityTool, SleepTool, UseItemTool,
 };
 pub use tools_inventory::{ConsumeTool, DiscardTool, EquipTool};
 pub use tools_meta::{
@@ -124,6 +124,7 @@ pub fn action_for(name: &str) -> Option<&'static str> {
         "interact_entity" => Some("InteractEntity"),
         "pickup" => Some("Pickup"),
         "defend" => Some("Defend"),
+        "use_item" => Some("UseItem"),
         "equip" => Some("Equip"),
         "discard" => Some("Discard"),
         "consume" => Some("Consume"),
@@ -194,6 +195,7 @@ pub const ALL_TOOL_NAMES: &[&str] = &[
     "list_blueprints",
     "pickup",
     "defend",
+    "use_item",
     "equip",
     "discard",
     "follow",
@@ -236,6 +238,7 @@ pub const MINECRAFT_ACTION_VARIANTS: &[&str] = &[
     "InteractEntity",
     "Pickup",
     "Defend",
+    "UseItem",
     "Equip",
     "Discard",
     "Consume",
@@ -260,6 +263,7 @@ fn parse_step(action: &str, step: &serde_json::Value) -> anyhow::Result<Minecraf
             .map(|s| s.to_string())
     };
     let u32 = |key: &str| step.get(key).and_then(|v| v.as_u64()).map(|v| v as u32);
+    let f32 = |key: &str| step.get(key).and_then(|v| v.as_f64()).map(|v| v as f32);
     match action {
         "goto" => Ok(MinecraftAction::Goto {
             x: i64("x").ok_or_else(|| anyhow::anyhow!("goto 缺少 x"))?,
@@ -350,6 +354,11 @@ fn parse_step(action: &str, step: &serde_json::Value) -> anyhow::Result<Minecraf
         }),
         "pickup" => Ok(MinecraftAction::Pickup),
         "defend" => Ok(MinecraftAction::Defend),
+        "use_item" => Ok(MinecraftAction::UseItem {
+            item: str("item").ok_or_else(|| anyhow::anyhow!("use_item 缺少 item"))?,
+            yaw: f32("yaw"),
+            pitch: f32("pitch"),
+        }),
         "make_obsidian" => Ok(MinecraftAction::MakeObsidian {
             count: u32("count").unwrap_or(1),
         }),
@@ -419,7 +428,7 @@ fn parse_step(action: &str, step: &serde_json::Value) -> anyhow::Result<Minecraf
             "perceive 不支持在 run_plan 里调用（agent 主循环每轮自动注入 perceive，plan 里只放动作）"
         )),
         other => Err(anyhow::anyhow!(
-            "不支持的 action: {other}（支持: goto/mine/mine_below/mine_above/interact/interact_entity/attack/chat/craft/craft_3x3/smelt/gather/place/open/auto_craft/enchant/trade/pickup/defend/make_obsidian/equip/discard/consume/chest_view/chest_withdraw/chest_deposit/follow/goto_player/stop_follow/give/search_block/move_away/set_mode）"
+            "不支持的 action: {other}（支持: goto/mine/mine_below/mine_above/interact/interact_entity/attack/chat/craft/craft_3x3/smelt/gather/place/open/auto_craft/enchant/trade/pickup/defend/use_item/make_obsidian/equip/discard/consume/chest_view/chest_withdraw/chest_deposit/follow/goto_player/stop_follow/give/search_block/move_away/set_mode）"
         )),
     }
 }
@@ -478,6 +487,7 @@ pub fn create_mc_azalea_tools_full(
         Box::new(SleepTool::new(ctx.clone())),
         Box::new(HarvestTool::new(ctx.clone())),
         Box::new(AttackTool::new(ctx.clone())),
+        Box::new(UseItemTool::new(ctx.clone())),
         Box::new(CraftTool::new(ctx.clone())),
         Box::new(Craft3x3Tool::new(ctx.clone())),
         Box::new(SmeltTool::new(ctx.clone())),

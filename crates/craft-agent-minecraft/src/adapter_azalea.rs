@@ -604,6 +604,7 @@ fn mc_to_cmd(mc: MinecraftAction) -> BotCommand {
         MinecraftAction::MoveAway { target, distance } => BotCommand::MoveAway { target, distance },
         MinecraftAction::StopFollow => BotCommand::StopFollow,
         MinecraftAction::SetMode { mode, enabled } => BotCommand::SetMode { mode, enabled },
+        MinecraftAction::UseItem { item, yaw, pitch } => BotCommand::UseItem { item, yaw, pitch },
         MinecraftAction::Give {
             item,
             count,
