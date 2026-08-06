@@ -380,7 +380,7 @@ mod tests {
         );
     }
 
-/// P117 回归测试：flint_and_steel 是 2×2 形状配方（vanilla ["F","I"]：iron_ingot 上, flint 下）。
+    /// P117 回归测试：flint_and_steel 是 2×2 形状配方（vanilla ["F","I"]：iron_ingot 上, flint 下）。
     /// 此前手写表无此条目且 2×2 不走 RecipeBook → tier5_nether_portal 任务断裂。
     #[test]
     fn regression_lookup_shaped_2x2_finds_flint_and_steel() {
@@ -391,14 +391,18 @@ mod tests {
         assert!(cells.contains(&(1, "iron_ingot")), "slot1 应为 iron_ingot");
         assert!(cells.contains(&(3, "flint")), "slot3 应为 flint");
         assert_eq!(lookup_shaped_2x2("minecraft:flint_and_steel").len(), 1);
-        assert!(lookup_recipe("flint_and_steel").is_none(), "顺序填充表不应含它");
+        assert!(
+            lookup_recipe("flint_and_steel").is_none(),
+            "顺序填充表不应含它"
+        );
     }
 
     /// P117 回归：blaze_powder（末影之眼链路）与木板变体必须能被 lookup_recipe（2×2 顺序填充）查到。
     /// 此前手写表只有 oak_planks → auto_craft 合成这些物品走 RecipeBook 2×2 分支时断裂。
     #[test]
     fn regression_lookup_recipe_finds_blaze_powder_and_plank_variants() {
-        let blaze = lookup_recipe("blaze_powder").expect("blaze_powder 必须可查（2×2 shapeless 1 rod → 2）");
+        let blaze = lookup_recipe("blaze_powder")
+            .expect("blaze_powder 必须可查（2×2 shapeless 1 rod → 2）");
         assert_eq!(blaze.output_per_craft, 2, "blaze_powder 每次产出 2");
         for plank in [
             "spruce_planks",

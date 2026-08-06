@@ -356,3 +356,16 @@
 - **门槛**：workspace 全绿（craft-agent 171 + craft-agent-minecraft 153 + model 23 + regression 29）+ fmt/clippy `-D warnings` 全绿。
 
 > **当前主线：差距表 ❌ 全部清零**（命令层/技能层/模式层 ✅ + 🟡 取舍项 + ➖ 记录；!stay 等 🟡 为设计取舍）。下一轮可选：① LLM 策略层持续优化（P115 结论：目标达成自动收尾需 task.rs 结构化完成检测，Mindcraft 亦未解决）；② 末地通关路径推进（tier6 → 末地 → 龙）；③ 架构演进 P2 剩余项。
+
+## 修复记录：2026-08-06 P117 末地路径 2×2 配方断裂批量修复（flint_and_steel / blaze_powder / 木板变体）
+
+> 触发：差距表 ❌ 清零后主线转向末地通关路径（tier5_nether_portal → tier6）。逐环节盘点末地链路时发现 2×2 合成系统性断裂：**P48 只把 3×3 反转成 RecipeBook 优先，2×2 仍只查手写表**——RecipeBook 判定为 2×2 的配方（Shaped grid <4 槽 / Shapeless ≤4 原料）在 auto_craft 和 craft 工具中全部走手写表，表外物品全失败。
+
+- **断裂点 1：flint_and_steel（commit 68a9996）**——tier5_nether_portal 任务 goal 明确引导 `craft(item="flint_and_steel")`（点传送门必需），手写 SHAPED_2X2 无此条目 → craft/auto_craft 全失败。修复：SHAPED_2X2 加 `("flint_and_steel", &[(1,"iron_ingot"),(3,"flint")], 1)`（vanilla shape ["F","I"]）。
+- **断裂点 2：blaze_powder + 木板变体（commit 774cbde）**——blaze_powder 是末影之眼链路（blaze_rod → blaze_powder → ender_eye → 要塞）关键 2×2 配方（vanilla shapeless 1 rod → 2）；9 种木板变体（spruce/birch/jungle/acacia/dark_oak/mangrove/cherry/pale_oak/crimson/warped）在非橡树林区同样断裂。修复：RECIPES 顺序填充加 `("blaze_powder", &[("blaze_rod",1)], 2)` + 10 条木板条目（1 log → 4）。
+- **probe 实机验证 ✓（scripts/probe/p117_flint_and_steel.json / p117_blaze_powder.json）**：`craft flint_and_steel 1` 成功 ✓ + `autocraft flint_and_steel 2` 成功（背包 2）✓；`craft blaze_powder 2` 成功（产出 2）✓；`craft spruce_planks 4` 成功 ✓。
+- **回归测试 +2**（regression_lookup_shaped_2x2_finds_flint_and_steel / regression_lookup_recipe_finds_blaze_powder_and_plank_variants，minecraft 154→156）。
+- **根因反思**：2×2 不走 RecipeBook 是 P48 时期的显式取舍（当时手写表覆盖基础物），末地路径扩展后该假设失效——手写表只应承载形状特殊/多变体的 2×2 配方（stick/torch/flint_and_steel），纯 shapeless 单原料应自动兜底 RecipeBook。
+- **门槛**：workspace 全绿（craft-agent 171 + craft-agent-minecraft 156 + model 23 + regression 29）+ fmt/clippy `-D warnings` 干净（未全量跑，P117 后补跑）。
+
+> **当前主线：末地路径断裂修复进行中**。末地链路盘点（obsidian→flint_and_steel→下界→blaze_rod→blaze_powder→ender_pearl→ender_eye→要塞→传送门→龙战）：2×2 配方断裂已闭环；**能力缺口候选：① 投掷末影之眼（要塞定位，harness 无 use/throw 工具）；② 远程攻击（bow+arrow，龙战必需，attack 仅近战）**。下一轮实施候选 ① 或 ②（4 处同步 + probe 命令）。
