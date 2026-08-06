@@ -205,6 +205,11 @@ pub enum BotCommand {
         yaw: Option<f32>,
         pitch: Option<f32>,
     },
+    /// P119：拉弓射箭。target 为实体名（None=朝当前视角方向射）。
+    /// 流程：装备弓 → 检查箭 → 可选转向目标 → 拉弦 ~1s → 放箭（ReleaseUseItem）。
+    Shoot {
+        target: Option<String>,
+    },
     /// P68：把物品丢在指定玩家脚边（玩家拾取）。item 为物品 id，count 为数量（0=全部）。
     /// target 为玩家名（None 表示最近的其他玩家）。基于现有 Discard 能力，但丢在玩家坐标而非 bot 脚边。
     Give {
@@ -418,6 +423,17 @@ pub fn parse_chat_command(content: &str) -> Option<BotCommand> {
         return Some(BotCommand::Attack {
             target: "chat".into(),
         });
+    }
+    if content == "shoot" {
+        return Some(BotCommand::Shoot { target: None });
+    }
+    if let Some(rest) = content.strip_prefix("shoot ") {
+        let target = rest.trim().to_string();
+        if !target.is_empty() {
+            return Some(BotCommand::Shoot {
+                target: Some(target),
+            });
+        }
     }
     if let Some(rest) = content.strip_prefix("enchant ") {
         let mut parts = rest.split_whitespace();
@@ -763,6 +779,19 @@ mod chat_parser_tests {
                 if item == "ender_pearl" && y == 90.0 && p == 0.0
         ));
         assert!(parse_chat_command("useitem").is_none());
+    }
+
+    /// P119：shoot 拉弓射箭解析。
+    #[test]
+    fn chat_parser_shoot() {
+        assert!(matches!(
+            parse_chat_command("shoot"),
+            Some(BotCommand::Shoot { target: None })
+        ));
+        assert!(matches!(
+            parse_chat_command("shoot zombie"),
+            Some(BotCommand::Shoot { target: Some(t) }) if t == "zombie"
+        ));
     }
 
     /// P110：goto 单 token 非数字 → GotoAnchor；数字坐标仍走 Goto。

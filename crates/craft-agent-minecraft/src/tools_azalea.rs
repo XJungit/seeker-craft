@@ -75,7 +75,8 @@ pub use tools_container::{ChestDepositTool, ChestViewTool, ChestWithdrawTool, Op
 pub use tools_crafting::{AutoCraftTool, Craft3x3Tool, CraftTool, EnchantTool, SmeltTool};
 pub use tools_farming::{GatherTool, HarvestTool, TillAndSowTool};
 pub use tools_interact::{
-    AttackTool, DefendTool, InteractBlockTool, InteractEntityTool, SleepTool, UseItemTool,
+    AttackTool, DefendTool, InteractBlockTool, InteractEntityTool, ShootTool, SleepTool,
+    UseItemTool,
 };
 pub use tools_inventory::{ConsumeTool, DiscardTool, EquipTool};
 pub use tools_meta::{
@@ -125,6 +126,7 @@ pub fn action_for(name: &str) -> Option<&'static str> {
         "pickup" => Some("Pickup"),
         "defend" => Some("Defend"),
         "use_item" => Some("UseItem"),
+        "shoot" => Some("Shoot"),
         "equip" => Some("Equip"),
         "discard" => Some("Discard"),
         "consume" => Some("Consume"),
@@ -196,6 +198,7 @@ pub const ALL_TOOL_NAMES: &[&str] = &[
     "pickup",
     "defend",
     "use_item",
+    "shoot",
     "equip",
     "discard",
     "follow",
@@ -239,6 +242,7 @@ pub const MINECRAFT_ACTION_VARIANTS: &[&str] = &[
     "Pickup",
     "Defend",
     "UseItem",
+    "Shoot",
     "Equip",
     "Discard",
     "Consume",
@@ -359,6 +363,9 @@ fn parse_step(action: &str, step: &serde_json::Value) -> anyhow::Result<Minecraf
             yaw: f32("yaw"),
             pitch: f32("pitch"),
         }),
+        "shoot" => Ok(MinecraftAction::Shoot {
+            target: str("target"),
+        }),
         "make_obsidian" => Ok(MinecraftAction::MakeObsidian {
             count: u32("count").unwrap_or(1),
         }),
@@ -428,7 +435,7 @@ fn parse_step(action: &str, step: &serde_json::Value) -> anyhow::Result<Minecraf
             "perceive 不支持在 run_plan 里调用（agent 主循环每轮自动注入 perceive，plan 里只放动作）"
         )),
         other => Err(anyhow::anyhow!(
-            "不支持的 action: {other}（支持: goto/mine/mine_below/mine_above/interact/interact_entity/attack/chat/craft/craft_3x3/smelt/gather/place/open/auto_craft/enchant/trade/pickup/defend/use_item/make_obsidian/equip/discard/consume/chest_view/chest_withdraw/chest_deposit/follow/goto_player/stop_follow/give/search_block/move_away/set_mode）"
+            "不支持的 action: {other}（支持: goto/mine/mine_below/mine_above/interact/interact_entity/attack/chat/craft/craft_3x3/smelt/gather/place/open/auto_craft/enchant/trade/pickup/defend/use_item/shoot/make_obsidian/equip/discard/consume/chest_view/chest_withdraw/chest_deposit/follow/goto_player/stop_follow/give/search_block/move_away/set_mode）"
         )),
     }
 }
@@ -488,6 +495,7 @@ pub fn create_mc_azalea_tools_full(
         Box::new(HarvestTool::new(ctx.clone())),
         Box::new(AttackTool::new(ctx.clone())),
         Box::new(UseItemTool::new(ctx.clone())),
+        Box::new(ShootTool::new(ctx.clone())),
         Box::new(CraftTool::new(ctx.clone())),
         Box::new(Craft3x3Tool::new(ctx.clone())),
         Box::new(SmeltTool::new(ctx.clone())),

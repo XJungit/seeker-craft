@@ -272,6 +272,8 @@ pub fn timeout_ticks(cmd: &BotCommand) -> u64 {
         BotCommand::SetMode { .. } => 20,
         // P118：右键使用/投掷物品即时生效。
         BotCommand::UseItem { .. } => 20,
+        // P119：拉弓射箭（装备+瞄准+拉弦 1s+放箭）。
+        BotCommand::Shoot { .. } => 60,
         BotCommand::Give { .. } => 400,
         // P88：raw dump 是调试通道，即时完成。
         BotCommand::RawState => 20,
@@ -347,6 +349,8 @@ pub fn cmd_signature(cmd: &BotCommand) -> String {
         }
         // P118：签名含物品（不同物品不算重复使用）。
         BotCommand::UseItem { item, yaw, pitch } => format!("use_item({item},{yaw:?},{pitch:?})"),
+        // P119：签名含目标（不同目标不算重复射击）。
+        BotCommand::Shoot { target } => format!("shoot({target:?})"),
         BotCommand::Give { item, count, .. } => format!("give({item},{count})"),
         BotCommand::RawState => "raw_state".to_string(),
     }

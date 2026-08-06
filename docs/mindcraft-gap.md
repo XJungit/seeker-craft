@@ -382,3 +382,15 @@
 - **门槛**：workspace 全绿（craft-agent 171 + craft-agent-minecraft 157 + model 23 + regression 29）+ fmt/clippy `-D warnings` 干净。
 
 > **当前主线：末地路径能力补齐进行中**。use_item 已闭环（要塞定位可用）；**下一候选：远程攻击（bow+arrow，龙战必需，attack 仅近战）**——弓的拉弦/放箭协议是独立机制（ServerboundPlayerAction start_use_item + release_using_item），比 use_item 更复杂，实施前需先搜 azalea 对 release_using_item 的支持。其余候选：② 末地传送门搭建（框架 12 obsidian + 点火）；③ 龙战策略（水晶破坏 → 龙本体，MODE/策略层）。
+
+## 修复记录：2026-08-07 P119 shoot 工具（拉弓射箭，龙战远程必需）
+
+> 缺口：末地链路"远程攻击"无工具（attack 仅近战，龙战必须弓箭）。azalea 公开 API 仅 start_use_item，**无放箭对应物**（弓需 ServerboundPlayerAction ReleaseUseItem）。先联网搜索确认协议（mineflayer 模型：activateItem 拉弓 + deactivateItem 放箭），再走 P114 流程魔改 vendor。
+
+- **vendor/azalea 魔改（P114 流程）**：`azalea-client/plugins/interact` 加 `StopUseItemEvent`(Message) → `StopUseItemQueued` component → GameTick handler 发 `ServerboundPlayerAction{ action: ReleaseUseItem, pos: BlockPos::ZERO, direction: Down, seq: start_predicting() }`（iter_mut 修 mutable 借用）；`azalea` crate 加公开 API `Client::stop_use_item()`。配置：仅更新 `.cargo/config.toml` [patch] rev（gitignored 不提交），清 cargo git 缓存后 check 验证 patch 生效（`file://.../vendor/azalea?rev=<新SHA>`）。vendor 侧 3 个 commit 并入父仓库 gitlink。
+- **4 处同步 + 工具注册**：MinecraftAction::Shoot{target: Option<String>}（types.rs）+ BotCommand::Shoot + parse `shoot [entity]` + 测试 chat_parser_shoot（minecraft 157→158）+ adapter mc_to_cmd + action_manager timeout 60 + cmd_signature `shoot({target:?})`（不同目标不算重复射击）+ tools_azalea 全部注册（pub use/工厂/tool_name/ACTION_NAMES/parse_step/不支持列表）+ rhai `shoot()` 双签名 + AzaleaBot::shoot()。
+- **handler dispatch**：do_equip bow（失败报错）→ 检查 arrow（为 0 给合成建议 flint+stick+feather）→ 可选 `look_at_nearest_entity()`（复用 Attack 目标匹配，yaw=atan2(-dx,dz)/pitch=atan2(-dy,horiz) 瞄准）→ **命中方块检测（P118 教训）**：朝方块报错"无法拉弓，请先移动开阔处"而非自动改向（射箭必须精准瞄准）→ 拉弦循环 start_use_item 20×50ms（P8 模式，~1s 满蓄力）→ `bot.stop_use_item()` 放箭 → 轮询 1.5s 确认箭数 -1 → 恢复原方向。
+- **probe 实机验证 ✓（scripts/probe/p119_shoot.json）**：洞穴内 4 次 shoot 全部正确报"命中方块无法拉弓" ✓（遮挡保护）；tp 高空 `shoot` → **"已朝当前方向射出一支箭（消耗 1，背包剩余 9）"**——拉弦+放箭真实生效（服务端发射箭并扣库存）✓；`shoot pillager`（pillager 在山洞内）：转向目标逻辑执行后命中山脉遮挡 → 正确报错提示移动 ✓。
+- **门槛**：workspace 全绿（craft-agent 171 + craft-agent-minecraft 158 + model 23 + regression 29）+ fmt/clippy `-D warnings` 干净。
+
+> **当前主线：末地路径能力补齐进行中**。弓箭已闭环（shoot = 拉弦 1s 满蓄力 + 放箭 ReleaseUseItem）。**剩余缺口：① 末地传送门搭建（12 obsidian 框架 + flint_and_steel 点火；obsidian 采掘任务已有 make_obsidian/挖 obsidian gap 待验）；② 龙战策略（水晶破坏 → 龙本体：远程+走位，MODE/策略层）；③ tier3-4 铁甲/钻石装备阶段推进**。下一轮可从 ① 或 ③ 开始。

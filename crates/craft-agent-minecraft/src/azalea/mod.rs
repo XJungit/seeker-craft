@@ -216,6 +216,11 @@ impl AzaleaBot {
         self.push_cmd(BotCommand::Attack { target });
     }
 
+    /// P119：拉弓射箭（龙战远程必需）。target 为实体名（None=朝当前视角方向射）。
+    pub fn shoot(&self, target: Option<String>) {
+        self.push_cmd(BotCommand::Shoot { target });
+    }
+
     /// 2×2 背包合成（无需工作台）。item 为目标物品 id（如 "oak_planks"），count 为期望数量。
     pub fn craft_2x2(&self, item: String, count: u32) {
         self.push_cmd(BotCommand::Craft2x2 { item, count });

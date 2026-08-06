@@ -319,3 +319,61 @@ impl GameTool for UseItemTool {
         })
     }
 }
+
+/// P119：拉弓射箭（龙战远程必需）。装备弓 → 检查箭 → 可选转向目标 →
+/// 拉弦 ~1s → 放箭（ReleaseUseItem），自动验证箭数消耗。
+pub struct ShootTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl ShootTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for ShootTool {
+    fn name(&self) -> &str {
+        "shoot"
+    }
+    fn is_slow(&self) -> bool {
+        false
+    }
+    fn description(&self) -> &str {
+        "拉弓射箭（远程攻击，龙战必需）。\n\
+         装备弓并检查箭（arrow），可选指定目标实体（默认朝当前视角方向射）。\n\
+         指定目标时会自动转向目标再射击。射完验证箭数消耗并回报。\n\
+         注意：朝方块射击会失败——先移动到开阔处；弓没有时用 equip 检查背包，\
+         箭用 craft 合成（flint + stick + feather）或用 auto_craft。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "target": { "type": "string", "description": "目标实体名（如 zombie，可选，默认朝当前视角方向）" }
+            },
+            "required": []
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let target = args
+            .get("target")
+            .and_then(|v| v.as_str())
+            .map(|v| v.to_string());
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::Shoot { target }))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}

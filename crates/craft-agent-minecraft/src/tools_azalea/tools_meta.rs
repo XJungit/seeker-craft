@@ -459,6 +459,19 @@ fn build_rhai_engine(ctx: &Arc<AzaleaToolCtx>) -> rhai::Engine {
             },
         )
     });
+    let a = adapter.clone();
+    engine.register_fn("shoot", move || -> String {
+        _exec_action(&a, MinecraftAction::Shoot { target: None })
+    });
+    let a = adapter.clone();
+    engine.register_fn("shoot", move |target: String| -> String {
+        _exec_action(
+            &a,
+            MinecraftAction::Shoot {
+                target: Some(target),
+            },
+        )
+    });
 
     // ===== 合成/熔炼/附魔 =====
     let a = adapter.clone();

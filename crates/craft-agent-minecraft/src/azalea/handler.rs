@@ -356,6 +356,51 @@ fn nearby_player_position(bot: &Client, target: Option<&str>) -> Option<azalea::
     closest.map(|(_, position)| position)
 }
 
+/// P119：找最近匹配目标实体，返回朝它瞄准的 (yaw, pitch)（眼睛高度近似平射）。
+/// kind 匹配参考 Attack 分支：nearest = 任意非玩家生物。返回 None 表示没有可瞄准目标。
+async fn look_at_nearest_entity(bot: &Client, target: &str) -> Option<(f32, f32)> {
+    let Ok(entities) =
+        bot.nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>()
+    else {
+        return None;
+    };
+    let self_id = bot.entity().id();
+    let requested = normalize_entity_target(target);
+    let bot_pos = bot.position().ok()?;
+    for e in entities.iter() {
+        if e.id() == self_id {
+            continue;
+        }
+        let Ok(kind) = e.kind() else {
+            continue;
+        };
+        let kind = entity_kind_name(kind);
+        if requested != "nearest" && kind != requested {
+            continue;
+        }
+        if matches!(
+            kind.as_str(),
+            "item" | "experience_orb" | "item_frame" | "glow_item_frame"
+        ) {
+            continue;
+        }
+        let Ok(pos) = e.position() else {
+            continue;
+        };
+        let dx = pos.x - bot_pos.x;
+        let dz = pos.z - bot_pos.z;
+        let dy = pos.y - bot_pos.y;
+        let horiz = (dx * dx + dz * dz).sqrt();
+        if horiz < 0.001 {
+            continue;
+        }
+        let yaw = (-dx).atan2(dz).to_degrees();
+        let pitch = (-dy).atan2(horiz).to_degrees();
+        return Some((yaw as f32, pitch as f32));
+    }
+    None
+}
+
 impl AzaleaBot {
     /// azalea handler：所有 bot 逻辑在此执行（fn 指针，不捕获外部变量）。
     /// 命令从 `state.cmd_queue` 取出执行，事件经 `state.evt_tx` 转发外部。
@@ -2172,6 +2217,116 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                     state.action_mgr.clear_pending();
                                 }
                             }
+                        }
+                        // P119：拉弓射箭（龙战远程必需）。装备弓 → 检查箭 → 可选转向目标
+                        // → 拉弦 ~1s（循环 start_use_item，P8 模式）→ 放箭（stop_use_item，
+                        // azalea 魔改新增的 ReleaseUseItem 支持）→ 验证箭数消耗。
+                        BotCommand::Shoot { target } => {
+                            let eq = do_equip(&bot, "bow", "hand").await;
+                            if !eq.starts_with("已装备") {
+                                let msg = format!("射击失败：{eq}（需要弓）");
+                                if let Some(tx) = &result_tx {
+                                    let _ = tx.send(format!("Action output:\n{msg}"));
+                                }
+                                let _ = evt_tx.send(BotEvent::Chat {
+                                    content: format!("[射击] {msg}"),
+                                });
+                                state.action_mgr.clear_pending();
+                            }
+                            let arrow_kind =
+                                ItemKind::from_str("arrow").expect("arrow is a valid item kind");
+                            let arrows_before = count_item(&bot, arrow_kind);
+                            if arrows_before == 0 {
+                                let msg = "射击失败：背包没有箭（arrow）。请先合成/获取箭（flint + stick + feather）。"
+                                    .to_string();
+                                if let Some(tx) = &result_tx {
+                                    let _ = tx.send(format!("Action output:\n{msg}"));
+                                }
+                                let _ = evt_tx.send(BotEvent::Chat {
+                                    content: format!("[射击] {msg}"),
+                                });
+                                state.action_mgr.clear_pending();
+                            }
+                            // 可选：转向目标实体（眼睛高度差 + 弹道平射近似）。
+                            let orig = bot.direction().ok();
+                            let mut aimed_at: Option<String> = None;
+                            if let Some(t) = target.clone()
+                                && let Some((yaw, pitch)) = look_at_nearest_entity(&bot, &t).await
+                            {
+                                let _ = bot.set_direction(yaw, pitch);
+                                sleep(Duration::from_millis(150)).await;
+                                aimed_at = Some(t.clone());
+                            }
+                            // P118 教训：命中方块时 start_use_item 发 ServerboundUseItemOn，
+                            // 服务端不拉弓。射箭必须瞄准空旷处，命中方块时明确报错。
+                            let mut blocked = false;
+                            if let Ok(hit) = bot.hit_result()
+                                && let HitResult::Block(r) = hit
+                            {
+                                blocked = !r.miss;
+                            }
+                            if blocked {
+                                let msg = "射击失败：当前朝向命中方块，无法拉弓。请先移动到开阔处或调整视角再射。".to_string();
+                                if let Some(o) = orig {
+                                    let _ = bot.set_direction(o.y_rot(), o.x_rot());
+                                }
+                                if let Some(tx) = &result_tx {
+                                    let _ = tx.send(format!("Action output:\n{msg}"));
+                                }
+                                let _ = evt_tx.send(BotEvent::Chat {
+                                    content: format!("[射击] {msg}"),
+                                });
+                                state.action_mgr.clear_pending();
+                            }
+                            // 拉弦：循环 start_use_item 模拟按住右键（P8 模式，~1s 满蓄力）。
+                            for _ in 0..20 {
+                                bot.start_use_item();
+                                sleep(Duration::from_millis(50)).await;
+                            }
+                            bot.stop_use_item();
+                            // 放箭后服务端同步箭数可能有延迟，轮询最多 1.5s。
+                            let mut arrows_after = count_item(&bot, arrow_kind);
+                            for _ in 0..5 {
+                                if arrows_after < arrows_before {
+                                    break;
+                                }
+                                sleep(Duration::from_millis(300)).await;
+                                arrows_after = count_item(&bot, arrow_kind);
+                            }
+                            if let Some(o) = orig {
+                                let _ = bot.set_direction(o.y_rot(), o.x_rot());
+                            }
+                            let msg = match aimed_at {
+                                Some(t) => {
+                                    if arrows_after < arrows_before {
+                                        format!(
+                                            "已朝 {t} 射出一支箭（消耗 1，背包剩余 {arrows_after}）"
+                                        )
+                                    } else {
+                                        format!(
+                                            "已朝 {t} 放箭（箭数未变化 {arrows_after}，可能未命中目标或未消耗）"
+                                        )
+                                    }
+                                }
+                                None => {
+                                    if arrows_after < arrows_before {
+                                        format!(
+                                            "已朝当前方向射出一支箭（消耗 1，背包剩余 {arrows_after}）"
+                                        )
+                                    } else {
+                                        format!(
+                                            "已朝当前方向放箭（箭数未变化 {arrows_after}，可能未消耗）"
+                                        )
+                                    }
+                                }
+                            };
+                            if let Some(tx) = &result_tx {
+                                let _ = tx.send(format!("Action output:\n{msg}"));
+                            }
+                            let _ = evt_tx.send(BotEvent::Chat {
+                                content: format!("[射击] {msg}"),
+                            });
+                            state.action_mgr.clear_pending();
                         }
                         BotCommand::Craft2x2 { item, count } => {
                             match crate::azalea::craft::do_craft_2x2(&bot, &item, count).await {

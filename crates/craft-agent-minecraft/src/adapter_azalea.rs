@@ -605,6 +605,7 @@ fn mc_to_cmd(mc: MinecraftAction) -> BotCommand {
         MinecraftAction::StopFollow => BotCommand::StopFollow,
         MinecraftAction::SetMode { mode, enabled } => BotCommand::SetMode { mode, enabled },
         MinecraftAction::UseItem { item, yaw, pitch } => BotCommand::UseItem { item, yaw, pitch },
+        MinecraftAction::Shoot { target } => BotCommand::Shoot { target },
         MinecraftAction::Give {
             item,
             count,

@@ -250,6 +250,9 @@ pub enum MinecraftAction {
         yaw: Option<f32>,
         pitch: Option<f32>,
     },
+    /// P119：拉弓射箭（龙战远程必需）。target 为实体名（None=朝当前视角方向射）。
+    /// 装备弓 → 检查箭 → 可选转向目标 → 拉弦 ~1s → 放箭（ReleaseUseItem）。
+    Shoot { target: Option<String> },
     /// P68：把物品丢在玩家脚边（给予）。item 为物品 id，count 为数量（0=全部），
     /// target 为玩家名（None=最近的玩家）。
     Give {

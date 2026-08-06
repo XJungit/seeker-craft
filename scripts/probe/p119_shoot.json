@@ -1,0 +1,10 @@
+{
+  "steps": [
+    { "cmd": "chat /give @s bow 1", "wait_ms": 2000 },
+    { "cmd": "chat /give @s arrow 5", "wait_ms": 2000 },
+    { "cmd": "chat /tp @s ~ 130 ~", "wait_ms": 3000 },
+    { "cmd": "shoot", "wait_ms": 8000 },
+    { "cmd": "shoot pillager", "wait_ms": 8000 },
+    { "state": true }
+  ]
+}
