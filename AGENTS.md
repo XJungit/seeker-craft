@@ -161,7 +161,7 @@ craft-agent-autopilot    自主测试循环（build/test → anomaly → RCA →
 
 | 类别 | 工具 |
 |---|---|
-| 感知 | `perceive`, `memory`, `search_wiki` |
+| 感知 | `perceive`, `memory`, `search_wiki`, `search_for_block` |
 | 移动 | `goto`, `goto_player`, `mine_below`, `mine_above`, `pickup`, `follow`, `stop_follow` |
 | 挖掘 | `mine`, `make_obsidian` |
 | 交互 | `interact_block`, `interact_entity`, `attack`, `defend` |
@@ -380,7 +380,7 @@ probe bot 名 `craftbot_probe`，与 agent bot 共存不冲突。命令文本见
 `parse_chat_command`（azalea/commands.rs，支持 goto/mine x y z/minebelow/mineabove/attack/gather/
 craft/craft3/smelt/autocraft/place/open/enchant/trade/interact/interactblock x y z/tillandsow x y z seed/chat/chat 消息/
 follow/give/equip/discard/consume/chestview/chestwithdraw/chestdeposit/makeobsidian/pickup/defend/sleep/harvest/
-memory anchor/query/gotoplayer [玩家名]）。
+memory anchor/query/gotoplayer [玩家名]/searchblock <方块> [半径]）。
 需要 LLM 决策的测试（策略/规划/目标分解）才开 viewer+agent。
 
 新增工具命令时必须同时更新 `parse_chat_command`，否则 probe 无法驱动。

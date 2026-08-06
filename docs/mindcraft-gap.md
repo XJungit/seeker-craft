@@ -13,7 +13,7 @@
 | !goToPlayer | goto_player | ✅ | P111（2026-08-06）：按玩家名单次导航（LLM 工具 goto_player + probe 命令 gotoplayer [名字]），复用 P110 定位→Goto 派发模式，probe 实机验证（无参→最近玩家 / 按名→Jun / 不存在→报错）；持续跟随用 follow |
 | !followPlayer | follow / stop_follow | ✅ | |
 | !goToCoordinates | goto | ✅ | |
-| !searchForBlock | gather + perceive | 🟡 | 无"全局搜块返回坐标"（有 scan 记忆） |
+| !searchForBlock | search_for_block | ✅ | P112（2026-08-06）：搜块返回坐标列表（别名展开 + 按距离升序 + 最多 8 处），LLM 工具 search_for_block + probe 命令 searchblock <方块> [半径]；只搜不挖（要挖用 gather） |
 | !searchForEntity | perceive | 🟡 | 实体带坐标（P74） |
 | !moveAway | — | ❌ | LLM 层躲怪无工具（cowardice 自动做） |
 | !rememberHere / !savedPlaces / !goToRememberedPlace | memory + goto | ✅ | P110（2026-08-06）：GotoTool 增加可选 anchor 参数；命令层 `goto <名>` 单 token 非数字 → GotoAnchor；handler 用共享 WorldMemory 解析锚点转 Goto 复用全部导航逻辑；probe 新增 `memory anchor/query` 命令（probe 与 LLM 共享同一 WorldMemory 实例），probe 实机验证锚点设置 → 锚点导航闭环 |
@@ -210,6 +210,20 @@
 - **门槛**：workspace 全绿（craft-agent 171 + craft-agent-minecraft 151 + model 23 + regression 29）+ fmt/clippy `-D warnings` 全绿。
 
 > 当前主线：goto 家族已齐全（坐标 goto / 锚点 goto P110 / 玩家 goto_player P111 / 持续跟随 follow）。差距表命令层剩余：!moveAway（cowardice 自动做，取舍）、!setMode（配置层非 LLM）、!lookAt*（视觉无用）、!searchForBlock 全局搜块返回坐标（🟡，有 scan 记忆）。下一轮可选：!searchForBlock 全局搜块、或 LLM 策略层观测（craft 顺序/工作台放置）。
+
+## 修复记录：2026-08-06 P112 search_for_block 搜块返回坐标（gap !searchForBlock 闭环）
+
+> 触发：P111 后继续扫差距表——!searchForBlock（🟡 部分，gather 只走到+挖、无"返回坐标供规划"）升级为完整工具。
+
+- **P112 search_for_block（commit 8141136）**：
+  - smart_actions.rs 新增 `scan_blocks_all`（多种类多结果按距离升序，最多 max 个）+ `search_block_coords`（bot 层接口：别名展开 + 返回坐标与欧氏距离）
+  - 新 `BotCommand::SearchBlock { item, radius }`（radius clamp 4-96，默认 32）+ `MinecraftAction::SearchBlock` + LLM 工具 `search_for_block { block, radius? }`（read 效果，4 处同步 + run_plan parse_step `search_block` + rhai 注册）
+  - handler：扫描 → 输出"半径 N 内找到 M 处 {item}：item @ (x,y,z) 距离 d.m"（最多 8 处）+ 事件流 [搜索] 推送；找不到 → 明确报错 + [搜索失败] 事件
+  - probe 命令 `searchblock <方块> [半径]`；测试 chat_parser_search_block（默认半径 32/指定半径/无参 None）
+- **probe 实机验证 ✓（scripts/probe/p112_search_block.json）**：`searchblock grass_block` → 7 处坐标按距离升序（0.8-2.7m）✓；`searchblock oak_log` → 3 处（别名展开，lush_caves 红树林原木命中）✓；`searchblock diamond_ore 16` → "半径 16 内找不到 diamond_ore" + [搜索失败] 事件 ✓
+- **门槛**：workspace 全绿（craft-agent 171 + craft-agent-minecraft 152 + model 23 + regression 29）+ fmt/clippy `-D warnings` 全绿。
+
+> 当前主线：差距表命令层 ❌ 仅剩 !moveAway（cowardice 自动做，设计取舍）、!setMode（配置层非 LLM）、!lookAt*（视觉无用）。下一轮可选：LLM 策略层实机观测（craft 顺序/工作台放置/task_retry 引导，需 viewer+LLM），或 !moveAway 独立工具化。
 
 ## 最近修复记录（2026-08-03 · P103 viewer 启动根因 + 工作流固化）
 
