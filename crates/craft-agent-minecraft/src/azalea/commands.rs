@@ -10,6 +10,20 @@ pub enum BotCommand {
         y: i32,
         z: i32,
     },
+    /// P110：按锚点名导航（参考 Mindcraft goToRememberedPlace）。
+    /// handler 从 `bot.memory` 查锚点坐标后执行 goto；锚点不存在返回明确错误。
+    GotoAnchor {
+        name: String,
+    },
+    /// P110b：probe 侧操作共享 WorldMemory（与 LLM memory 工具同一实例）。
+    /// anchor: 设锚点（name,x,y,z,label）；query: 列全部锚点。
+    Memory {
+        action: String,
+        name: Option<String>,
+        x: Option<i32>,
+        y: Option<i32>,
+        z: Option<i32>,
+    },
     Mine {
         x: i32,
         y: i32,
@@ -256,8 +270,43 @@ pub fn parse_chat_command(content: &str) -> Option<BotCommand> {
         });
     }
     if let Some(rest) = content.strip_prefix("goto ") {
+        let rest = rest.trim();
+        // P110: 单个 token 非坐标格式 → 按锚点名导航（goto home）
+        // 坐标格式 `x y z` 三个数才走 parse_chat_coords，其余视为锚点名
+        let tokens: Vec<&str> = rest.split_whitespace().collect();
+        if tokens.len() == 1 && tokens[0].parse::<i32>().is_err() {
+            return Some(BotCommand::GotoAnchor {
+                name: tokens[0].to_string(),
+            });
+        }
         let (x, y, z) = parse_chat_coords(rest)?;
         return Some(BotCommand::Goto { x, y, z });
+    }
+    // P110b: memory anchor <name> <x> <y> <z> / memory query
+    if let Some(rest) = content.strip_prefix("memory ") {
+        let mut parts = rest.split_whitespace();
+        let action = parts.next()?.to_string();
+        return match action.as_str() {
+            "anchor" => {
+                let name = parts.next()?.to_string();
+                let (x, y, z) = parse_chat_coords(&parts.collect::<Vec<_>>().join(" "))?;
+                Some(BotCommand::Memory {
+                    action,
+                    name: Some(name),
+                    x: Some(x),
+                    y: Some(y),
+                    z: Some(z),
+                })
+            }
+            "query" => Some(BotCommand::Memory {
+                action,
+                name: None,
+                x: None,
+                y: None,
+                z: None,
+            }),
+            _ => None,
+        };
     }
     if let Some(rest) = content.strip_prefix("mine ") {
         let (x, y, z) = parse_chat_coords(rest)?;
@@ -520,5 +569,49 @@ mod chat_parser_tests {
         ));
         assert!(parse_chat_command("harvest 3").is_none());
         assert!(parse_chat_command("tillandsow 1 2").is_none());
+    }
+
+    /// P110：goto 单 token 非数字 → GotoAnchor；数字坐标仍走 Goto。
+    #[test]
+    fn chat_parser_goto_anchor_vs_coords() {
+        assert!(matches!(
+            parse_chat_command("goto home"),
+            Some(BotCommand::GotoAnchor { name }) if name == "home"
+        ));
+        assert!(matches!(
+            parse_chat_command("goto nether_portal"),
+            Some(BotCommand::GotoAnchor { name }) if name == "nether_portal"
+        ));
+        // 单数字不是锚点（坐标格式不完整 → None）
+        assert!(parse_chat_command("goto 10").is_none());
+        assert!(matches!(
+            parse_chat_command("goto 10 64 20"),
+            Some(BotCommand::Goto {
+                x: 10,
+                y: 64,
+                z: 20
+            })
+        ));
+    }
+
+    /// P110b：memory 命令解析（anchor/query）。
+    #[test]
+    fn chat_parser_memory_anchor_and_query() {
+        assert!(matches!(
+            parse_chat_command("memory anchor home 10 64 20"),
+            Some(BotCommand::Memory {
+                action,
+                name: Some(name),
+                x: Some(10),
+                y: Some(64),
+                z: Some(20),
+            }) if action == "anchor" && name == "home"
+        ));
+        assert!(matches!(
+            parse_chat_command("memory query"),
+            Some(BotCommand::Memory { action, name: None, x: None, y: None, z: None }) if action == "query"
+        ));
+        assert!(parse_chat_command("memory foo").is_none());
+        assert!(parse_chat_command("memory anchor home 1 2").is_none());
     }
 }

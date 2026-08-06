@@ -224,6 +224,10 @@ pub fn timeout_ticks(cmd: &BotCommand) -> u64 {
         BotCommand::Harvest => 600,             // 30s（走到作物+挖掘+等待拾取，最多 24 棵）
         // 寻路/挖掘
         BotCommand::Goto { .. } => 30, // 1.5s（长距离由 32m 限制拦截；无路径时快速失败）
+        // P110：锚点导航解析后转 Goto，沿用 Goto 超时。
+        BotCommand::GotoAnchor { .. } => 30,
+        // P110b：probe 侧 memory 操作即时完成。
+        BotCommand::Memory { .. } => 20,
         BotCommand::Mine { .. } => 200, // 10s（深板岩/黑曜石等硬方块可能慢；wooden_pickaxe 挖 deepslate ~4.5s）
         BotCommand::MineBelow => 200,   // 10s（持续下挖，由 Y≤-61 停止）
         BotCommand::MineAbove => 200,   // 10s（持续上挖，由头顶空气/Y≥320 停止）
@@ -274,6 +278,10 @@ pub fn timeout_ticks(cmd: &BotCommand) -> u64 {
 pub fn cmd_signature(cmd: &BotCommand) -> String {
     match cmd {
         BotCommand::Goto { .. } => "goto(#,#,#)".to_string(),
+        // P110：锚点导航签名含锚点名（不同锚点不算重复循环）。
+        BotCommand::GotoAnchor { name } => format!("goto_anchor({name})"),
+        // P110b：memory 操作签名含动作名。
+        BotCommand::Memory { action, .. } => format!("memory({action})"),
         BotCommand::Mine { .. } => "mine(#,#,#)".to_string(),
         BotCommand::MineBelow => "mine_below".to_string(),
         BotCommand::MineAbove => "mine_above".to_string(),
@@ -374,6 +382,30 @@ mod tests {
             count: 4,
         });
         assert_ne!(a, b, "不同 item 应有不同签名");
+    }
+
+    /// P110：锚点导航签名含锚点名；不同锚点不算重复循环。
+    #[test]
+    fn test_signature_goto_anchor_keeps_name() {
+        let home = cmd_signature(&BotCommand::GotoAnchor {
+            name: "home".into(),
+        });
+        let portal = cmd_signature(&BotCommand::GotoAnchor {
+            name: "nether_portal".into(),
+        });
+        assert_ne!(home, portal, "不同锚点应有不同签名");
+        assert!(home.contains("home"), "签名应含锚点名");
+    }
+
+    /// P110：锚点导航超时与 Goto 一致。
+    #[test]
+    fn test_timeout_goto_anchor_matches_goto() {
+        assert_eq!(
+            timeout_ticks(&BotCommand::GotoAnchor {
+                name: "home".into()
+            }),
+            timeout_ticks(&BotCommand::Goto { x: 0, y: 64, z: 0 })
+        );
     }
 
     #[test]

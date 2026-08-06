@@ -33,6 +33,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use craft_agent::core::memory::WorldMemory;
 use craft_agent_minecraft::azalea::{AzaleaBot, BotEvent, parse_chat_command};
 
 #[tokio::main]
@@ -50,7 +51,8 @@ async fn main() {
     };
 
     println!("[probe] 连接 {addr} ...");
-    let bot = AzaleaBot::connect(&addr, "craftbot_probe", None)
+    // P110b: probe 也携带共享 WorldMemory，可测 memory anchor/query + goto 锚点闭环
+    let bot = AzaleaBot::connect(&addr, "craftbot_probe", Some(WorldMemory::new()))
         .await
         .expect("连接失败");
     let bot = Arc::new(bot);

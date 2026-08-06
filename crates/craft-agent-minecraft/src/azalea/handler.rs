@@ -1146,6 +1146,97 @@ impl AzaleaBot {
                                 let _ = tx.send(format!("Action output:\nRAW|{out}"));
                             }
                         }
+                        // P110b: probe 侧共享 WorldMemory 操作（与 LLM memory 工具同一实例）。
+                        BotCommand::Memory {
+                            action,
+                            name,
+                            x,
+                            y,
+                            z,
+                        } => {
+                            let out = match action.as_str() {
+                                "anchor" => {
+                                    let n = name.as_deref().unwrap_or("anchor");
+                                    let p = MemoryPos::new(
+                                        x.unwrap_or(0),
+                                        y.unwrap_or(0),
+                                        z.unwrap_or(0),
+                                    );
+                                    if let Some(mem) = state.memory.as_ref() {
+                                        mem.set_anchor(n, Some(p), n);
+                                        format!("已设锚点 {n} @({},{},{})", p.x, p.y, p.z)
+                                    } else {
+                                        "无共享 WorldMemory".to_string()
+                                    }
+                                }
+                                "query" => {
+                                    if let Some(mem) = state.memory.as_ref() {
+                                        let anchors = mem.anchors();
+                                        if anchors.is_empty() {
+                                            "无锚点".to_string()
+                                        } else {
+                                            anchors
+                                                .iter()
+                                                .map(|a| {
+                                                    let p = a
+                                                        .pos
+                                                        .map(|p| {
+                                                            format!("({},{},{})", p.x, p.y, p.z)
+                                                        })
+                                                        .unwrap_or_default();
+                                                    format!("{} {p}", a.name)
+                                                })
+                                                .collect::<Vec<_>>()
+                                                .join(", ")
+                                        }
+                                    } else {
+                                        "无锚点".to_string()
+                                    }
+                                }
+                                other => format!("memory 未知动作 {other}"),
+                            };
+                            if let Some(tx) = &result_tx {
+                                let _ = tx.send(format!("Action output:\n{out}"));
+                            }
+                            state.action_mgr.clear_pending();
+                        }
+                        // P110: 按锚点名导航（goto home）。解析锚点 → 替换 pending 槽为 Goto
+                        //（busy=true 已置，clear_pending 后下一 tick Goto 正常轮询执行）。
+                        // 锚点不存在 → 明确报错。锚点解析失败自动回退 x/y/z 分支。
+                        BotCommand::GotoAnchor { name } => {
+                            let pos = state
+                                .memory
+                                .as_ref()
+                                .and_then(|mem| mem.find_anchor(&name).and_then(|a| a.pos));
+                            match pos {
+                                Some(p) => {
+                                    // 直接接管 pending 槽为 Goto（保留原 result_tx 以便结果回传）。
+                                    *state.action_mgr.pending.lock().unwrap() =
+                                        Some(QueuedCommand {
+                                            cmd: BotCommand::Goto {
+                                                x: p.x,
+                                                y: p.y,
+                                                z: p.z,
+                                            },
+                                            result_tx: result_tx.clone(),
+                                        });
+                                    let _ = evt_tx.send(BotEvent::Chat {
+                                        content: format!(
+                                            "[goto] 锚点 {name} -> ({},{},{})，开始导航",
+                                            p.x, p.y, p.z
+                                        ),
+                                    });
+                                }
+                                None => {
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!(
+                                            "Action output:\n锚点 {name} 不存在。可用 memory action=query 查看全部锚点。"
+                                        ));
+                                    }
+                                    state.action_mgr.clear_pending();
+                                }
+                            }
+                        }
                         BotCommand::Goto { x, y, z } => {
                             *state.mining_below.lock().unwrap() = false;
                             // P66：冷却拦截。按 bot 当前格子检查冷却（而非目标坐标，

@@ -18,17 +18,19 @@ impl GameTool for GotoTool {
         true
     }
     fn description(&self) -> &str {
-        "走到世界坐标 (x, y, z)。bot 使用内置 A* pathfinder 自动导航。参数：x,y,z 整数。"
+        "走到世界坐标 (x, y, z)，或按已记忆的命名锚点导航（anchor=\"home\"）。\
+         二选一：给 anchor 则忽略 x/y/z；给 x/y/z 则按坐标走。\
+         锚点由 memory action=anchor 设置。bot 使用内置 A* pathfinder 自动导航。"
     }
     fn parameters(&self) -> Value {
         serde_json::json!({
             "type": "object",
             "properties": {
-                "x": { "type": "integer", "description": "目标 X 坐标" },
-                "y": { "type": "integer", "description": "目标 Y 坐标" },
-                "z": { "type": "integer", "description": "目标 Z 坐标" }
-            },
-            "required": ["x", "y", "z"]
+                "x": { "type": "integer", "description": "目标 X 坐标（anchor 给定时可省略）" },
+                "y": { "type": "integer", "description": "目标 Y 坐标（anchor 给定时可省略）" },
+                "z": { "type": "integer", "description": "目标 Z 坐标（anchor 给定时可省略）" },
+                "anchor": { "type": "string", "description": "已记忆的锚点名（如 home），优先于 x/y/z" }
+            }
         })
     }
     fn execute(
@@ -37,10 +39,41 @@ impl GameTool for GotoTool {
         args: Value,
         _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
     ) -> anyhow::Result<ToolResult> {
+        // P110：anchor 优先——查 WorldMemory 锚点拿坐标，找不到报错提示。
+        if let Some(anchor) = args.get("anchor").and_then(|v| v.as_str()) {
+            let anchor = anchor.trim().to_string();
+            let found = self.ctx.memory.find_anchor(&anchor);
+            return match found.and_then(|a| a.pos) {
+                Some(p) => {
+                    let r = self.ctx.adapter.execute_shared(Action::Minecraft(
+                        MinecraftAction::Goto {
+                            x: p.x,
+                            y: p.y,
+                            z: p.z,
+                        },
+                    ))?;
+                    let msg = format!("锚点 {anchor} @({},{},{})：{}", p.x, p.y, p.z, r.detail);
+                    Ok(ToolResult {
+                        message: msg,
+                        is_error: !r.ok,
+                        images: vec![],
+                    })
+                }
+                None => Ok(ToolResult {
+                    message: format!(
+                        "锚点 {anchor} 不存在。先用 memory action=anchor name={anchor} 设置锚点，\
+                         或 memory action=query 查看现有锚点。"
+                    ),
+                    is_error: true,
+                    images: vec![],
+                }),
+            };
+        }
         let x = args
             .get("x")
             .and_then(|v| v.as_i64())
-            .ok_or_else(|| anyhow::anyhow!("缺少 x"))? as i32;
+            .ok_or_else(|| anyhow::anyhow!("缺少 x（或给 anchor 参数导航到锚点）"))?
+            as i32;
         let y = args
             .get("y")
             .and_then(|v| v.as_i64())

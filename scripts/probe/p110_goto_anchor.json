@@ -1,0 +1,7 @@
+{"between_delay_ms": 4000, "timeout_ms": 240000, "steps": [
+  {"cmd": "memory anchor home -487 94 -148"},
+  {"cmd": "chat /tp @a[name=craftbot_probe] -520 94 -140"},
+  {"wait_ms": 2000},
+  {"cmd": "goto home"},
+  {"state": true}
+]}

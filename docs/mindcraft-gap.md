@@ -16,7 +16,7 @@
 | !searchForBlock | gather + perceive | 🟡 | 无"全局搜块返回坐标"（有 scan 记忆） |
 | !searchForEntity | perceive | 🟡 | 实体带坐标（P74） |
 | !moveAway | — | ❌ | LLM 层躲怪无工具（cowardice 自动做） |
-| !rememberHere / !savedPlaces / !goToRememberedPlace | memory | 🟡 | 记忆有，goto 锚点无 |
+| !rememberHere / !savedPlaces / !goToRememberedPlace | memory + goto | ✅ | P110（2026-08-06）：GotoTool 增加可选 anchor 参数；命令层 `goto <名>` 单 token 非数字 → GotoAnchor；handler 用共享 WorldMemory 解析锚点转 Goto 复用全部导航逻辑；probe 新增 `memory anchor/query` 命令（probe 与 LLM 共享同一 WorldMemory 实例），probe 实机验证锚点设置 → 锚点导航闭环 |
 | !givePlayer | give | ✅ | |
 | !consume / !equip / !discard | consume / equip / discard | ✅ | |
 | !putInChest / !takeFromChest / !viewChest | chest_deposit/withdraw/view | ✅ | |
@@ -81,7 +81,7 @@
 | mineflayer-pvp（走位战斗） | self_defense 直打+strafe | ✅ | P87 无武器徒手攻击+绕侧走位 |
 | auto-eat（startAt=14+bannedFood） | auto_eat（P58/P73） | ✅ | 白名单等价 banned |
 | armor-manager 自动穿甲 | auto_armor（P79） | ✅ | 200 tick 检查，材料优先级 |
-| 记忆（rememberPlace/记忆库） | WorldMemory 7 类 | ✅ | 锚点 goto 缺失 |
+| 记忆（rememberPlace/记忆库） | WorldMemory 7 类 | ✅ | P110 锚点 goto 已完成（2026-08-06） |
 | full_state（世界全量查询） | perceive 分块 | 🟡 | |
 | lockdown（限制物品/禁命令） | blocked_actions? | 🟡 | |
 
