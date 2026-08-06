@@ -1,0 +1,17 @@
+{"between_delay_ms": 3000, "timeout_ms": 300000, "steps": [
+  {"cmd": "chat /tp @a[name=craftbot_probe] -520 94 -140"},
+  {"cmd": "chat /time set night"},
+  {"cmd": "chat /summon zombie -515 93 -135"},
+  {"wait_ms": 3000},
+  {"cmd": "moveaway zombie 20"},
+  {"wait_ms": 12000},
+  {"state": true},
+  {"cmd": "moveaway"},
+  {"wait_ms": 10000},
+  {"state": true},
+  {"cmd": "chat /time set day"},
+  {"wait_ms": 2000},
+  {"cmd": "moveaway zombie 20"},
+  {"wait_ms": 3000},
+  {"state": true}
+]}

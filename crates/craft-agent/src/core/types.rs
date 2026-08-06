@@ -230,6 +230,12 @@ pub enum MinecraftAction {
     /// P112：搜索指定方块在半径内的全部坐标（对齐 Mindcraft searchForBlock）。
     /// 只返回坐标列表供规划，不挖掘（要挖用 gather）。
     SearchBlock { item: String, radius: u32 },
+    /// P113：向远离指定实体的方向移动（对齐 Mindcraft moveAway）。
+    /// target 为实体名（None=最近的非玩家实体）；distance 为反向移动距离。
+    MoveAway {
+        target: Option<String>,
+        distance: u32,
+    },
     /// P68：停止跟随。
     StopFollow,
     /// P68：把物品丢在玩家脚边（给予）。item 为物品 id，count 为数量（0=全部），

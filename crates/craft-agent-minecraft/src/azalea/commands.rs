@@ -183,6 +183,12 @@ pub enum BotCommand {
         item: String,
         radius: u32,
     },
+    /// P113：向远离指定实体的方向移动（对齐 Mindcraft moveAway）。
+    /// target 为实体名（None=最近的非玩家实体）；distance 为反向移动距离（默认 8）。
+    MoveAway {
+        target: Option<String>,
+        distance: u32,
+    },
     /// P68：停止跟随（解除 Follow 模式）。
     StopFollow,
     /// P68：把物品丢在指定玩家脚边（玩家拾取）。item 为物品 id，count 为数量（0=全部）。
@@ -257,6 +263,26 @@ pub fn parse_chat_command(content: &str) -> Option<BotCommand> {
             .and_then(|value| value.parse().ok())
             .unwrap_or(32);
         return Some(BotCommand::SearchBlock { item, radius });
+    }
+    // P113: moveaway [实体名] [距离] —— 向远离指定实体的方向移动（默认 8m）。
+    if let Some(rest) = content.strip_prefix("moveaway") {
+        let rest = rest.trim();
+        if !rest.is_empty() {
+            let mut parts = rest.split_whitespace();
+            let first = parts.next()?.to_string();
+            let (target, distance) = match first.parse::<u32>() {
+                Ok(d) => (None, d),
+                Err(_) => (
+                    Some(first),
+                    parts.next().and_then(|v| v.parse().ok()).unwrap_or(8),
+                ),
+            };
+            return Some(BotCommand::MoveAway { target, distance });
+        }
+        return Some(BotCommand::MoveAway {
+            target: None,
+            distance: 8,
+        });
     }
     if let Some(rest) = content.strip_prefix("craft3 ") {
         let mut parts = rest.split_whitespace();
@@ -634,6 +660,33 @@ mod chat_parser_tests {
             Some(BotCommand::SearchBlock { item, radius }) if item == "diamond_ore" && radius == 64
         ));
         assert!(parse_chat_command("searchblock").is_none());
+    }
+
+    /// P113：moveaway 远离实体解析。
+    #[test]
+    fn chat_parser_move_away() {
+        assert!(matches!(
+            parse_chat_command("moveaway"),
+            Some(BotCommand::MoveAway {
+                target: None,
+                distance: 8
+            })
+        ));
+        assert!(matches!(
+            parse_chat_command("moveaway zombie"),
+            Some(BotCommand::MoveAway { target: Some(t), distance: 8 }) if t == "zombie"
+        ));
+        assert!(matches!(
+            parse_chat_command("moveaway zombie 20"),
+            Some(BotCommand::MoveAway { target: Some(t), distance: 20 }) if t == "zombie"
+        ));
+        assert!(matches!(
+            parse_chat_command("moveaway 15"),
+            Some(BotCommand::MoveAway {
+                target: None,
+                distance: 15
+            })
+        ));
     }
 
     /// P110：goto 单 token 非数字 → GotoAnchor；数字坐标仍走 Goto。

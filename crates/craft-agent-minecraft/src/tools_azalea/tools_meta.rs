@@ -670,6 +670,24 @@ fn build_rhai_engine(ctx: &Arc<AzaleaToolCtx>) -> rhai::Engine {
             },
         )
     });
+    let a = adapter.clone();
+    engine.register_fn(
+        "move_away",
+        move |target: String, distance: i64| -> String {
+            let target = if target.is_empty() {
+                None
+            } else {
+                Some(target)
+            };
+            _exec_action(
+                &a,
+                MinecraftAction::MoveAway {
+                    target,
+                    distance: distance.clamp(4, 64) as u32,
+                },
+            )
+        },
+    );
 
     // ===== 感知/蓝图（读路径，不经过 BotCommand 队列） =====
     engine.register_fn("perceive", move || -> String {

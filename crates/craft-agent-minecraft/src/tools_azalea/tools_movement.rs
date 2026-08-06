@@ -362,6 +362,71 @@ impl GameTool for GotoPlayerTool {
     }
 }
 
+/// P113：向远离指定实体的方向移动（对齐 Mindcraft moveAway）。
+/// 定位最近的目标实体（无参=最近非玩家实体），朝反向移动 distance 格。
+/// 用于预判危险主动拉开距离（creeper 靠近等），cowardice 是被动触发。
+pub struct MoveAwayTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl MoveAwayTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for MoveAwayTool {
+    fn name(&self) -> &str {
+        "move_away"
+    }
+    fn is_slow(&self) -> bool {
+        true
+    }
+    fn description(&self) -> &str {
+        "向远离指定实体的方向移动（实现\"躲开\"）。\n\
+         定位最近的目标实体（target 为实体名，可选；留空=最近的非玩家实体），\n\
+         沿反向水平移动 distance 格（默认 8，最大 64）后停下。\n\
+         用于主动拉开距离（如 creeper 靠近准备自爆、怪群包围）。\n\
+         也可以在游戏聊天框直接打 \"moveaway [实体名] [距离]\" 触发。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "target": { "type": "string", "description": "实体名（可选，留空=最近的非玩家实体）" },
+                "distance": { "type": "integer", "description": "反向移动距离，默认 8，最大 64" }
+            },
+            "required": []
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let target = args
+            .get("target")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string());
+        let distance = args.get("distance").and_then(|v| v.as_u64()).unwrap_or(8) as u32;
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::MoveAway {
+                target,
+                distance,
+            }))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}
+
 /// P68：停止跟随。
 pub struct StopFollowTool {
     ctx: Arc<AzaleaToolCtx>,

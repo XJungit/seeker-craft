@@ -1903,6 +1903,109 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             let _ = evt_tx.send(BotEvent::Chat { content: msg });
                         }
                         }
+                        // P113: 向远离指定实体的方向移动（moveaway [实体名] [距离]）。
+                        // 定位最近的目标实体（无参=最近非玩家实体，排除物品/经验球），
+                        // 计算水平反向向量 → goto bot_pos + 反向*distance（y 保持 bot 当前层）。
+                        BotCommand::MoveAway { target, distance } => {
+                            let distance = distance.clamp(4, 64);
+                            let entity_pos: Option<(azalea::Vec3, String)> = {
+                                let entities = bot.nearest_entities::<()>().ok();
+                                let self_id = bot.entity().id();
+                                let wanted = target.as_deref();
+                                let mut best: Option<(f64, azalea::Vec3, String)> = None;
+                                if let Some(entities) = entities {
+                                    for e in entities.iter() {
+                                        if e.id() == self_id {
+                                            continue;
+                                        }
+                                        let Ok(kind) = e.kind() else {
+                                            continue;
+                                        };
+                                        let kind = entity_kind_name(kind);
+                                        if matches!(
+                                            kind.as_str(),
+                                            "item"
+                                                | "experience_orb"
+                                                | "item_frame"
+                                                | "glow_item_frame"
+                                        ) {
+                                            continue;
+                                        }
+                                        let Ok(position) = e.position() else {
+                                            continue;
+                                        };
+                                        let Ok(d) = e.distance_to_client() else {
+                                            continue;
+                                        };
+                                        if let Some(wanted) = wanted {
+                                            let player_name = e
+                                                .component::<azalea::player::GameProfileComponent>()
+                                                .map(|profile| profile.name.clone())
+                                                .unwrap_or_default();
+                                            if player_name != wanted && kind != wanted {
+                                                continue;
+                                            }
+                                        }
+                                        let replace = match &best {
+                                            Some((bd, _, _)) => d < *bd,
+                                            None => true,
+                                        };
+                                        if replace {
+                                            best = Some((d, position, kind));
+                                        }
+                                    }
+                                }
+                                best.map(|(_, p, k)| (p, k))
+                            };
+                            match entity_pos {
+                                Some((ep, kind)) => match bot.position() {
+                                    Ok(bot_pos) => {
+                                        let dx = bot_pos.x - ep.x;
+                                        let dz = bot_pos.z - ep.z;
+                                        let dist = (dx * dx + dz * dz).sqrt();
+                                        let (nx, nz) = if dist < 0.01 {
+                                            (1.0, 0.0)
+                                        } else {
+                                            (dx / dist, dz / dist)
+                                        };
+                                        let tx_x = bot_pos.x + nx * distance as f64;
+                                        let tx_z = bot_pos.z + nz * distance as f64;
+                                        *state.action_mgr.pending.lock().unwrap() =
+                                            Some(QueuedCommand {
+                                                cmd: BotCommand::Goto {
+                                                    x: tx_x.floor() as i32,
+                                                    y: bot_pos.y.floor() as i32,
+                                                    z: tx_z.floor() as i32,
+                                                },
+                                                result_tx: result_tx.clone(),
+                                            });
+                                        let _ = evt_tx.send(BotEvent::Chat {
+                                                content: format!(
+                                                    "[远离] 远离 {kind} -> 反向 {distance}m 目标 ({},{},{})",
+                                                    tx_x.floor() as i32,
+                                                    bot_pos.y.floor() as i32,
+                                                    tx_z.floor() as i32
+                                                ),
+                                            });
+                                    }
+                                    Err(_) => {
+                                        let _ = evt_tx.send(BotEvent::Chat {
+                                            content: "[远离失败] 读取坐标失败".to_string(),
+                                        });
+                                        state.action_mgr.clear_pending();
+                                    }
+                                },
+                                None => {
+                                    let who =
+                                        target.clone().unwrap_or_else(|| "任何实体".to_string());
+                                    let msg = format!("附近找不到目标实体 {who}，无需远离。");
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!("Action output:\n{msg}"));
+                                    }
+                                    state.action_mgr.clear_pending();
+                                }
+                            }
+                        }
                         BotCommand::Craft2x2 { item, count } => {
                             match crate::azalea::craft::do_craft_2x2(&bot, &item, count).await {
                                 Ok(msg) => {

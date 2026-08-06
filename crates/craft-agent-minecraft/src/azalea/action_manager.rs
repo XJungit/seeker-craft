@@ -265,6 +265,8 @@ pub fn timeout_ticks(cmd: &BotCommand) -> u64 {
         BotCommand::GotoPlayer { .. } => 30,
         // P112：搜块返回坐标是读扫描，20s 足够。
         BotCommand::SearchBlock { .. } => 20,
+        // P113：远离=解析实体 + goto 反向，给 30s（同 GotoAnchor）。
+        BotCommand::MoveAway { .. } => 30,
         BotCommand::StopFollow => 20,
         BotCommand::Give { .. } => 400,
         // P88：raw dump 是调试通道，即时完成。
@@ -329,6 +331,11 @@ pub fn cmd_signature(cmd: &BotCommand) -> String {
         },
         // P112：签名含方块名（不同方块不算重复搜索）。
         BotCommand::SearchBlock { item, .. } => format!("search_block({item})"),
+        // P113：签名含目标名（不同目标不算重复远离）。
+        BotCommand::MoveAway { target, .. } => match target {
+            Some(t) => format!("move_away({t})"),
+            None => "move_away(any)".to_string(),
+        },
         BotCommand::StopFollow => "stop_follow".to_string(),
         BotCommand::Give { item, count, .. } => format!("give({item},{count})"),
         BotCommand::RawState => "raw_state".to_string(),
