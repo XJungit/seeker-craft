@@ -227,6 +227,9 @@ pub enum MinecraftAction {
     /// P111：按玩家名单次导航（对齐 Mindcraft goToPlayer）。target 为玩家名
     ///（None=最近的玩家）。只导航一次到目标当前坐标，不持续跟随（持续跟随用 Follow）。
     GotoPlayer { target: Option<String> },
+    /// P112：搜索指定方块在半径内的全部坐标（对齐 Mindcraft searchForBlock）。
+    /// 只返回坐标列表供规划，不挖掘（要挖用 gather）。
+    SearchBlock { item: String, radius: u32 },
     /// P68：停止跟随。
     StopFollow,
     /// P68：把物品丢在玩家脚边（给予）。item 为物品 id，count 为数量（0=全部），

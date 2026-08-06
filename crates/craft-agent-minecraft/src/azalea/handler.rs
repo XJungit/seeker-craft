@@ -2051,6 +2051,48 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                 }
                             }
                         }
+                        // P112: 搜块返回坐标（searchblock <方块> [半径]）。只扫描不挖掘，
+                        // 输出按距离升序的坐标列表供 LLM 规划（对齐 Mindcraft searchForBlock）。
+                        BotCommand::SearchBlock { item, radius } => {
+                            let radius = radius.clamp(4, 96) as i32;
+                            match crate::azalea::smart_actions::search_block_coords(
+                                &bot, &item, radius, 8,
+                            )
+                            .await
+                            {
+                                Ok(hits) => {
+                                    let lines: Vec<String> = hits
+                                        .iter()
+                                        .map(|(p, d)| {
+                                            format!(
+                                                "{item} @ ({},{},{}) 距离 {d:.1}m",
+                                                p.x, p.y, p.z
+                                            )
+                                        })
+                                        .collect();
+                                    let msg = format!(
+                                        "半径 {radius} 内找到 {} 处 {item}：\n{}",
+                                        lines.len(),
+                                        lines.join("\n")
+                                    );
+                                    let _ = evt_tx.send(BotEvent::Chat {
+                                        content: format!("[搜索] {msg}"),
+                                    });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!("Action output:\n{msg}"));
+                                    }
+                                }
+                                Err(e) => {
+                                    let _ = evt_tx.send(BotEvent::Chat {
+                                        content: format!("[搜索失败] {e}"),
+                                    });
+                                    if let Some(tx) = &result_tx {
+                                        let _ = tx.send(format!("Action output:\n{e}"));
+                                    }
+                                }
+                            }
+                            state.action_mgr.clear_pending();
+                        }
                         BotCommand::Place { item, x, y, z } => {
                             match crate::azalea::place::do_place(
                                 &bot,

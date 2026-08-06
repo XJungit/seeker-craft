@@ -177,6 +177,12 @@ pub enum BotCommand {
     GotoPlayer {
         name: Option<String>,
     },
+    /// P112：搜索指定方块在半径内的全部坐标（对齐 Mindcraft searchForBlock）。
+    /// 只返回坐标供规划，不挖掘（要挖用 gather）。
+    SearchBlock {
+        item: String,
+        radius: u32,
+    },
     /// P68：停止跟随（解除 Follow 模式）。
     StopFollow,
     /// P68：把物品丢在指定玩家脚边（玩家拾取）。item 为物品 id，count 为数量（0=全部）。
@@ -241,6 +247,16 @@ pub fn parse_chat_command(content: &str) -> Option<BotCommand> {
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(1),
         });
+    }
+    // P112: searchblock <方块> [半径] —— 搜块返回坐标（默认半径 32）。
+    if let Some(rest) = content.strip_prefix("searchblock ") {
+        let mut parts = rest.split_whitespace();
+        let item = parts.next()?.to_string();
+        let radius = parts
+            .next()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(32);
+        return Some(BotCommand::SearchBlock { item, radius });
     }
     if let Some(rest) = content.strip_prefix("craft3 ") {
         let mut parts = rest.split_whitespace();
@@ -604,6 +620,20 @@ mod chat_parser_tests {
             parse_chat_command("goto Jun"),
             Some(BotCommand::GotoAnchor { name }) if name == "Jun"
         ));
+    }
+
+    /// P112：searchblock 搜块返回坐标解析。
+    #[test]
+    fn chat_parser_search_block() {
+        assert!(matches!(
+            parse_chat_command("searchblock oak_log"),
+            Some(BotCommand::SearchBlock { item, radius }) if item == "oak_log" && radius == 32
+        ));
+        assert!(matches!(
+            parse_chat_command("searchblock diamond_ore 64"),
+            Some(BotCommand::SearchBlock { item, radius }) if item == "diamond_ore" && radius == 64
+        ));
+        assert!(parse_chat_command("searchblock").is_none());
     }
 
     /// P110：goto 单 token 非数字 → GotoAnchor；数字坐标仍走 Goto。

@@ -180,6 +180,73 @@ pub fn scan_blocks_multi(
     best.map(|(p, _)| p)
 }
 
+/// 扫描多种方块种类，返回全部匹配（按到中心距离升序），最多 `max` 个。
+/// P112：search_for_block 用——搜块返回坐标供 LLM 规划（不再只挖不报坐标）。
+pub fn scan_blocks_all(
+    world: &azalea_world::World,
+    center: azalea::Vec3,
+    kinds: &[BlockKind],
+    radius: i32,
+    max: usize,
+) -> Vec<BlockPos> {
+    let cx = center.x.floor() as i32;
+    let cy = center.y.floor() as i32;
+    let cz = center.z.floor() as i32;
+    let mut found = Vec::new();
+    for dx in -radius..=radius {
+        for dy in -radius..=radius {
+            for dz in -radius..=radius {
+                let pos = BlockPos::new(cx + dx, cy + dy, cz + dz);
+                if let Some(state) = world.get_block_state(pos) {
+                    let bk: BlockKind = state.into();
+                    if kinds.contains(&bk) {
+                        let dist = dx * dx + dy * dy + dz * dz;
+                        found.push((pos, dist));
+                    }
+                }
+            }
+        }
+    }
+    found.sort_by_key(|(_, d)| *d);
+    found.truncate(max);
+    found.into_iter().map(|(p, _)| p).collect()
+}
+
+/// P112：搜索指定方块在半径内的全部坐标（对齐 Mindcraft searchForBlock）。
+/// 别名展开（oak_log → 9 种原木）+ 按距离升序返回（含与 bot 的欧氏距离）。
+pub async fn search_block_coords(
+    bot: &Client,
+    item: &str,
+    radius: i32,
+    max: usize,
+) -> Result<Vec<(BlockPos, f64)>, String> {
+    let block_kinds = expand_block_aliases(item);
+    if block_kinds.is_empty() {
+        return Err(format!("未知方块 {item}"));
+    }
+    let hits = {
+        let world = bot.world().map_err(|e| format!("读取世界失败: {e:?}"))?;
+        let w = world.read();
+        let center = bot.position().map_err(|e| format!("读取坐标失败: {e:?}"))?;
+        let hits = scan_blocks_all(&w, center, &block_kinds, radius, max);
+        (hits, center)
+    };
+    let (hits, center) = hits;
+    if hits.is_empty() {
+        return Err(format!("半径 {radius} 内找不到 {item}"));
+    }
+    Ok(hits
+        .into_iter()
+        .map(|p| {
+            let d = ((p.x as f64 - center.x).powi(2)
+                + (p.y as f64 - center.y).powi(2)
+                + (p.z as f64 - center.z).powi(2))
+            .sqrt();
+            (p, d)
+        })
+        .collect())
+}
+
 /// P30 新增（2026-07-27）：返回目标方块的典型 Y 生成范围（vanilla 规则）。
 ///
 /// 用于 gather 失败时给 LLM 明确的 Y 提示：

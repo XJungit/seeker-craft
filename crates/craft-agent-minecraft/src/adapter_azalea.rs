@@ -600,6 +600,7 @@ fn mc_to_cmd(mc: MinecraftAction) -> BotCommand {
         },
         MinecraftAction::Follow { target } => BotCommand::Follow { target },
         MinecraftAction::GotoPlayer { target } => BotCommand::GotoPlayer { name: target },
+        MinecraftAction::SearchBlock { item, radius } => BotCommand::SearchBlock { item, radius },
         MinecraftAction::StopFollow => BotCommand::StopFollow,
         MinecraftAction::Give {
             item,

@@ -184,6 +184,67 @@ impl GameTool for MemoryTool {
     }
 }
 
+/// P112：搜块返回坐标（对齐 Mindcraft searchForBlock）。
+/// 在半径内扫描指定方块（别名自动展开：oak_log → 9 种原木等），
+/// 返回按距离升序的坐标列表供规划；不挖掘（要挖用 gather）。
+pub struct SearchBlockTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl SearchBlockTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for SearchBlockTool {
+    fn name(&self) -> &str {
+        "search_for_block"
+    }
+    fn description(&self) -> &str {
+        "搜索指定方块，返回半径内全部匹配坐标（按距离升序，最多 8 处）。\n\
+         只扫描不挖掘（要挖用 gather）。别名自动展开（oak_log 匹配全部原木变体、\n\
+         iron_ore 匹配深板岩变体）。找矿/找资源时先搜索坐标再规划路线。\n\
+         block 为方块 id（如 diamond_ore / oak_log）；radius 为扫描半径（默认 32，最大 96）。\n\
+         也可以在游戏聊天框直接打 \"searchblock <方块> [半径]\" 触发。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "block": { "type": "string", "description": "方块 id，如 diamond_ore / oak_log" },
+                "radius": { "type": "integer", "description": "扫描半径，默认 32，最大 96" }
+            },
+            "required": ["block"]
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::read()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let block = args
+            .get("block")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| anyhow::anyhow!("缺少 block"))?;
+        let radius = args.get("radius").and_then(|v| v.as_u64()).unwrap_or(32) as u32;
+        let r =
+            self.ctx
+                .adapter
+                .execute_shared(Action::Minecraft(MinecraftAction::SearchBlock {
+                    item: block.to_string(),
+                    radius,
+                }))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}
+
 /// 搜索 Minecraft Wiki（中文源，国内可访问）。
 /// 使用 Bilibili 游戏 Wiki（wiki.biligame.com/mc）的 MediaWiki 搜索 API。
 #[allow(dead_code)]

@@ -263,6 +263,8 @@ pub fn timeout_ticks(cmd: &BotCommand) -> u64 {
         BotCommand::Follow { .. } => 20,
         // P111：按玩家名单次导航——先解析玩家坐标再走 Goto，给 30s（同 GotoAnchor）。
         BotCommand::GotoPlayer { .. } => 30,
+        // P112：搜块返回坐标是读扫描，20s 足够。
+        BotCommand::SearchBlock { .. } => 20,
         BotCommand::StopFollow => 20,
         BotCommand::Give { .. } => 400,
         // P88：raw dump 是调试通道，即时完成。
@@ -325,6 +327,8 @@ pub fn cmd_signature(cmd: &BotCommand) -> String {
             Some(n) => format!("goto_player({n})"),
             None => "goto_player(any)".to_string(),
         },
+        // P112：签名含方块名（不同方块不算重复搜索）。
+        BotCommand::SearchBlock { item, .. } => format!("search_block({item})"),
         BotCommand::StopFollow => "stop_follow".to_string(),
         BotCommand::Give { item, count, .. } => format!("give({item},{count})"),
         BotCommand::RawState => "raw_state".to_string(),

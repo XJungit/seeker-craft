@@ -1,0 +1,11 @@
+{"between_delay_ms": 3000, "timeout_ms": 240000, "steps": [
+  {"cmd": "chat /tp @a[name=craftbot_probe] -520 94 -140"},
+  {"wait_ms": 2000},
+  {"cmd": "searchblock grass_block"},
+  {"wait_ms": 3000},
+  {"cmd": "searchblock oak_log"},
+  {"wait_ms": 3000},
+  {"cmd": "searchblock diamond_ore 16"},
+  {"wait_ms": 3000},
+  {"state": true}
+]}

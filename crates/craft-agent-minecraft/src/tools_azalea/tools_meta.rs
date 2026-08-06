@@ -660,6 +660,16 @@ fn build_rhai_engine(ctx: &Arc<AzaleaToolCtx>) -> rhai::Engine {
             },
         )
     });
+    let a = adapter.clone();
+    engine.register_fn("search_block", move |item: String, radius: i64| -> String {
+        _exec_action(
+            &a,
+            MinecraftAction::SearchBlock {
+                item,
+                radius: radius.clamp(4, 96) as u32,
+            },
+        )
+    });
 
     // ===== 感知/蓝图（读路径，不经过 BotCommand 队列） =====
     engine.register_fn("perceive", move || -> String {
