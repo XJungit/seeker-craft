@@ -603,6 +603,7 @@ fn mc_to_cmd(mc: MinecraftAction) -> BotCommand {
         MinecraftAction::SearchBlock { item, radius } => BotCommand::SearchBlock { item, radius },
         MinecraftAction::MoveAway { target, distance } => BotCommand::MoveAway { target, distance },
         MinecraftAction::StopFollow => BotCommand::StopFollow,
+        MinecraftAction::SetMode { mode, enabled } => BotCommand::SetMode { mode, enabled },
         MinecraftAction::Give {
             item,
             count,

@@ -87,7 +87,7 @@ pub(crate) use tools_meta::{lint_action_script, lint_script};
 pub use tools_mining::{MakeObsidianTool, MineTool};
 pub use tools_movement::{
     FollowTool, GotoPlayerTool, GotoTool, MineAboveTool, MineBelowTool, MoveAwayTool, PickupTool,
-    StopFollowTool,
+    SetModeTool, StopFollowTool,
 };
 pub use tools_perceive::{MemoryTool, PerceiveTool, SearchBlockTool, SearchWikiTool};
 pub use tools_placement::{BuildBlueprintTool, BuildTool, ListBlueprintsTool, PlaceTool};
@@ -136,6 +136,7 @@ pub fn action_for(name: &str) -> Option<&'static str> {
         "give" => Some("Give"),
         "search_for_block" => Some("SearchBlock"),
         "move_away" => Some("MoveAway"),
+        "set_mode" => Some("SetMode"),
         _ => None,
     }
 }
@@ -247,6 +248,7 @@ pub const MINECRAFT_ACTION_VARIANTS: &[&str] = &[
     "Give",
     "SearchBlock",
     "MoveAway",
+    "SetMode",
 ];
 
 /// 将 plan 步骤中的 action 名和参数解析为 MinecraftAction。
@@ -401,6 +403,13 @@ fn parse_step(action: &str, step: &serde_json::Value) -> anyhow::Result<Minecraf
             target: str("target"),
             distance: u32("distance").unwrap_or(8),
         }),
+        "set_mode" => Ok(MinecraftAction::SetMode {
+            mode: str("mode").ok_or_else(|| anyhow::anyhow!("set_mode 缺少 mode"))?,
+            enabled: step
+                .get("enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true),
+        }),
         "set_goal" => Ok(MinecraftAction::Chat {
             content: format!("[set_goal] {}", str("goal").unwrap_or_default()),
         }),
@@ -410,7 +419,7 @@ fn parse_step(action: &str, step: &serde_json::Value) -> anyhow::Result<Minecraf
             "perceive 不支持在 run_plan 里调用（agent 主循环每轮自动注入 perceive，plan 里只放动作）"
         )),
         other => Err(anyhow::anyhow!(
-            "不支持的 action: {other}（支持: goto/mine/mine_below/mine_above/interact/interact_entity/attack/chat/craft/craft_3x3/smelt/gather/place/open/auto_craft/enchant/trade/pickup/defend/make_obsidian/equip/discard/consume/chest_view/chest_withdraw/chest_deposit/follow/goto_player/stop_follow/give/search_block/move_away）"
+            "不支持的 action: {other}（支持: goto/mine/mine_below/mine_above/interact/interact_entity/attack/chat/craft/craft_3x3/smelt/gather/place/open/auto_craft/enchant/trade/pickup/defend/make_obsidian/equip/discard/consume/chest_view/chest_withdraw/chest_deposit/follow/goto_player/stop_follow/give/search_block/move_away/set_mode）"
         )),
     }
 }
@@ -499,6 +508,7 @@ pub fn create_mc_azalea_tools_full(
         Box::new(GiveTool::new(ctx.clone())),
         Box::new(SearchBlockTool::new(ctx.clone())),
         Box::new(MoveAwayTool::new(ctx.clone())),
+        Box::new(SetModeTool::new(ctx.clone())),
         Box::new(ConsumeTool::new(ctx.clone())),
         Box::new(ChestViewTool::new(ctx.clone())),
         Box::new(ChestWithdrawTool::new(ctx.clone())),

@@ -268,6 +268,8 @@ pub fn timeout_ticks(cmd: &BotCommand) -> u64 {
         // P113：远离=解析实体 + goto 反向，给 30s（同 GotoAnchor）。
         BotCommand::MoveAway { .. } => 30,
         BotCommand::StopFollow => 20,
+        // P116：模式开关即时生效。
+        BotCommand::SetMode { .. } => 20,
         BotCommand::Give { .. } => 400,
         // P88：raw dump 是调试通道，即时完成。
         BotCommand::RawState => 20,
@@ -337,6 +339,10 @@ pub fn cmd_signature(cmd: &BotCommand) -> String {
             None => "move_away(any)".to_string(),
         },
         BotCommand::StopFollow => "stop_follow".to_string(),
+        // P116：签名含模式名与开关（不同模式/开关不算重复操作）。
+        BotCommand::SetMode { mode, enabled } => {
+            format!("set_mode({mode},{})", if *enabled { "on" } else { "off" })
+        }
         BotCommand::Give { item, count, .. } => format!("give({item},{count})"),
         BotCommand::RawState => "raw_state".to_string(),
     }

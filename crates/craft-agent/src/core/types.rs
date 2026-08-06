@@ -238,6 +238,10 @@ pub enum MinecraftAction {
     },
     /// P68：停止跟随。
     StopFollow,
+    /// P116：开关自动反应式模式（对齐 Mindcraft setMode）。mode 为模式名
+    ///（self_preservation/self_defense/cowardice/hunting/item_collecting），
+    /// enabled=true 开（默认）/false 关。关闭后 handler 不再自动执行该模式动作。
+    SetMode { mode: String, enabled: bool },
     /// P68：把物品丢在玩家脚边（给予）。item 为物品 id，count 为数量（0=全部），
     /// target 为玩家名（None=最近的玩家）。
     Give {

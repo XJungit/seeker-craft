@@ -191,6 +191,13 @@ pub enum BotCommand {
     },
     /// P68：停止跟随（解除 Follow 模式）。
     StopFollow,
+    /// P116：开关自动反应式模式（对齐 Mindcraft setMode）。mode 为模式名
+    ///（self_preservation/self_defense/cowardice/hunting/item_collecting），
+    /// enabled=true 开（默认）/false 关。关闭后 handler 不再自动执行该模式动作。
+    SetMode {
+        mode: String,
+        enabled: bool,
+    },
     /// P68：把物品丢在指定玩家脚边（玩家拾取）。item 为物品 id，count 为数量（0=全部）。
     /// target 为玩家名（None 表示最近的其他玩家）。基于现有 Discard 能力，但丢在玩家坐标而非 bot 脚边。
     Give {
@@ -283,6 +290,21 @@ pub fn parse_chat_command(content: &str) -> Option<BotCommand> {
             target: None,
             distance: 8,
         });
+    }
+    // P116: setmode <模式> on|off —— 开关自动反应式模式。
+    if let Some(rest) = content.strip_prefix("setmode") {
+        let rest = rest.trim();
+        if rest.is_empty() || rest == "list" {
+            return Some(BotCommand::SetMode {
+                mode: "list".into(),
+                enabled: false,
+            });
+        }
+        let mut parts = rest.split_whitespace();
+        let mode = parts.next()?.to_string();
+        let flag = parts.next().unwrap_or("on");
+        let enabled = flag != "off" && flag != "0" && flag != "false";
+        return Some(BotCommand::SetMode { mode, enabled });
     }
     if let Some(rest) = content.strip_prefix("craft3 ") {
         let mut parts = rest.split_whitespace();
@@ -686,6 +708,29 @@ mod chat_parser_tests {
                 target: None,
                 distance: 15
             })
+        ));
+    }
+
+    fn chat_parser_set_mode() {
+        assert!(matches!(
+            parse_chat_command("setmode hunting off"),
+            Some(BotCommand::SetMode { mode, enabled: false }) if mode == "hunting"
+        ));
+        assert!(matches!(
+            parse_chat_command("setmode self_defense on"),
+            Some(BotCommand::SetMode { mode, enabled: true }) if mode == "self_defense"
+        ));
+        assert!(matches!(
+            parse_chat_command("setmode item_collecting"),
+            Some(BotCommand::SetMode { mode, enabled: true }) if mode == "item_collecting"
+        ));
+        assert!(matches!(
+            parse_chat_command("setmode list"),
+            Some(BotCommand::SetMode { mode, .. }) if mode == "list"
+        ));
+        assert!(matches!(
+            parse_chat_command("setmode cowardice 0"),
+            Some(BotCommand::SetMode { mode, enabled: false }) if mode == "cowardice"
         ));
     }
 

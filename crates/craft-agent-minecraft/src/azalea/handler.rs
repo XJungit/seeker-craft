@@ -18,7 +18,7 @@ use azalea::prelude::*;
 use azalea_registry::DataRegistryKey;
 use azalea_registry::builtin::{BlockKind, EntityKind, ItemKind};
 use craft_agent::core::memory::{MemoryKind, MemoryPos, WorldMemory};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -279,6 +279,9 @@ pub struct BotState {
     /// 解决 done 判定与反馈歧义：done 轮询用实际目标判空气（否则修正挖掘被
     /// 立即终结），done 分支据 original_air 区分"成功挖掉/修正成功/空气 no-op"。
     pub last_mine_eff: Arc<Mutex<Option<(BlockPos, bool)>>>,
+    /// P116：被禁用的自动反应式模式集合（set_mode 开关）。空=全部启用。
+    /// 模式名：self_preservation/self_defense/cowardice/hunting/item_collecting。
+    pub mode_switches: Arc<Mutex<HashSet<String>>>,
 }
 
 impl Default for BotState {
@@ -308,7 +311,18 @@ impl Default for BotState {
             combat_strafe_cd: Arc::new(Mutex::new(0)),
             last_mine_eff: Arc::new(Mutex::new(None)),
             cancel_flag: Arc::new(AtomicBool::new(false)),
+            mode_switches: Arc::new(Mutex::new(HashSet::new())),
         }
+    }
+}
+
+impl BotState {
+    /// P116：查询自动反应式模式是否被 set_mode 禁用。
+    pub fn mode_disabled(&self, mode: &str) -> bool {
+        self.mode_switches
+            .lock()
+            .map(|s| s.contains(mode))
+            .unwrap_or(false)
     }
 }
 
@@ -2006,6 +2020,69 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                 }
                             }
                         }
+                        // P116: 开关自动反应式模式（setmode <模式> on|off / setmode list）。
+                        // mode="list" 仅查询当前禁用集合，不修改。
+                        BotCommand::SetMode { mode, enabled } => {
+                            const SWITCHABLE: [&str; 5] = [
+                                "self_preservation",
+                                "self_defense",
+                                "cowardice",
+                                "hunting",
+                                "item_collecting",
+                            ];
+                            let (msg, chat): (String, String) = if mode == "list" {
+                                let disabled = state.mode_switches.lock().unwrap().clone();
+                                if disabled.is_empty() {
+                                    ("全部自动模式已启用".to_string(), String::new())
+                                } else {
+                                    let list = {
+                                        let mut v: Vec<String> = disabled.iter().cloned().collect();
+                                        v.sort();
+                                        v.join(", ")
+                                    };
+                                    (format!("已禁用的自动模式: {list}"), String::new())
+                                }
+                            } else if SWITCHABLE.contains(&mode.as_str()) {
+                                if enabled {
+                                    let removed =
+                                        state.mode_switches.lock().unwrap().remove(mode.as_str());
+                                    if removed {
+                                        (
+                                            format!("已启用自动模式 {mode}"),
+                                            format!("[模式] 自动模式 {mode} 已启用"),
+                                        )
+                                    } else {
+                                        (format!("自动模式 {mode} 本来就是启用的"), String::new())
+                                    }
+                                } else {
+                                    let added =
+                                        state.mode_switches.lock().unwrap().insert(mode.clone());
+                                    if added {
+                                        (
+                                            format!("已禁用自动模式 {mode}"),
+                                            format!("[模式] 自动模式 {mode} 已禁用"),
+                                        )
+                                    } else {
+                                        (format!("自动模式 {mode} 本来就被禁用"), String::new())
+                                    }
+                                }
+                            } else {
+                                (
+                                    format!(
+                                        "不支持的自动模式: {mode}（可开关: {}）",
+                                        SWITCHABLE.join("/")
+                                    ),
+                                    String::new(),
+                                )
+                            };
+                            if let Some(tx) = &result_tx {
+                                let _ = tx.send(format!("Action output:\n{msg}"));
+                            }
+                            if !chat.is_empty() {
+                                let _ = evt_tx.send(BotEvent::Chat { content: chat });
+                            }
+                            state.action_mgr.clear_pending();
+                        }
                         BotCommand::Craft2x2 { item, count } => {
                             match crate::azalea::craft::do_craft_2x2(&bot, &item, count).await {
                                 Ok(msg) => {
@@ -3638,7 +3715,10 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                 // ===== 反应式 modes（每 tick 检查，直接执行动作，不依赖 LLM）=====
                 // self_preservation：检测火/岩浆，自动脱困
                 // 使用 ActionManager 的 High 优先级抢占当前 pending（如正在合成时着火立即打断）
-                if let Ok(p) = bot.position() {
+                // P116：set_mode 可禁用（mode_switches 集合）。
+                if !state.mode_disabled("self_preservation")
+                    && let Ok(p) = bot.position()
+                {
                     let foot = BlockPos::new(
                         p.x.floor() as i32,
                         (p.y - 1.0).floor() as i32,
@@ -3747,7 +3827,9 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                 // （30-60s/回合），动物跑了/没 LLM 关注就没有食物来源。
                 // 实现：100 tick 节流 + is_idle + hp≥10（濒死让位 cowardice）；
                 // 攻击后 5s 拾取窗口内自动 pickup 掉落物。
-                if bot.ticks_connected().is_multiple_of(100)
+                // P116：set_mode 可禁用（mode_switches 集合）。
+                if !state.mode_disabled("hunting")
+                    && bot.ticks_connected().is_multiple_of(100)
                     && state.action_mgr.is_idle()
                     && !*state.mining_below.lock().unwrap()
                     && bot.health().unwrap_or(20.0) >= 10.0
@@ -3824,7 +3906,9 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                 // （30-60s/回合注意不到地上 raw_iron/diamond——实测 item:6@5m 无人捡）。
                 // 每 200 tick（~10s）：空闲时 8m 内有 item 实体 → 自动拾取。
                 // 背包空位保护：空槽 <2 时跳过（避免捡垃圾占满背包）。
-                if bot.ticks_connected().is_multiple_of(200)
+                // P116：set_mode 可禁用（mode_switches 集合）。
+                if !state.mode_disabled("item_collecting")
+                    && bot.ticks_connected().is_multiple_of(200)
                     && state.action_mgr.is_idle()
                     && !*state.mining_below.lock().unwrap()
                 {
@@ -3957,7 +4041,8 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                 // Mindcraft 是无条件 16m 逃，我们保留 hp 门槛避免 bot 见怪就放弃主线）。
                 // 地下→自动向上挖洞逃生（僵尸不会挖方块）；地表→向远离敌人方向走 20 格。
                 // 优先于 self_defense：hp<10 时 self_defense 的攻击会被跳过。
-                if bot.ticks_connected().is_multiple_of(100) {
+                // P116：set_mode 可禁用（mode_switches 集合）。
+                if !state.mode_disabled("cowardice") && bot.ticks_connected().is_multiple_of(100) {
                     let health = bot.health().unwrap_or(20.0);
                     if health < 10.0 {
                         let mut flee_dir: Option<(f64, f64)> = None;
@@ -4091,7 +4176,9 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                 // P88-c：hp 条件移到内层——低血只放弃「远处逼近」，
                 // 贴脸（≤3.2m）怪照打：cowardice 逃跑途中被贴脸怪追着咬，
                 // 不反击只会越逃越死（实机验证 P88-b 时 bot 8/20 全程逃跑被追）。
-                if !state.action_mgr.is_busy()
+                // P116：set_mode 可禁用（mode_switches 集合）。
+                if !state.mode_disabled("self_defense")
+                    && !state.action_mgr.is_busy()
                     && bot.ticks_connected().is_multiple_of(20)
                     && let Ok(entities) = bot.nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>() {
                     let self_id = bot.entity().id();

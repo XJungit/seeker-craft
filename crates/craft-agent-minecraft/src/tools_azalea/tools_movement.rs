@@ -427,6 +427,74 @@ impl GameTool for MoveAwayTool {
     }
 }
 
+/// P116：开关自动反应式模式（对齐 Mindcraft setMode）。
+/// mode 为模式名（self_preservation/self_defense/cowardice/hunting/item_collecting），
+/// enabled=true 开（默认）/false 关。关闭后 handler 不再自动执行该模式动作。
+pub struct SetModeTool {
+    ctx: Arc<AzaleaToolCtx>,
+}
+impl SetModeTool {
+    pub fn new(ctx: Arc<AzaleaToolCtx>) -> Self {
+        Self { ctx }
+    }
+}
+impl GameTool for SetModeTool {
+    fn name(&self) -> &str {
+        "set_mode"
+    }
+    fn is_slow(&self) -> bool {
+        false
+    }
+    fn description(&self) -> &str {
+        "开关自动反应式模式（默认全部启用）。\n\
+         可开关模式：self_preservation（火/岩浆自动脱困）、self_defense（自动攻击附近敌对）、\n\
+         cowardice（低血自动逃离）、hunting（自动狩猎动物）、item_collecting（自动捡掉落物）。\n\
+         关闭某模式后 bot 不再自动执行该行为（如要保护动物可关 hunting，要安静潜入可关 self_defense）。\n\
+         用 mode=\"list\" 查询当前禁用列表。也可以在游戏聊天框直接打 \"setmode <模式> on|off\" 触发。"
+    }
+    fn parameters(&self) -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": {
+                "mode": { "type": "string", "description": "模式名或 list" },
+                "enabled": { "type": "boolean", "description": "true=启用（默认），false=禁用" }
+            },
+            "required": ["mode"]
+        })
+    }
+    fn effects(&self) -> ToolEffects {
+        ToolEffects::write()
+    }
+    fn execute(
+        &self,
+        _call_id: &str,
+        args: Value,
+        _on_update: Option<craft_agent::core::tool::ToolUpdateFn>,
+    ) -> anyhow::Result<ToolResult> {
+        let mode = args
+            .get("mode")
+            .and_then(|v| v.as_str())
+            .unwrap_or("list")
+            .to_string();
+        let enabled = args
+            .get("enabled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let r = self
+            .ctx
+            .adapter
+            .execute_shared(Action::Minecraft(MinecraftAction::SetMode {
+                mode,
+                enabled,
+            }))?;
+        Ok(ToolResult {
+            message: r.detail,
+            is_error: !r.ok,
+            images: vec![],
+        })
+    }
+}
+
 /// P68：停止跟随。
 pub struct StopFollowTool {
     ctx: Arc<AzaleaToolCtx>,
