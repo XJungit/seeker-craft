@@ -380,6 +380,23 @@ mod tests {
         );
     }
 
+    /// P117 回归测试：flint_and_steel 是 2×2 形状配方（vanilla ["F","I"]：iron_ingot 上, flint 下）。
+    /// 此前手写表无此条目且 2×2 不走 RecipeBook → tier5_nether_portal 任务断裂。
+    #[test]
+    fn regression_lookup_shaped_2x2_finds_flint_and_steel() {
+        let candidates = lookup_shaped_2x2("flint_and_steel");
+        assert_eq!(candidates.len(), 1, "flint_and_steel 应有 1 个形状候选");
+        let (cells, out) = candidates[0];
+        assert_eq!(out, 1, "flint_and_steel 每次产出 1");
+        assert!(cells.contains(&(1, "iron_ingot")), "slot1 应为 iron_ingot");
+        assert!(cells.contains(&(3, "flint")), "slot3 应为 flint");
+        assert_eq!(lookup_shaped_2x2("minecraft:flint_and_steel").len(), 1);
+        assert!(
+            lookup_recipe("flint_and_steel").is_none(),
+            "顺序填充表不应含它"
+        );
+    }
+
     /// P17 回归测试：lookup_smelt_all 必须能查到 SMELT_RECIPES 表中的所有熔炼配方。
     /// 历史bug：原 lookup_smelt 用 normalize_item() 给 id 加 "minecraft:" 前缀，
     /// 但表里存的是裸 id（如 "iron_ingot"），导致查找永远 false → smelt 报"不支持 iron_ingot"。

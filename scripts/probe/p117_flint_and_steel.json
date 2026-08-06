@@ -1,0 +1,12 @@
+{
+  "steps": [
+    { "cmd": "chat /give @s iron_ingot 1", "wait_ms": 2000 },
+    { "cmd": "chat /give @s flint 1", "wait_ms": 2000 },
+    { "cmd": "craft flint_and_steel 1", "wait_ms": 4000 },
+    { "cmd": "chat /give @s iron_ingot 1", "wait_ms": 2000 },
+    { "cmd": "chat /give @s flint 1", "wait_ms": 2000 },
+    { "cmd": "chat /give @s flint 1", "wait_ms": 2000 },
+    { "cmd": "autocraft flint_and_steel 2", "wait_ms": 6000 },
+    { "state": true }
+  ]
+}

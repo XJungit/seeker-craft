@@ -44,6 +44,10 @@ const SHAPED_2X2: &[ShapedEntry] = &[
     ("torch", &[(1, "coal"), (3, "stick")], 4),
     // torch (charcoal 变体): charcoal 在上, stick 在下
     ("torch", &[(1, "charcoal"), (3, "stick")], 4),
+    // P117: flint_and_steel 是 2×2 配方（vanilla shape ["F","I"]：iron_ingot 上, flint 下）。
+    // 此前手写表无此条目且 2×2 不走 RecipeBook → craft/auto_craft 合成失败，
+    // tier5_nether_portal 任务（goal 引导 craft(item="flint_and_steel")）断裂（知识→能力断裂，P83 同模式）。
+    ("flint_and_steel", &[(1, "iron_ingot"), (3, "flint")], 1),
 ];
 
 /// 查找 2×2 形状配方的所有候选（按表中顺序，coal 优先于 charcoal）。
