@@ -10,7 +10,7 @@
 |---|---|---|---|
 | !newAction | new_action | ✅ | |
 | !stop / !stfu / !restart / !clearChat | pause_goal | 🟡 | compaction 自动清 |
-| !goToPlayer | — | ❌ | 按玩家名 goto（目前只能 follow） |
+| !goToPlayer | goto_player | ✅ | P111（2026-08-06）：按玩家名单次导航（LLM 工具 goto_player + probe 命令 gotoplayer [名字]），复用 P110 定位→Goto 派发模式，probe 实机验证（无参→最近玩家 / 按名→Jun / 不存在→报错）；持续跟随用 follow |
 | !followPlayer | follow / stop_follow | ✅ | |
 | !goToCoordinates | goto | ✅ | |
 | !searchForBlock | gather + perceive | 🟡 | 无"全局搜块返回坐标"（有 scan 记忆） |
@@ -24,7 +24,7 @@
 | !craftRecipe / !smeltItem / !clearFurnace | craft/3x3/smelt/auto_craft | ✅ | P47 自动回收炉 |
 | !placeHere / !useOn | place / interact_block | ✅ | |
 | !attack / !attackPlayer | attack / interact_entity | ✅ | attackPlayer 不需要 |
-| !goToBed | — | ❌ | 睡觉跳夜（低优先级） |
+| !goToBed | sleep | ✅ | P85 完成，2026-08-02 probe 实测通过 |
 | !stay | pause_goal | 🟡 | |
 | !setMode | — | ❌ | 模式开关（配置层，非 LLM） |
 | !goal / !endGoal | set_goal / task_complete | ✅ | |
@@ -32,7 +32,7 @@
 | !startConversation / !endConversation | chat | 🟡 | 对话无需双端 |
 | !lookAtPlayer / !lookAtPosition | — | ❌ | 转头动画（视觉无用） |
 | !digDown | mine_below | ✅ | |
-| !goToSurface | — | ❌ | 快速回地表（mine_above 替代，慢） |
+| !goToSurface | mine_above | ✅ | P105/P106/P107 三层修复闭环（2026-08-03，probe 实机验证） |
 | !checkBlueprint* / !getBlueprint* | list_blueprints / build_blueprint | ✅ | |
 | !getCraftingPlan | auto_craft | ✅ | |
 | !searchWiki | search_wiki | ✅ | |
@@ -49,12 +49,12 @@
 | breakBlockAt / placeBlock | mine / place | ✅ | |
 | putInChest / takeFromChest / viewChest | chest_* | ✅ | |
 | goToGoal / goToPosition / goToNearestBlock / goToNearestEntity | goto / gather / mine | 🟡 | goToNearestEntity 无（perceive 带坐标） |
-| goToPlayer | follow | 🟡 | |
+| goToPlayer | goto_player / follow | ✅ | P111 单次导航 + follow 持续跟随 |
 | moveAway / moveAwayFromEntity / avoidEnemies | cowardice | ✅ | P77 阈值 10 |
 | stay | pause_goal | 🟡 | |
 | useDoor | interact_block | ✅ | 门自动开？ |
-| goToBed | — | ❌ | |
-| tillAndSow | — | ❌ | 种植（农场蓝图有，无自动化） |
+| goToBed | sleep | ✅ | P85（2026-08-02 probe 实测） |
+| tillAndSow | till_and_sow | ✅ | P84（2026-08-02 probe 全路径实测） |
 | activateNearestBlock | interact_block | ✅ | |
 | showVillagerTrades / tradeWithVillager | trade | ✅ | |
 | autoLight（火把自动） | torch_placing | ✅ | |
@@ -195,6 +195,21 @@
 - 工具层 probe 回归 ✓：P101 三场景 + P102 修正/幂等 + smoke 全通（0/6 失败）。
 
 > 当前主线：harness 层修正类优化已覆盖 mine（P101）/till（P102）坐标盲猜，place 已有 P5/P11 自动重定位。下一轮观测重点：craft 顺序、工作台放置策略、task_retry 引导。
+
+## 修复记录：2026-08-06 P111 goto_player 按玩家名单次导航（gap !goToPlayer 闭环）
+
+> 触发：优先级队列 1-10 全部完成后扫差距表，剩余 ❌ 缺失项中主线收益最高的是 !goToPlayer（按玩家名 goto，此前只有 follow 持续跟随、无单次导航）。表格过期状态顺手回填（!goToBed P85 / !goToSurface P105-107 / tillAndSow P84 早已完成但表内仍标 ❌）。
+
+- **P111 goto_player（commit c71e463）**：
+  - 新 `MinecraftAction::GotoPlayer { target: Option<String> }` + `BotCommand::GotoPlayer { name: Option<String> }`（None=最近的其他玩家）
+  - handler 完全复用 P110 模式：`nearby_player_position(&bot, name)` 定位玩家当前坐标 → 替换 pending 槽为 Goto（保留 result_tx 回传）→ Chat 事件 `[goto] 玩家 <名> @ (x,y,z)，开始导航`；未找到 → 明确报错 + clear_pending
+  - action_manager：timeout 30 tick + cmd_signature `goto_player({name})`（含名字，不同玩家不算重复导航）
+  - LLM 工具 `goto_player`（4 处同步：tools_movement 注册 + types 变体 + adapter_azalea action_for + parse_chat_command `gotoplayer [名字]`）+ run_plan parse_step + rhai 注册 + AGENTS.md 工具表同步
+  - 测试：chat_parser_goto_player（无参/按名/goto 单 token 仍走锚点不冲突）
+- **probe 实机验证 ✓（scripts/probe/p111_goto_player.json）**：`gotoplayer` 无参 → `[goto] 玩家 最近的玩家 @ (-493,80,-165)，开始导航`（定位到挂机玩家 Jun）✓；`gotoplayer Jun` 按名定位 ✓；`gotoplayer nobody_xyz_404` → `未找到玩家 nobody_xyz_404（不在附近扫描范围）` ✓。导航超时（goto (-493,80,-165) 超时——路径被阻）属 goto 既有行为（目标在地下不可达），非 gotoplayer 缺陷。
+- **门槛**：workspace 全绿（craft-agent 171 + craft-agent-minecraft 151 + model 23 + regression 29）+ fmt/clippy `-D warnings` 全绿。
+
+> 当前主线：goto 家族已齐全（坐标 goto / 锚点 goto P110 / 玩家 goto_player P111 / 持续跟随 follow）。差距表命令层剩余：!moveAway（cowardice 自动做，取舍）、!setMode（配置层非 LLM）、!lookAt*（视觉无用）、!searchForBlock 全局搜块返回坐标（🟡，有 scan 记忆）。下一轮可选：!searchForBlock 全局搜块、或 LLM 策略层观测（craft 顺序/工作台放置）。
 
 ## 最近修复记录（2026-08-03 · P103 viewer 启动根因 + 工作流固化）
 
