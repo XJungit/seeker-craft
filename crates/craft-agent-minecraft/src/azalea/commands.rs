@@ -711,6 +711,7 @@ mod chat_parser_tests {
         ));
     }
 
+    #[test]
     fn chat_parser_set_mode() {
         assert!(matches!(
             parse_chat_command("setmode hunting off"),
