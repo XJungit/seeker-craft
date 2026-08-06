@@ -25,6 +25,22 @@ const RECIPES: &[RecipeEntry] = &[
         &[("bowl", 1), ("red_mushroom", 1), ("brown_mushroom", 1)],
         1,
     ),
+    // P117: 木板变体（builtin RecipeBook 是 shapeless 单原料，走 2×2 路径但手写表原只有 oak）。
+    // LLM 在红树林/云杉/深色橡木林区会用对应木板 → 此前 craft/auto_craft 失败（同 P117 断裂模式）。
+    ("spruce_planks", &[("spruce_log", 1)], 4),
+    ("birch_planks", &[("birch_log", 1)], 4),
+    ("jungle_planks", &[("jungle_log", 1)], 4),
+    ("acacia_planks", &[("acacia_log", 1)], 4),
+    ("dark_oak_planks", &[("dark_oak_log", 1)], 4),
+    ("mangrove_planks", &[("mangrove_log", 1)], 4),
+    ("cherry_planks", &[("cherry_log", 1)], 4),
+    ("pale_oak_planks", &[("pale_oak_log", 1)], 4),
+    ("crimson_planks", &[("crimson_stem", 1)], 4),
+    ("warped_planks", &[("warped_stem", 1)], 4),
+    // P117: blaze_powder（vanilla shapeless：1 blaze_rod → 2 blaze_powder）。
+    // 末影之眼链路（blaze_rod → blaze_powder → ender_eye）的关键 2×2 配方，
+    // 此前手写表无 → auto_craft("blaze_powder") 断裂（同 flint_and_steel 模式）。
+    ("blaze_powder", &[("blaze_rod", 1)], 2),
 ];
 
 /// 2×2 形状配方表（P12 新增，2026-07-26）。

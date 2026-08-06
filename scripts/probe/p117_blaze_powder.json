@@ -1,0 +1,9 @@
+{
+  "steps": [
+    { "cmd": "chat /give @s blaze_rod 1", "wait_ms": 2000 },
+    { "cmd": "craft blaze_powder 2", "wait_ms": 4000 },
+    { "cmd": "chat /give @s spruce_log 1", "wait_ms": 2000 },
+    { "cmd": "craft spruce_planks 4", "wait_ms": 4000 },
+    { "state": true }
+  ]
+}
