@@ -15,7 +15,7 @@
 | !goToCoordinates | goto | ✅ | |
 | !searchForBlock | search_for_block | ✅ | P112（2026-08-06）：搜块返回坐标列表（别名展开 + 按距离升序 + 最多 8 处），LLM 工具 search_for_block + probe 命令 searchblock <方块> [半径]；只搜不挖（要挖用 gather） |
 | !searchForEntity | perceive | 🟡 | 实体带坐标（P74） |
-| !moveAway | — | ❌ | LLM 层躲怪无工具（cowardice 自动做） |
+| !moveAway | move_away | ✅ | P113（2026-08-06）：主动远离指定实体/类型（无参=最近非玩家实体，默认 8m，clamp 4-64），水平反向向量→Goto（y 保持当前层），找不到→"附近找不到目标实体"反馈；LLM 工具 move_away + probe 命令 moveaway [实体名] [距离]；probe 实机验证（zombie 指定距离 / 无参默认 / llama 不存在报错）；战斗中被 self_defense 抢 pending 槽属已知模式交互（goto 超时兜底） |
 | !rememberHere / !savedPlaces / !goToRememberedPlace | memory + goto | ✅ | P110（2026-08-06）：GotoTool 增加可选 anchor 参数；命令层 `goto <名>` 单 token 非数字 → GotoAnchor；handler 用共享 WorldMemory 解析锚点转 Goto 复用全部导航逻辑；probe 新增 `memory anchor/query` 命令（probe 与 LLM 共享同一 WorldMemory 实例），probe 实机验证锚点设置 → 锚点导航闭环 |
 | !givePlayer | give | ✅ | |
 | !consume / !equip / !discard | consume / equip / discard | ✅ | |
@@ -50,7 +50,7 @@
 | putInChest / takeFromChest / viewChest | chest_* | ✅ | |
 | goToGoal / goToPosition / goToNearestBlock / goToNearestEntity | goto / gather / mine | 🟡 | goToNearestEntity 无（perceive 带坐标） |
 | goToPlayer | goto_player / follow | ✅ | P111 单次导航 + follow 持续跟随 |
-| moveAway / moveAwayFromEntity / avoidEnemies | cowardice | ✅ | P77 阈值 10 |
+| moveAway / moveAwayFromEntity / avoidEnemies | move_away + cowardice | ✅ | P113 主动工具（指定实体/距离）+ P77 cowardice 自动（阈值 10） |
 | stay | pause_goal | 🟡 | |
 | useDoor | interact_block | ✅ | 门自动开？ |
 | goToBed | sleep | ✅ | P85（2026-08-02 probe 实测） |
@@ -223,7 +223,23 @@
 - **probe 实机验证 ✓（scripts/probe/p112_search_block.json）**：`searchblock grass_block` → 7 处坐标按距离升序（0.8-2.7m）✓；`searchblock oak_log` → 3 处（别名展开，lush_caves 红树林原木命中）✓；`searchblock diamond_ore 16` → "半径 16 内找不到 diamond_ore" + [搜索失败] 事件 ✓
 - **门槛**：workspace 全绿（craft-agent 171 + craft-agent-minecraft 152 + model 23 + regression 29）+ fmt/clippy `-D warnings` 全绿。
 
-> 当前主线：差距表命令层 ❌ 仅剩 !moveAway（cowardice 自动做，设计取舍）、!setMode（配置层非 LLM）、!lookAt*（视觉无用）。下一轮可选：LLM 策略层实机观测（craft 顺序/工作台放置/task_retry 引导，需 viewer+LLM），或 !moveAway 独立工具化。
+> 当前主线：差距表命令层 ❌ 仅剩 !setMode（配置层非 LLM）、!lookAt*（视觉无用）。下一轮可选：LLM 策略层实机观测（craft 顺序/工作台放置/task_retry 引导，需 viewer+LLM），或配置层 !setMode。
+
+## 修复记录：2026-08-06 P113 move_away 主动远离（gap !moveAway 闭环，命令层 ❌ 清零）
+
+> 触发：P112 后差距表命令层 ❌ 仅剩 !moveAway（此前认为 cowardice 自动做即可，但 LLM 需要主动控制距离/目标的逃跑工具）。本轮完成命令层最后一个 ❌ 项。
+
+- **P113 move_away（commit ef076e3）**：
+  - 新 `MinecraftAction::MoveAway { target: Option<String>, distance: u32 }` + `BotCommand::MoveAway`（distance clamp 4-64，默认 8）
+  - parse_chat_command `moveaway [实体名] [距离]`（第一个 token 纯数字→距离，否则→目标名）+ chat_parser_move_away 测试
+  - handler 分支：nearest_entities 定位目标（排除 item/experience_orb/item_frame/glow_item_frame；玩家名匹配用 `azalea::player::GameProfileComponent`，实体类型匹配用 `entity_kind_name`；无参=最近非玩家实体）→ 水平反向向量 → 接管 pending 槽为 Goto（y 保持 bot 当前层，result_tx 保留回传）→ Chat 事件 `[远离] 远离 {kind} -> 反向 {distance}m 目标 (x,y,z)`；找不到 → result_tx 反馈"附近找不到目标实体 {who}，无需远离。" + clear_pending
+  - action_manager：timeout 30 tick + cmd_signature `move_away({t})`/`move_away(any)`（与 goto 的 `goto(#,#,#)` 区分，不算重复导航）
+  - LLM 工具 `move_away`（4 处同步：tools_movement 注册 + types 变体 + adapter_azalea action_for + parse_chat_command）+ run_plan parse_step + rhai 注册 + AGENTS.md 工具表同步
+- **probe 实机验证 ✓（scripts/probe/p113_move_away.json）**：`moveaway zombie 20` → `[远离] 远离 zombie -> 反向 20m 目标 (-526,93,-118)` + goto 派发 ✓（战斗中 zombie 追位，反向向量随执行瞬间位置计算）；`moveaway` 无参 → `[远离] 远离 zombie -> 反向 8m 目标 (-480,95,-149)`（默认距离 8、最近实体）✓；`moveaway llama 10`（不存在）→ `附近找不到目标实体 llama，无需远离。` ✓
+- **已知交互**：战斗中 self_defense 的 strafe/逼近会抢占 pending 槽覆盖 move_away 派发的 goto（goto 超时兜底 60s 自动挖路）——模式系统 tick 级优先属既有设计，move_away 在非战斗场景正常。
+- **门槛**：workspace 全绿（craft-agent 171 + craft-agent-minecraft 153 + model 23 + regression 29）+ fmt/clippy `-D warnings` 全绿。
+
+> 当前主线：命令层差距表已全部清零（✅/🟡/➖ 之外无 ❌）。下一轮可选：LLM 策略层实机观测（craft 顺序/工作台放置/task_retry 引导，需 viewer+LLM），或配置层 !setMode。
 
 ## 最近修复记录（2026-08-03 · P103 viewer 启动根因 + 工作流固化）
 

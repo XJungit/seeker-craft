@@ -142,7 +142,7 @@ craft-agent-minecraft    MC 适配器（azalea 协议，约 12000+ 行）
   azalea/actions.rs      基础 bot 动作（goto/mine/chat）
   azalea/smart_actions.rs 多工具聚合动作（1319 行）
   adapter_azalea.rs      GameAdapter 实现、perceive 格式、execute、工具↔动作映射
-  tools_azalea.rs        47 个 LLM 工具（4166 行）
+  tools_azalea.rs        48 个 LLM 工具（4166 行）
   action_lib.rs          LLM 定义的 rhai 脚本（338 行）
   blueprint.rs           蓝图库（310 行）
 
@@ -157,12 +157,12 @@ craft-agent-viewer       Web 仪表盘（Axum + SSE）
 craft-agent-autopilot    自主测试循环（build/test → anomaly → RCA → commit）
 ```
 
-## 44 个 LLM 工具
+## 45 个 LLM 工具
 
 | 类别 | 工具 |
 |---|---|
 | 感知 | `perceive`, `memory`, `search_wiki`, `search_for_block` |
-| 移动 | `goto`, `goto_player`, `mine_below`, `mine_above`, `pickup`, `follow`, `stop_follow` |
+| 移动 | `goto`, `goto_player`, `move_away`, `mine_below`, `mine_above`, `pickup`, `follow`, `stop_follow` |
 | 挖掘 | `mine`, `make_obsidian` |
 | 交互 | `interact_block`, `interact_entity`, `attack`, `defend` |
 | 合成 | `craft`, `craft_3x3`, `smelt`, `auto_craft`, `enchant` |
@@ -380,7 +380,7 @@ probe bot 名 `craftbot_probe`，与 agent bot 共存不冲突。命令文本见
 `parse_chat_command`（azalea/commands.rs，支持 goto/mine x y z/minebelow/mineabove/attack/gather/
 craft/craft3/smelt/autocraft/place/open/enchant/trade/interact/interactblock x y z/tillandsow x y z seed/chat/chat 消息/
 follow/give/equip/discard/consume/chestview/chestwithdraw/chestdeposit/makeobsidian/pickup/defend/sleep/harvest/
-memory anchor/query/gotoplayer [玩家名]/searchblock <方块> [半径]）。
+memory anchor/query/gotoplayer [玩家名]/searchblock <方块> [半径]/moveaway [实体名] [距离]）。
 需要 LLM 决策的测试（策略/规划/目标分解）才开 viewer+agent。
 
 新增工具命令时必须同时更新 `parse_chat_command`，否则 probe 无法驱动。
