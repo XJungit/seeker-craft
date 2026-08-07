@@ -119,6 +119,59 @@ fn is_natural_mineable(kind: Option<BlockKind>) -> bool {
     name.ends_with("_ore")
 }
 
+/// P132：goto 目标实心、上方无空气（P69b fallback 失效）且非矿石（P126 失效）时，
+/// 找目标附近最近的可站立空气点，把 goto 目标自动修正到该点。LLM 盲猜洞穴内
+/// 岩体里的坐标通常离真实可走空气很近（几格内），直接废弃坐标只会死循环
+/// （实测连续 6+ 次 goto 同一岩体内坐标全失败）。与 P101/P102 "派发时自动修正"
+/// 同纪律。若无障碍才走原拒绝逻辑。
+const GOTO_P132_AIR_SEARCH_RADIUS: i32 = 10;
+
+fn nearest_standable_air(bot: &Client, x: i32, y: i32, z: i32) -> Option<BlockPos> {
+    let world = bot.world().ok()?;
+    let mut best: Option<(i64, BlockPos)> = None;
+    for d in 1i32..=GOTO_P132_AIR_SEARCH_RADIUS {
+        for dx in -d..=d {
+            for dz in -d..=d {
+                // 跳过与 (x,z) 水平距离 >d 的格子（保持曼哈顿径向扩展顺序）
+                if dx.abs().max(dz.abs()) != d {
+                    continue;
+                }
+                for dy in -2..=2 {
+                    let pos = BlockPos::new(x + dx, y + dy, z + dz);
+                    let air = world
+                        .read()
+                        .get_block_state(pos)
+                        .map(|b| b.is_air())
+                        .unwrap_or(false);
+                    if !air {
+                        continue;
+                    }
+                    // 脚下必须是实心（能站立），否则洞顶空气点会让 pathfinder 绕远
+                    let feet_solid = world
+                        .read()
+                        .get_block_state(pos.down(1))
+                        .map(|b| {
+                            let k: BlockKind = b.into();
+                            k != BlockKind::Air && k != BlockKind::Water && k != BlockKind::Lava
+                        })
+                        .unwrap_or(false);
+                    if !feet_solid {
+                        continue;
+                    }
+                    let dist = (dx as i64).pow(2) + (dy as i64).pow(2) + (dz as i64).pow(2);
+                    if best.as_ref().map(|(bd, _)| dist < *bd).unwrap_or(true) {
+                        best = Some((dist, pos));
+                    }
+                }
+            }
+        }
+        if best.is_some() {
+            break;
+        }
+    }
+    best.map(|(_, pos)| pos)
+}
+
 /// P120b：无镐时 mine_above 自动绕行的软土柱扫描。
 /// 在 (x, y, z) 周围 radius 格水平范围内，找最近的"软方块列"（该列
 /// 头顶 y+1..y+3 任一格是非硬方块且非空气：dirt/grass/sand/gravel/
@@ -1646,6 +1699,24 @@ impl AzaleaBot {
                                             cmd: BotCommand::Mine { x, y, z },
                                             result_tx: tx_clone,
                                         });
+                                        return bot;
+                                    }
+                                    // P132：非矿石实体（岩壁/山体/树干）目标，P69b 上方无空气且
+                                    // P126 非矿石时，自动修正到目标附近最近的可站立空气点。
+                                    // LLM 盲猜岩体内坐标离真实洞穴/地表通常几格内，修正后
+                                    // pathfinder 能到达；直接拒绝会让 LLM 反复换坐标死循环
+                                    // （实测同一坐标连续 6+ 次失败，换坐标继续失败）。
+                                    if let Some(air_pos) = nearest_standable_air(&bot, x, y, z) {
+                                        let (fx, fy, fz) = (air_pos.x, air_pos.y, air_pos.z);
+                                        if let Some(tx) = &result_tx {
+                                            let _ = tx.send(format!(
+                                                "Action output:\ngoto ({},{},{}) 的目标方块是实心（岩壁/山体，上方无站立空气），\
+                                                 已自动修正到最近可站立空气点 ({},{},{}) 继续前往。",
+                                                x, y, z, fx, fy, fz
+                                            ));
+                                        }
+                                        bot.start_goto(BlockPosGoal(BlockPos::new(fx, fy, fz)));
+                                        state.action_mgr.clear_pending();
                                         return bot;
                                     }
                                     if let Some(tx) = &result_tx {
