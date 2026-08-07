@@ -88,6 +88,54 @@ fn nearest_solid_block(bot: &Client, x: i32, y: i32, z: i32) -> Option<BlockPos>
     best.map(|(_, pos)| pos)
 }
 
+/// P120b：无镐时 mine_above 自动绕行的软土柱扫描。
+/// 在 (x, y, z) 周围 radius 格水平范围内，找最近的"软方块列"（该列
+/// 头顶 y+1..y+3 任一格是非硬方块且非空气：dirt/grass/sand/gravel/
+/// sandstone 等），返回该列脚底坐标（x, y, z），供 pathfinder 绕行后
+/// 从软土向上挖。徒手挖软土 ~0.25s/格 vs 硬方块 ~8s/格（差 32 倍），
+/// 绕软土柱比死磕硬天花板快得多——MC 常识：无镐时走土坡/沙堆，不凿岩壁。
+/// 注意：只查 y+1 曾漏掉软土在更高层的场景（probe p120b step7），
+/// 放宽到 y+1..y+3 三层。
+fn nearest_soft_column(bot: &Client, x: i32, y: i32, z: i32, radius: i32) -> Option<BlockPos> {
+    let world = bot.world().ok()?;
+    let mut best: Option<(i64, BlockPos)> = None;
+    for d in 1i32..=radius {
+        for dx in -d..=d {
+            for dz in -d..=d {
+                if dx == 0 && dz == 0 {
+                    continue;
+                }
+                let col_x = x + dx;
+                let col_z = z + dz;
+                let soft = (1..=3).any(|dy| {
+                    let head = BlockPos::new(col_x, y + dy, col_z);
+                    world
+                        .read()
+                        .get_block_state(head)
+                        .map(|b| {
+                            let k: BlockKind = b.into();
+                            k != BlockKind::Air
+                                && k != BlockKind::Water
+                                && k != BlockKind::Lava
+                                && !is_hard_block(azalea::block::BlockState::from(k))
+                        })
+                        .unwrap_or(false)
+                });
+                if soft {
+                    let dist = (dx as i64).pow(2) + (dz as i64).pow(2);
+                    if best.as_ref().map(|(bd, _)| dist < *bd).unwrap_or(true) {
+                        best = Some((dist, BlockPos::new(col_x, y, col_z)));
+                    }
+                }
+            }
+        }
+        if best.is_some() {
+            break;
+        }
+    }
+    best.map(|(_, pos)| pos)
+}
+
 /// 把感兴趣的 BlockKind 映射为记忆元数据（item, 标签, 类别）。
 /// 返回 None 表示该方块不值得记忆。
 fn block_memory_meta(bk: BlockKind) -> Option<(String, &'static str, MemoryKind)> {
@@ -264,6 +312,11 @@ pub struct BotState {
     /// P120：mine_above 无镐徒手挖警告去重（dispatch 每 tick 重入 + P60b/ceiling
     /// 持续 tick 分支都会触发）。首次警告后置 true，命令结束（done/超时）重置。
     pub mining_above_no_pick_warned: Arc<Mutex<bool>>,
+    /// P120b：无镐时 mine_above 自动绕行的软土柱目标。
+    /// 头顶是硬方块且无镐时，自动扫描附近软土柱（dirt/grass/sand/gravel/...），
+    /// 找到即改挖软土柱（徒手 ~0.25s/格，比硬方块 8s/格快 32 倍），
+    /// 避免死磕硬天花板。Some((x, y, z)) = 软土柱脚坐标。命令结束重置。
+    pub mining_above_soft_column: Arc<Mutex<Option<BlockPos>>>,
 }
 
 impl Default for BotState {
@@ -295,6 +348,7 @@ impl Default for BotState {
             cancel_flag: Arc::new(AtomicBool::new(false)),
             mode_switches: Arc::new(Mutex::new(HashSet::new())),
             mining_above_no_pick_warned: Arc::new(Mutex::new(false)),
+            mining_above_soft_column: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -983,6 +1037,7 @@ impl AzaleaBot {
                             if matches!(&qc.cmd, BotCommand::MineAbove) {
                                 *state.mining_above_start_y.lock().unwrap() = None;
                                 *state.mining_above_no_pick_warned.lock().unwrap() = false;
+                                *state.mining_above_soft_column.lock().unwrap() = None;
                             }
                             state.action_mgr.clear_pending();
                         }
@@ -998,6 +1053,7 @@ impl AzaleaBot {
                     *state.mining_below.lock().unwrap() = false;
                     *state.mining_above.lock().unwrap() = false;
                     *state.mining_above_no_pick_warned.lock().unwrap() = false;
+                    *state.mining_above_soft_column.lock().unwrap() = None;
                     if !state.action_mgr.is_busy() {
                         // 非异步执行中：强停寻路 + 清槽 + 回复取消
                         if let Some(qc) = state.action_mgr.peek_pending() {
@@ -1754,16 +1810,32 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             // LLM 只能靠 Mine 逐格慢挖。逃生不需要掉落物，挖穿即可。
                             // 改为警告后继续徒手挖（不做硬拒绝）。dispatch 每 tick 重入，
                             // 用 mining_above_no_pick_warned 去重（命令结束重置）。
+                            // P120b：无镐且头顶硬方块时，先自动找附近软土柱（dirt/sand/...）
+                            // 绕行——徒手挖软土 ~0.25s/格 vs 硬方块 ~8s/格（快 32 倍）。
+                            // 找到软土柱则优先绕行（避免死磕硬天花板），找不到才徒手硬挖。
                             if head_is_hard
                                 && !head_is_air
                                 && !has_any_pickaxe_in_inventory(&bot).await
-                                && !*state.mining_above_no_pick_warned.lock().unwrap()
+                                && state.mining_above_soft_column.lock().unwrap().is_none()
+                                && let Ok(p) = bot.position()
                             {
-                                *state.mining_above_no_pick_warned.lock().unwrap() = true;
-                                let _ = evt_tx.send(BotEvent::Chat {
-                                    content: "⚠️ 头顶是硬方块且背包无镐：将徒手慢速挖掘（~8秒/格，不掉落物品）作为逃生通道。\
-                                              如多个 MineAbove 都未成功，请先合成镐（wooden_pickaxe 2×2：3 planks+2 stick）或用 mine 横向找泥土地/沙地软通道。".to_string(),
-                                });
+                                let (cx, cy, cz) =
+                                    (p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
+                                if let Some(col) = nearest_soft_column(&bot, cx, cy, cz, 4) {
+                                    *state.mining_above_soft_column.lock().unwrap() = Some(col);
+                                    let _ = evt_tx.send(BotEvent::Chat {
+                                        content: format!(
+                                            "⚠️ 头顶是硬方块且背包无镐：已自动绕行到最近软土柱 ({},{},{}) 从软土向上挖（徒手 ~0.25s/格，比硬方块快 32 倍）。",
+                                            col.x, col.y, col.z
+                                        ),
+                                    });
+                                } else if !*state.mining_above_no_pick_warned.lock().unwrap() {
+                                    *state.mining_above_no_pick_warned.lock().unwrap() = true;
+                                    let _ = evt_tx.send(BotEvent::Chat {
+                                        content: "⚠️ 头顶是硬方块且背包无镐：附近无软土柱，将徒手慢速挖掘（~8秒/格，不掉落物品）作为逃生通道。\
+                                                  如多个 MineAbove 都未成功，请先合成镐（wooden_pickaxe 2×2：3 planks+2 stick）或用 mine 横向找泥土地/沙地软通道。".to_string(),
+                                        });
+                                }
                             }
                             let was_active = *state.mining_above.lock().unwrap();
                             *state.mining_above.lock().unwrap() = true;
@@ -1774,6 +1846,7 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             }
                             let _ = auto_equip_best_pickaxe(&bot).await;
                             if !head_is_air
+                                && state.mining_above_soft_column.lock().unwrap().is_none()
                                 && let Some(pos) = head_pos
                                 && !bot.is_mining()
                             {
@@ -2984,6 +3057,34 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                     let y = p.y.floor() as i32;
                     let cx = p.x.floor() as i32;
                     let cz = p.z.floor() as i32;
+                    // P120b：无镐软土柱绕行。目标软土柱已设置时，先走到柱脚下
+                    // （水平距离 >1.5 格就 goto），到达后清除目标，让上方
+                    // YGoal 循环从软土柱向上挖（软土徒手 ~0.25s/格）。
+                    let soft_col = *state.mining_above_soft_column.lock().unwrap();
+                    if let Some(col) = soft_col {
+                        let d2 = (col.x - cx).pow(2) + (col.z - cz).pow(2);
+                        if d2 > 2 {
+                            // 每 20 tick 重新发起 goto（pathfinder 可能被硬墙挡回）
+                            if t.is_multiple_of(20)
+                                && !bot.is_calculating_path()
+                                && !bot.is_executing_path()
+                            {
+                                use azalea::pathfinder::PathfinderOpts;
+                                use std::time::Duration;
+                                let opts = PathfinderOpts::new()
+                                    .allow_mining(true)
+                                    .min_timeout(Duration::from_secs(2))
+                                    .max_timeout(Duration::from_secs(30));
+                                bot.start_goto_with_opts(
+                                    BlockPosGoal(BlockPos::new(col.x, y, col.z)),
+                                    opts,
+                                );
+                            }
+                        } else {
+                            // 已到达软土柱脚下：清除目标，正常 YGoal 逻辑接管。
+                            *state.mining_above_soft_column.lock().unwrap() = None;
+                        }
+                    }
                     // Throttle surface detection to every 5 ticks to reduce per-tick
                     // world reads (6 block reads per check) and avoid GameTick lag.
                     if t.is_multiple_of(5) {
@@ -3052,7 +3153,10 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                         .and_then(|w| w.read().get_block_state(BlockPos::new(cx, y + 1, cz)))
                         .map(|s| s.is_air())
                         .unwrap_or(false);
-                    if p60b_head_air {
+                    // P120b：正在绕行软土柱时跳过正常上挖逻辑（P60b/ceiling/YGoal
+                    // 会覆盖绕行 goto 或徒手硬挖硬块——绕行期只走位不挖）。
+                    let soft_col_active = state.mining_above_soft_column.lock().unwrap().is_some();
+                    if p60b_head_air && !soft_col_active {
                         let above_head = BlockPos::new(cx, y + 2, cz);
                         let above_is_solid = bot
                             .world()
@@ -3160,6 +3264,7 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                     if !bot.is_calculating_path()
                         && !bot.is_executing_path()
                         && t.is_multiple_of(40)
+                        && state.mining_above_soft_column.lock().unwrap().is_none()
                     {
                         use azalea::pathfinder::PathfinderOpts;
                         use std::time::Duration;

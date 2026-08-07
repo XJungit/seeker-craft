@@ -408,3 +408,18 @@
 - **probe 实机验证 ✓（scripts/probe/p120_mine_above_no_pick.json + p120b_mine_above_with_pick.json）**：无镐 mineabove → 不再 abort ✓、警告仅一次 ✓（去重生效）、bot 真实上升（Y44→45，比修改前死锁显著进步）✓；有镐对照 → 正常路径无回归（Y46→47 + cobblestone 掉落）✓。残留：头顶 3-6 格厚硬天花板徒手 30s 仍难挖穿，属物理现实（LLM 可多次 mine_above 逐格推进），非 harness 死锁。
 - **门槛**：workspace 全绿（craft-agent 171 + craft-agent-minecraft 158 + model 23）+ fmt/clippy `-D warnings` 干净。
 - **回填纪律**：此发现来自 LLM 实机观测（第 1 步差距分析 → 第 2 步实机观测确认 harness bug vs LLM 决策 → 修复 → 回填）。
+
+
+## 修复记录：2026-08-07 P120b mine_above 无镐自动绕软土柱（非徒手硬挖）
+
+> 用户质疑 P120"为什么要徒手硬挖石头"——正确 MC 玩法是绕软土柱。probe 实测数据：无镐死磕头顶石头 8s/格，30s 挖不穿 3-6 格厚天花板；而旁边就有 dirt（徒手 0.25s/格，快 32 倍）。P120 只解除硬拒绝，没解决"死磕硬天花板"的效率问题。
+
+- **根因**：mine_above 无脑垂直往上，头顶是石头就硬刨石头，哪怕泥土/沙就在旁边 2 格。这是 harness 机械行为缺陷，不是 LLM 决策问题。
+- **修改**（handler.rs）：
+  - 新增 mining_above_soft_column: Arc<Mutex<Option<BlockPos>>>（handler.rs + mod.rs 两处初始化），命令结束（done/超时/取消）重置。
+  - 新增 
+earest_soft_column(bot, x, y, z, radius=4)：无镐且头顶硬方块时，扫描半径 4 内最近"软土柱"（列上 y+1..y+3 任一格是非 hard 非 air：dirt/grass/sand/gravel/sandstone），返回列脚坐标。
+  - dispatch 无镐硬头顶分支：找到软土柱 → 设置目标 + 提示"已自动绕行到软土柱"；找不到才走 P120 徒手硬挖兜底警告。
+  - 持续上挖循环：软土柱目标存在时先 goto 到柱脚下（每 20 tick 重发，防 pathfinder 被硬墙挡回），到达后清除目标由正常 YGoal 逻辑接管；绕过 P60b/ceiling/YGoal 的抢跑（软柱绕行期只走位不出挖）。
+- **probe 实测 ✓（scripts/probe/p120b_mine_above_soft_column.json）**：无镐 + 硬头顶 → bot 自动横向 5 格走到软土柱（-504,-247 -> -498,-245），徒手快速上升 Y44→51，"MineAbove progressed to Y=48" ✓（对比 P120 徒手硬挖 30s Y 不动）；第二次同位置重跑，泥土柱已被上次挖光（附近只剩 stone+water），正确回退 P120 硬挖兜底——物理现实而非 bug。
+- **门槛**：workspace 全绿 + clippy -D warnings 干净。"绕软土柱"成为无镐逃生默认路径，徒手硬挖仅供无软土时兜底。

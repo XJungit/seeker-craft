@@ -1,0 +1,13 @@
+{
+  "name": "p120b_mine_above_soft_column",
+  "steps": [
+    {"cmd": "chat /clear @s", "wait_ms": 600},
+    {"cmd": "chat /tp @s -504 44 -247", "wait_ms": 1200},
+    {"state": true},
+    {"cmd": "mineabove", "wait_ms": 15000},
+    {"state": true},
+    {"cmd": "chat /tp @s -504 44 -247", "wait_ms": 1200},
+    {"cmd": "mineabove", "wait_ms": 15000},
+    {"state": true}
+  ]
+}
