@@ -383,6 +383,52 @@ fn extract_error_suggestion(err_msg: &str) -> Option<String> {
     }
 }
 
+/// P131：从场景文本判断饥饿，返回应急回退指令（饱食 ≤6 时非空）。
+/// LLM（deepseek-flash）常无视 goal 新指令，但每次"连续失败"提示都会驱动它换策略
+/// （实测 9 轮失败后它按提示去 craft）。因此把现成食物的具体动作塞进失败提示最可靠。
+fn build_hunger_hint(scene: &str) -> String {
+    let food = scene
+        .split("饱食: ")
+        .nth(1)
+        .and_then(|r| r.split('/').next())
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .unwrap_or(20);
+    if food > 6 {
+        return String::new();
+    }
+    let has_mushroom = scene.contains("red_mushroom") || scene.contains("brown_mushroom");
+    let has_bowl = scene.contains("bowl:");
+    let has_food = [
+        "bread:",
+        "apple:",
+        "cooked_beef:",
+        "cooked_porkchop:",
+        "cooked_chicken:",
+        "cooked_mutton:",
+        "cooked_cod:",
+        "mushroom_stew:",
+        "baked_potato:",
+        "sweet_berries",
+        "glow_berries",
+        "carrot:",
+    ]
+    .iter()
+    .any(|s| scene.contains(s));
+    if has_food {
+        format!(
+            "【应急】饱食 {food}/20 危险！背包已有可吃食物，立即用 consume 吃掉它（把饱食补到 10+ 再做其他）。"
+        )
+    } else if has_mushroom && has_bowl {
+        format!(
+            "【应急】饱食 {food}/20 危险！背包有蘑菇+碗，立即 craft('mushroom_stew') 合成蘑菇煲（1 蘑菇 + 1 碗，2x2），再 consume('mushroom_stew') 吃，补到饱食 10+。"
+        )
+    } else {
+        format!(
+            "【应急】饱食 {food}/20 危险！当前无食物——先找食物（搜村庄/甜浆果丛，或附近狩猎动物生肉烤来吃），吃饱再继续当前目标。"
+        )
+    }
+}
+
 // ── Config ──
 
 /// SelfPrompter 三态状态机（学习自 Mindcraft self_prompter.js）。
@@ -2435,7 +2481,21 @@ impl Agent {
             // P1 改进4+6: 连续 3+ 轮失败 — 注入诊断提示 + 自动回退链建议
             let failed_tools: Vec<&str> = last_calls.iter().map(|tc| tc.name.as_str()).collect();
             let fallback = build_fallback_suggestion(&failed_tools);
-            let nudge = format!(
+            // P131：连续失败 + 饥饿场景 → 追加应急食物指令（覆盖 LLM 无视 goal 的
+            // 顽固计划，如"63m 外找 brown_mushroom"）。场景文本取当前注入的状态。
+            let scene = self
+                .messages
+                .iter()
+                .rev()
+                .find_map(|m| match m {
+                    Message::User(u) if u.content.starts_with("【当前游戏状态") => {
+                        Some(u.content.as_str())
+                    }
+                    _ => None,
+                })
+                .unwrap_or("");
+            let hunger_hint = build_hunger_hint(scene);
+            let mut nudge = format!(
                 "【连续失败警告】你已连续 {} 轮工具调用失败。请：\n\
                  1. 调用 perceive 检查当前状态\n\
                  2. 分析失败原因（距离太远？缺工具？缺材料？位置错误？）\n\
@@ -2443,6 +2503,9 @@ impl Agent {
                  {fallback}",
                 self.consecutive_failures
             );
+            if !hunger_hint.is_empty() {
+                nudge.push_str(&format!("\n{hunger_hint}"));
+            }
             self.push_transient(nudge);
             log.push(format!(
                 "[t{turn}] 连续失败检测: {} 轮失败，注入诊断提示+回退建议",
@@ -4236,5 +4299,26 @@ mod tests {
             .filter(|m| matches!(m, Message::User(u) if u.content.starts_with("[当前目标]")))
             .collect();
         assert!(!goal_msgs_active.is_empty(), "Active 态应注入 [当前目标]");
+    }
+
+    #[test]
+    fn hunger_hint_fires_on_low_food_and_steers_to_stew() {
+        // 饱食高 → 空
+        let s =
+            "位置: (1,2,3)\n生命: 20/20  饱食: 18/20  主手: dirt\n背包: [red_mushroom:13, bowl:16]";
+        assert_eq!(build_hunger_hint(s), "");
+        // 低饱食 + 蘑菇&碗 → 蘑菇煲方案
+        let s = "生命: 11/20  饱食: 4/20\n背包: [red_mushroom:13, bowl:16]";
+        let h = build_hunger_hint(s);
+        assert!(h.contains("mushroom_stew"), "{h}");
+        assert!(h.contains("饱食 4/20"), "{h}");
+        // 低饱食 + 现成食物 → consume 指令
+        let s = "生命: 11/20  饱食: 4/20\n背包: [bread:3, cobblestone:9]";
+        let h = build_hunger_hint(s);
+        assert!(h.contains("consume"), "{h}");
+        // 低饱食 + 无食物 → 找食物指令
+        let s = "生命: 11/20  饱食: 4/20\n背包: [cobblestone:9]";
+        let h = build_hunger_hint(s);
+        assert!(h.contains("找食物"), "{h}");
     }
 }
