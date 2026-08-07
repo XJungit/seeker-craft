@@ -1119,6 +1119,28 @@ const SHAPED_RECIPES: &[(&str, ShapedRecipe)] = &[
             output_per_craft: 1,
         },
     ),
+    // P123：shield 补入手写 SHAPED_RECIPES。
+    // vanilla 配方 = 3×3 全环木板 + 中心铁锭（1..9 除 5 全是木板，5 是 iron_ingot）。
+    // P123（2026-08-07）：shield 曾缺于手写表（LLM 从 7 月起反复失败）。
+    // 形状必须为 vanilla 官方 "WoW/WWW/ W "（铁锭在顶部中间 slot2，非中心）——
+    // 早期写成 "W W/WIW/WWW"（铁居中）导致服务端不匹配 100% 失败。
+    // 木板用 oak_planks 占位，P23 expand_ingredient_aliases 会把 *_planks 替换为背包里
+    // 任一带 _planks 木板（dark_oak_planks 等实测可用）。
+    (
+        "shield",
+        ShapedRecipe {
+            cells: &[
+                (1, "oak_planks"),
+                (2, "iron_ingot"),
+                (3, "oak_planks"),
+                (4, "oak_planks"),
+                (5, "oak_planks"),
+                (6, "oak_planks"),
+                (8, "oak_planks"),
+            ],
+            output_per_craft: 1,
+        },
+    ),
     (
         "iron_shovel",
         ShapedRecipe {

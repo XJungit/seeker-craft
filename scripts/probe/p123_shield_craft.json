@@ -1,0 +1,12 @@
+{
+  "name": "p123_shield_craft",
+  "description": "P123：craft3 shield 端到端——验证 6 木板+1 铁锭官方形状（铁锭顶部中间 slot2），RecipeBook 与手写表双路径均可用",
+  "steps": [
+    {"cmd": "chat /clear @s", "wait_ms": 600},
+    {"cmd": "chat /give @s minecraft:dark_oak_planks 24", "wait_ms": 800},
+    {"cmd": "chat /give @s minecraft:iron_ingot 16", "wait_ms": 800},
+    {"cmd": "chat /give @s minecraft:crafting_table 2", "wait_ms": 600},
+    {"cmd": "craft3 shield", "wait_ms": 20000},
+    {"state": true}
+  ]
+}

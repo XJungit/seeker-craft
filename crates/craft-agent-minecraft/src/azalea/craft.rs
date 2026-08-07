@@ -291,6 +291,35 @@ mod tests {
         );
     }
 
+    /// P123 回归测试：lookup_shaped 必须能查到 shield 配方（vanilla 形状）。
+    /// 历史bug：SHAPED_RECIPES 缺 shield，RecipeBook 未解锁时双路径失败，
+    /// LLM 反复 craft_3x3("shield") 100% 报"不支持的 3×3 合成目标"（7 月至今）。
+    #[test]
+    fn regression_lookup_shaped_finds_shield() {
+        let r = lookup_shaped("shield").expect("shield 必须可查（P123）");
+        assert_eq!(r.cells.len(), 7, "shield 应 6 木板 + 1 铁锭 = 7 格");
+        // vanilla 官方形状 "WoW/WWW/ W "：铁锭在顶部中间 slot2，slot7/9 空
+        assert!(
+            r.cells.contains(&(2, "iron_ingot")),
+            "slot2（顶部中间）应为 iron_ingot"
+        );
+        let cells: Vec<(usize, &str)> = r.cells.to_vec();
+        assert!(
+            !cells.contains(&(5, "iron_ingot")),
+            "铁锭不应在中心 slot5（官方形状是顶部中间）"
+        );
+        assert!(
+            !cells.iter().any(|&(g, _)| g == 7 || g == 9),
+            "slot7/9 应为空（shield 形状 WoW/WWW/ W ）"
+        );
+        for &(g, ing) in cells.iter() {
+            if g != 2 {
+                assert_eq!(ing, "oak_planks", "slot{g} 应为木板（shield 环）");
+            }
+        }
+        assert_eq!(r.output_per_craft, 1);
+    }
+
     /// P12 回归测试：lookup_shaped 返回的 cells 必须是 vanilla 正确形状。
     /// 镐形状：头部占 1,2,3（顶行），柄占 5,8（中列）。
     #[test]

@@ -122,7 +122,7 @@
   {"result":"shears","type":"shaped","pattern":["I"," I"],"keys":{"I":"iron_ingot"}},
   {"result":"clock","type":"shaped","pattern":[" G ","GRG"," G "],"keys":{"G":"gold_ingot","R":"redstone"}},
   {"result":"compass","type":"shaped","pattern":[" I ","IRI"," I "],"keys":{"I":"iron_ingot","R":"redstone"}},
-  {"result":"shield","type":"shaped","pattern":["W W","WIW","WWW"],"keys":{"W":"oak_planks","I":"iron_ingot"}},
+  {"result":"shield","type":"shaped","pattern":["WoW","WWW"," W "],"keys":{"W":"oak_planks","o":"iron_ingot"}},
   {"result":"bowl","count":4,"type":"shaped","pattern":["P P"," P "],"keys":{"P":"oak_planks"}},
   {"result":"bow","type":"shaped","pattern":["S "," S ","S "],"keys":{"S":"string"}},
   {"result":"arrow","count":4,"type":"shaped","pattern":["F","S","F"],"keys":{"F":"flint","S":"stick"}},

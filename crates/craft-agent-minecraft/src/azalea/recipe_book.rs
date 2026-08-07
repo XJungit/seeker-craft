@@ -82,6 +82,33 @@ pub enum StoredRecipe {
 }
 
 impl StoredRecipe {
+    /// 配方是否可直接执行（所有原料都能解析出具体物品）。
+    ///
+    /// P123 修复（2026-08-07）：服务端 overlay 的 `RecipeBookAdd` 中，Tag 原料
+    /// （如 `#minecraft:planks`）在 `SlotDisplayData::Tag` 下无法展开成具体物品，
+    /// `from_slot` 返回空 items。若这样的条目覆盖内置配方，摆放时会缺格
+    /// （如 shield 的 8 个木板格全空 → 只剩 iron_ingot）→ 服务端不匹配 → 合成
+    /// 100% 失败。这里丢弃无法执行的 overlay 条目，保留内置正确配方。
+    pub fn is_executable(&self) -> bool {
+        match self {
+            StoredRecipe::Shapeless { ingredients, .. } => {
+                !ingredients.is_empty() && ingredients.iter().all(|i| !i.items.is_empty())
+            }
+            StoredRecipe::Shaped { grid, .. } => grid.iter().flatten().all(|i| !i.items.is_empty()),
+            StoredRecipe::Furnace { ingredient, .. } => !ingredient.items.is_empty(),
+            StoredRecipe::Stonecutter { input, .. } => !input.items.is_empty(),
+            StoredRecipe::Smithing {
+                template,
+                base,
+                addition,
+                ..
+            } => !template.items.is_empty() && !base.items.is_empty() && !addition.items.is_empty(),
+            StoredRecipe::Brewing {
+                ingredient, base, ..
+            } => !ingredient.items.is_empty() && !base.items.is_empty(),
+        }
+    }
+
     /// 产物 id（归一化，去命名空间前缀）。
     pub fn result_id(&self) -> String {
         let k = match self {
@@ -200,8 +227,11 @@ fn parse_display(d: &RecipeDisplayData) -> Option<StoredRecipe> {
 }
 
 /// 把一个配方书条目存入配方书。
+/// P123：overlay 条目若因 Tag 未展开而含空原料（不可执行），丢弃——防止覆盖内置正确配方。
 pub fn store_recipe_book_entry(book: &mut RecipeBook, e: &Entry) {
-    if let Some(r) = parse_display(&e.contents.display) {
+    if let Some(r) = parse_display(&e.contents.display)
+        && r.is_executable()
+    {
         book.insert(r);
     }
 }
@@ -350,5 +380,79 @@ fn parse_builtin(e: &Value) -> Option<StoredRecipe> {
             })
         }
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// P123：overlay 条目若含 Tag 未展开的空原料格，必须丢弃，防止覆盖内置正确配方。
+    #[test]
+    fn regression_overlay_tag_recipe_is_rejected() {
+        let builtin = load_builtin();
+        let shield = builtin.get_by_result("shield");
+        assert!(shield.is_some(), "内置配方库应有 shield");
+        let StoredRecipe::Shaped {
+            width,
+            height,
+            grid,
+            ..
+        } = shield.unwrap()
+        else {
+            panic!("shield 应为 shaped");
+        };
+        assert_eq!((*width, *height), (3, 3));
+        assert_eq!(grid.len(), 9);
+        // P123：官方形状 "WoW/WWW/ W "——铁锭在顶部中间 grid[1]，slot7/9 空
+        let iron = grid[1].as_ref().and_then(|i| i.items.first());
+        assert_eq!(
+            iron,
+            Some(&ItemKind::IronIngot),
+            "shield slot2 应为 iron_ingot"
+        );
+        assert!(grid[6].is_none(), "shield slot7 应为空");
+        assert!(grid[8].is_none(), "shield slot9 应为空");
+        let planks = grid[0].as_ref().and_then(|i| i.items.first());
+        assert!(planks.is_some(), "shield slot1 应为木板");
+
+        // 模拟服务端 overlay：shield 配方 7 格原料 items 全空（Tag #planks 未展开）
+        let mut bad_grid: Vec<Option<IngredientItems>> = Vec::new();
+        for _ in 0..7 {
+            bad_grid.push(Some(IngredientItems { items: Vec::new() }));
+        }
+        bad_grid.push(Some(IngredientItems {
+            items: vec![ItemKind::IronIngot],
+        }));
+        bad_grid.push(None);
+        let bad = StoredRecipe::Shaped {
+            width: 3,
+            height: 3,
+            grid: bad_grid,
+            result: ItemKind::Shield,
+            count: 1,
+        };
+        assert!(!bad.is_executable(), "Tag 空格子的 shaped 应判定不可执行");
+
+        let mut book = load_builtin();
+        if bad.is_executable() {
+            book.insert(bad);
+        }
+        assert!(
+            book.get_by_result("shield").is_some(),
+            "内置 shield 不能被 Tag 条目顶掉"
+        );
+        let shield2 = book.get_by_result("shield").unwrap();
+        let StoredRecipe::Shaped { grid: g2, .. } = shield2 else {
+            panic!("shield 应为 shaped");
+        };
+        assert_eq!(
+            g2[1]
+                .as_ref()
+                .and_then(|i| i.items.first())
+                .map(|k| k.to_str()),
+            Some("minecraft:iron_ingot"),
+            "内置 shield slot2 仍应是铁锭（官方形状 WoW/WWW/ W ）"
+        );
     }
 }

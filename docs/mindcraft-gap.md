@@ -439,6 +439,20 @@ earest_soft_column(bot, x, y, z, radius=4)：无镐且头顶硬方块时，扫�
 - **门槛**：workspace 全绿（craft-agent 171 + craft-agent-minecraft 158 + model 23）+ fmt/clippy `-D warnings` 干净（LSP 对 `directions[...]` 的 4 处报错为误报，cargo 编译/clippy 均通过，3322 行既有 P60 同模式无碍）。
 - **回填纪律**：第 1 步差距分析（P120/P120b 后无软土柱场景）→ 第 2 步实机观测（LLM 被困 -507,44,-230 发求援聊天）→ 修复 → 回填。
 
+## 修复记录：2026-08-07 P123 盾牌合成 harness 缺口（gap "合成" 项回收）
+
+> 用户提问"盾牌配方有问题吗？为什么又停下来 goal"→ pursue：goal 暂停是用户发消息的正常自动暂停（`/goal resume` 可继续）；盾牌合成 100% 失败确认为 harness 双路径缺口。
+
+- **症状**：LLM 从 7 月至今反复 `craft_3x3("shield")` 100% 失败（archives 多会话证据：甚至自记 fact"craft_3x3 只支持固定列表，不支持 shield"）。
+- **根因链（3 层）**：
+  1. **手写表缺 shield**：`SHAPED_RECIPES`（craft_table.rs）无 shield → `lookup_shaped("shield")` None → "不支持的 3×3 合成目标"。
+  2. **RecipeBook 内置形状错**：`builtin_recipes.json` shield pattern `"W W"/"WIW"/"WWW"`（7 木板，铁居中）→ 服务端不匹配 100% 失败。官方配方（mcasset 权威 + crafty.gg 26.2 证实）实为 **`"WoW"/"WWW"/" W "`——6 木板 + 1 铁锭，铁锭在顶部中间 slot2，slot7/9 空**。沿用了错误记忆（铁居中）。
+  3. **服务端 overlay 保卫**：`RecipeBookAdd` 中 Tag 原料（`#planks`）在 `SlotDisplayData::Tag` 下不展开 → `from_slot` 空 items → 覆盖内置正确配方后缺格失败。新增 `StoredRecipe::is_executable()`，`store_recipe_book_entry` 丢弃不可执行条目，保留内置。
+- **修复**：① `SHAPED_RECIPES` 补 shield（cells: slot1/3/4/5/6/8=oak_planks，slot2=iron_ingot，P23 别名自动兼容任意木板）；② `builtin_recipes.json` pattern 改 `["WoW","WWW"," W "]`；③ `recipe_book.rs` 增加 is_executable + overlay 过滤。回归测试 2 个：`regression_lookup_shaped_finds_shield`（shape 断言）、`regression_overlay_tag_recipe_is_rejected`（overlay 保卫）。
+- **probe 实测 ✓（scripts/probe/p123_shield_craft.json）**：/clear + give dark_oak_planks/iron_ingot/crafting_table → `craft3 shield` → P18 命中 RecipeBook (shaped) → P23 别名 dark_oak_planks 7 处 → "Successfully crafted shield, you now have it."，背包 shield:1 ✓。对照 iron_sword（RecipeBook shaped 同类）成功 → 证路径无碍，shield 配方数据为根因。
+- **门槛**：workspace 全绿（craft-agent 171 + craft-agent-minecraft 160 + model 23）+ fmt/clippy `-D warnings` 干净（LSP 数处 const 数组推断误报，cargo 编译/clippy 均通过）。
+- **回填纪律**：用户提问触发 → 实机 probe 逐层排除（Tag overlay → 板子坏形状 → 官方形状铁居顶中）→ 修复 → 回填。
+
 ## 修复记录：2026-08-07 文档层完善 + 工程基准层（open-code 工作单元，非 P 系列）
 
 > 定位：以优秀开源项目标准完善仓库"门面"与可复现性——面向 DeepSeek Harness 内测
