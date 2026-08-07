@@ -472,3 +472,56 @@ earest_soft_column(bot, x, y, z, radius=4)：无镐且头顶硬方块时，扫�
   本机无 bash/docker，脚本待真实服务器环境首跑。
 - **纪律备注**：33ffdfb 提交将 P120c 代码改动与本文档层改动合并，违反单提交单关注点，
   后续如需要可拆分（SearchReplace 逐行回滚纪律不变）。
+
+## 修复记录：2026-08-08 P126 四个 Mindcraft 学习改进点（用户驱动，全选 4 项）
+
+> 用户调研 Mindcraft 后提出"改进我们项目应该改进的地方,只学习好的地方"，4 个改进点全选、不计工作量。
+> 定位：差距分析项回收——工具分组表（prompt 心智模型）、物品名单复数（知识→能力断裂）、
+> LAST_GOALS 目标回顾（动态上下文）、当前动作标签（perceive 感知完整性）。均为 Mindcraft 已有而我们缺失/错位的能力。
+
+### P126a 工具知识分组表修复（提示词层，用户确认"这正是提示词那方面的工作"）
+
+- **症状**：`to_knowledge_string` 的 groups 数组引用 Mindcraft 旧工具名（`collect`/`move_to`/`digDown`/`rememberHere`…），
+  53 个已注册工具仅 8 个命中分组，45 个全落 `## Other Tools`——LLM 无法从工具名分组快速建立"何时用哪个工具"的心智模型。
+- **根因**：分组表是早期从 Mindcraft 翻译的，此后工具大量改名/新增（goto_player/search_for_block/move_away/set_mode 等 4 个连 `ALL_TOOL_NAMES` 都漏了），分组表从未同步。
+- **修复**（core/tool.rs + tools_azalea.rs）：
+  1. 以实际注册工具名重建 `TOOL_GROUPS` const（12 组 53 工具：感知/移动/模式/挖掘/交互/合成/采集/放置/容器/背包/社交/元操作），分组表按注册名精确列出，兜底 `## Other Tools` 不变。
+  2. `ALL_TOOL_NAMES` 补 4 个遗漏工具（goto_player/search_for_block/move_away/set_mode），49→53 与注册表一致。
+  3. 回归测试 3 个：`regression_knowledge_groups_well_formed`、`regression_knowledge_string_groups_all_registered_tools`（tool.rs）、`regression_all_tool_names_in_knowledge_group`（tools_azalea.rs 双向锁定）。
+- **影响**：系统提示字节变化 → 碎一次 DeepSeek 前缀缓存（一次性，knowledge 段之后自动稳定）。用户明示接受的权衡。
+
+### P126b 物品名单复数容错（知识→能力断裂修复）
+
+- **症状**：LLM 输入 `craft("oak_plank")`/`craft("wheat_seed")`（单数）失败——「不支持的 2×2 合成目标 oak_plank」，
+  而 prompt 知识层教的配方里物品名是复数（`oak_planks`/`wheat_seeds`）。probe 实测确认。
+- **根因**（两层）：
+  1. `normalize_item_id` 只做 `minecraft:` 前缀归一，不做单复数——字符串层容错缺失（Mindcraft commands/index.js:136 有同款规则）。
+  2. **lookup 层未归一**（probe 案发现场）：`lookup_recipe`/`lookup_shaped_2x2`/`lookup_shaped` 对查询输入做精确匹配，
+     复数归一没作用于查询 → 即使字符串函数修好，`craft "oak_plank"` 仍 100% 失败。
+- **修复**（azalea/mod.rs + craft.rs + craft/craft_table.rs）：
+  1. `normalize_item_id` 追加复数规则：`ends_with("plank")`/`ends_with("seed")` → 补 `s`；已复数/带前缀不受影响。3 处调用点自动受益。
+  2. 三个 lookup 入口先 `normalize_item` 再 `bare()`/匹配（P126b 补丁 commit）。
+  3. 回归测试 2 个：`regression_normalize_item_id_plural_fallback`（15 例字符串层）、`regression_lookup_recipe_plural_fallback`（lookup 层，含 `minecraft:oak_plank` 组合）。
+- **probe 实测**：见下方验证段（probe 驱动发现 lookup 缺口 → 修复 → 复测闭环）。
+
+### P126c LAST_GOALS 任务回顾（对标 Mindcraft `$LAST_GOALS`）
+
+- **差距**：Mindcraft 每轮注入最近完成/失败目标，让 LLM 从历史结果学习（避免重复失败模式）；
+  我们 TaskManager 只在任务结束时给一次性反馈，动态上下文无历史结果回顾。
+- **修复**（task.rs + agent/mod.rs + agent/prompt.rs）：
+  1. TaskManager 增加 `recent_results: VecDeque<RecentResult>`（cap 4，含 task_id/goal/completed/reason/finished_at），
+     任务迁移到 Completed/Failed 时记录，超 cap 滚动淘汰。
+  2. `build_dynamic_context_msg` 增加 `【任务回顾】` 用户消息（瞬态，前缀登记 TRANSIENT_USER_PREFIXES 自动剔除），
+     格式 `✓ xxx（完成）` / `✗ xxx（失败: 原因）`——**走用户消息，系统提示字节不变，前缀缓存不碎**。
+  3. 回归测试 2 个：`recent_results_record_completed_and_failed_with_cap`、`recent_results_keep_retry_history`。
+
+### P126d perceive 当前动作标签（对标 Mindcraft `$ACTION`）
+
+- **差距**：Mindcraft 每轮场景含"正在执行的动作"（`$ACTION`），LLM 能感知自己当前动作状态；
+  我们 perceive 场景无动作信息，LLM 对 pending 命令（已派发未完成）无感知。
+- **修复**（azalea/handler.rs + adapter_azalea.rs + examples/azalea_probe.rs）：
+  1. handler tick 构建 game_state 时从 ActionManager 读当前 pending 命令，`current_action_label` match 全部 38 个
+     BotCommand 变体渲染中文标签（如「挖掘 (10,64,-20)」「前往 (100,64,200)」），无 pending 为空串。
+  2. adapter scene 在装备行后插入 `当前动作: <标签>`（空时显示「当前动作: 空闲」）——场景本就是用户消息，前缀缓存不受影响。
+  3. probe 的 state 快照追加 `action=` 字段（`scripts/probe/p126d_current_action.json`），可实机验证标签链路。
+- **门槛**：workspace 全绿 + fmt/clippy `-D warnings` 干净。

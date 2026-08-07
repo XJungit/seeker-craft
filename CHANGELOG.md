@@ -11,6 +11,18 @@ release (`v0.1.0`) corresponds to the initial stable feature baseline below.
 
 ### Added
 
+- **P126 Mindcraft learning batch (4 items, user-driven)** — prompt/tooling parity with Mindcraft:
+  - **P126a tool knowledge grouping table** — `to_knowledge_string` rebuilt around the actual
+    53 registered tool names in 12 real groups (previously referenced obsolete Mindcraft names,
+    45/53 tools fell into `## Other Tools`); `ALL_TOOL_NAMES` completed (4 missing tools).
+  - **P126b item-id plural fallback** — `normalize_item_id` maps singular forms
+    (`oak_plank` → `oak_planks`, `wheat_seed` → `wheat_seeds`, Mindcraft parity) and all three
+    recipe lookups normalize query input before matching (probe-driven fix).
+  - **P126c LAST_GOALS task recap** — TaskManager keeps the last 4 completed/failed tasks and
+    injects them into the dynamic context as a transient `【任务回顾】` user message (system-prompt
+    byte-stable, prefix-cache safe).
+  - **P126d perceive current-action label** — game state exposes the pending bot command and the
+    perceive scene shows `当前动作: …` (or 空闲), matching Mindcraft `$ACTION`.
 - **Documentation / repo hygiene** — README overhaul (badges, architecture diagram,
   6-stage path, 49-tool table), root-level `CHANGELOG.md`, `CITATION.cff`, `AUTHORS`.
 - **Engineering benchmark layer** — CI coverage job (`cargo llvm-cov` → lcov artifact),
