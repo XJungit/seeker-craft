@@ -154,6 +154,7 @@ impl MinecraftAzaleaAdapter {
                         if let BotEvent::State {
                             position,
                             inventory,
+                            hotbar,
                             armor,
                             player_count,
                             yaw,
@@ -243,6 +244,15 @@ impl MinecraftAzaleaAdapter {
                             } else {
                                 "头顶: 空气（已在地下洞穴或地表）".to_string()
                             };
+                            // P124：有矿石但无镐 → 注入合成建议（否则为空串，不占 token）
+                            let pick_hint =
+                                pickaxe_warning(&nearby_blocks, &game_state, &held_item);
+                            // 末尾提示行：头顶信息 + 可选的无镐警示（合并两行）
+                            let scene_tail = if pick_hint.is_empty() {
+                                overhead_hint
+                            } else {
+                                format!("{}\n{}", overhead_hint, pick_hint)
+                            };
                             let scene = format!(
                                 "位置: ({:.0}, {:.0}, {:.0})\n\
                                   生命: {:.0}/20  饱食: {}/20  主手: {}\n\
@@ -255,6 +265,7 @@ impl MinecraftAzaleaAdapter {
                                   击杀统计: [{}]\n\
                                   装备: [{}]\n\
                                   背包: [{}]\n\
+                                  hotbar: [{}]\n\
                                   玩家: {}{}\n\
                                   {}",
                                 position.x,
@@ -279,9 +290,10 @@ impl MinecraftAzaleaAdapter {
                                 kill_counts,
                                 armor,
                                 inventory,
+                                hotbar,
                                 player_count,
                                 stuck_hint,
-                                overhead_hint
+                                scene_tail
                             );
                             *g.last.lock().unwrap() = Some(WorldState {
                                 scene_desc: scene.clone(),
@@ -709,5 +721,111 @@ fn compress_block_list(nearby_blocks: &str) -> String {
         String::new()
     } else {
         interesting.join(", ")
+    }
+}
+
+/// P124：视野内是否出现矿石（"name:count" 摘要中任何 *_ore 且数量 > 0）。
+fn ore_in_view(nearby_blocks: &str) -> bool {
+    nearby_blocks.split(',').any(|tok| {
+        let Some((name, cnt)) = tok.trim().split_once(':') else {
+            return false;
+        };
+        name.trim().ends_with("ore") && cnt.trim().parse::<u32>().unwrap_or(0) > 0
+    })
+}
+
+/// P124：背包（game_state.inventory）或主手是否持有任何镐。
+/// item id 为 "minecraft:iron_pickaxe" 等 snake_case 全名。
+fn inventory_has_pickaxe(game_state: &serde_json::Value, held_item: &str) -> bool {
+    if let Some(arr) = game_state["inventory"].as_array() {
+        for s in arr {
+            let id = s["id"].as_str().unwrap_or("");
+            if id.ends_with("_pickaxe") && s["count"].as_u64().unwrap_or(0) > 0 {
+                return true;
+            }
+        }
+    }
+    held_item.ends_with("_pickaxe")
+}
+
+/// P124：背包无镐警示文本（有矿石但无任何镐时注入 perceive，否则空串）。
+///
+/// 背景（2026-08-07 实机观测）：bot 埋在地下铁矿石壁中，背包 0 把镐，
+/// LLM 因感知不到"缺工具"信号，反复对矿石坐标 goto/mine 空转——工具层
+/// gather 已有防死循环，但 LLM 决策层看不到原因而回退循环。
+/// 该警示让 LLM 在下一步就能看到缺失并规划合成镐。
+fn pickaxe_warning(nearby_blocks: &str, game_state: &serde_json::Value, held_item: &str) -> String {
+    if !ore_in_view(nearby_blocks) || inventory_has_pickaxe(game_state, held_item) {
+        return String::new();
+    }
+    "警示：视野内发现矿石，但背包无任何镐——矿石/石头类方块徒手挖不掉（不掉落物品）。\n\
+         建议先合成木镐：craft('oak_planks') → craft('stick') → craft('wooden_pickaxe') → equip('wooden_pickaxe')。\n\
+         若已有 3 块 cobblestone + 2 根 stick，可上工作台 craft_3x3('stone_pickaxe') 后再来挖矿。"
+        .to_string()
+}
+
+#[cfg(test)]
+mod p124_pickaxe_warning_tests {
+    use super::{inventory_has_pickaxe, ore_in_view, pickaxe_warning};
+    use serde_json::json;
+
+    fn inv(items: &[(&str, u64)]) -> serde_json::Value {
+        json!({"inventory": items.iter().map(|(id, c)| json!({"id": id, "count": c})).collect::<Vec<_>>()})
+    }
+
+    #[test]
+    fn ore_in_view_detects_ore_counts() {
+        assert!(ore_in_view("stone:42, iron_ore:3, deepslate:10"));
+        assert!(ore_in_view("deepslate_iron_ore:1"));
+        // 数量为 0 的矿石不算"看得到"
+        assert!(!ore_in_view("iron_ore:0, stone:5"));
+        assert!(!ore_in_view("stone:42, dirt:3"));
+        assert!(!ore_in_view(""));
+    }
+
+    #[test]
+    fn inventory_has_pickaxe_checks_ids() {
+        assert!(inventory_has_pickaxe(
+            &inv(&[("minecraft:stone_pickaxe", 1)]),
+            "dirt"
+        ));
+        assert!(inventory_has_pickaxe(
+            &inv(&[("minecraft:iron_pickaxe", 1), ("minecraft:cobblestone", 32)]),
+            "air"
+        ));
+        // 背包没有但主手是镐 → 也算有
+        assert!(inventory_has_pickaxe(&inv(&[]), "minecraft:iron_pickaxe"));
+        // 都没有 → 无镐
+        assert!(!inventory_has_pickaxe(
+            &inv(&[("minecraft:oak_log", 8), ("minecraft:stick", 4)]),
+            "dirt"
+        ));
+        // 0 个镐不算持有
+        assert!(!inventory_has_pickaxe(
+            &inv(&[("minecraft:iron_pickaxe", 0)]),
+            "dirt"
+        ));
+    }
+
+    #[test]
+    fn warning_injected_only_when_ore_and_no_pickaxe() {
+        let with_ore = "stone:88, iron_ore:4";
+        let no_ore = "stone:88, dirt:4";
+
+        // 有矿石 + 无镐 → 非空警示，且提示合成木镐
+        let w = pickaxe_warning(with_ore, &inv(&[("minecraft:oak_log", 8)]), "dirt");
+        assert!(w.contains("背包无任何镐"));
+        assert!(w.contains("wooden_pickaxe"));
+
+        // 有矿石但背包已有镐 → 空
+        assert!(
+            pickaxe_warning(with_ore, &inv(&[("minecraft:stone_pickaxe", 1)]), "dirt").is_empty()
+        );
+
+        // 有矿石但主手是镐 → 空
+        assert!(pickaxe_warning(with_ore, &inv(&[]), "minecraft:stone_pickaxe").is_empty());
+
+        // 无矿石 → 空（不论有没有镐，不打扰 LLM）
+        assert!(pickaxe_warning(no_ore, &inv(&[]), "dirt").is_empty());
     }
 }

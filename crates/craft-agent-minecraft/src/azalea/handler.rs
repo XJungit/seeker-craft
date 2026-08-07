@@ -3632,7 +3632,7 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                     // 全量背包：列出所有非空格，**按物品 ID 聚合后输出**（旧版每个槽位单独
                     // 输出，导致 `dirt:46, dirt:64, leaflitter:64, leaflitter:26` 这种重复条目，
                     // LLM 困惑且浪费 token）。聚合后输出 `dirt:110, leaflitter:90`。
-                    let (inventory, armor_str) = match bot.get_inventory() {
+                    let (inventory, armor_str, hotbar_str) = match bot.get_inventory() {
                         Ok(inv) => match inv.slots() {
                             Some(slots) => {
                                 // P56：Player 菜单槽位布局（azalea declare_menus!）：
@@ -3651,6 +3651,10 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                 let mut agg: std::collections::HashMap<String, u32> =
                                     std::collections::HashMap::new();
                                 let mut armor: [String; 4] = Default::default();
+                                // P124：hotbar 槽位（azalea Player 菜单 36-44）单独汇总，
+                                // 让 LLM 看到"hotbar 空/已有哪些物品"——装备主手只需 set_selected_hotbar_slot
+                                // 或 shift_click 入 hotbar，无需先清空背包（P8 已处理 hotbar 满自动腾位）。
+                                let mut hotbar_items: Vec<String> = Vec::new();
                                 for (idx, s) in slots.iter().enumerate() {
                                     if s.is_empty() {
                                         continue;
@@ -3670,7 +3674,15 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                     } else {
                                         *agg.entry(kind.to_string()).or_insert(0) += cnt;
                                     }
+                                    if is_player_menu && (36..=44).contains(&idx) {
+                                        hotbar_items.push(format!("{kind} x{cnt}"));
+                                    }
                                 }
+                                let hotbar_str = if hotbar_items.is_empty() {
+                                    "空".to_string()
+                                } else {
+                                    hotbar_items.join(", ")
+                                };
                                 let inv_str = if agg.is_empty() {
                                     "空背包".to_string()
                                 } else {
@@ -3697,16 +3709,18 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                     display(&armor[2]),
                                     display(&armor[3])
                                 );
-                                (inv_str, armor_summary)
+                                (inv_str, armor_summary, hotbar_str)
                             }
                             None => (
                                 "slots=None".to_string(),
                                 "头盔: 无, 胸甲: 无, 护腿: 无, 靴子: 无".to_string(),
+                                "空".to_string(),
                             ),
                         },
                         Err(_) => (
                             "获取失败".to_string(),
                             "头盔: 无, 胸甲: 无, 护腿: 无, 靴子: 无".to_string(),
+                            "空".to_string(),
                         ),
                     };
                     let player_count = bot.nearby_players().map(|pp| pp.len()).unwrap_or(0);
@@ -3878,6 +3892,17 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             .clone();
                         serde_json::json!({
                             "inventory": inv_slots,
+                            // P124：hotbar（Player 菜单 36-44）摘要，供面板/API 查看。
+                            "hotbar": inv_slots
+                                .iter()
+                                .filter(|s| {
+                                    s.get("slot")
+                                        .and_then(|v| v.as_u64())
+                                        .map(|i| (36..=44).contains(&i) && s["count"].as_u64().unwrap_or(0) > 0)
+                                        .unwrap_or(false)
+                                })
+                                .cloned()
+                                .collect::<Vec<_>>(),
                             // P56：盔甲槽位（Player 菜单 5-8）单独列出，与背包区分。
                             "armor": inv_slots
                                 .iter()
@@ -4072,6 +4097,7 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                     let _ = evt_tx.send(BotEvent::State {
                         position: p,
                         inventory,
+                        hotbar: hotbar_str,
                         armor: armor_str,
                         player_count,
                         yaw,

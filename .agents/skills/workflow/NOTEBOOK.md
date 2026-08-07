@@ -276,3 +276,17 @@ earest_entities::<Without<Player>>() 全量计数，无距离过滤无距离标�
 - Verification: 130 tests 全过；probe 实测 goto/minebelow/equip(dirt)/state 全通；部署后 LLM 死循环打破：合成 stone_pickaxe → gather iron_ore → mine_below（12:53 实机观察）。
 - Learning: (1) 工具层行为验证一律用 probe（秒级），LLM 实机只用于策略验证；(2) azalea 槽位布局必须查 vendor 源码 declare_menus!，不能想当然；(3) 工具返回消息必须区分"成功但无新信息"与"失败"——假成功消息会让 LLM 自嗨死循环。
 - Next: 观察铁获取/熔炼进度，验证新会话装备行（甲已穿上不重穿）；关注下界准备。
+
+## Round 30 - 2026-08-03 (P100-P107 修正纪律固化 + 差距表命令层全清)
+- Evidence: P100 起进入"LLM 实机观测驱动修正"阶段：probe 对照实验发现 force_block 交互 2.9m 静默拒收；mine/till 坐标盲猜死循环顽固复发。
+- Root cause: (1) P100 交互类工具仅距离检查不自动靠近——force_block 2.9m 外被服务端静默拒收；(2) P101 mine 对空气格盲猜，每次换坐标绕过死循环检测；(3) P102 till 对空气格犁地同类；(4) P103 viewer 启动根因：PowerShell `Start-Process -ArgumentList` 数组 join 成单字符串，含空格 goal 被 clap 拆烂静默退出；(5) P104 mine_above 残留 auto-tp 调试后门（无 cheats 环境静默失败、掩盖真实能力）。
+- Verification: P101 双场景 LLM 实机（L76/L78 修正消息）+ P102 probe（空气→修正犁+种 / 幂等）✓；P100 probe（空手 till 2.5m 修正→成功）✓；工具层回归全通。
+- Learning: ① 交互类工具一律自动靠近 ≤2.5m（P100）；② mine 派发时目标空气→nearest_solid_block(4) 自动修正，done 判定基于实际挖掘目标（P101）；③ till 同类修正+继续执行（P102）；④ viewer 只用 `ctl viewer`（Rust args 逐参传递），禁 PowerShell Start-Process（P103）；⑤ 调试后门绝进产品路径（P104）。
+- Next: P111 goto_player 按名导航 → 差距表命令层闭环冲刺。
+
+## Round 31 - 2026-08-06/07 (P110-P123 差距表全清 + 末地路径修复)
+- Evidence: 差距表 ❌ 清零后主线转向末地通关（tier5 → tier6 → 龙）。逐环节盘点发现 2×2 配方系统性断裂（P117）。
+- Change: P110 锚点 goto（memory anchor）→ P111 goto_player → P112 search_for_block 坐标列表 → P113 move_away → P114 vendor azalea 幽灵实体 bug 修复（首例魔改实践）→ P115 LLM 策略层观测 → P116 set_mode 双通道 → P117 2×2 配方断裂批量修复（flint_and_steel/blaze_powder/木板变体）→ P118 use_item（抛末影之眼定位要塞）→ P119 shoot（拉弓射箭）→ P120/P120b/P120c mine_above 无镐死局（绕软土柱+搜索半径扩大+超时横移）→ P123 shield 双路径缺口（手写表补配方 + RecipeBook 官方形状修正 + overlay Tag 保卫）。
+- Verification: 各 probe 实机闭环（合规内）；差距表全部 ❌ 清零；workspace 全绿 + fmt/clippy 干净。
+- Learning: ① 末地路径每环节先做"配方盘点"防系统性断裂（P117：2×2 仍查手写表）；② 射箭必须命中检测（P118 教训），拉满蓄力 1s（P119）；③ 有效工具等级规则：无镐徒手 8s/格 vs 绕软土 0.25s/格（32 倍差，P120b）；④ 官方配方以 mcasset/crafty.gg 交叉验证，勿沿误记忆（P123 铁居中错误）。
+- Next: 末地通关——下界 → 烈焰棒 → 末影之眼 → 要塞 → 龙战（当前主线）。自动化工作流补 24h 常驻：状态回填 + viewer/agent 常驻 + 时钟调度（自增强循环）。

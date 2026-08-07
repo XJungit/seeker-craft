@@ -82,6 +82,9 @@ pub enum BotEvent {
         position: azalea::Vec3,
         /// 全量非空格：格式 `oak_log:3, cobblestone:64, wooden_pickaxe:1`
         inventory: String,
+        /// hotbar（槽 36-44）摘要：`coal x52, dirt x19` 或 `空`（P124 新增）。
+        /// 让 LLM 知道装备/切换无需先清背包——避免误判"背包满"陷入 discard 循环。
+        hotbar: String,
         /// 已穿戴盔甲摘要：`头盔: iron_helmet, 胸甲: 无, 护腿: 无, 靴子: 无`（P56 新增）
         armor: String,
         player_count: usize,

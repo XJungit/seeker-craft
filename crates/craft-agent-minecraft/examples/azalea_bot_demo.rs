@@ -59,6 +59,7 @@ async fn main() {
             BotEvent::State {
                 position,
                 inventory,
+                hotbar: _,
                 armor: _,
                 player_count,
                 yaw,
