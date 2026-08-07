@@ -561,6 +561,16 @@ impl Agent {
             }
         }
 
+        // P126c：最近任务结果回顾（对标 Mindcraft $LAST_GOALS）——刚完成/失败的
+        // 里程碑以 ✓/✗ 列出，帮 LLM 延续目标链（知道上一步做到哪、下一步接什么）。
+        // 只有任务链启用且有结果时才注入（空则跳过，省 token）。
+        if self.config.enable_task_chain {
+            let recent = self.task_manager.recent_results_str();
+            if !recent.is_empty() {
+                parts.push(format!("【任务回顾】\n最近任务结果：\n{recent}"));
+            }
+        }
+
         if self.obs_streak >= 5 {
             if self.obs_streak >= 10 {
                 parts.push("【循环警告】你已经连续观察 10+ 步没有实际行动！STOP repeating perceive. Pick a COMPLETELY DIFFERENT tool RIGHT NOW — goto / gather / mine / craft / attack / build — anything but perceive.".to_string());

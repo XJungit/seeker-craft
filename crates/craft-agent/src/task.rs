@@ -16,11 +16,28 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 use std::path::Path;
 use std::path::PathBuf;
 
 /// Session custom-entry type used to persist task progress across restarts.
 pub use crate::core::session::TASK_STATE_CUSTOM_TYPE;
+
+/// 最近任务结果条数上限（对标 Mindcraft $LAST_GOALS，滚动保留最近 4 条）。
+pub const RECENT_RESULTS_CAP: usize = 4;
+
+/// 单条最近任务结果（供动态上下文注入「任务回顾」，让 LLM 知道刚完成/失败过什么）。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RecentResult {
+    pub task_id: String,
+    /// 任务 goal 文本（给 LLM 看的 self_prompt）。
+    pub goal: String,
+    /// true=完成，false=失败。
+    pub completed: bool,
+    /// 失败原因（失败时 Some）。
+    pub reason: Option<String>,
+    pub finished_at: u64,
+}
 
 /// 单个完成条件（结构化，非代码）。
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -311,6 +328,8 @@ pub struct TaskManager {
     pub current: Option<TaskInstance>,
     pub tasks_dir: Option<PathBuf>,
     statuses: HashMap<String, TaskStatus>,
+    /// 最近完成/失败结果（滚动保留，注入动态上下文供 LLM 回顾）。
+    recent_results: VecDeque<RecentResult>,
 }
 
 impl TaskManager {
@@ -321,6 +340,7 @@ impl TaskManager {
             current: None,
             tasks_dir: None,
             statuses: HashMap::new(),
+            recent_results: VecDeque::new(),
         }
     }
 
@@ -451,10 +471,27 @@ impl TaskManager {
         });
         let status = next_status?;
         let completed = matches!(status, TaskStatus::Completed { .. });
+        let reason = match &status {
+            TaskStatus::Failed { reason, .. } => Some(reason.clone()),
+            _ => None,
+        };
         if let Some(inst) = self.current.as_mut() {
             inst.status = status.clone();
         }
-        self.statuses.insert(task_id, status);
+        self.statuses.insert(task_id.clone(), status);
+        // 记录最近结果（完成/失败各一次；restart 重跑会再记一条，保留尝试历史）。
+        if completed || reason.is_some() {
+            self.recent_results.push_back(RecentResult {
+                task_id: task_id.clone(),
+                goal: task.goal.clone(),
+                completed,
+                reason,
+                finished_at: now_ms,
+            });
+            while self.recent_results.len() > RECENT_RESULTS_CAP {
+                self.recent_results.pop_front();
+            }
+        }
         Some(completed)
     }
 
@@ -490,6 +527,29 @@ impl TaskManager {
         self.current
             .as_ref()
             .is_some_and(|instance| TaskChecker::check(&instance.task.success, perceive_text))
+    }
+
+    /// 最近任务结果文本（对标 Mindcraft $LAST_GOALS，供动态上下文注入）。
+    /// 无结果时返回空串（调用方不注入，省 token）。
+    pub fn recent_results_str(&self) -> String {
+        if self.recent_results.is_empty() {
+            return String::new();
+        }
+        self.recent_results
+            .iter()
+            .map(|r| {
+                if r.completed {
+                    format!("✓ {}（完成）", r.goal)
+                } else {
+                    format!(
+                        "✗ {}（失败: {}）",
+                        r.goal,
+                        r.reason.as_deref().unwrap_or("未知原因")
+                    )
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     /// Return a JSON snapshot suitable for the session custom entry.
@@ -812,6 +872,119 @@ mod tests {
             tm.current_status(),
             Some(TaskStatus::Failed { .. })
         ));
+    }
+
+    /// P126c：最近结果记录（完成/失败）与滚动上限。
+    #[test]
+    fn recent_results_record_completed_and_failed_with_cap() {
+        let mut tm = TaskManager::new();
+        for i in 0..3 {
+            let task = Task {
+                id: format!("t{i}"),
+                name: format!("任务{i}"),
+                description: String::new(),
+                goal: format!("目标{i}"),
+                tier: 1,
+                order: i as u32,
+                success: SuccessCondition::InventoryHas {
+                    item: format!("item{i}"),
+                    count: 1,
+                },
+                failure: None,
+                timeout_secs: None,
+                reward: None,
+            };
+            tm.start_task_direct(task, i * 100);
+            let r = tm.check_current(&format!("背包: [item{i}:1]"), i * 100 + 50);
+            assert_eq!(r, Some(true), "t{i} 应完成");
+        }
+        // 3 条完成记录，按时间顺序
+        let text = tm.recent_results_str();
+        assert!(text.contains("✓ 目标0（完成）"), "got: {text}");
+        assert!(text.contains("✓ 目标1（完成）"));
+        assert!(text.contains("✓ 目标2（完成）"));
+        assert!(!text.contains("✗"), "不应有失败记录: {text}");
+
+        // 第 4 条：失败（超时）
+        let task = Task {
+            id: "t3".into(),
+            name: "任务3".into(),
+            description: String::new(),
+            goal: "超时目标".into(),
+            tier: 1,
+            order: 3,
+            success: SuccessCondition::InventoryHas {
+                item: "item3".into(),
+                count: 1,
+            },
+            failure: None,
+            timeout_secs: Some(1),
+            reward: None,
+        };
+        tm.start_task_direct(task, 400);
+        let r = tm.check_current("背包: []", 2_000);
+        assert_eq!(r, Some(false), "t3 应超时失败");
+        let text = tm.recent_results_str();
+        assert!(text.contains("✗ 超时目标（失败: 超时 1s）"), "got: {text}");
+
+        // 第 5 条：滚动上限 4（最早一条被挤出）
+        let task = Task {
+            id: "t4".into(),
+            name: "任务4".into(),
+            description: String::new(),
+            goal: "第五个目标".into(),
+            tier: 1,
+            order: 4,
+            success: SuccessCondition::InventoryHas {
+                item: "item4".into(),
+                count: 1,
+            },
+            failure: None,
+            timeout_secs: None,
+            reward: None,
+        };
+        tm.start_task_direct(task, 500);
+        let r = tm.check_current("背包: [item4:1]", 550);
+        assert_eq!(r, Some(true));
+        let text = tm.recent_results_str();
+        assert!(
+            !text.contains("✓ 目标0（完成）"),
+            "最早记录应被挤出（cap 4）: {text}"
+        );
+        assert!(text.contains("✓ 目标1（完成）"));
+        assert!(text.contains("✓ 目标2（完成）"));
+        assert!(text.contains("✗ 超时目标"));
+        assert!(text.contains("✓ 第五个目标（完成）"));
+        // 行数 = 4
+        assert_eq!(text.lines().count(), 4, "最多 4 条: {text}");
+    }
+
+    /// P126c：同一任务 restart 后再次完成 → 两条尝试记录（历史保留）。
+    #[test]
+    fn recent_results_keep_retry_history() {
+        let mut tm = TaskManager::new();
+        let task = Task {
+            id: "retry".into(),
+            name: "重试任务".into(),
+            description: String::new(),
+            goal: "重试目标".into(),
+            tier: 1,
+            order: 1,
+            success: SuccessCondition::InventoryHas {
+                item: "oak_log".into(),
+                count: 4,
+            },
+            failure: None,
+            timeout_secs: None,
+            reward: None,
+        };
+        tm.start_task_direct(task, 0);
+        assert_eq!(tm.check_current("背包: [oak_log:2]", 100), None);
+        tm.restart_current(200);
+        assert_eq!(tm.check_current("背包: [oak_log:8]", 300), Some(true));
+        let text = tm.recent_results_str();
+        assert_eq!(text.lines().count(), 1, "仅完成一次: {text}");
+        assert!(text.contains("✓ 重试目标（完成）"));
     }
 
     #[test]

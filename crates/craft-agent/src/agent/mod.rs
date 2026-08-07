@@ -47,6 +47,7 @@ pub(super) const TRANSIENT_USER_PREFIXES: &[&str] = &[
     // ── 动态上下文（build_dynamic_context_msg 各段）──
     "【场景提示】",
     "【经验参考】",
+    "【任务回顾】",
     "【观察提醒】",
     "【循环警告】",
     "【关键警告】",
