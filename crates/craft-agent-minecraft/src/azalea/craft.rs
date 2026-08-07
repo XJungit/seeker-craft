@@ -453,6 +453,38 @@ mod tests {
         }
     }
 
+    /// P126b 回归测试：复数容错必须在 lookup 层生效，而不只是 normalize_item_id 字符串函数。
+    /// probe 实测 `craft "oak_plank"`（单数）仍报「不支持的 2×2 合成目标 oak_plank」——
+    /// 根因：lookup_recipe/lookup_shaped_2x2/lookup_shaped 对查询输入做精确匹配，复数归一
+    /// 没作用于查询。修复后在三个 lookup 入口统一先 normalize_item 再 bare/匹配。
+    #[test]
+    fn regression_lookup_recipe_plural_fallback() {
+        // 2×2 顺序填充（RECIPES 表）：oak_plank(单数) → oak_planks
+        let p = lookup_recipe("oak_plank").expect("oak_plank 必须可查（复数容错）");
+        assert_eq!(p.output_per_craft, 4, "oak_plank → 产出 4 木板");
+        assert!(
+            lookup_recipe("wheat_seed").is_none(),
+            "wheat_seed 无合成配方"
+        );
+        // 2×2 形状（SHAPED_2X2 表）：单数 plank 不匿名入表，但 stick/tool 类不受影响
+        assert_eq!(lookup_shaped_2x2("stick").len(), 1, "stick 仍可查");
+        assert_eq!(
+            lookup_shaped_2x2("flint_and_steel").len(),
+            1,
+            "flint_and_steel 仍可查"
+        );
+        // 3×3 形状（SHAPED_RECIPES 表）：物品名本身无单复数问题，回归确认不回归
+        assert!(lookup_shaped("stone_pickaxe").is_some());
+        assert!(lookup_shaped("minecraft:stone_pickaxe").is_some());
+        // bare 前缀处理 + 复数归一组合：minecraft:oak_plank → oak_planks
+        assert!(
+            lookup_recipe("minecraft:oak_plank").is_some(),
+            "minecraft:oak_plank 必须可查"
+        );
+        // 已复数/原样不受影响
+        assert!(lookup_recipe("oak_planks").is_some());
+    }
+
     /// P17 回归测试：lookup_smelt_all 必须能查到 SMELT_RECIPES 表中的所有熔炼配方。
     /// 历史bug：原 lookup_smelt 用 normalize_item() 给 id 加 "minecraft:" 前缀，
     /// 但表里存的是裸 id（如 "iron_ingot"），导致查找永远 false → smelt 报"不支持 iron_ingot"。

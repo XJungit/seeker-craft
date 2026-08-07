@@ -69,7 +69,9 @@ const SHAPED_2X2: &[ShapedEntry] = &[
 /// 查找 2×2 形状配方的所有候选（按表中顺序，coal 优先于 charcoal）。
 /// 返回 (cells, output_per_craft) 列表；空表示该物品无形状配方，应回退到顺序填充。
 pub(crate) fn lookup_shaped_2x2(item: &str) -> Vec<(&'static [(usize, &'static str)], u32)> {
-    let b = bare(item);
+    // P126b：查询输入同样走复数归一（oak_plank → oak_planks）。
+    let norm = normalize_item(item);
+    let b = bare(&norm);
     SHAPED_2X2
         .iter()
         .filter(|(id, _, _)| *id == b)
@@ -93,7 +95,8 @@ pub(crate) fn planks_plan_for(planks_id: &str) -> Option<CraftPlan> {
 }
 
 pub(crate) fn lookup_recipe(item: &str) -> Option<CraftPlan> {
-    let b = bare(item).to_string();
+    // P126b：先做单复数归一（oak_plank → oak_planks），否则 RECIPES/planks 派生都查不到。
+    let b = bare(&normalize_item(item)).to_string();
     // 显式配方优先；否则对木板做动态派生（覆盖所有原木种类）
     if let Some(p) = RECIPES
         .iter()
@@ -1229,7 +1232,9 @@ pub(crate) fn lookup_shaped(item: &str) -> Option<ShapedRecipe> {
     // P12 修复（2026-07-26）：原代码用 normalize_item(item) 把 id 统一加上 "minecraft:" 前缀，
     // 但 SHAPED_RECIPES 表里存的是裸 id（如 "stone_pickaxe"），导致查找永远不匹配，
     // craft_3x3 100% 失败。改用 bare() 去掉前缀后比较。
-    let norm = bare(item);
+    // P126b：查询输入先走复数归一（oak_plank → oak_planks）。
+    let norm = normalize_item(item);
+    let norm = bare(&norm);
     SHAPED_RECIPES
         .iter()
         .find(|(id, _)| *id == norm)

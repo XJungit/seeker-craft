@@ -1,0 +1,11 @@
+{
+  "name": "p126b_plural_craft",
+  "description": "P126b：物品名单复数容错——craft('oak_plank')（单数）应自动归一为 oak_planks 并成功合成，背包出现 oak_planks",
+  "between_delay_ms": 1500,
+  "steps": [
+    {"cmd": "chat /clear @s", "wait_ms": 600},
+    {"cmd": "chat /give @s minecraft:oak_log 4", "wait_ms": 800},
+    {"cmd": "craft oak_plank", "wait_ms": 15000},
+    {"state": true}
+  ]
+}
