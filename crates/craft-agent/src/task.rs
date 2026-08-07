@@ -557,6 +557,9 @@ impl TaskManager {
         serde_json::json!({
             "current_id": self.current.as_ref().map(|instance| instance.task.id.clone()),
             "statuses": &self.statuses,
+            // P126c：最近结果同步持久化——跨会话恢复后任务回顾依然可注入，
+            // 否则快照里的 Failed/Completed 状态会丢 recent_results（实测 gap）。
+            "recent_results": &self.recent_results,
         })
     }
 
@@ -572,6 +575,19 @@ impl TaskManager {
                 && let Ok(status) = serde_json::from_value::<TaskStatus>(value.clone())
             {
                 self.statuses.insert(id.clone(), status);
+            }
+        }
+        // P126：恢复最近任务回顾（跨会话延续）。旧快照无此字段（None）→ 跳过，
+        // recent_results 保持空（与旧行为一致，不产生垃圾）。
+        if let Some(recent) = snapshot.get("recent_results").and_then(Value::as_array) {
+            self.recent_results.clear();
+            for value in recent {
+                if let Ok(r) = serde_json::from_value::<RecentResult>(value.clone()) {
+                    self.recent_results.push_back(r);
+                }
+            }
+            while self.recent_results.len() > RECENT_RESULTS_CAP {
+                self.recent_results.pop_front();
             }
         }
         let Some(current_id) = snapshot.get("current_id").and_then(Value::as_str) else {
@@ -1045,6 +1061,101 @@ mod tests {
             restored.current_status(),
             Some(TaskStatus::Running { .. })
         ));
+    }
+
+    /// P126c：restore_snapshot 必须恢复最近任务回顾（跨会话恢复后
+    /// 【任务回顾】注入照样可用）。旧快照无 recent_results 字段 → 优雅跳过。
+    #[test]
+    fn restore_snapshot_restores_recent_results() {
+        let mut manager = TaskManager::new();
+        // 完成一个任务 → recent_results 有一条
+        manager.start_task_direct(
+            Task {
+                id: "old-win".into(),
+                name: "胜利".into(),
+                description: String::new(),
+                goal: "拿到木头".into(),
+                tier: 1,
+                order: 1,
+                success: SuccessCondition::InventoryHas {
+                    item: "oak_log".into(),
+                    count: 1,
+                },
+                failure: None,
+                timeout_secs: None,
+                reward: None,
+            },
+            100,
+        );
+        assert_eq!(manager.check_current("背包: [oak_log:1]", 150), Some(true));
+
+        // 失败一个任务 → 第二条记录
+        manager.start_task_direct(
+            Task {
+                id: "old-fail".into(),
+                name: "失败".into(),
+                description: String::new(),
+                goal: "打到铁".into(),
+                tier: 2,
+                order: 2,
+                success: SuccessCondition::InventoryHas {
+                    item: "iron_ingot".into(),
+                    count: 1,
+                },
+                failure: None,
+                timeout_secs: Some(1),
+                reward: None,
+            },
+            200,
+        );
+        assert_eq!(manager.check_current("背包: []", 5_000), Some(false));
+
+        let snapshot = manager.snapshot();
+        // 快照必须携带 recent_results（否则恢复后回顾丢失 → 实测 gap）
+        assert!(
+            snapshot
+                .get("recent_results")
+                .and_then(Value::as_array)
+                .is_some(),
+            "snapshot 应包含 recent_results: {snapshot}"
+        );
+
+        let mut restored = TaskManager::new();
+        // 恢复一个空 manager（旧代码路径：仅 statuses/current 恢复）
+        let legacy = serde_json::json!({"current_id": "old-fail", "statuses": {}});
+        restored.restore_snapshot(&legacy);
+        assert!(
+            restored.recent_results_str().is_empty(),
+            "旧快照无字段 → 空"
+        );
+
+        // 当前版本快照 → 完整恢复回顾
+        let mut restored = TaskManager::new();
+        restored.restore_snapshot(&snapshot);
+        let text = restored.recent_results_str();
+        assert!(text.contains("✓ 拿到木头（完成）"), "got: {text}");
+        assert!(text.contains("✗ 打到铁（失败"), "got: {text}");
+        // 恢复后新结果继续追加
+        restored.start_task_direct(
+            Task {
+                id: "new-win".into(),
+                name: "新胜利".into(),
+                description: String::new(),
+                goal: "新目标".into(),
+                tier: 1,
+                order: 3,
+                success: SuccessCondition::InventoryHas {
+                    item: "stick".into(),
+                    count: 1,
+                },
+                failure: None,
+                timeout_secs: None,
+                reward: None,
+            },
+            300,
+        );
+        assert_eq!(restored.check_current("背包: [stick:1]", 350), Some(true));
+        assert!(restored.recent_results_str().contains("✓ 新目标（完成）"));
     }
 
     #[test]

@@ -1,0 +1,9 @@
+{
+  "between_delay_ms": 1000,
+  "timeout_ms": 60000,
+  "steps": [
+    { "cmd": "goto -477 88 -141" },
+    { "wait_ms": 3000 },
+    { "state": true }
+  ]
+}
