@@ -12,10 +12,14 @@ use super::{
     normalize_entity_target, parse_chat_command,
 };
 use azalea::BlockPos;
+use azalea::core::direction::Direction;
 use azalea::core::hit_result::HitResult;
 use azalea::pathfinder::goals::{BlockPosGoal, RadiusGoal, YGoal};
 use azalea::player::GameProfileComponent;
 use azalea::prelude::*;
+use azalea::protocol::packets::game::s_player_action::{
+    Action as ServerboundPlayerActionKind, ServerboundPlayerAction,
+};
 use azalea_registry::DataRegistryKey;
 use azalea_registry::builtin::{BlockKind, EntityKind, ItemKind};
 use craft_agent::core::memory::{MemoryKind, MemoryPos, WorldMemory};
@@ -2339,7 +2343,14 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                 bot.start_use_item();
                                 sleep(Duration::from_millis(50)).await;
                             }
-                            bot.stop_use_item();
+                            // 松弦：直接发 ReleaseUseItem 包（azalea 官方 API write_packet，
+                            // 不依赖本地 vendor 扩展——vendor 保持官方 c35b57e 可随上游更新）。
+                            bot.write_packet(ServerboundPlayerAction {
+                                action: ServerboundPlayerActionKind::ReleaseUseItem,
+                                pos: BlockPos::new(0, 0, 0),
+                                direction: Direction::Down,
+                                seq: 0,
+                            });
                             // 放箭后服务端同步箭数可能有延迟，轮询最多 1.5s。
                             let mut arrows_after = count_item(&bot, arrow_kind);
                             for _ in 0..5 {
