@@ -290,3 +290,11 @@ earest_entities::<Without<Player>>() 全量计数，无距离过滤无距离标�
 - Verification: 各 probe 实机闭环（合规内）；差距表全部 ❌ 清零；workspace 全绿 + fmt/clippy 干净。
 - Learning: ① 末地路径每环节先做"配方盘点"防系统性断裂（P117：2×2 仍查手写表）；② 射箭必须命中检测（P118 教训），拉满蓄力 1s（P119）；③ 有效工具等级规则：无镐徒手 8s/格 vs 绕软土 0.25s/格（32 倍差，P120b）；④ 官方配方以 mcasset/crafty.gg 交叉验证，勿沿误记忆（P123 铁居中错误）。
 - Next: 末地通关——下界 → 烈焰棒 → 末影之眼 → 要塞 → 龙战（当前主线）。自动化工作流补 24h 常驻：状态回填 + viewer/agent 常驻 + 时钟调度（自增强循环）。
+
+## Round 32 - 2026-08-07 22:40 (P124 感知双增强 + 运维可靠性修复)
+- Evidence: 实机观测到 bot 埋在铁矿石壁中，背包 0 镐，却反复 discard 背包物品——hotbar 空但需腾出"hotbar 空间"，LLM 因感知不到真实 hotbar 状态误判背包满，产生 discard 死循环（每次丢弃又因自动拾取吸回）。
+- Root cause: (1) 感知层只给背包聚合计数，不给 hotbar 具体占用——LLM 无从得知"hotbar 空、可直接 equip"；(2) 埋地矿石场景无镐时缺少决策信号，LLM 反复 goto/mine 空转；(3) 运维层 ctl status 尾部日志读取时机是"读 8-01 旧日志"假象，掩盖进程真实存活状态。
+- Change: P124 (1) `BotEvent::State` 新增 `hotbar` 字段（handler 聚合槽 36-44 → 摘要行），adapter perceive 新增 `hotbar: [{}]` 行；(2) adapter 新增 `pickaxe_warning()`——视野有矿石但背包无镐时注入合成建议（否则空串不占 token）；(3) ctl cmd_status 先查进程存活再 read 日志，autopilot/viewer 未跑时跳旧日志防误导；(4) 无镐警示按干场景回填（无需交互类靠近）。
+- Verification: probe 实机——hotbar 空 + 背包 iron_ingot → `equip` 一次成功 "已装备 iron_ingot 到主手 (hotbar 槽 1)"，无需 discard ✓；回归单测 163 全绿 ✓；EOF 全量 fmt/clippy/workspace 干净 ✓；commit 8d66480（P124）+ db54a1e（ctl）。
+- Learning: ① LLM 决策黑洞常来自感知缺口——无法看到的它拿不（hotbar）；② 工具信息给"该做什么"的信号（无镐→合成路径）比只给状态有用；③ 运维工具也要自查进程存活，不能把过早日志当现状。
+- Next: P124 部署随主 runtime（父任务并行控制）下次重启生效；持续观测末地主线（下界 → 烈焰棒），遇瓶颈先联网再修。
