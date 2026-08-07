@@ -1037,10 +1037,14 @@ impl AzaleaBot {
                                         Some((nx, nz)) => format!(
                                             "Action output:\nmine_above 超时（30s）：Y 未上升，上升路径被挡或徒手挖太慢（~8秒/格）。\
                                              已自动横移到 ({nx},?,{nz}) 换位置找软土柱/洞穴通道，到达后请重试 mine_above。\
-                                             若有镐可先 equip 再挖。"
+                                             若有镐可先 equip 再挖。\
+                                             \nP125 提示：若背包有方块（如 cobblestone），用 place 垫方块逐格上跳（pillar 脱离）\
+                                             比徒手凿岩壁快得多——原地放置、跳上、再放置，直出地表找树做镐。"
                                         ),
                                         None => "Action output:\nmine_above 超时（30s）：Y 未上升，上升路径被挡或徒手挖太慢（~8秒/格）。\
-                                             建议：(1) 若有镐，先 equip 再重试；(2) 用 mine 横向挖楼梯/找软方块通道；(3) 无镐时多调几次 mine_above 逐格挖穿。"
+                                             建议：(1) 若有镐，先 equip 再重试；(2) 用 mine 横向挖楼梯/找软方块通道；\
+                                             (3) P125：若背包有方块（如 cobblestone），用 place 垫方块逐格上跳\
+                                             （pillar-up）快速脱离——无镐凿岩壁 8s/格，pillar 只需 1 格方块/跳。"
                                             .to_string(),
                                     }
                                 }

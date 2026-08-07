@@ -12,24 +12,16 @@
 3. 持续优化 agent 框架、Azalea 接口、自动化工具套件
 
 ### 问题解决（Problem Solving）
-- **首先**：上网搜索解决方案
-- **反复出现的问题**：必须搜索解决方案
-- Mindcraft 及类似项目是参考实现
+- **首先**：上网搜索解决方案；**反复出现的问题**必须搜索（Mindcraft/Azalea/MC Wiki 是参考实现）
+- 完整迭代方法（差距分析先行 + 证据驱动循环 + 迭代纪律）见工作流技能 `.agents/skills/workflow/SKILL.md`
 
 ### 迭代工作流（必须遵守，2026-08-01 起）
 > 本质定位：**工作流 = 持续优化项目本身**（差距分析 → 修复 → 回填）。
-> bot 运行（viewer/autopilot）只是**按需观测手段**，不是常驻工作流——
-> 每个工作单元按需启动、观测完即停（`craft-agent-ctl stop`）。
-> 工具层验证优先用 probe（秒级），LLM 实机观测只在需要确认
-> 策略/规划行为时按工作单元启动。
-
-每个工作单元开始前按顺序执行：
-1. **差距分析先行**：扫 `docs/mindcraft-gap.md` 优先级队列，找出主线收益最高的缺失项
-2. **实机观测**：probe/status/session 确认问题真实存在（区分 harness bug vs LLM 决策）
-3. **修复/实现**：改代码 → `cargo test -p craft-agent-minecraft --features azalea-bot --lib` → 提交
-4. **回填**：更新 `docs/mindcraft-gap.md` 状态与 AGENTS.md（如有流程变更）
-> 禁止跳过第 1 步直接修 bug——被动修补（P57-P76 模式）是流程缺陷，
-> 主动差距分析（P77 起）是 Mission 第一优先级的正确执行方式。
+> bot 运行（viewer/autopilot）只是**按需观测手段**，观测完即停（`craft-agent-ctl stop`）；
+> 工具层验证优先用 probe（秒级），LLM 实机观测只在需要确认策略/规划行为时按工作单元启动。
+> 完整迭代循环（差距分析先行 → 实机观测 → 修复 → 提交 → 回填）与迭代纪律
+> **见工作流技能 `.agents/skills/workflow/SKILL.md`**——禁止跳过差距分析直接修 bug
+> （被动修补 P57-P76 模式是流程缺陷；主动差距分析 P77 起是 Mission 第一优先级的正确执行方式）。
 
 ### 汇报纪律（2026-08-06 起，用户指令）
 
@@ -69,24 +61,12 @@ cargo run -p craft-agent-minecraft --example agent_azalea_demo --features azalea
 > 本质：本项目代码将由 AI 代理长期维护。**一切改动**（功能、修复、重构、实验）
 > 服从同一套准则：**稳定、可靠、准确、方便长期维护**。优先级：稳定性 > 工作量。
 > LLM 兼容性是不可破坏的契约（工具名、消息格式、prompt 文本、配置 schema）。
-
-### 通用迭代准则（适用于所有工作单元）
-
-1. **先测试锁定行为**：任何改动（尤其重构）前，先写/确认针对性测试锁定现有行为；改动后全量验证
-2. **行为不变原则**：工具名、消息格式、prompt 文本、任务/配置文件 schema 绝不因重构而变
-3. **单提交单关注点**：一次改动一个提交，回滚粒度 = 单次提交；纯移动/重命名提交的 diff 只有位置变化
-4. **全量门槛**：每次改动后 `cargo test --workspace` + `cargo fmt --all -- --check` + clippy `-D warnings` 全绿才算完成
-5. **可回滚**：冒险实验前先 `git add -A && git commit --no-verify -m "wip: checkpoint"`；绝不 `git checkout`/`reset`/`restore`/`stash` 回滚（用 SearchReplace 逐行可见回滚）
-6. **文档同步**：每次迭代回填 `docs/mindcraft-gap.md` 状态；流程性变更必须回写 AGENTS.md 本准则
-7. **双点同步防线**：任何涉及工具/动作/消息格式的新增，按下方"新增能力纪律"四处同步，回归测试兜底
+> 通用迭代准则（先测试锁定/行为不变/单提交/全量门槛/回滚/文档回填/双点同步）
+> 已下沉至工作流技能 `.agents/skills/workflow/SKILL.md`。本文件只保留项目级硬契约。
 
 ### 架构演进路线图（稳定优先，逐步执行）
 
-- **P1 已完成基线收尾（2026-08-03）**：P1.3 ctl 日志文件名统一 ✓ / P1.2 工具↔MinecraftAction 映射集中（`action_for()` + 47 工具/32 变体登记表）+ 全量回归测试 ✓ / P1.1 瞬态消息统一 `push_transient` helper（debug 断言前缀已登记；顺带修复 P12/P31/P56 nudge 的 `你的目标是:` 公共前缀漏登记 → 此前 nudge 永不剔除混入压缩摘要）✓
-- **P2 结构性已完成（2026-08-03）**：
-  - P2.1 `run_one_turn` 拆分 ✓：`execute_batch`（批分组/READ 并行/WRITE 串行/slow 探测）+ `finalize_abort`（P89/P90/P94/P99 四分支收敛为 `AbortDecision::{Reroute, Handoff}` 枚举）
-  - P2.2 `azalea/mod.rs`（6340 行）拆分 ✓：`azalea/commands.rs`（BotCommand 33 变体 + QueuedCommand + parse_chat_command + chat_parser 测试）+ `azalea/handler.rs`（BotState + tick 主体 handle + 专属 helper），mod.rs 1995 行，经 `pub use` re-export 保持外部引用零改动
-  - P2.3 `craft-agent-model` 边界 ✓：Cargo.toml 文档标注只依赖 `craft_agent::core::{message,types}`，CI quality job 用 `cargo check -p craft-agent-model --no-default-features` 验证不渗透上层
+- **P1/P2 已完成（2026-08-03）**：ctl 日志文件名统一 / 工具↔MinecraftAction 映射集中（`action_for()` + 47 工具登记表 + 全量回归）/ 瞬态消息统一 `push_transient` / run_one_turn 拆分（execute_batch + `AbortDecision`）/ azalea mod.rs 拆分（commands.rs + handler.rs）/ craft-agent-model 边界。细节见 git log。
 - **P3 按需（不设 deadline）**：`craft.rs`（4730 行）按域拆 craft_table/smelt/brew/enchant/smith；`tools_azalea.rs`（4166 行）按域分组文件保留单一 `register_all_tools()`；`agent_loop.rs` 事件推送/会话保存/滚动抽 helper
 
 ### 新增能力纪律（工具/动作/消息格式的双点同步）

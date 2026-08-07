@@ -26,15 +26,35 @@ description: Craft-Agent 持久维护工作流——先读 NOTEBOOK.md，按观�
 
 ## 迭代循环
 
-1. 查看 Viewer API 状态、游戏状态、会话尾部、进程日志
-2. 从实机证据确认一个具体失败或缺失能力
+0. **差距分析先行**：扫 `docs/mindcraft-gap.md` 优先级队列，找出主线收益最高的缺失项；
+   禁止跳过差距分析直接修 bug（被动修补 = 流程缺陷）。当前工作单元收益最高项见
+   NOTEBOOK 末尾 "Next"。
+1. 查看 Viewer API 状态、游戏状态、会话尾部、进程日志（`craft-agent-ctl status` /
+   `GET /api/game-state`）
+2. 从实机证据确认一个具体失败或缺失能力——工具层用 probe（秒级），区分
+   harness bug vs LLM 决策；策略/规划行为才按工作单元开 LLM 实机观测
 3. 先搜索互联网解决不熟悉或重复出现的 Minecraft/Azalea/Mindcraft 问题
 4. 定位根因：框架、适配器、工具、提示词或策略
 5. 在 `vendor/azalea` 之外做最小正确修改
-6. 运行聚焦测试 + 相关 crate 测试 + `git diff --check`
+6. 运行聚焦测试 + 相关 crate 测试 + `git diff --check` + `cargo fmt --all -- --check`，全绿后再提交
 7. 仅必要时部署。除非新二进制必须加载，否则重用现有 Viewer
 8. 验证真实状态增量：库存里程碑、位置/维度、生命/生存恢复、成功生产或末影龙击杀
-9. 追加到 `NOTEBOOK.md`，报告给用户，然后立即继续
+   （以结构化 game-state 为准，不看 LLM 工具返回文本）
+9. 回填 `docs/mindcraft-gap.md` 状态 + 追加到 `NOTEBOOK.md`，报告给用户，然后立即继续
+
+## 迭代纪律（总纲下沉，2026-08-02 起）
+
+- **先测试锁定行为**：任何改动（尤其重构）前，先写/确认针对性测试锁定现有行为；改动后全量验证
+- **行为不变原则**：工具名、消息格式、prompt 文本、任务/配置文件 schema 绝不因重构而变
+- **单提交单关注点**：一次改动一个提交，回滚粒度 = 单次提交；纯移动/重命名提交的 diff 只有位置变化
+- **全量门槛**：每次改动后 `cargo test --workspace` + `cargo fmt --all -- --check` + clippy `-D warnings` 全绿才算完成
+- **可回滚**：风险实验前先 `git add -A && git commit --no-verify -m "wip: checkpoint"`；
+  绝不 `git checkout`/`reset`/`restore`/`stash` 回滚（用可见、逐行可回滚的方式）
+- **文档同步**：每次迭代回填 `docs/mindcraft-gap.md` 状态与 NOTEBOOK.md；流程变迁时回写本技能与 AGENTS.md
+- **双点同步防线**：新增/变更工具、动作、消息格式时四处同步（见 AGENTS.md「新增能力纪律」）+ 回归测试兜底
+- **推送纪律（2026-08-06 起）**：功能类工作单元推送前必须 probe 实机验证或 LLM 实机观测确认真有效果；
+  编译通过/单测通过 ≠ 实际效果已验证——未实测的功能只本地提交，绝不推送。推送前自检：
+  `cargo fmt --all -- --check` + `cargo clippy --workspace --all-targets --features craft-agent-minecraft/azalea-bot -- -D warnings` + `cargo test --workspace` 全绿
 
 一轮工程工作流不是一次 LLM 轮次，也不是一次会话边界。它涵盖实机证据、诊断、变更、测试、部署和实机验证。完成或报告一轮工作流不得停止 Agent 或替换其活跃对话。
 
@@ -45,7 +65,7 @@ description: Craft-Agent 持久维护工作流——先读 NOTEBOOK.md，按观�
 - 通过 `POST /api/start` 启动 Agent；进程存在不代表它正在运行。
 - 监控 `/api/status`、`/api/game-state`、`sessions/mc_run.jsonl` 和 Viewer 日志。
 - `sessions/mc_run.jsonl` 是 Minecraft 对话/会话：一个头部加追加树条目。Viewer 重启时重新打开；每轮追加新条目。不用于工程笔记。
-- 工程笔记本是 `.opencode/skills/workflow/NOTEBOOK.md`。
+- 工程笔记本是 `.agents/skills/workflow/NOTEBOOK.md`。
 - 不自动暂存或提交无关工作树变更。仅在被明确要求时提交。
 - 不在固定数量的失败假设后停止。记录失败，改变方法，继续，除非用户停止或外部依赖不可用。
 - 未经用户明确命令，不得停止或暂停整体维护工作流。Agent 退出、Viewer 失败、测试失败、轮次报告或完成的里程碑必须触发恢复或下一次迭代，而不是终止。
@@ -54,7 +74,7 @@ description: Craft-Agent 持久维护工作流——先读 NOTEBOOK.md，按观�
 
 ## 七条额外工作流规则
 
-1. **所有修改除 vendor/azalea 外**：可改范围包括所有 crates（craft-agent、craft-agent-minecraft、craft-agent-model、craft-agent-viewer、craft-agent-autopilot）、profiles、tasks、blueprints、actions、config、scripts、docs、.opencode 配置和根目录文件。唯一不能改的是 `vendor/azalea/` 和 `.git/`。
+1. **所有修改除 vendor/azalea 外**：可改范围包括所有 crates（craft-agent、craft-agent-minecraft、craft-agent-model、craft-agent-viewer、craft-agent-autopilot）、profiles、tasks、blueprints、actions、config、scripts、docs、.agents 配置和根目录文件。唯一不能改的是 `vendor/azalea/` 和 `.git/`。
 
 2. **更新旧测试**：每次修改后，不仅要添加新的回归测试，还要检查被改功能是否有旧测试需要更新语义。跑 `cargo test --lib` 全量通过后，人工检查是否有语义上被新行为覆盖但没失败的旧测试。
 
@@ -122,12 +142,11 @@ description: Craft-Agent 持久维护工作流——先读 NOTEBOOK.md，按观�
 - 停止 Agent: `POST http://127.0.0.1:8080/api/stop`
 - 注入目标: `POST http://127.0.0.1:8080/api/goal` with `{"goal":"..."}`
 - 运行时会话: `sessions/mc_run.jsonl`
-- Autopilot 日志: `scripts/logs/autopilot_out.log`, `scripts/logs/autopilot_err.log`
-- Viewer 日志: `scripts/logs/viewer_out.log`, `scripts/logs/viewer_err.log`
+- Viewer/Autopilot 日志: `craft-agent-ctl` 重定向到 `C:\Windows\TEMP\opencode\viewer_run.log(.err)` 等（`ctl status` / `ctl tail <log> <N>` 查看）
 
 ## 当前里程碑路径
 
 石镐 → 铁和盾牌/盔甲 → 食物和桶 → 钻石 → 黑曜石/下界传送门 → 烈焰棒 → 末影珍珠/末影之眼 → 要塞 → 末地 → 末影龙。
 
-此技能的基础目录: D:\Craft-Agent\.opencode\skills\workflow
-此技能中的相对路径（如 scripts/、reference/）相对于此基础目录。
+此技能的基础目录: D:\Craft-Agent\.agents\skills\workflow
+此技能中的相对路径（如 reference/）相对于此基础目录。NOTEBOOK.md 也在此目录中。

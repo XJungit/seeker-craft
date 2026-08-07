@@ -298,3 +298,11 @@ earest_entities::<Without<Player>>() 全量计数，无距离过滤无距离标�
 - Verification: probe 实机——hotbar 空 + 背包 iron_ingot → `equip` 一次成功 "已装备 iron_ingot 到主手 (hotbar 槽 1)"，无需 discard ✓；回归单测 163 全绿 ✓；EOF 全量 fmt/clippy/workspace 干净 ✓；commit 8d66480（P124）+ db54a1e（ctl）。
 - Learning: ① LLM 决策黑洞常来自感知缺口——无法看到的它拿不（hotbar）；② 工具信息给"该做什么"的信号（无镐→合成路径）比只给状态有用；③ 运维工具也要自查进程存活，不能把过早日志当现状。
 - Next: P124 部署随主 runtime（父任务并行控制）下次重启生效；持续观测末地主线（下界 → 烈焰棒），遇瓶颈先联网再修。
+
+## Round 33 - 2026-08-08 (AGENTS.md 瘦身 + 工作流技能下沉)
+- Evidence: AGENTS.md 455 行混叠"项目契约 + 迭代方法论"，且 workflow SKILL.md 仍在引用已迁移的 `.opencode/skills/workflow` 路径与旧 `scripts/logs` 日志路径——上下文成本高、指令可能互相漂移。
+- Root cause: 方法论（迭代循环/迭代纪律/推送纪律）是"过程"，应属于可迭代升级的工作流技能而非一次性项目契约；路径未随 `.opencode → .agents` 迁移更新。
+- Change: (1) `AGENTS.md` 问题解决/迭代工作流/通用迭代准则收敛为指针，-30 行——只保留硬契约（新增能力纪律、P100/P101/P102 修正纪律、Git 安全、vendor 约束、ctl 用法等）；(2) `workflow/SKILL.md` 迭代循环新增第 0 步"差距分析先行"（扫 mindcraft-gap 优先级队列）、新增"迭代纪律（总纲下沉）"节（先测试/行为不变/单提交/全量门槛/回滚/文档同步/双点同步/推送纪律）、修复 `.opencode→.agents` 旧路径与日志路径。
+- Verification: git diff 复核两文件（+29/-30，无契约丢失）；bot 实机 step 166 仍 running（OCC 后端 step 速率正常），pos (-464,62,-161) lush_caves，背包 iron_ingot:2 尚无全套铁甲——本轮无代码变更，无需构建。
+- Learning: ①"契约"与"方法论"分文件存放，方法学可随迭代演化而不动硬契约；② 文档优化也要做路径一致性检查（find 过时路径）；③ 新一轮 OCC 后端自切换后首验速率恢复。
+- Next: 持续观测铁甲主线（iron_ore 搜挖 → 熔炼 24 → 合成全甲）；工作流技能后续若再改流程，回写 SKILL.md 而非 AGENTS.md。
