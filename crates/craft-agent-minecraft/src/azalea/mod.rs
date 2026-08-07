@@ -437,6 +437,44 @@ mod cancel_tests {
 }
 
 #[cfg(test)]
+mod normalize_item_tests {
+    use super::*;
+
+    /// 单复数容错（P126b）：oak_plank → oak_planks、wheat_seed → wheat_seeds。
+    /// 已带 minecraft: 前缀、已复数、无单复数关系的 id 一律原样。
+    #[test]
+    fn regression_normalize_item_id_plural_fallback() {
+        assert_eq!(normalize_item_id("oak_plank"), "minecraft:oak_planks");
+        assert_eq!(normalize_item_id("spruce_plank"), "minecraft:spruce_planks");
+        assert_eq!(normalize_item_id("wheat_seed"), "minecraft:wheat_seeds");
+        assert_eq!(
+            normalize_item_id("beetroot_seed"),
+            "minecraft:beetroot_seeds"
+        );
+        // 已带前缀：只做复数容错，不再拼前缀
+        assert_eq!(
+            normalize_item_id("minecraft:oak_plank"),
+            "minecraft:oak_planks"
+        );
+        assert_eq!(
+            normalize_item_id("minecraft:oak_planks"),
+            "minecraft:oak_planks"
+        );
+        assert_eq!(
+            normalize_item_id("minecraft:wheat_seed"),
+            "minecraft:wheat_seeds"
+        );
+        // 已复数 / 无关 id：不变
+        assert_eq!(normalize_item_id("oak_planks"), "minecraft:oak_planks");
+        assert_eq!(normalize_item_id("wheat_seeds"), "minecraft:wheat_seeds");
+        assert_eq!(normalize_item_id("stone"), "minecraft:stone");
+        assert_eq!(normalize_item_id("stick"), "minecraft:stick");
+        assert_eq!(normalize_item_id("oak_sapling"), "minecraft:oak_sapling");
+        assert_eq!(normalize_item_id("bamboo"), "minecraft:bamboo");
+    }
+}
+
+#[cfg(test)]
 mod entity_target_tests {
     use super::*;
 
@@ -468,12 +506,21 @@ use std::str::FromStr;
 use tokio::time::sleep;
 
 /// 把 "oak_planks" / "minecraft:oak_planks" 统一为 "minecraft:oak_planks"。
-fn normalize_item_id(item: &str) -> String {
-    if item.starts_with("minecraft:") {
-        item.to_string()
-    } else {
-        format!("minecraft:{item}")
+/// 归一化物品 id：补 `minecraft:` 前缀，并对常见单复数笔误容错
+/// （Mindcraft commands/index.js 同款规则）：`oak_plank` → `oak_planks`、
+/// `wheat_seed` → `wheat_seeds`。已带前缀/已复数的 id 不受影响
+/// （`planks` 不以 `plank` 结尾，`seeds` 不以 `seed` 结尾）。
+pub(crate) fn normalize_item_id(item: &str) -> String {
+    let bare = item.strip_prefix("minecraft:").unwrap_or(item);
+    let mut id = bare.to_string();
+    // 单数结尾（plank/seed）→ 补 s 变复数；已复数（planks/seeds）不以单数结尾，不受影响。
+    for suffix in ["plank", "seed"] {
+        if id.ends_with(suffix) {
+            id.push('s');
+            break;
+        }
     }
+    format!("minecraft:{id}")
 }
 
 /// 在玩家背包范围（排除合成网格/盔甲槽）内找到所有持有指定物品种类的槽位。
