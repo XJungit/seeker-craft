@@ -13,6 +13,9 @@ release (`v0.1.0`) corresponds to the initial stable feature baseline below.
 
 - **Documentation / repo hygiene** — README overhaul (badges, architecture diagram,
   6-stage path, 49-tool table), root-level `CHANGELOG.md`, `CITATION.cff`, `AUTHORS`.
+- **Engineering benchmark layer** — CI coverage job (`cargo llvm-cov` → lcov artifact),
+  `docs/benchmarks.md` (410-test baseline, 52 probe scripts, cache hit rates, Ender-Dragon
+  progress), and `scripts/bench/` one-shot probe runner + optional Docker repro.
 - **P119 `shoot` tool** — bow combat (ReleaseUseItem) for ranged Ender Dragon phase.
 - **P120 `mine_above` survivability** — when the bot has no pickaxe, dig a soft-soil
   escape column instead of hard-refusing; bare-hand fallback path added (P120, P120b).

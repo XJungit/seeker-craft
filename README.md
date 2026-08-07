@@ -155,6 +155,7 @@ cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot 
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Layered architecture, 13-step agent loop, module layout |
 | [AGENTS.md](AGENTS.md) | Autonomous development workflow (gap analysis → fix → verify) |
 | [docs/mindcraft-gap.md](docs/mindcraft-gap.md) | Mindcraft parity audit + prioritized backlog |
+| [docs/benchmarks.md](docs/benchmarks.md) | Test baselines, probe coverage, cache hit rates, Ender-Dragon progress |
 | [docs/adr.md](docs/adr.md) | Architecture decision records |
 | [docs/README.md](docs/README.md) | Full documentation index (tutorials, design archive) |
 | [CHANGELOG.md](CHANGELOG.md) | Versioned change log |

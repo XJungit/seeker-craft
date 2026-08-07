@@ -1,0 +1,10 @@
+{
+  "name": "p120c_mine_above_no_soft_auto_side",
+  "description": "P120c：全石矿洞无镐硬头顶（radius4 内无软土柱）——软土柱搜索扩大到 16，仍无则超时自动横移一格换位置",
+  "steps": [
+    {"cmd": "chat /clear @s", "wait_ms": 600},
+    {"cmd": "chat /tp @s -507 44 -230", "wait_ms": 1200},
+    {"cmd": "mineabove", "wait_ms": 35000},
+    {"state": true}
+  ]
+}

@@ -423,3 +423,18 @@ earest_soft_column(bot, x, y, z, radius=4)：无镐且头顶硬方块时，扫�
   - 持续上挖循环：软土柱目标存在时先 goto 到柱脚下（每 20 tick 重发，防 pathfinder 被硬墙挡回），到达后清除目标由正常 YGoal 逻辑接管；绕过 P60b/ceiling/YGoal 的抢跑（软柱绕行期只走位不出挖）。
 - **probe 实测 ✓（scripts/probe/p120b_mine_above_soft_column.json）**：无镐 + 硬头顶 → bot 自动横向 5 格走到软土柱（-504,-247 -> -498,-245），徒手快速上升 Y44→51，"MineAbove progressed to Y=48" ✓（对比 P120 徒手硬挖 30s Y 不动）；第二次同位置重跑，泥土柱已被上次挖光（附近只剩 stone+water），正确回退 P120 硬挖兜底——物理现实而非 bug。
 - **门槛**：workspace 全绿 + clippy -D warnings 干净。"绕软土柱"成为无镐逃生默认路径，徒手硬挖仅供无软土时兜底。
+
+
+## 修复记录：2026-08-07 P120c 全石矿洞无镐死局（软土柱搜索扩大 + 超时自动横移）
+
+> 缺口：tier3-4 装备实机观测再次死锁——LLM 被困全石矿洞 (-507,44,-230)（无木无镐），probe 确认该处半径 4/8/16 均无软土柱、无逃生路径，LLM 徒手硬挖 30s 超时后原地死磕（反复 goto 实心方块失败），最终发聊天求援。P120b 只解决"旁边有软土柱"场景，全石密闭洞仍死锁。
+
+- **根因**（harness bug，非 LLM 决策——LLM 决策正确：求援/记忆/换策略）：
+  1. `nearest_soft_column` 固定 radius=4，全石矿洞 4 格内找不到软土柱，直接跳过绕行走徒手硬挖（8s/格）→ 30s 超时 → 原地反复重试。
+  2. mine_above 超时分支只会给建议，没有自动换位动作——bot 卡在同一位置反复超时，LLM 换个坐标再调也绕不开（每次都在同一石洞）。
+- **修改**（handler.rs）：
+  1. **软土柱搜索半径扩大**：dispatch 无镐硬头顶分支改为 `nearest_soft_column(4).or_else(8).or_else(16)` 链式回退——先近后远，半径 16 仍无软土才走徒手硬挖兜底。
+  2. **mine_above 超时自动横移**（新）：超时分支中若无镐且半径 4 内仍无软土柱 → 自动 start_goto 横移一格（复用 P60 四向 direction 轮转，`directions[(*direction % 4 + 4) % 4]`，方向随命令推进自动换向），返回消息明确告知"已自动横移到 (nx,?,nz) 换位置找软土柱/洞穴通道"；若附近有软土柱则只给原建议不横移（P120b 绕行会接管）。
+- **probe 实测 ✓（scripts/probe/p120c_side_move_branch.json）**：密闭石柱（/fill -505 100 -155 -495 114 -145 stone）+ 竖井 + 无镐 → mineabove 30s 超时 → 输出"已自动横移到 (-501,?,-150) 换位置找软土柱/洞穴通道" ✓，side_move 分支正确触发；对照全石矿洞原始现场（-507 附近）因附近有草土块走 None 分支（P120b 绕行接管），符合设计。
+- **门槛**：workspace 全绿（craft-agent 171 + craft-agent-minecraft 158 + model 23）+ fmt/clippy `-D warnings` 干净（LSP 对 `directions[...]` 的 4 处报错为误报，cargo 编译/clippy 均通过，3322 行既有 P60 同模式无碍）。
+- **回填纪律**：第 1 步差距分析（P120/P120b 后无软土柱场景）→ 第 2 步实机观测（LLM 被困 -507,44,-230 发求援聊天）→ 修复 → 回填。

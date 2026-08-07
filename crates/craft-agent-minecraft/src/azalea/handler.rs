@@ -1006,9 +1006,43 @@ impl AzaleaBot {
                                     *state.mining_above.lock().unwrap() = false;
                                     *state.mining_above_start_y.lock().unwrap() = None;
                                     bot.force_stop_pathfinding();
-                                    "Action output:\nmine_above 超时（30s）：Y 未上升，上升路径被挡或徒手挖太慢（~8秒/格）。\
-                                     建议：(1) 若有镐，先 equip 再重试；(2) 用 mine 横向挖楼梯/找软方块通道；(3) 无镐时多调几次 mine_above 逐格挖穿。"
-                                        .to_string()
+                                    // P120c：徒手硬挖超时（30s Y 未上升）说明头顶天花板太厚
+                                    // 或通道被堵——同一位置死磕只会重复超时。若背包无镐，
+                                    // 自动横移一格换位置（找软土柱/洞穴通道），不再原地死磕。
+                                    let side_move = if !has_any_pickaxe_in_inventory(&bot).await
+                                        && let Ok(p) = bot.position()
+                                    {
+                                        let (cx, cy, cz) = (
+                                            p.x.floor() as i32,
+                                            p.y.floor() as i32,
+                                            p.z.floor() as i32,
+                                        );
+                                        if nearest_soft_column(&bot, cx, cy, cz, 4).is_none() {
+                                            let mut direction =
+                                                state.mining_above_direction.lock().unwrap();
+                                            let directions = [(1, 0), (0, 1), (-1, 0), (0, -1)];
+                                            let (dx, dz) = directions[(*direction % 4 + 4) % 4];
+                                            *direction = (*direction + 1) % 4;
+                                            drop(direction);
+                                            let target = BlockPos::new(cx + dx, cy, cz + dz);
+                                            bot.start_goto(BlockPosGoal(target));
+                                            Some((cx + dx, cz + dz))
+                                        } else {
+                                            None
+                                        }
+                                    } else {
+                                        None
+                                    };
+                                    match side_move {
+                                        Some((nx, nz)) => format!(
+                                            "Action output:\nmine_above 超时（30s）：Y 未上升，上升路径被挡或徒手挖太慢（~8秒/格）。\
+                                             已自动横移到 ({nx},?,{nz}) 换位置找软土柱/洞穴通道，到达后请重试 mine_above。\
+                                             若有镐可先 equip 再挖。"
+                                        ),
+                                        None => "Action output:\nmine_above 超时（30s）：Y 未上升，上升路径被挡或徒手挖太慢（~8秒/格）。\
+                                             建议：(1) 若有镐，先 equip 再重试；(2) 用 mine 横向挖楼梯/找软方块通道；(3) 无镐时多调几次 mine_above 逐格挖穿。"
+                                            .to_string(),
+                                    }
                                 }
                                 BotCommand::Gather { item, .. } => {
                                     // P3：gather 超时时，采集 future 仍在后台运行（无法取消），
@@ -1825,7 +1859,10 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             {
                                 let (cx, cy, cz) =
                                     (p.x.floor() as i32, p.y.floor() as i32, p.z.floor() as i32);
-                                if let Some(col) = nearest_soft_column(&bot, cx, cy, cz, 4) {
+                                if let Some(col) = nearest_soft_column(&bot, cx, cy, cz, 4)
+                                    .or_else(|| nearest_soft_column(&bot, cx, cy, cz, 8))
+                                    .or_else(|| nearest_soft_column(&bot, cx, cy, cz, 16))
+                                {
                                     *state.mining_above_soft_column.lock().unwrap() = Some(col);
                                     let _ = evt_tx.send(BotEvent::Chat {
                                         content: format!(

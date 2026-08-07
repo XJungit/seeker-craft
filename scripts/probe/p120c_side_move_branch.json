@@ -1,0 +1,12 @@
+{
+  "name": "p120c_side_move_branch",
+  "description": "P120c：密闭石柱内无镐 mine_above 超时 → side_move 自动横移",
+  "steps": [
+    {"cmd": "chat /clear @s", "wait_ms": 600},
+    {"cmd": "chat /fill -505 100 -155 -495 114 -145 stone", "wait_ms": 3000},
+    {"cmd": "chat /fill -500 101 -150 -500 102 -150 air", "wait_ms": 2000},
+    {"cmd": "chat /tp @s -500 101 -150", "wait_ms": 2000},
+    {"cmd": "mineabove", "wait_ms": 45000},
+    {"state": true}
+  ]
+}

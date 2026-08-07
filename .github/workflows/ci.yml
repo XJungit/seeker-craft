@@ -51,3 +51,24 @@ jobs:
         run: cargo test --workspace --no-fail-fast
       - name: cargo test (azalea-bot)
         run: cargo test -p craft-agent-minecraft --features azalea-bot --lib
+
+  coverage:
+    name: coverage (llvm-cov)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install nightly-2026-07-21 toolchain (llvm-tools)
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "nightly-2026-07-21"
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+      - name: Generate coverage (lcov, incl. azalea-bot)
+        run: cargo llvm-cov --workspace --features craft-agent-minecraft/azalea-bot --lcov --output-path lcov.info
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-lcov
+          path: lcov.info

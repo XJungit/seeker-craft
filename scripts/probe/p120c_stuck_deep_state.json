@@ -1,0 +1,7 @@
+{
+  "name": "p120c_stuck_deep_state",
+  "description": "确认矿洞底部死局状态：背包构成 / 周围方块",
+  "steps": [
+    { "raw": true, "wait_ms": 1500 }
+  ]
+}

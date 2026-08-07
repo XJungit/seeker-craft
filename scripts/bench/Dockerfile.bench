@@ -1,0 +1,12 @@
+# Bench reproduction image (optional; requires a reachable MC server).
+# Build: docker build -f scripts/bench/Dockerfile.bench -t seeker-craft-bench .
+# Run:   docker run --network host seeker-craft-bench 127.0.0.1:4444
+FROM rust:1.99-bookworm AS build
+WORKDIR /src
+COPY . .
+RUN cargo build -p craft-agent-minecraft --example azalea_probe --features azalea-bot
+
+FROM rust:1.99-bookworm
+COPY --from=build /src/target/debug/examples/azalea_probe /usr/local/bin/azalea_probe
+COPY scripts/probe /probe
+ENTRYPOINT ["/usr/local/bin/azalea_probe"]
