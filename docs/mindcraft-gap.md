@@ -438,3 +438,23 @@ earest_soft_column(bot, x, y, z, radius=4)：无镐且头顶硬方块时，扫�
 - **probe 实测 ✓（scripts/probe/p120c_side_move_branch.json）**：密闭石柱（/fill -505 100 -155 -495 114 -145 stone）+ 竖井 + 无镐 → mineabove 30s 超时 → 输出"已自动横移到 (-501,?,-150) 换位置找软土柱/洞穴通道" ✓，side_move 分支正确触发；对照全石矿洞原始现场（-507 附近）因附近有草土块走 None 分支（P120b 绕行接管），符合设计。
 - **门槛**：workspace 全绿（craft-agent 171 + craft-agent-minecraft 158 + model 23）+ fmt/clippy `-D warnings` 干净（LSP 对 `directions[...]` 的 4 处报错为误报，cargo 编译/clippy 均通过，3322 行既有 P60 同模式无碍）。
 - **回填纪律**：第 1 步差距分析（P120/P120b 后无软土柱场景）→ 第 2 步实机观测（LLM 被困 -507,44,-230 发求援聊天）→ 修复 → 回填。
+
+## 修复记录：2026-08-07 文档层完善 + 工程基准层（open-code 工作单元，非 P 系列）
+
+> 定位：以优秀开源项目标准完善仓库"门面"与可复现性——面向 DeepSeek Harness 内测
+> 类评审场景的工程可读性提升，非 Mindcraft 对位差距。
+
+- **README 重写**：CI/audit/docs/license/rust 徽章 + 6-crate 架构树 + 13 步 loop 图 +
+  6 阶 23 任务表 + 49 工具分类表 + 快速开始 + 文档索引。
+- **CHANGELOG 上移根目录**（docs/CHANGELOG.md → 根），Keep a Changelog + SemVer 分段
+  （Unreleased / v0.1.0 基线 / 历史日期段）。
+- **新增**：CITATION.cff、AUTHORS；CONTRIBUTING.md / CODE_OF_CONDUCT.md 上移根目录，
+  同步修复 docs/README、README.zh-CN、docs/RELEASING 交叉引用。
+- **docs/benchmarks.md**：410 tests（2026-08-07 cargo test --workspace 实测）、52 probe
+  脚本清单、缓存命中 >93%（P97 实机）、末地路径里程碑表（P84-P121）。
+- **CI coverage job**（ci.yml）：llvm-cov → lcov artifact；本机无 rustup/llvm-tools，
+  job 在 GitHub Actions 首次运行时实测（推送后验证）。
+- **scripts/bench/**：run_all.sh 一键跑全部 probe + Dockerfile.bench 可选容器复现；
+  本机无 bash/docker，脚本待真实服务器环境首跑。
+- **纪律备注**：33ffdfb 提交将 P120c 代码改动与本文档层改动合并，违反单提交单关注点，
+  后续如需要可拆分（SearchReplace 逐行回滚纪律不变）。
