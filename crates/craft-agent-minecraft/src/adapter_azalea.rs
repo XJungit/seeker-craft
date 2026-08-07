@@ -257,9 +257,21 @@ impl MinecraftAzaleaAdapter {
                                 }
                             }
                             let scene_tail = tail_lines.join("\n");
+                            // P126d：当前执行动作（game_state 由 handler tick 注入，
+                            // 对标 Mindcraft $ACTION）；无则显示「空闲」保持场景信息完整。
+                            let current_action = game_state["current_action"]
+                                .as_str()
+                                .unwrap_or_default()
+                                .to_string();
+                            let current_action_line = if current_action.is_empty() {
+                                "当前动作: 空闲".to_string()
+                            } else {
+                                format!("当前动作: {}", current_action)
+                            };
                             let scene = format!(
                                 "位置: ({:.0}, {:.0}, {:.0})\n\
                                   生命: {:.0}/20  饱食: {}/20  主手: {}\n\
+                                  {}\n\
                                   维度: {}\n\
                                   群系: {}  脚下: {}  前方: {}\n\
                                   传送门: {}\n\
@@ -278,6 +290,7 @@ impl MinecraftAzaleaAdapter {
                                 health,
                                 food,
                                 held_item,
+                                current_action_line,
                                 dimension,
                                 biome,
                                 block_under,

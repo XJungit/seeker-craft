@@ -422,6 +422,92 @@ fn nearby_player_position(bot: &Client, target: Option<&str>) -> Option<azalea::
     closest.map(|(_, position)| position)
 }
 
+/// 当前 pending 命令的紧凑中文标签（perceive「当前动作」行 / game_state 用，
+/// P126d 对标 Mindcraft $ACTION）。无 pending 命令返回 None（调用方渲染"空闲"）。
+fn current_action_label(action_mgr: &ActionManager) -> Option<String> {
+    let qc = action_mgr.peek_pending()?;
+    Some(match &qc.cmd {
+        BotCommand::Goto { x, y, z } => format!("前往 ({x}, {y}, {z})"),
+        BotCommand::GotoAnchor { name } => format!("前往锚点 {name}"),
+        BotCommand::GotoPlayer { name } => {
+            format!("前往玩家 {}", name.as_deref().unwrap_or("最近"))
+        }
+        BotCommand::Mine { x, y, z } => format!("挖掘 ({x}, {y}, {z})"),
+        BotCommand::MineBelow => "向下挖矿井".to_string(),
+        BotCommand::MineAbove => "向上挖通竖井".to_string(),
+        BotCommand::BlockInteract { x, y, z } => format!("交互方块 ({x}, {y}, {z})"),
+        BotCommand::TillAndSow { x, y, z, seed } => {
+            format!("犁地播种 ({x}, {y}, {z}) {seed}")
+        }
+        BotCommand::Sleep => "睡觉跳夜".to_string(),
+        BotCommand::Harvest => "收割作物".to_string(),
+        BotCommand::Chat { content } => {
+            format!("发送聊天: {}", content.chars().take(20).collect::<String>())
+        }
+        BotCommand::Attack { target } => format!("攻击 {target}"),
+        BotCommand::Craft2x2 { item, count } => format!("合成 {item} ×{count}（2×2）"),
+        BotCommand::Craft3x3 { item, count, .. } => format!("合成 {item} ×{count}（3×3）"),
+        BotCommand::Smelt {
+            output,
+            fuel,
+            count,
+            ..
+        } => {
+            format!("熔炼 {output}（燃料 {fuel}）×{count}")
+        }
+        BotCommand::Gather { item, count } => format!("采集 {item} ×{count}"),
+        BotCommand::MakeObsidian { count } => format!("制造黑曜石 ×{count}"),
+        BotCommand::Place { item, x, y, z } => format!("放置 {item} ({x}, {y}, {z})"),
+        BotCommand::OpenContainer { x, y, z } => format!("打开容器 ({x}, {y}, {z})"),
+        BotCommand::AutoCraft { item, count } => format!("自动合成 {item} ×{count}"),
+        BotCommand::Enchant { item, level } => format!("附魔 {item} 等级{level}"),
+        BotCommand::Trade { offer } => format!("交易（报价{offer}）"),
+        BotCommand::InteractEntity { kind } => format!("交互实体 {kind}"),
+        BotCommand::Pickup => "拾取掉落物".to_string(),
+        BotCommand::Defend => "防御".to_string(),
+        BotCommand::Equip { item, slot } => format!("装备 {item} → {slot}"),
+        BotCommand::Discard { item, count } => format!("丢弃 {item} ×{count}"),
+        BotCommand::Consume { item } => format!("使用 {item}"),
+        BotCommand::ChestView { x, y, z } => format!("查看容器 ({x}, {y}, {z})"),
+        BotCommand::ChestWithdraw {
+            x,
+            y,
+            z,
+            item,
+            count,
+        } => {
+            format!("取物 {item} ×{count} ({x}, {y}, {z})")
+        }
+        BotCommand::ChestDeposit {
+            x,
+            y,
+            z,
+            item,
+            count,
+        } => {
+            format!("存物 {item} ×{count} ({x}, {y}, {z})")
+        }
+        BotCommand::Follow { .. } => "跟随玩家".to_string(),
+        BotCommand::SearchBlock { item, radius, .. } => {
+            format!("搜索 {item}（半径{radius}）")
+        }
+        BotCommand::MoveAway { .. } => "远离实体".to_string(),
+        BotCommand::StopFollow => "停止跟随".to_string(),
+        BotCommand::SetMode { mode, .. } => format!("切换模式 {mode}"),
+        BotCommand::UseItem { item, .. } => format!("使用物品 {item}"),
+        BotCommand::Shoot { .. } => "拉弓射箭".to_string(),
+        BotCommand::Give {
+            item,
+            count,
+            target,
+        } => {
+            format!("给玩家 {item} ×{count}（{target:?}）")
+        }
+        BotCommand::RawState => "原始状态 dump".to_string(),
+        BotCommand::Memory { action, .. } => format!("记忆操作 {action}"),
+    })
+}
+
 /// P119：找最近匹配目标实体，返回朝它瞄准的 (yaw, pitch)（眼睛高度近似平射）。
 /// kind 匹配参考 Attack 分支：nearest = 任意非玩家生物。返回 None 表示没有可瞄准目标。
 async fn look_at_nearest_entity(bot: &Client, target: &str) -> Option<(f32, f32)> {
@@ -3948,6 +4034,9 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             .clone();
                         serde_json::json!({
                             "inventory": inv_slots,
+                            // P126d：当前执行动作标签（perceive「当前动作」行用，
+                            // 对标 Mindcraft $ACTION）。无 pending 命令时为空串。
+                            "current_action": current_action_label(&state.action_mgr).unwrap_or_default(),
                             // P124：hotbar（Player 菜单 36-44）摘要，供面板/API 查看。
                             "hotbar": inv_slots
                                 .iter()
