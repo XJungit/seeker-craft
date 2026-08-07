@@ -157,7 +157,15 @@ fn cmd_status() {
     } else {
         println!("[status] game-state unavailable");
     }
-    for (name, path) in [("autopilot", "auto5_out.log"), ("viewer", "viewer_run.log")] {
+    for (name, path, exe_name) in [
+        ("autopilot", "auto5_out.log", "craft-agent-autopilot.exe"),
+        ("viewer", "viewer_run.log", "craft-agent-viewer.exe"),
+    ] {
+        let alive = procs.iter().any(|(_, n)| n == exe_name);
+        if !alive {
+            println!("[status] {name} NOT RUNNING（跳过旧日志，避免误导）");
+            continue;
+        }
         let lines = tail_file(&format!("{LOG_DIR}\\{path}"), 3);
         if !lines.is_empty() {
             println!("[status] --- {name} log tail ---");
