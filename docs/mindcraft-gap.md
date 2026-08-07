@@ -394,3 +394,17 @@
 - **门槛**：workspace 全绿（craft-agent 171 + craft-agent-minecraft 158 + model 23 + regression 29）+ fmt/clippy `-D warnings` 干净。
 
 > **当前主线：末地路径能力补齐进行中**。弓箭已闭环（shoot = 拉弦 1s 满蓄力 + 放箭 ReleaseUseItem）。**剩余缺口：① 末地传送门搭建（12 obsidian 框架 + flint_and_steel 点火；obsidian 采掘任务已有 make_obsidian/挖 obsidian gap 待验）；② 龙战策略（水晶破坏 → 龙本体：远程+走位，MODE/策略层）；③ tier3-4 铁甲/钻石装备阶段推进**。下一轮可从 ① 或 ③ 开始。
+
+## 修复记录：2026-08-07 P120 mine_above 无镐死亡困锁（LLM 实机观测发现）
+
+> 缺口：tier3-4 装备实机观测发现死锁——bot 被困地下且木材=0、背包无镐时，mine_above 被三处硬拒绝 abort（"无镐无法挖"），gather 也拒绝徒手挖石头，LLM 只能退回 Mine 逐格徒手挖（8s/格）→ 无限循环。逃生不需要掉落物，徒手挖得动，应允许继续挖。
+
+- **根因**：`handler.rs` 三处对无镐 MineAbove 直接 abort 硬拒绝：① dispatch 入口（头顶 y+1/y+2 硬块）、② P60b 分支（above_head）、③ ceiling 扫描分支（y+8 天花板）。
+- **修改**：三处全部改为"警告后继续徒手挖"（`bot.start_mining`，P16 徒手砍树先例）：
+  - 警告文案统一："⚠️ 上方 y+X 是硬方块天花板且背包无镐：徒手慢速挖穿（~8s/格，不掉落物）。逃生通道可行但慢。"
+  - **警告去重**：新增 `BotState.mining_above_no_pick_warned: Arc<Mutex<bool>>`（handler.rs + mod.rs 两处初始化），每轮命令只提示一次（此前每 tick 刷屏）；命令结束（done/超时/取消）重置。
+  - 删除死代码 `abort_mine_above`。
+  - `action_manager.rs` MineAbove 超时 200→600 tick（30s）：徒手 8s/格 + 爬升，10s 必然超时（probe 实测"Y did not increase"）；超时消息改中文并给建议（equip 镐 / 横向找软方块 / 多次 mine_above 逐格挖穿）。
+- **probe 实机验证 ✓（scripts/probe/p120_mine_above_no_pick.json + p120b_mine_above_with_pick.json）**：无镐 mineabove → 不再 abort ✓、警告仅一次 ✓（去重生效）、bot 真实上升（Y44→45，比修改前死锁显著进步）✓；有镐对照 → 正常路径无回归（Y46→47 + cobblestone 掉落）✓。残留：头顶 3-6 格厚硬天花板徒手 30s 仍难挖穿，属物理现实（LLM 可多次 mine_above 逐格推进），非 harness 死锁。
+- **门槛**：workspace 全绿（craft-agent 171 + craft-agent-minecraft 158 + model 23）+ fmt/clippy `-D warnings` 干净。
+- **回填纪律**：此发现来自 LLM 实机观测（第 1 步差距分析 → 第 2 步实机观测确认 harness bug vs LLM 决策 → 修复 → 回填）。

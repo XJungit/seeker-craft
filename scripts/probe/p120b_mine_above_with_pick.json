@@ -1,0 +1,12 @@
+{
+  "name": "p120_mine_above_with_pick",
+  "steps": [
+    {"cmd": "chat /clear @s", "wait_ms": 600},
+    {"cmd": "chat /give @s stone_pickaxe 1", "wait_ms": 800},
+    {"cmd": "chat /tp @s -501 44 -245", "wait_ms": 1200},
+    {"cmd": "equip stone_pickaxe hand", "wait_ms": 800},
+    {"state": true},
+    {"cmd": "mineabove", "wait_ms": 18000},
+    {"state": true}
+  ]
+}

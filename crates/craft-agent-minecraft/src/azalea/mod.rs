@@ -181,6 +181,7 @@ impl AzaleaBot {
             cancel_flag: cancel_flag.clone(),
             last_mine_eff: Arc::new(Mutex::new(None)),
             mode_switches: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            mining_above_no_pick_warned: Arc::new(Mutex::new(false)),
         };
 
         let addr = address.to_string();

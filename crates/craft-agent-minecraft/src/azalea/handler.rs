@@ -35,29 +35,6 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// P107：终止当前 MineAbove 命令并回报结果（清标志/停寻路/回填 result_tx/推送事件）。
-/// P105 无镐提前终止与 P107 天花板扫描共用，避免重复的终止样板。
-fn abort_mine_above(state: &BotState, bot: &Client, msg: &str) {
-    *state.mining_above.lock().unwrap() = false;
-    *state.mining_above_start_y.lock().unwrap() = None;
-    bot.force_stop_pathfinding();
-    let mut is_mine_above = false;
-    if let Some(qc) = state.action_mgr.peek_pending()
-        && matches!(qc.cmd, BotCommand::MineAbove)
-    {
-        is_mine_above = true;
-        if let Some(tx) = qc.result_tx {
-            let _ = tx.send(msg.to_string());
-        }
-    }
-    if is_mine_above {
-        state.action_mgr.clear_pending();
-    }
-    let _ = state.evt_tx.send(BotEvent::Chat {
-        content: msg.to_string(),
-    });
-}
-
 fn nearby_active_portal(bot: &Client, center: BlockPos) -> bool {
     let Ok(world) = bot.world() else {
         return false;
@@ -284,6 +261,9 @@ pub struct BotState {
     /// P116：被禁用的自动反应式模式集合（set_mode 开关）。空=全部启用。
     /// 模式名：self_preservation/self_defense/cowardice/hunting/item_collecting。
     pub mode_switches: Arc<Mutex<HashSet<String>>>,
+    /// P120：mine_above 无镐徒手挖警告去重（dispatch 每 tick 重入 + P60b/ceiling
+    /// 持续 tick 分支都会触发）。首次警告后置 true，命令结束（done/超时）重置。
+    pub mining_above_no_pick_warned: Arc<Mutex<bool>>,
 }
 
 impl Default for BotState {
@@ -314,6 +294,7 @@ impl Default for BotState {
             last_mine_eff: Arc::new(Mutex::new(None)),
             cancel_flag: Arc::new(AtomicBool::new(false)),
             mode_switches: Arc::new(Mutex::new(HashSet::new())),
+            mining_above_no_pick_warned: Arc::new(Mutex::new(false)),
         }
     }
 }
@@ -967,7 +948,8 @@ impl AzaleaBot {
                                     *state.mining_above.lock().unwrap() = false;
                                     *state.mining_above_start_y.lock().unwrap() = None;
                                     bot.force_stop_pathfinding();
-                                    "Action output:\nmine_above failed: Y did not increase within 10 seconds. The ascent path is blocked; perceive and clear a horizontal staircase before retrying."
+                                    "Action output:\nmine_above 超时（30s）：Y 未上升，上升路径被挡或徒手挖太慢（~8秒/格）。\
+                                     建议：(1) 若有镐，先 equip 再重试；(2) 用 mine 横向挖楼梯/找软方块通道；(3) 无镐时多调几次 mine_above 逐格挖穿。"
                                         .to_string()
                                 }
                                 BotCommand::Gather { item, .. } => {
@@ -1000,6 +982,7 @@ impl AzaleaBot {
                             }
                             if matches!(&qc.cmd, BotCommand::MineAbove) {
                                 *state.mining_above_start_y.lock().unwrap() = None;
+                                *state.mining_above_no_pick_warned.lock().unwrap() = false;
                             }
                             state.action_mgr.clear_pending();
                         }
@@ -1014,6 +997,7 @@ impl AzaleaBot {
                     // 持续挖矿标志复位，防取消后仍自动下挖/上挖
                     *state.mining_below.lock().unwrap() = false;
                     *state.mining_above.lock().unwrap() = false;
+                    *state.mining_above_no_pick_warned.lock().unwrap() = false;
                     if !state.action_mgr.is_busy() {
                         // 非异步执行中：强停寻路 + 清槽 + 回复取消
                         if let Some(qc) = state.action_mgr.peek_pending() {
@@ -1764,23 +1748,22 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                 }
                             }
                             let head_is_hard = head_state.map(is_hard_block).unwrap_or(true); // 不确定时按硬方块处理
-                            if head_is_hard {
-                                let has_pick = has_any_pickaxe_in_inventory(&bot).await;
-                                if !has_pick {
-                                    if let Some(tx) = &result_tx {
-                                        let _ = tx.send(
-                                        "Action output:\n❌ mine_above 失败：头顶是硬方块（石头/深板岩/矿石等）且背包里没有镐！\
-                                         徒手挖硬方块极慢（~8秒/格）且不掉落。\
-                                         建议：(1) chat(\"/tp @s ~ 70 ~\") 用命令传送到地表（需 cheats）；\
-                                         (2) 横向 mine 看是否有 dirt/gravel 软方块通道；\
-                                         (3) 先 craft 一个 wooden_pickaxe 再 mine_above。"
-                                            .to_string(),
-                                    );
-                                    }
-                                    *state.mining_above.lock().unwrap() = false;
-                                    state.action_mgr.clear_pending();
-                                    return bot;
-                                }
+                            // P120（2026-08-07）：无镐徒手挖硬方块是可行的逃生路径（~8s/格，
+                            // 不掉落物品）。此前这里直接 abort 并报错，导致地下死锁——
+                            // 无镐无木时 自动路径全被拦（mine_above/gather 都拒绝徒手），
+                            // LLM 只能靠 Mine 逐格慢挖。逃生不需要掉落物，挖穿即可。
+                            // 改为警告后继续徒手挖（不做硬拒绝）。dispatch 每 tick 重入，
+                            // 用 mining_above_no_pick_warned 去重（命令结束重置）。
+                            if head_is_hard
+                                && !head_is_air
+                                && !has_any_pickaxe_in_inventory(&bot).await
+                                && !*state.mining_above_no_pick_warned.lock().unwrap()
+                            {
+                                *state.mining_above_no_pick_warned.lock().unwrap() = true;
+                                let _ = evt_tx.send(BotEvent::Chat {
+                                    content: "⚠️ 头顶是硬方块且背包无镐：将徒手慢速挖掘（~8秒/格，不掉落物品）作为逃生通道。\
+                                              如多个 MineAbove 都未成功，请先合成镐（wooden_pickaxe 2×2：3 planks+2 stick）或用 mine 横向找泥土地/沙地软通道。".to_string(),
+                                });
                             }
                             let was_active = *state.mining_above.lock().unwrap();
                             *state.mining_above.lock().unwrap() = true;
@@ -3081,28 +3064,25 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             // P105：P60b 挖 y+2 前检查镐。入口的镐检查只看头顶（head_is_hard），
                             // 头顶是空气时被跳过——但 y+2 可能是硬方块，无镐徒手挖不动
                             // （~8s/格）→ 空转 10s 后超时，且失败消息误导 LLM 横向找路。
-                            // 这里提前终止 mine_above 并给明确反馈（镐检查节流到 20 tick）。
+                            // P120：不再提前终止——徒手挖硬方块是可行逃生路径（慢但挖得动），
+                            // 警告后继续挖；由 MineAbove 超时兜底，不做硬拒绝。
                             let above_hard = bot
                                 .world()
                                 .ok()
                                 .and_then(|w| w.read().get_block_state(above_head))
                                 .map(is_hard_block)
                                 .unwrap_or(false);
-                            let no_pick = above_hard
+                            if above_hard
                                 && t.is_multiple_of(20)
-                                && !has_any_pickaxe_in_inventory(&bot).await;
-                            if no_pick {
-                                abort_mine_above(
-                                    &state,
-                                    &bot,
-                                    "Action output:\n❌ mine_above 失败：头顶是空气但上方是硬方块天花板（石头/深板岩/矿石等）且背包里没有镐！\
-                                       徒手挖硬方块极慢（~8秒/格）且不掉落。\
-                                       建议：(1) 先 craft 一把镐（wooden_pickaxe 或 stone_pickaxe）再重试 mine_above；\
-                                       (2) 横向挖楼梯/找软方块通道透顶。",
-                                );
-                            } else {
-                                bot.start_mining(above_head);
+                                && !has_any_pickaxe_in_inventory(&bot).await
+                                && !*state.mining_above_no_pick_warned.lock().unwrap()
+                            {
+                                *state.mining_above_no_pick_warned.lock().unwrap() = true;
+                                let _ = state.evt_tx.send(BotEvent::Chat {
+                                    content: "⚠️ 上方 y+2 是硬方块且背包无镐：徒手慢速挖掘（~8秒/格，不掉落物）。逃生通道可行但慢。".to_string(),
+                                });
                             }
+                            bot.start_mining(above_head);
                         } else if !above_is_solid {
                             // P107: 头顶 y+2 也是空气——可能身处高穹顶洞穴腔体
                             // （空气袋不止 2 格高，上方远处才是硬方块天花板）。
@@ -3126,6 +3106,8 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             if let Some(_cpos) = ceiling {
                                 // 有天花板：优先挖穿（软硬方块都用镐/徒手，由
                                 // is_hard_block + 镐检查决定是否值得挖）。
+                                // P120：无镐不再提前终止——徒手挖穿（慢但可行），
+                                // 由 MineAbove 超时兜底，不做硬拒绝。
                                 let cpos = _cpos;
                                 let chard = bot
                                     .world()
@@ -3133,22 +3115,20 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                     .and_then(|w| w.read().get_block_state(cpos))
                                     .map(is_hard_block)
                                     .unwrap_or(false);
-                                let no_pick = chard
+                                if chard
                                     && t.is_multiple_of(20)
-                                    && !has_any_pickaxe_in_inventory(&bot).await;
-                                if no_pick {
-                                    abort_mine_above(
-                                        &state,
-                                        &bot,
-                                        &format!(
-                                            "Action output:\n❌ mine_above 失败：头顶是空气但上方 y+{} 是硬方块天花板（石头/深板岩/矿石等）且背包里没有镐！\
-                                               徒手挖硬方块极慢（~8秒/格）且不掉落。\
-                                               建议：(1) 先 craft 一把镐（wooden_pickaxe 或 stone_pickaxe）再重试 mine_above；\
-                                               (2) 横向挖楼梯/找软方块通道透顶。",
+                                    && !has_any_pickaxe_in_inventory(&bot).await
+                                    && !*state.mining_above_no_pick_warned.lock().unwrap()
+                                {
+                                    *state.mining_above_no_pick_warned.lock().unwrap() = true;
+                                    let _ = state.evt_tx.send(BotEvent::Chat {
+                                        content: format!(
+                                            "⚠️ 上方 y+{} 是硬方块天花板且背包无镐：徒手慢速挖穿（~8秒/格，不掉落物）。逃生通道可行但慢。",
                                             cpos.y - y
                                         ),
-                                    );
-                                } else if !bot.is_mining() {
+                                    });
+                                }
+                                if !bot.is_mining() {
                                     bot.start_mining(cpos);
                                 }
                             } else if t.is_multiple_of(4) {

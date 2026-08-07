@@ -230,7 +230,7 @@ pub fn timeout_ticks(cmd: &BotCommand) -> u64 {
         BotCommand::Memory { .. } => 20,
         BotCommand::Mine { .. } => 200, // 10s（深板岩/黑曜石等硬方块可能慢；wooden_pickaxe 挖 deepslate ~4.5s）
         BotCommand::MineBelow => 200,   // 10s（持续下挖，由 Y≤-61 停止）
-        BotCommand::MineAbove => 200,   // 10s（持续上挖，由头顶空气/Y≥320 停止）
+        BotCommand::MineAbove => 600, // 30s（持续上挖，由头顶空气/Y≥320 停止；P120 徒手挖硬方块 ~8s/格，10s 不够挖穿+爬升）
         // 合成
         BotCommand::Craft2x2 { .. } => 200, // 10s
         BotCommand::Craft3x3 { .. } => 500, // 25s（含放桌+开桌+合成+收桌，P1-4）
