@@ -1,0 +1,11 @@
+{
+  "name": "p126d_current_action",
+  "description": "P126d：perceive 当前动作标签——goto 远处坐标时 state 快照 action=前往 (x,y,z)；空闲时 action= 空",
+  "between_delay_ms": 1500,
+  "steps": [
+    {"cmd": "goto 500 64 500", "wait_ms": 3000},
+    {"state": true},
+    {"wait_ms": 45000},
+    {"state": true}
+  ]
+}

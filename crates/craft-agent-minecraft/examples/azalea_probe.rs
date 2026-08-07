@@ -87,10 +87,17 @@ async fn main() {
                     biome,
                     nearby,
                     overhead_solid,
+                    game_state,
                     ..
                 } => {
+                    // P126d：当前执行动作（game_state.current_action，handler tick 注入；
+                    // 空串=空闲）。probe 借此验证「当前动作」链路。
+                    let action = game_state["current_action"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string();
                     let snapshot = format!(
-                        "pos=({:.1},{:.1},{:.1}) hp={:.1}/20 food={}/20 held={} biome={} overhead={} nearby=[{}] inv=[{}] players={}",
+                        "pos=({:.1},{:.1},{:.1}) hp={:.1}/20 food={}/20 held={} biome={} overhead={} nearby=[{}] inv=[{}] players={} action={}",
                         position.x,
                         position.y,
                         position.z,
@@ -101,7 +108,8 @@ async fn main() {
                         overhead_solid,
                         nearby,
                         inventory,
-                        player_count
+                        player_count,
+                        action
                     );
                     if let Ok(mut g) = latest_state_task.lock() {
                         *g = Some(snapshot.clone());
