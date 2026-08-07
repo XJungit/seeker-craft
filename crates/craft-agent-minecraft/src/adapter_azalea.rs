@@ -247,12 +247,16 @@ impl MinecraftAzaleaAdapter {
                             // P124：有矿石但无镐 → 注入合成建议（否则为空串，不占 token）
                             let pick_hint =
                                 pickaxe_warning(&nearby_blocks, &game_state, &held_item);
-                            // 末尾提示行：头顶信息 + 可选的无镐警示（合并两行）
-                            let scene_tail = if pick_hint.is_empty() {
-                                overhead_hint
-                            } else {
-                                format!("{}\n{}", overhead_hint, pick_hint)
-                            };
+                            // P129：饱食过低 → 注入进食方案（确定性兜底，LLM 常无视 goal 指令）
+                            let hunger_hint = hunger_warning(food, &game_state);
+                            // 末尾提示行：头顶信息 + 可选的无镐/饥饿警示（合并多行）
+                            let mut tail_lines = vec![overhead_hint];
+                            for h in [pick_hint, hunger_hint] {
+                                if !h.is_empty() {
+                                    tail_lines.push(h);
+                                }
+                            }
+                            let scene_tail = tail_lines.join("\n");
                             let scene = format!(
                                 "位置: ({:.0}, {:.0}, {:.0})\n\
                                   生命: {:.0}/20  饱食: {}/20  主手: {}\n\
@@ -764,9 +768,96 @@ fn pickaxe_warning(nearby_blocks: &str, game_state: &serde_json::Value, held_ite
         .to_string()
 }
 
+/// P129：饱食度过低 → 注入进食警示（否则为空串，不占 token）。
+/// 确定性兜底：LLM 会无视 goal 里的"先吃食物"指令（实测 red_mushroom+bowl
+/// 在手仍跑 63m 外找 brown_mushroom），与 P124 无镐警示同理——perceive 里
+/// 直接列出背包现成的可吃方案，不用依赖 LLM 自发的规划能力。
+fn hunger_warning(food: u32, game_state: &serde_json::Value) -> String {
+    if food > 6 {
+        return String::new();
+    }
+    // 扫背包：第一个可食用物品 + 是否蘑菇&碗（可合成蘑菇煲）
+    let mut edible: Option<String> = None;
+    let mut has_mushroom = false;
+    let mut has_bowl = false;
+    if let Some(arr) = game_state["inventory"].as_array() {
+        for s in arr {
+            let id = s["id"].as_str().unwrap_or("");
+            let name = id.strip_prefix("minecraft:").unwrap_or(id);
+            if s["count"].as_u64().unwrap_or(0) == 0 {
+                continue;
+            }
+            if is_edible(name) && edible.is_none() {
+                edible = Some(name.to_string());
+            }
+            if name.ends_with("mushroom") {
+                has_mushroom = true;
+            }
+            if name == "bowl" {
+                has_bowl = true;
+            }
+        }
+    }
+    let severity = if food <= 3 {
+        "濒临饿死"
+    } else {
+        "饱食度偏低"
+    };
+    let plan = if let Some(f) = edible {
+        format!("立即 consume('{f}') 进食！")
+    } else if has_mushroom && has_bowl {
+        "背包有蘑菇+碗——立即 craft('mushroom_stew') 合成蘑菇煲（1 蘑菇 + 1 碗，2x2），再 consume('mushroom_stew') 吃！"
+            .to_string()
+    } else {
+        "背包没有可吃食物——就近找食物：搜村庄/甜浆果丛，或猎杀动物（生肉 smelt 后吃）。".to_string()
+    };
+    format!("警示：{severity}（饱食 {food}/20，长期不吃会掉血）。{plan}")
+}
+
+/// Java 版可食用物品（含生食与熟食）。蘑菇/碗本身不可食用但可合成蘑菇煲。
+fn is_edible(name: &str) -> bool {
+    matches!(
+        name,
+        "bread"
+            | "apple"
+            | "golden_apple"
+            | "beef"
+            | "cooked_beef"
+            | "porkchop"
+            | "cooked_porkchop"
+            | "chicken"
+            | "cooked_chicken"
+            | "mutton"
+            | "cooked_mutton"
+            | "rabbit"
+            | "cooked_rabbit"
+            | "cod"
+            | "cooked_cod"
+            | "salmon"
+            | "cooked_salmon"
+            | "mushroom_stew"
+            | "suspicious_stew"
+            | "beetroot_soup"
+            | "carrot"
+            | "potato"
+            | "baked_potato"
+            | "poisonous_potato"
+            | "beetroot"
+            | "melon_slice"
+            | "cookie"
+            | "pumpkin_pie"
+            | "sweet_berries"
+            | "glow_berries"
+            | "dried_kelp"
+            | "honey_bottle"
+            | "cake"
+            | "golden_carrot"
+    )
+}
+
 #[cfg(test)]
 mod p124_pickaxe_warning_tests {
-    use super::{inventory_has_pickaxe, ore_in_view, pickaxe_warning};
+    use super::{hunger_warning, inventory_has_pickaxe, is_edible, ore_in_view, pickaxe_warning};
     use serde_json::json;
 
     fn inv(items: &[(&str, u64)]) -> serde_json::Value {
@@ -827,5 +918,43 @@ mod p124_pickaxe_warning_tests {
 
         // 无矿石 → 空（不论有没有镐，不打扰 LLM）
         assert!(pickaxe_warning(no_ore, &inv(&[]), "dirt").is_empty());
+    }
+
+    #[test]
+    fn hunger_warning_suggests_stew_when_mushroom_and_bowl() {
+        // 饱食正常 → 空
+        assert!(hunger_warning(12, &inv(&[])).is_empty());
+        // 低饱食 + 有现成食物 → 直接吃
+        let w = hunger_warning(4, &inv(&[("minecraft:bread", 3)]));
+        assert!(w.contains("consume('bread')"));
+        // 低饱食 + 蘑菇&碗（但蘑菇不可直接吃）→ 提示合成蘑菇煲
+        let w = hunger_warning(
+            4,
+            &inv(&[("minecraft:red_mushroom", 13), ("minecraft:bowl", 16)]),
+        );
+        assert!(w.contains("mushroom_stew"));
+        assert!(w.contains("craft('mushroom_stew')"));
+        // 低饱食 + 无可吃 → 提示找食物
+        let w = hunger_warning(
+            4,
+            &inv(&[("minecraft:cobblestone", 64), ("minecraft:iron_pickaxe", 1)]),
+        );
+        assert!(w.contains("找食物"));
+        // 濒临饿死措辞
+        assert!(hunger_warning(2, &inv(&[("minecraft:apple", 1)])).contains("濒临饿死"));
+    }
+
+    #[test]
+    fn is_edible_classifies_common_foods() {
+        assert!(is_edible("bread"));
+        assert!(is_edible("cooked_beef"));
+        assert!(is_edible("mushroom_stew"));
+        assert!(is_edible("apple"));
+        assert!(is_edible("sweet_berries"));
+        // 蘑菇/碗/工具/矿物都不可直接吃
+        assert!(!is_edible("red_mushroom"));
+        assert!(!is_edible("bowl"));
+        assert!(!is_edible("cobblestone"));
+        assert!(!is_edible("iron_ingot"));
     }
 }

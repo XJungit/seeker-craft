@@ -199,6 +199,81 @@ fn build_index(tools: &[Box<dyn GameTool>]) -> HashMap<String, usize> {
         .collect()
 }
 
+/// 工具知识分组表：LLM 工具按域分类展示（输出 `## {group} Tools` 段头）。
+///
+/// 对应 `craft-agent-minecraft` 实际注册的工具集（`tools_azalea.rs` 的
+/// `create_mc_azalea_tools_full`）。新增工具时必须归入某个分组，否则落
+/// `## Other Tools` 兜底并被回归测试拦截：
+/// - `crates/craft-agent-minecraft` 的 `regression_all_tool_names_in_knowledge_group`
+///   （每个注册工具名都要在某个分组里）
+/// - 本模块的 `regression_knowledge_groups_well_formed`（无重复/无空组）
+///
+/// ⚠️ 这是打进系统提示（knowledge_string）的一部分——改分组名/顺序会碎一次
+/// DeepSeek 前缀缓存（一次性，C8 knowledge_cache 之后自动稳定）。
+pub const TOOL_GROUPS: &[(&str, &[&str])] = &[
+    (
+        "Perception",
+        &["perceive", "memory", "search_wiki", "search_for_block"],
+    ),
+    (
+        "Movement",
+        &[
+            "goto",
+            "goto_player",
+            "move_away",
+            "mine_below",
+            "mine_above",
+            "pickup",
+            "follow",
+            "stop_follow",
+        ],
+    ),
+    ("Mining", &["mine", "make_obsidian"]),
+    ("Modes", &["set_mode"]),
+    (
+        "Interaction",
+        &[
+            "interact_block",
+            "interact_entity",
+            "attack",
+            "defend",
+            "use_item",
+            "shoot",
+            "sleep",
+        ],
+    ),
+    (
+        "Crafting",
+        &["craft", "craft_3x3", "smelt", "auto_craft", "enchant"],
+    ),
+    ("Gathering", &["gather", "till_and_sow", "harvest"]),
+    (
+        "Building",
+        &["place", "build", "build_blueprint", "list_blueprints"],
+    ),
+    (
+        "Containers",
+        &["open", "chest_view", "chest_withdraw", "chest_deposit"],
+    ),
+    ("Inventory", &["equip", "discard", "consume"]),
+    ("Social", &["trade", "give"]),
+    (
+        "Meta",
+        &[
+            "chat",
+            "set_goal",
+            "run_plan",
+            "run_script",
+            "new_action",
+            "list_actions",
+            "pause_goal",
+            "resume_goal",
+            "task_complete",
+            "task_retry",
+        ],
+    ),
+];
+
 impl ToolRegistry {
     pub fn new() -> Self {
         Self {
@@ -258,49 +333,27 @@ impl ToolRegistry {
             return String::new();
         }
         let mut lines = Vec::new();
-        // 按 group 分组展示
-        let groups = [
-            (
-                "High-Level",
-                &[
-                    "collect",
-                    "craft",
-                    "place",
-                    "build",
-                    "blueprints",
-                    "combat",
-                    "attack",
-                ] as &[&str],
-            ),
-            ("Utility", &["equip", "consume", "discard", "smeltItem"]),
-            (
-                "Navigation",
-                &["searchForBlock", "move_to", "moveAway", "digDown"],
-            ),
-            ("Aim", &["look_at", "look_at_player", "look_at_position"]),
-            ("Query", &["perceive", "visual_perceive", "savedPlaces"]),
-            ("Memory", &["rememberHere", "goToRememberedPlace"]),
-        ];
-        for (group_name, tool_names) in &groups {
+        // 按 group 分组展示（分组表见 TOOL_GROUPS，与本项目真实工具域对齐）
+        let mut grouped: std::collections::HashSet<&str> = std::collections::HashSet::new();
+        for (group_name, tool_names) in TOOL_GROUPS {
             let mut group_lines = Vec::new();
             for name in *tool_names {
                 if let Some(tool) = self.get(name) {
+                    grouped.insert(tool.name());
                     group_lines.push(format!("{}(...) — {}", tool.name(), tool.description()));
                 }
             }
             if !group_lines.is_empty() {
                 lines.push(String::new());
-                lines.push(format!("## {} Tools", group_name));
+                lines.push(format!("## {group_name} Tools"));
                 lines.extend(group_lines);
             }
         }
         // 未分组的剩余工具
-        let all_grouped: std::collections::HashSet<&str> =
-            groups.iter().flat_map(|(_, ns)| *ns).copied().collect();
         let ungrouped: Vec<String> = self
             .tools
             .iter()
-            .filter(|t| !all_grouped.contains(t.name()))
+            .filter(|t| !grouped.contains(t.name()))
             .map(|t| format!("{}(...) — {}", t.name(), t.description()))
             .collect();
         if !ungrouped.is_empty() {
@@ -551,5 +604,96 @@ mod tests {
                 .unwrap()
                 .contains("test tool")
         );
+    }
+
+    /// 分组表形态校验：工具名不跨组重复、无空组、无重复组名。
+    /// 覆盖性（每个注册工具都在某组）由 craft-agent-minecraft 侧的
+    /// `regression_all_tool_names_in_knowledge_group` 兜底。
+    #[test]
+    fn regression_knowledge_groups_well_formed() {
+        assert!(!TOOL_GROUPS.is_empty(), "分组表不能为空");
+        let mut seen_group_names = std::collections::HashSet::new();
+        let mut seen_tools = std::collections::HashSet::new();
+        for (group_name, tools) in TOOL_GROUPS {
+            assert!(
+                seen_group_names.insert(*group_name),
+                "分组名重复: {group_name}"
+            );
+            assert!(!tools.is_empty(), "分组 {group_name} 无工具");
+            for t in *tools {
+                assert!(
+                    seen_tools.insert(*t),
+                    "工具 `{t}` 出现在多个分组（跨组重复）"
+                );
+            }
+        }
+        assert!(
+            seen_tools.len() >= 40,
+            "分组表覆盖率异常：仅 {} 个工具被分组（应覆盖全部注册工具）",
+            seen_tools.len()
+        );
+    }
+
+    /// 知识字符串渲染：全部已分组工具都出现在对应组段头下，
+    /// 且注册工具全被分组时不会出现 `## Other Tools` 兜底段。
+    #[test]
+    fn regression_knowledge_string_groups_all_registered_tools() {
+        // 用分组表里全部工具名注册 stub 工具（模拟完整工具集）
+        struct Stub(&'static str);
+        impl GameTool for Stub {
+            fn name(&self) -> &str {
+                self.0
+            }
+            fn description(&self) -> &str {
+                "stub"
+            }
+            fn parameters(&self) -> Value {
+                serde_json::json!({})
+            }
+            fn execute(&self, _: &str, _: Value, _: Option<ToolUpdateFn>) -> Result<ToolResult> {
+                Ok(ToolResult {
+                    message: "ok".into(),
+                    is_error: false,
+                    images: vec![],
+                })
+            }
+        }
+        let mut reg = ToolRegistry::new();
+        for (_, tools) in TOOL_GROUPS {
+            for name in *tools {
+                reg.register(Box::new(Stub(name)));
+            }
+        }
+        let knowledge = reg.to_knowledge_string();
+        // 每个组段头都渲染（非空组必然有注册工具）
+        for (group_name, _) in TOOL_GROUPS {
+            assert!(
+                knowledge.contains(&format!("## {group_name} Tools")),
+                "缺少组段头 ## {group_name} Tools"
+            );
+        }
+        // 注册工具全覆盖 → 不应出现 Other Tools 兜底段
+        assert!(
+            !knowledge.contains("## Other Tools"),
+            "全部工具已分组，不应出现 ## Other Tools 兜底段"
+        );
+        // 每个工具都在其组段头之后渲染（抽查：组头行号 < 组内工具行号）
+        let lines: Vec<&str> = knowledge.lines().collect();
+        for (group_name, tools) in TOOL_GROUPS {
+            let header_pos = lines
+                .iter()
+                .position(|l| *l == format!("## {group_name} Tools"))
+                .expect("组段头存在");
+            for t in *tools {
+                let tool_pos = lines
+                    .iter()
+                    .position(|l| l.starts_with(&format!("{t}(...)")))
+                    .unwrap_or_else(|| panic!("工具 `{t}` 未渲染在知识字符串中"));
+                assert!(
+                    tool_pos > header_pos,
+                    "工具 `{t}` 应渲染在组 {group_name} 段头之后"
+                );
+            }
+        }
     }
 }

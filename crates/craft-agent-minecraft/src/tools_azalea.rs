@@ -202,8 +202,12 @@ pub const ALL_TOOL_NAMES: &[&str] = &[
     "equip",
     "discard",
     "follow",
+    "goto_player",
     "stop_follow",
     "give",
+    "search_for_block",
+    "move_away",
+    "set_mode",
     "consume",
     "chest_view",
     "chest_withdraw",
@@ -588,6 +592,32 @@ mod tool_mapping_tests {
             ALL_TOOL_NAMES.len(),
             "ALL_TOOL_NAMES 存在重复"
         );
+    }
+
+    /// 防线：每个注册工具名都必须出现在知识分组表（TOOL_GROUPS）里，
+    /// 否则打进系统提示的工具知识会落到 `## Other Tools` 兜底段。
+    /// 反向：分组表里没有未注册的名字（防僵尸条目）。
+    #[test]
+    fn regression_all_tool_names_in_knowledge_group() {
+        let grouped: Vec<&str> = craft_agent::core::tool::TOOL_GROUPS
+            .iter()
+            .flat_map(|(_, names)| *names)
+            .copied()
+            .collect();
+        // 1) 每个注册工具名都在分组表里
+        for name in ALL_TOOL_NAMES {
+            assert!(
+                grouped.contains(name),
+                "工具 `{name}` 未归入 TOOL_GROUPS：新增工具必须加入 core/tool.rs 分组表，否则落入 ## Other Tools"
+            );
+        }
+        // 2) 反向：分组表里没有未注册的名字
+        for name in grouped {
+            assert!(
+                ALL_TOOL_NAMES.contains(&name),
+                "TOOL_GROUPS 含未注册工具 `{name}`（应同时登记 ALL_TOOL_NAMES）"
+            );
+        }
     }
 
     /// run_plan 支持的 action 名与 action_for 动作工具集一致（parse_step 漏分支 → 红）。

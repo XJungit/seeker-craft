@@ -1594,6 +1594,39 @@ pub async fn do_consume(bot: &Client, item: &str) -> String {
     let mut hotbar_slot = find_hotbar_slot_for(&inv, kind);
     if hotbar_slot.is_none() {
         // 从主背包 shift_click 到 hotbar
+        // P127：移植 do_equip 的 P8 修复——hotbar 满时 shift_click 无法移动物品
+        // （服务端没有空 hotbar 槽可接收），表现为"背包未持有 X"但 perceive 明明
+        // 显示 X 在主背包（实测 red_mushroom 就在 slot 17 却无法消耗）。
+        // 先腾一个空 hotbar 槽：把第一个 hotbar 物品左击拾起、放到主背包空槽。
+        if let Some(menu) = inv.menu().ok().flatten() {
+            let hotbar_range = menu.hotbar_slots_range();
+            if let Some(slots) = inv.slots() {
+                let hotbar_full = hotbar_range
+                    .clone()
+                    .all(|s| slots.get(s).map(|st| !st.is_empty()).unwrap_or(false));
+                if hotbar_full {
+                    let player_range = menu.player_slots_range();
+                    for hs in hotbar_range.clone() {
+                        if let Some(st) = slots.get(hs)
+                            && !st.is_empty()
+                        {
+                            inv.left_click(hs);
+                            sleep(Duration::from_millis(80)).await;
+                            for ps in player_range.clone() {
+                                let is_empty =
+                                    slots.get(ps).map(|st| st.is_empty()).unwrap_or(false);
+                                if is_empty || ps >= slots.len() {
+                                    inv.left_click(ps);
+                                    sleep(Duration::from_millis(80)).await;
+                                    break;
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+        }
         let srcs = find_item_slots(&inv, kind);
         if let Some(src) = srcs.first() {
             inv.shift_click(*src);
@@ -1697,7 +1730,15 @@ pub async fn do_consume(bot: &Client, item: &str) -> String {
         } else {
             "可能不是可消耗物品或饥饿值已满".to_string()
         };
-        format!("尝试消耗 {item}，但数量未减少（{before} → {after}，{hint}）")
+        // P128：Java 版蘑菇不能生吃（无食物组件），但 1 蘑菇 + 1 碗可合成
+        // 蘑菇煲（+6 饥饿）。实测 LLM 会误以为"蘑菇不可食用"转去找其它食物，
+        // 忽略背包里现成的 red_mushroom + bowl——给明确合成指引。
+        let stew_hint = if item.contains("mushroom") && !item.contains("stew") {
+            "。蘑菇不能生吃（Java 无食物组件）——用 craft('mushroom_stew') 合成蘑菇煲（1 蘑菇 + 1 碗，2x2）后再 consume('mushroom_stew')"
+        } else {
+            ""
+        };
+        format!("尝试消耗 {item}，但数量未减少（{before} → {after}，{hint}{stew_hint}）")
     }
 }
 

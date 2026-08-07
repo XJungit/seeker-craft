@@ -1,0 +1,169 @@
+共 53 个工具 | 分组: ['High-Level', 'Utility', 'Query'] + Other(45)
+============================================================
+
+## High-Level Tools
+craft(...) — 用玩家自带 2×2 背包网格合成物品（无需工作台）。
+item 为目标物品 id（可省略 minecraft: 前缀，如 "oak_planks" / "stick" / "crafting_table" / "torch" / "chest" / "wooden_pickaxe" / "furnace"，也支持任意原木如 "spruce_log" 合成对应木板）。
+count 为期望数量（默认 1）。合成在后台异步执行，结果通过聊天事件回传。
+place(...) — 把手持物品 item 放置到世界坐标 (x,y,z) 旁（右键放置）。
+需背包持有该物品；常用于放置工作台/熔炉以便后续 craft_3x3 / smelt。
+item 为目标物品 id（如 "crafting_table"），坐标用整数。
+build(...) — 按蓝图建造：JSON 格式 {"blocks":[{"x":10,"y":64,"z":20,"block":"oak_planks"}, ...]}。自动 goto 到每个位置再 place。材料不足时报错。例: build(blueprint="{\"blocks\":[{\"x\":10,\"y\":64,\"z\":20,\"block\":\"oak_planks\"}]}")
+attack(...) — 攻击近战距离内最近的指定生物。target 必填，如 cow、zombie、creeper。若目标不在近战距离，先 goto 接近或撤退。
+
+## Utility Tools
+equip(...) — 装备背包中的物品到指定槽位。
+slot="hand"：把物品移到主手（武器/工具/方块都走这条路径）。
+slot="helmet"/"chestplate"/"leggings"/"boots"：穿戴对应盔甲。
+参数：item（物品 id 如 wooden_pickaxe/iron_sword/iron_helmet），slot（槽位名）。
+场景：挖矿前装备镐、战斗前装备剑、有盔甲时穿上。
+consume(...) — 消耗（吃/喝）背包中的指定物品。
+把物品移到主手并按住右键使用。食物 1.6s 吃完一个，药水 1.6s 喝完。
+参数：item（物品 id，如 cooked_beef / bread / apple / potion）。
+场景：血量/饱食度低时吃食物回血。
+discard(...) — 丢弃背包中的指定物品以腾出空间。
+count=0 丢弃全部，count>0 丢弃指定数量（按堆丢，最后不足一堆用单个丢）。
+丢弃后物品以掉落物形式存在于 bot 脚边，可重新捡起。
+场景：背包满（如挖了一堆泥土/沙砾）时丢弃无用物品。
+
+## Query Tools
+perceive(...) — 读取当前世界结构化状态：坐标、维度、生命/饥饿、背包、附近方块/实体、激活传送门和服务端击杀统计。返回文本描述，供决策使用。无参数。
+
+## Other Tools
+open(...) — 打开世界坐标 (x,y,z) 处的容器（工作台/熔炉/箱子等）。
+打开后配合 craft_3x3 / smelt 使用。坐标用整数。
+chest_view(...) — 查看世界坐标 (x,y,z) 处容器（箱子/熔炉/木桶等）的物品列表。
+打开 → 读取 → 关闭，返回 'iron_ingot:32, coal:16' 格式。
+参数：x,y,z 容器坐标。无副作用（不改变背包/容器内容）。
+场景：决策取什么/存什么前先查看。
+chest_withdraw(...) — 从世界坐标 (x,y,z) 处容器取出 item 到 bot 背包。
+count=0 取全部，count>0 取指定数量（不足时尽力而为）。
+参数：x,y,z 容器坐标；item 物品 id（如 iron_ingot）；count 数量（默认 0=全部）。
+场景：从基地箱子拿物资（食物/工具/矿石）出来用。
+chest_deposit(...) — 把背包中的 item 存入世界坐标 (x,y,z) 处容器。
+count=0 存全部，count>0 存指定数量（不足时尽力而为）。
+参数：x,y,z 容器坐标；item 物品 id；count 数量（默认 0=全部）。
+场景：把挖到的矿石/收集的资源存进基地箱子，腾出背包空间。
+craft_3x3(...) — 用 3×3 工作台合成物品（如 furnace / chest / wooden_pickaxe / iron_ingot 工具等）。
+**P1-4 自动放收桌**：bot 自动放置工作台→打开→合成→关闭，LLM 一次调用即可。
+- 若附近已有工作台，传入 table_x/table_y/table_z 复用（避免重复放置）。
+- 若不传 table 坐标，bot 在头顶放置一个新工作台并自动收桌。
+- 若背包无 crafting_table，会返回错误，请先 craft(crafting_table) 造一个。
+item 为目标物品 id（如 "furnace"/"chest"/"wooden_pickaxe"），count 为期望数量（默认 1）。
+smelt(...) — 在熔炉中熔炼物品（如 iron_ingot / glass / charcoal / stone）。
+**P1-4 自动放收炉**：bot 自动放置熔炉→打开→熔炼→关闭，LLM 一次调用即可。
+- 若附近已有熔炉，传入 table_x/table_y/table_z 复用（避免重复放置）。
+- 若不传 table 坐标，bot 在头顶放置一个新熔炉并自动收炉。
+- 若背包无 furnace，会返回错误，请先 craft(furnace) 造一个。
+output 为产物 id（如 "iron_ingot"），fuel 为燃料 id（默认 "coal"，也可 "charcoal"/"oak_log"），
+count 为期望数量（默认 1）。
+auto_craft(...) — 高层自动合成：一句话造任意已登记物品，bot 沿配方图递归满足全部原料（采集/合成/熔炼），
+自动造并打开放置的工作台/熔炉。支持目标含 oak_planks/stick/crafting_table/chest/furnace/
+ladder/door/trapdoor/fence/iron_ingot/copper_ingot/gold_ingot/glass/stone/charcoal 等。
+如 auto_craft("chest",1) / auto_craft("iron_ingot",3)。其他物品请用分步工具。
+enchant(...) — 附魔：在已打开的附魔台中，给背包内的物品 item 附魔（需背包有 item 与青金石 lapis_lazuli）。
+level 取 1/2/3，对应附魔台三个选项槽。使用前请先用 open 打开附魔台坐标，并确认背包有 item 与青金石。
+till_and_sow(...) — 在指定世界坐标 (x,y,z) 犁地并播种。目标必须是草方块/泥土/已耕地；需背包有锄头和种子。种子支持 wheat_seeds/beetroot_seeds/carrot/potato/melon_seeds/pumpkin_seeds。若目标过远需先 goto 靠近。
+harvest(...) — 收割附近 32m 内所有成熟的农作物（小麦/胡萝卜/土豆/甜菜/下界疣），自动走到并徒手挖取，掉落物自动拾取。未成熟的作物不会掉落，需要等待。
+gather(...) — 走到最近的指定方块并挖掘，直到背包有 count 个（早期游戏采集：砍树/挖石/挖矿）。
+item 为方块物品 id（如 "oak_log" / "stone" / "coal_ore"），count 为期望数量（默认 1）。
+interact_block(...) — 对着指定世界坐标 (x,y,z) 的方块交互（放置方块/右键激活）。参数：x,y,z 整数。
+sleep(...) — 在附近床上睡觉跳过夜晚（夜晚怪物多/等天亮时用）。自动找 32m 内最近的床、走过去并上床。若白天或无床会返回错误。
+interact_entity(...) — 实体右键交互：与最近的指定种类实体交互（打开村民界面/动物/物品展示框等）。
+kind 为实体种类关键词，如 villager。需先走到该实体附近。
+defend(...) — 自动防御 5 秒：等待 handler 层 self_defense mode 自动攻击附近敌对生物。
+期间监测血量，若受到严重伤害（>5 点）提前返回建议撤退。
+无参数。适合被多只怪围攻时调用。
+use_item(...) — 使用（右键）手持物品一次。
+主要用途：投掷末影之眼（ender_eye）定位要塞、投掷投掷物、使用可 '启用' 物品。
+装备物品 → 可选转向（yaw/pitch）→ 右键使用一次，自动验证物品消耗。
+注意：水桶装水/对方块使用请用 interact_block（右键方块）。
+shoot(...) — 拉弓射箭（远程攻击，龙战必需）。
+装备弓并检查箭（arrow），可选指定目标实体（默认朝当前视角方向射）。
+指定目标时会自动转向目标再射击。射完验证箭数消耗并回报。
+注意：朝方块射击会失败——先移动到开阔处；弓没有时用 equip 检查背包，箭用 craft 合成（flint + stick + feather）或用 auto_craft。
+chat(...) — 发送聊天消息到游戏。参数 content 为消息文本。
+set_goal(...) — 设置或更新当前目标。bot 会持续朝此目标行动直到调用 set_goal(goal="") 清空。goal 为英文目标描述，如 "Get 3 iron ingots" / "Build a house"。调用后系统每轮自动注入此目标，bot 持续行动直到目标达成。
+run_plan(...) — 执行多步计划：按顺序执行一系列工具调用。steps 为 JSON 数组，每步格式为 {"action":"工具名", "参数名":值}。支持动作: goto, mine, craft, gather, place, open, interact, attack, chat, mine_below。例: [{"action":"goto","x":10,"y":64,"z":8}, {"action":"mine","x":10,"y":63,"z":8}]。会等待每一步完成再执行下一步，返回所有步骤的汇总结果。
+run_script(...) — 执行 rhai 脚本（嵌入式引擎，沙箱化）。支持变量、循环、条件。使用时机：需要连续执行 3 步以上动作（如 收集→合成→拾取 流水线、循环挖矿、带条件判断的多步流程）时用本工具；单步操作请直接调用对应工具（更可靠）。动作函数: walk_to(x,y,z) [或 move_to/step_to，不要用 go/goto，rhai 保留字], mine(x,y,z), mine_below(), mine_above(), interact(x,y,z), attack(target?), defend(), craft(item,count), craft_3x3(item,count), smelt(output,fuel,count), auto_craft(item,count), enchant(item,level), gather(item,count), place(item,x,y,z), open(x,y,z), chest_view(x,y,z), chest_withdraw(x,y,z,item,count), chest_deposit(x,y,z,item,count), equip(item,slot), discard(item,count), consume(item), interact_entity(kind), trade(offer), chat(msg), pickup(), perceive(), list_blueprints(), build_blueprint(name,x,y,z), till_and_sow(x,y,z,seed), harvest(), sleep(ms), print(msg)。脚本最后一行若是动作函数调用会作为返回值；不需要返回值时末尾加分号 `;`。函数返回错误消息字符串（含"失败"/"超时"/"未持有"）不会中断脚本，可用 if 判断：例1（流水线）: walk_to(10, 64, 20); gather("oak_log", 4); craft("oak_planks", 4); pickup();例2（循环+条件）: for i in 0..3 { let r = mine(10, 60-i, 20); if r.contains("失败") { break; } sleep(300); }
+task_complete(...) — 声明当前阶段里程碑完成。系统记录声明后继续运行，你必须推进总体目标的下一阶段。仅在世界状态可验证里程碑时调用，不要对同一里程碑重复调用。参数 reason: 完成原因简述（必填）。
+task_retry(...) — 重试当前失败的任务。只有任务状态为 Failed 时有效；先解决失败原因，再传入 reason。
+pause_goal(...) — 暂停当前目标（不注入 [当前目标] 但保留 goal 文本）。
+暂停后需手动调用 resume_goal 恢复（不会自动恢复）。
+无参数。场景：LLM 临时处理突发情况时不想丢失长期目标。
+注意：紧急 mode（如血量危急）会自动暂停目标，无需调用此工具。
+resume_goal(...) — 恢复已暂停的目标（Paused → Active），目标重新每轮注入。
+无参数。场景：突发情况处理完后继续原目标。
+new_action(...) — 创建一个命名的自定义动作（P2-4：newAction 等价物），持久化到 actions/<name>.rhai.json。
+后续可在 run_script 里用 call_action(name) 调用，跨会话复用。
+
+参数：
+- name: 动作名（合法标识符 [a-z_][a-z0-9_]*，1..=32 字符，如 'gather_and_craft'）
+- description: 何时该用此动作（给 LLM 看的提示）
+- script: rhai 脚本代码（≤8KB，可用 run_script 全部 27 个函数 + call_action）
+
+lint 规则：禁用 import/eval/Fn/call/IO，禁 while true 无 break。
+若同名动作已存在则覆盖（更新脚本）。
+
+示例：new_action(name="gather_wood_and_planks", description="采集 4 个原木并合成木板", script="gather(\"oak_log\", 4); craft(\"oak_planks\", 4); pickup(); print(\"done\")")
+list_actions(...) — 列出所有已保存的自定义动作（P2-4）。无参数。
+返回：name (调用 N 次): description + 脚本预览（前 200 字符）。
+用 new_action 创建新动作，用 run_script 内 call_action(name) 调用。
+mine(...) — 挖掉指定世界坐标 (x,y,z) 的方块。bot 会对该方块发起挖掘（需在其可达范围内）。参数：x,y,z 整数。
+make_obsidian(...) — 自动制造黑曜石（用于下界传送门框架）。
+**前置条件**：bot 必须手持 water_bucket（先到水源 interact 装满水），且附近（半径12）有岩浆源。
+- 工具会自动：在岩浆旁放一格水→生成黑曜石→用钻石镐挖下→重复 count 次。
+- 若没水/没岩浆/没钻石镐会返回错误。
+count 为期望黑曜石数量（默认 10，传送门框架需 10 块）。
+goto(...) — 走到世界坐标 (x, y, z)，或按已记忆的命名锚点导航（anchor="home"）。二选一：给 anchor 则忽略 x/y/z；给 x/y/z 则按坐标走。锚点由 memory action=anchor 设置。bot 使用内置 A* pathfinder 自动导航。
+mine_below(...) — 挖掉 bot 脚下的方块（向下挖矿井）。无参数。bot 自动挖掘并可能拾取掉落物。
+注意：垂直下挖前先规划脱困——记录入口坐标，挖完用 mine_above 回地表；不要盲目连续垂直下挖（下去容易上来难）。
+mine_above(...) — 向上挖：从 bot 头顶逐格挖到空气，用于地下脱困/上到地表。无参数。与 mine_below 反向——mine_below 是向下挖矿井，mine_above 是向上挖通竖井。当 bot 困在地下/1x1 竖井/洞穴里需要回到地表时使用。bot 自动装备背包里最好的镐，挖通头顶方块后 bot 自动跳起，连续挖直到头顶是空气（已挖通）或 Y≥320（建筑上限）。
+pickup(...) — 捡起附近掉落物。bot 走 4 个方向扫一圈，让物理引擎吸取掉落物（vanilla 自动捡半径 1.5）。
+挖矿/战斗后调用一次，避免"挖了 8 个石头但只捡到 3 个"。
+无参数。返回捡到的物品总数。
+follow(...) — 跟随玩家（实现"跟着我"）。
+bot 会每 tick 自动走到目标玩家身边，直到你调用 stop_follow 解除。
+target 为玩家名（可选，留空则跟随最近的其他玩家）。
+也可以在游戏聊天框直接打 "follow [玩家名]" 或 "follow" 触发。
+goto_player(...) — 按玩家名单次导航到该玩家所在位置（实现"去玩家那边"）。
+bot 会解析玩家当前坐标并走过去（同 goto 的导航逻辑，到达后即停）。
+需要持续跟着玩家走用 follow，本工具只走一次。
+target 为玩家名（可选，留空则导航到最近的其他玩家）。
+也可以在游戏聊天框直接打 "gotoplayer [玩家名]" 触发。
+move_away(...) — 向远离指定实体的方向移动（实现"躲开"）。
+定位最近的目标实体（target 为实体名，可选；留空=最近的非玩家实体），
+沿反向水平移动 distance 格（默认 8，最大 64）后停下。
+用于主动拉开距离（如 creeper 靠近准备自爆、怪群包围）。
+也可以在游戏聊天框直接打 "moveaway [实体名] [距离]" 触发。
+set_mode(...) — 开关自动反应式模式（默认全部启用）。
+可开关模式：self_preservation（火/岩浆自动脱困）、self_defense（自动攻击附近敌对）、
+cowardice（低血自动逃离）、hunting（自动狩猎动物）、item_collecting（自动捡掉落物）。
+关闭某模式后 bot 不再自动执行该行为（如要保护动物可关 hunting，要安静潜入可关 self_defense）。
+用 mode="list" 查询当前禁用列表。也可以在游戏聊天框直接打 "setmode <模式> on|off" 触发。
+stop_follow(...) — 停止跟随（解除 follow 模式）。
+也可以在游戏聊天框直接打 "stopfollow" 或 "stop" 触发。
+memory(...) — 世界长期记忆：记录/查询/遗忘空间事实（资源点、结构、容器、村民、传送门、锚点）。action=save 记录坐标记忆；action=anchor 设命名锚点；action=query 查询；action=forget 删除。
+search_for_block(...) — 搜索指定方块，返回半径内全部匹配坐标（按距离升序，最多 8 处）。
+只扫描不挖掘（要挖用 gather）。别名自动展开（oak_log 匹配全部原木变体、
+iron_ore 匹配深板岩变体）。找矿/找资源时先搜索坐标再规划路线。
+block 为方块 id（如 diamond_ore / oak_log）；radius 为扫描半径（默认 32，最大 96）。
+也可以在游戏聊天框直接打 "searchblock <方块> [半径]" 触发。
+search_wiki(...) — 搜索 Minecraft Wiki（中文），查询方块/物品/生物/机制等游戏知识。参数 query 为搜索关键词（中文）。返回最多 3 条结果，含标题和摘要。例: search_wiki(query="铁砧") / search_wiki(query="how to make a pickaxe")
+build_blueprint(...) — 按预定义蓝图名称建造（P2-1）。蓝图文件在 `blueprints/` 目录，内置：small_shelter（3x3 木屋）/ farm_plot（9x9 农田）/ storage_corner（储物角）/ torch_pillar（标记柱）。
+bot 自动：1) 查蓝图 → 2) 计算材料清单 → 3) 逐方块 goto+place。
+参数：name 蓝图名，x/y/z 蓝图原点（相对坐标 dx/dy/dz 加上原点 = 实际世界坐标）。
+示例：build_blueprint(name="torch_pillar", x=100, y=64, z=-50) 在该坐标立一根火把柱。
+list_blueprints(...) — 列出所有可用蓝图名 + 描述 + 材料清单（P2-1）。无参数。
+返回示例：
+- small_shelter: 3x3 木屋 | 材料: oak_planks:5, oak_log:4, ...
+- torch_pillar: 标记柱 | 材料: cobblestone:3, torch:1
+
+用 build_blueprint(name=..., x=..., y=..., z=...) 实例化。
+trade(...) — 村民交易：与最近的村民交易，选第 offer 个报价（0 起，需用 perceive/interact 先靠近村民）。
+如 trade(0) 买第 1 个报价，trade(1) 买第 2 个。bot 自动打开村民并执行交易。
+give(...) — 把物品丢在玩家脚边（给予玩家，让其拾取）。
+item 为物品 id（如 cooked_beef / dirt / oak_log），count 为数量（0=全部）。
+target 为玩家名（可选，留空=最近的玩家）。
+也可以在游戏聊天框直接打 "give <物品> [数量] [玩家名]" 触发。
+场景：玩家说"给我点吃的"→ 调用 give(cooked_beef, 3)。

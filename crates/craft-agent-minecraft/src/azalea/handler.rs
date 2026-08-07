@@ -92,6 +92,33 @@ fn nearest_solid_block(bot: &Client, x: i32, y: i32, z: i32) -> Option<BlockPos>
     best.map(|(_, pos)| pos)
 }
 
+/// P126：goto 目标是实心矿石时是否值得"自动转直接挖掘"（等同 mine）。
+/// P126b（收紧）：仅矿石（含 deepslate_*_ore）自动改挖——矿石是 LLM 明确想
+/// "获得"的目标，转挖无损；P126a 曾把 stone/dirt 等岩层也纳入，实测 LLM 长距离
+/// goto 时每块挡路石头都被自动挖掉 → 隧道式偏航（一路挖向 63m 外的目标），
+/// 岩层阻挡应回到原拒绝逻辑让 LLM 换路线（P65/P69b 建议）。与 P101/P102 的
+/// "派发时自动修正"同纪律，不影响正常 goto 到可站立目标的行为。
+fn is_natural_mineable(kind: Option<BlockKind>) -> bool {
+    let Some(bk) = kind else {
+        return false;
+    };
+    if matches!(
+        bk,
+        BlockKind::Bedrock
+            | BlockKind::Obsidian
+            | BlockKind::Water
+            | BlockKind::Lava
+            | BlockKind::Barrier
+    ) {
+        return false;
+    }
+    let name = bk
+        .to_str()
+        .strip_prefix("minecraft:")
+        .unwrap_or(bk.to_str());
+    name.ends_with("_ore")
+}
+
 /// P120b：无镐时 mine_above 自动绕行的软土柱扫描。
 /// 在 (x, y, z) 周围 radius 格水平范围内，找最近的"软方块列"（该列
 /// 头顶 y+1..y+3 任一格是非硬方块且非空气：dirt/grass/sand/gravel/
@@ -1508,6 +1535,31 @@ impl AzaleaBot {
                                         }
                                         bot.start_goto(BlockPosGoal(BlockPos::new(fx, fy, fz)));
                                         state.action_mgr.clear_pending();
+                                        return bot;
+                                    }
+                                    // P126：上方无站立点且目标是矿石时，自动改挖该方块
+                                    // （等同 mine）。原拒绝建议"改用附近空气坐标"对嵌入岩体的矿石
+                                    // 是死路——矿石四周全是实心，LLM 会反复 goto 周边坐标死循环
+                                    // （实测连续 6+ 次 goto 矿石/邻格全实心失败）。派发时自动修正。
+                                    let target_kind = bot.world().ok().and_then(|w| {
+                                        w.read()
+                                            .get_block_state(BlockPos::new(x, y, z))
+                                            .map(|b| b.into())
+                                    });
+                                    if is_natural_mineable(target_kind) {
+                                        if let Some(tx) = &result_tx {
+                                            let _ = tx.send(format!(
+                                                "Action output:\ngoto ({},{},{}) 的目标方块是矿石（实心、上方无站立点），\
+                                                已自动改为直接挖掘该方块（等同 mine {} {} {}）。若掉落物离你较远，挖完后用 pickup 拾取。",
+                                                x, y, z, x, y, z
+                                            ));
+                                        }
+                                        let tx_clone = result_tx.clone();
+                                        state.action_mgr.clear_pending();
+                                        cmd_queue.lock().unwrap().push(QueuedCommand {
+                                            cmd: BotCommand::Mine { x, y, z },
+                                            result_tx: tx_clone,
+                                        });
                                         return bot;
                                     }
                                     if let Some(tx) = &result_tx {
