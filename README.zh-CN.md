@@ -100,7 +100,7 @@ cargo test -p craft-agent-minecraft --features azalea-bot --lib
 - [ARCHITECTURE.md](ARCHITECTURE.md) — 分层架构、13 步循环、44 工具
 - [AGENTS.md](AGENTS.md) — 自主开发工作流（差距分析 → 修复 → 验证）
 - [docs/mindcraft-gap.md](docs/mindcraft-gap.md) — Mindcraft 差距审计 + 优先级队列
-- [docs/CHANGELOG.md](docs/CHANGELOG.md) — 变更日志
+- [CHANGELOG.md](CHANGELOG.md) — 变更日志（Keep a Changelog 格式）
 - [docs/adr.md](docs/adr.md) — 架构决策记录
 - [docs/README.md](docs/README.md) — 完整文档索引
 

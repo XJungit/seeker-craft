@@ -6,11 +6,11 @@ This document describes how to prepare a release of Craft-Agent.
 
 We use semver-like tags for milestones:
 - `v0.x.y` for early development
-- Breaking changes documented in `CHANGELOG.md`
+- Breaking changes documented in [`../CHANGELOG.md`](../CHANGELOG.md) (Keep a Changelog format)
 
 ## Pre-release Checklist
 
-- [ ] `CHANGELOG.md` updated with all changes since last tag
+- [ ] `../CHANGELOG.md` updated with all changes since last tag
 - [ ] `cargo check --workspace` passes (no warnings preferred)
 - [ ] `cargo test --workspace` passes
 - [ ] `cargo clippy --workspace` clean (or known exceptions documented)

@@ -4,7 +4,7 @@ Start with `tutorials/INDEX.md` for the full guide map.
 
 ## Reference
 
-- `../docs/CHANGELOG.md` — change log (P-series fixes & features)
+- `../CHANGELOG.md` — versioned change log (Keep a Changelog)
 - `../docs/mindcraft-gap.md` — Mindcraft parity audit + priority queue
 - `../docs/adr.md` — architecture decision records
 - `../ARCHITECTURE.md` — current architecture (13-step loop, batch execution, module layout)

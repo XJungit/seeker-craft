@@ -1,0 +1,19 @@
+# AUTHORS
+
+## Maintainer
+
+- **XJ Jungit** (@XJungit) — project owner, architecture, core agent loop
+
+## Acknowledgments
+
+This project builds on the work of two upstream open-source projects:
+
+- **Mindcraft** (mindcraft-bots/mindcraft) — LLM bot reference for tasks, profiles, and modes
+- **Azalea** (azalea-rs/azalea) — Rust Minecraft client protocol library
+
+The project is developed with substantial AI-assisted engineering
+("vibe coding") as a personal experiment.
+
+## Contributors
+
+No other contributors yet. See [CONTRIBUTING.md](CONTRIBUTING.md) if you'd like to help.

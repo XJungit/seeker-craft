@@ -1,0 +1,29 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "SeekerCraft (Craft-Agent)"
+abstract: >-
+  An LLM-driven autonomous Minecraft bot (Rust + Azalea protocol client) that
+  observes structured game state, plans multi-step survival strategies, and
+  executes them through typed tools, with the goal of beating the Ender Dragon.
+  Includes a 13-step agent loop, 49 LLM tools, 23 structured tasks, reactive
+  modes, spatial world memory, and a probe-based tool test harness.
+keywords:
+  - minecraft
+  - llm-agent
+  - ai-agent
+  - azalea
+  - rust
+  - game-ai
+license: MIT
+type: software
+date-released: 2026-08-07
+authors:
+  - family-names: "Jungit"
+    given-names: "XJ"
+    orcid: ""
+url: "https://github.com/XJungit/seeker-craft"
+repository-code: "https://github.com/XJungit/seeker-craft"
+preferred-citation:
+  type: software
+  title: "SeekerCraft (Craft-Agent)"
+  url: "https://github.com/XJungit/seeker-craft"
