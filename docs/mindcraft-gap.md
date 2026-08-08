@@ -635,3 +635,34 @@ earest_soft_column(bot, x, y, z, radius=4)：无镐且头顶硬方块时，扫�
 - **验证**：回归测试 6 例（穿着算持有 / 裸身不通过 / 非甲胄不受影响 / 前缀归一 / 全套四件
   All 条件通过）+ 实机 bot 后续 task_complete 通过。
 - **部署**：2026-08-08 与新 goal（tier4 阶段）一并重启部署，实机验证中。
+
+### P134 equip/discard 双死锁 + tier4 基岩任务条件不可达
+
+- **症状**：bot 在地下 1x1 竖井（y=-59 基岩顶附近）出现**三连死锁**：
+  1. `装备 stone_pickaxe 失败：shift_click 槽 31 后未在 hotbar 找到该物品` 反复出现——
+     hotbar 9 格全满 + 主背包 36 格全满，P8 eviction 腾不出空间；
+  2. `discard` 丢出的掉落物被 1.5m 自动拾取吸回（「走开失败：被卡住/路径不可达」）——
+     do_discard 只尝试水平 4 方向各 4 格，1x1 竖井四面全堵；
+  3. 徒手挖深板岩 ~8s/格 → mine_above 30s 超时，Y 不上升（P120c 绕软土柱不适用，
+     周围全是硬深板岩）。
+  另外 tier4_mine_to_bedrock 任务条件 `BelowY(-60)` 在 overworld **永远不可达**——
+  基岩层 y=-64~-59 不可破坏，玩家最低可站在基岩顶层（脚 y=-58），任务必超时 360s。
+- **根因**：
+  1. P8 eviction 用 `left_click` 手动"拿起→找空槽→放下"：`slots()` 是**快照**，click 后
+     不刷新；主背包无空槽时物品**卡在光标上**，后续 shift_click 全部错乱；且不会自动
+     合并同类堆（hotbar 有 cobblestone x12 + x64 两堆却无法合并腾位）。
+  2. do_discard 走开逻辑无竖直方向——竖井/窄洞唯一脱身方向是向上。
+  3. 任务条件没对齐世界生成事实。
+- **修复**（azalea/mod.rs + data/tasks/tier4_mine_to_bedrock.json）：
+  1. do_equip/do_consume 的 P8 eviction 改用 **QuickMoveClick（shift_click）**：服务端
+     自动合并同类堆 + 找空槽，无光标悬挂；对 hotbar 槽 shift_click 即腾位。
+  2. do_discard 追加**向上 4 格**走开尝试（竖直距离 > 1.5m 吸回半径），moved_away 判定
+     补 y 轴（三轴任一 >2 即算走开）。
+  3. tier4 任务 `BelowY(-60)` → `BelowY(-58)`（站在基岩顶层即满足），goal/description
+     同步改写。
+- **验证**：craft-agent-minecraft lib 168 通过 + craft-agent lib 183 通过 + fmt/clippy 干净；
+  实机部署后观测 bot 能否装备 stone_pickaxe 脱困（验证中）。
+- **教训**：① 容器操作的 slots() 是快照——任何 click 序列必须基于**服务端语义操作**
+  （QuickMove 让服务端决策合并/空槽），手动拿放要保证光标平衡（拿起必须放下，
+  否则后续所有 click 错乱）；② 走开/寻路兜底要覆盖竖直维度（竖井是 MC 的常见几何）；
+  ③ 任务完成条件必须对照世界生成事实（基岩层高度、最低可站高度）验证可达性。

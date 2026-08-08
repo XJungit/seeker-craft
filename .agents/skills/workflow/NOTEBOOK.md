@@ -330,3 +330,11 @@ earest_entities::<Without<Player>>() 全量计数，无距离过滤无距离标�
 - Verification: 445→287 行（-35%）；18 项硬契约关键词 grep 全数在位；SKILL.md 引用的「新增能力纪律」标题保留；workspace members 确认 6 crate；纯文档变更无需构建。Mimosa hook 提示完整安全审计未跑完（scanner_enobufs），未声明安全结论。
 - Learning: ① AAIF"只写无法推断的信息 + 短版优先"可直接套用本项目——高频引用（工具表）也可靠权威清单指针替代；② 精简 AGENTS.md 时顺带暴露了 5→6 crate 漂移——文档瘦身是最好的漂移扫描；③ 引用的标题（SKILL.md→新增能力纪律）是删改的硬约束，先查引用再动刀。
 - Next: Mimosa 完整审计补跑（本轮 hook 提示未完成）；AGENTS.md 后续增补内容时按"硬契约/指针"二分法评估，避免回涨。
+
+## Round 37 - 2026-08-08 (P134 地下竖井三连死锁修复：equip 光标悬挂 / discard 竖井吸回 / tier4 条件不可达)
+- Evidence: bot 在 y=-59 基岩顶附近 1x1 竖井中镶住：hotbar 9 格满 + 背包 36 格满 → `装备 stone_pickaxe 失败：shift_click 槽 31 后未在 hotbar 找到该物品` 反复 >3 轮；discard 掉落物被 1.5m 吸回（水平 4 方向全堵）；徒手挖深板岩 8s/格 → mine_above 超时。同时 tier4_mine_to_bedrock BelowY(-60) 在基岩层（-64~-59）永远不可达。
+- Root cause: (1) P8 eviction 手动 left_click 拿放，slots() 是快照 click 后不刷新，主背包无空槽时物品卡光标上，后续 shift_click 全乱，且不会合并同类堆；(2) do_discard 走开逻辑无竖直方向；(3) 任务条件未对照世界生成事实。
+- Change: (1) do_equip/do_consume eviction 改 QuickMoveClick（服务端自动合并同类堆+找空槽，无光标悬挂）；(2) do_discard 追加向上 4 格走开 + moved_away 补 y 轴；(3) tier4 任务 BelowY(-60)→BelowY(-58)。
+- Verification: minecraft lib 168 通过 + craft-agent lib 183 通过 + fmt/clippy 干净；commit c7a88d8；重新部署（ctl stop/build/viewer/start）实机验证中——观测 bot 能否装上 stone_pickaxe 逃脱竖井。
+- Learning: ① 容器操作 slots() 是快照，click 序列优先用服务端语义操作（QuickMove），手动拿放必须保证光标平衡；② 走开/寻路兜底必须覆盖竖直维度（竖井是 MC 常见几何）；③ 任务完成条件必须验证可达性（对照基岩高度）。
+- Next: 观测 P134 实机效果（装备→脱困→钻石）；tier4 完成后下一主线是钻石镐/钻石甲 → 下界。
