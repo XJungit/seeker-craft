@@ -306,3 +306,11 @@ earest_entities::<Without<Player>>() 全量计数，无距离过滤无距离标�
 - Verification: git diff 复核两文件（+29/-30，无契约丢失）；bot 实机 step 166 仍 running（OCC 后端 step 速率正常），pos (-464,62,-161) lush_caves，背包 iron_ingot:2 尚无全套铁甲——本轮无代码变更，无需构建。
 - Learning: ①"契约"与"方法论"分文件存放，方法学可随迭代演化而不动硬契约；② 文档优化也要做路径一致性检查（find 过时路径）；③ 新一轮 OCC 后端自切换后首验速率恢复。
 - Next: 持续观测铁甲主线（iron_ore 搜挖 → 熔炼 24 → 合成全甲）；工作流技能后续若再改流程，回写 SKILL.md 而非 AGENTS.md。
+
+## Round 34 - 2026-08-08 (食物危机→铁甲闭环 P127-P133，全链路实机驱动)
+- Evidence: bot 饥饿 4/20 濒临饿死（健康 11/20），`consume('red_mushroom')` 反复失败（13→13 数量不变）；目标 24 raw_iron → 全套铁甲，但连续 6+ 次 `goto (-477,88,-141)`（岩壁）全失败；穿上全套铁甲后 `task_complete`（tier3_iron_armor）永远验证失败。
+- Root cause: (1) P127 hotbar 满时 shift_click 无法搬移（consume 缺 equip 的 P8 腾槽逻辑）；(2) P128 Java 版蘑菇不可生吃（无食物组件），LLM 不知；(3) P129 perceive 无饥饿警示，LLM 无视 goal 进食指令；(4) P130 手写配方误写 bowl+red+brown 三种原料（vanilla 只需任意一种蘑菇+碗），P104 时埋下；(5) P131 LLM 顽固计划（63m 外找 brown_mushroom），但"连续失败"提示总能驱动换策略；(6) P132 goto 实心非矿石目标 P69b/P126 双失效（上方无空气、非矿石、y>62 无自动脱困）→ 盲猜坐标死循环；(7) P133 InventoryHas 只解析背包行，穿在身上的甲不算持有。
+- Change: P127 do_consume hotbar 满腾槽（移植 do_equip 模式）→ P128 consume 失败提示补蘑菇煲合成指引 → P129 adapter `hunger_warning` 饱食警示（is_edible 食物表）→ P130 mushroom_stew 配方 bowl+red（canonical）+ red/brown 互为别名（expand_ingredient_aliases）→ P131 连续失败 nudge 追加【应急】饥饿段（build_hunger_hint 场景解析）→ P132 goto 目标自动修正到最近可站立空气点（nearest_standable_air 半径 10）→ P133 InventoryHas 统计装备槽（parse_equipment_count）。
+- Verification: P132 probe 实测（goto 死循环坐标 → 自动修正 (-478,90,-141) 寻路成功）；P133 回归 6 例；全套铁甲穿上 + 生命/饱食回满 20/20 实机确认；task_complete 通过后任务链推进 tier4（搜索 diamond_ore）；gate：fmt/clippy/test 全绿。
+- Learning: ① 食物知识断裂分四层（配方/可食性/感知/顽固计划），需层层兜底——确定性提示（P129/P131）比 goal 指令可靠；② LLM 盲猜坐标是导航死循环根源，派发时自动修正（P132）与 P101/P102 同纪律；③ "穿在身上"是比"背包装着"更强的持有态，任务验证必须认（P133）；④ 任务链推进需验证器与实际游戏态对齐，否则 LLM 达成目标却无法交卷。
+- Next: tier4 钻石阶段（挖到基岩 → 钻石镐/甲）→ 黑曜石 → 下界传送门 → 烈焰棒 → 末影之眼 → 要塞 → 末地 → 龙战；P133 部署后首轮观测 task_complete 实机通过。
