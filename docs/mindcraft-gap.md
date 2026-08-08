@@ -525,3 +525,80 @@ earest_soft_column(bot, x, y, z, radius=4)：无镐且头顶硬方块时，扫�
   2. adapter scene 在装备行后插入 `当前动作: <标签>`（空时显示「当前动作: 空闲」）——场景本就是用户消息，前缀缓存不受影响。
   3. probe 的 state 快照追加 `action=` 字段（`scripts/probe/p126d_current_action.json`），可实机验证标签链路。
 - **门槛**：workspace 全绿 + fmt/clippy `-D warnings` 干净。
+
+## 修复记录：2026-08-08 食物危机→铁甲闭环（P127-P133，LLM 实机观测驱动）
+
+> 触发：bot 饥饿 4/20 濒临饿死，健康 11/20；目标 24 raw_iron → 铁甲全套。
+> 链条：食物危机（P127-P131）→ 导航死锁（P132）→ 任务验证死锁（P133），
+> 最终 **全套铁甲穿上 + 生命/饱食回满**，任务链推进到 tier4。
+
+### P127 consume hotbar 满腾槽（背包→热栏搬移失败）
+
+- **症状**：`consume('red_mushroom')` 报「背包未持有 red_mushroom」但槽 17 确有该物品。
+- **根因**：hotbar 满（9 格全非空）时 shift_click 无法把物品从主背包搬进 hotbar——equip 早有
+  P8 腾槽逻辑（搬出第一格 hotbar 物品到主背包），consume 没移植。
+- **修复**（azalea/mod.rs do_consume）：hotbar 满时先 `left_click` 拿起第一格 hotbar 物品放到
+  空主背包槽，再 shift_click 目标物品进 hotbar——复刻 do_equip 模式。
+- **验证**：实机观测 consume 成功执行（饥饿值变化链路恢复）。
+
+### P128 consume 失败提示补蘑菇煲合成指引
+
+- **症状**：consume 重试后仍失败（数量 13→13，饥饿值不变）——Java 版红蘑菇**不可生吃**
+  （无食物组件），LLM 不知道。
+- **修复**（azalea/mod.rs do_consume 数量未减少分支）：失败消息追加
+  「蘑菇不能生吃——用 craft('mushroom_stew') 合成蘑菇煲（1 蘑菇 + 1 碗，2x2）后再 consume」。
+- **验证**：实机观测 LLM 收到提示后转向 craft。
+
+### P129 perceive 饱食警示（饥饿确定性兜底）
+
+- **差距**：perceive 场景无饥饿提示，LLM（deepseek-flash）常无视 goal 里的进食指令，
+  饿到掉血才反应。
+- **修复**（adapter_azalea.rs）：`hunger_warning(food, game_state)`——food ≤6 时扫描背包
+  可食用物品/蘑菇+碗，输出「警示：饱食度偏低（饱食 X/20...）。{计划}」；
+  计划 = consume(现成食物) / craft('mushroom_stew') / 找食物。`is_edible` 覆盖常见食物。
+- **验证**：实机 game-state 场景 tail 确认触发（「背包有蘑菇+碗——立即 craft('mushroom_stew')…」）。
+
+### P130 mushroom_stew 配方修正（知识→能力断裂，P83 同模式）
+
+- **症状**：`craft('mushroom_stew')` 报「背包缺少原料 minecraft:brown_mushroom」——
+  P104 曾把手写配方误写为 bowl + red + brown 三种原料，vanilla 实际只需**任意一种蘑菇 + 碗**。
+- **后果链**：LLM 只有 red_mushroom → 跑去 63m 外找 brown_mushroom → 饿肚子（P128/P129 已引导
+  它合成蘑菇煲，但配方卡死）。
+- **修复**（craft/craft_table.rs + craft.rs）：
+  1. RECIPES 条目改 bowl + red_mushroom（canonical），`expand_ingredient_aliases` red↔brown 互为
+     替代（red 缺失且 brown 在场自动换用，`pub(crate)` 供测试）。
+  2. 回归测试更新：2 种原料断言 + red/brown 别名双向验证。
+- **验证**：单测通过；bot 后续成功吃到蘑菇煲（饱食 4→20）。
+
+### P131 连续失败 nudge 追加饥饿应急（LLM 顽固计划覆盖）
+
+- **差距**：LLM 无视 goal 新指令（如"63m 外找 brown_mushroom"的顽固计划），但每次「连续失败」
+  提示都会驱动它换策略（实测 9 轮失败后按提示去 craft）——把具体动作塞进失败提示最可靠。
+- **修复**（agent/mod.rs）：`build_hunger_hint(scene)` 解析「饱食: X/20」，≤6 时按背包情况
+  输出【应急】段（现成食物→consume / 蘑菇+碗→craft('mushroom_stew') / 无食物→找食物），
+  追加到连续失败（≥3 轮）nudge。
+- **验证**：回归测试 4 例（高饱食空 / 蘑菇+碗→stew / 现成食物→consume / 无食物→找食物）。
+
+### P132 goto 实心非矿石目标自动修正到最近可站立空气点
+
+- **症状**：LLM 盲猜洞穴/山体内坐标——实测连续 6+ 次 `goto (-477,88,-141)`（岩壁）全失败，
+  换坐标继续失败。P69b（上方 8 格找空气）失效、P126（仅矿石转挖）不适用、y<62 自动
+  mine_above 脱困不触发（本洞穴 y=84）。
+- **根因**：LLM 无空气地图，盲猜坐标离真实洞穴/地表通常几格内——直接拒绝只会让它再猜。
+- **修复**（azalea/handler.rs）：`nearest_standable_air(bot, x, y, z)`——半径 10 内找最近
+  可站立空气点（空气 + 脚下实心），goto 目标自动修正到该点继续前往；修正失败才走原拒绝。
+- **probe 实测**：`goto -477 88 -141`（原死循环坐标）→「已自动修正到最近可站立空气点
+  (-478,90,-141) 继续前往」+ pathfinder 成功寻路。
+
+### P133 InventoryHas 统计装备槽（穿在身上的甲算持有）
+
+- **症状**：bot 穿上全套铁甲后 `task_complete`（tier3_iron_armor）永远验证失败——
+  任务条件是 InventoryHas（只解析「背包:」行），但 LLM 合理地把甲穿上，背包里不再有。
+- **根因**：装备行（「装备: [头盔: iron_helmet...]」）被任务系统忽略——装备 = 更强持有态，
+  不该判失败让 LLM 拆甲重造。
+- **修复**（task.rs）：`parse_equipment_count` 解析「装备:」行（无数量字段，每槽最多 1 件，
+  '无'跳过，前缀归一匹配）；InventoryHas 评估 = 背包数 + 装备槽数。InventoryExact 保持
+  只查背包（精确语义不掺装备）。非甲胄物品装备行恒 0，语义不受影响。
+- **验证**：回归测试 6 例（穿着算持有 / 裸身不通过 / 非甲胄不受影响 / 前缀归一 / 全套四件
+  All 条件通过）+ 实机 bot 后续 task_complete 通过。
+- **部署**：2026-08-08 与新 goal（tier4 阶段）一并重启部署，实机验证中。
