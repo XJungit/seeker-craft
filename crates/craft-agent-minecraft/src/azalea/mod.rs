@@ -1143,9 +1143,17 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
                             && let Some(victim) = hotbar_range
                                 .clone()
                                 .filter(|&s| {
+                                    // P134c：兜底丢弃只允许"多件堆叠"（count>1）。工具/武器/镐/盔甲
+                                    // 恒为单件——旧实现取"堆叠最大非目标"，hotbar 全是单件工具时
+                                    // 会把刚装备的镐或关键工具当最大堆丢出去（实测 iron_pickaxe /
+                                    // stone_pickaxe 两次神秘消失都发生在换装/挖掘后，主背包同时满）。
                                     slots
                                         .get(s)
-                                        .map(|st| !st.is_empty() && st.kind() != kind)
+                                        .map(|st| {
+                                            !st.is_empty()
+                                                && st.count() > 1
+                                                && st.kind() != kind
+                                        })
                                         .unwrap_or(false)
                                 })
                                 .max_by_key(|&s| slots.get(s).map(|st| st.count()).unwrap_or(0))
