@@ -666,3 +666,44 @@ earest_soft_column(bot, x, y, z, radius=4)：无镐且头顶硬方块时，扫�
   （QuickMove 让服务端决策合并/空槽），手动拿放要保证光标平衡（拿起必须放下，
   否则后续所有 click 错乱）；② 走开/寻路兜底要覆盖竖直维度（竖井是 MC 的常见几何）；
   ③ 任务完成条件必须对照世界生成事实（基岩层高度、最低可站高度）验证可达性。
+
+### P134c equip 兜底丢弃保护（只丢多件堆叠）
+
+- **症状**：P134 修复后 bot 在地下热栏/背包全满时 equip，shift_click 兜底选错"牺牲品"——
+  若热栏全是单件堆叠（每格 1 个），丢弃逻辑可能丢掉唯一在用的工具/装备。
+- **根因**：P134 的 eviction 兜底按"非目标物品中 count 最大"丢弃，未区分
+  `count>1` 与 `count==1`——单件物品丢弃不可恢复，导致唯一石镐被丢。
+- **修复**（azalea/mod.rs）：兜底丢弃过滤改为**只丢多件堆叠**
+  （`!st.is_empty() && st.count() > 1 && st.kind() != kind`，按 count 降序取最大），
+  全部单件时不丢任何物品（宁可 equip 失败报错，也不破坏现有物品）。
+- **验证**：craft-agent-minecraft lib 169 通过 + fmt/clippy 干净。
+
+### P135 工具耐久感知（perceive 主手/背包显示剩余耐久 + ≤20% 警示）
+
+- **症状**：stone/iron 镐三次"神秘消失"——装备过的镐从背包里消失，LLM 感知不到
+  任何异常，只能重铸。实机日志显示消失即**耐久耗尽自动销毁**（MC 工具耐久归零
+  不残留损坏状态）。
+- **根因**：perceive 不显示耐久 → LLM 无法预判损坏，总是在镐消失后才被动反应
+  （先例：P120 无镐死亡困锁的感知缺信号模式）。
+- **修复**（azalea/handler.rs + adapter_azalea.rs）：
+  1. handler.rs 新增 `item_durability()`：读 azalea `Damage`/`MaxDamage` 组件
+     （非工具 max=0 返回 None），game_state 每个 inventory slot 注入 `{dmg, max}`。
+  2. adapter_azalea.rs 主手显示后缀：`stone_pickaxe (耐久 87/131)`（非工具不加）。
+  3. `tool_durability_warning()`：任意工具剩余 ≤20% 时注入警示，列出全部低耐久
+     工具（按剩余百分比升序）+ 合成/装备建议——与 P124 无镐警示、P129 饱食警示
+     同模式：确定性兜底，不依赖 LLM 自发规划。
+- **验证**：craft-agent-minecraft lib 169 通过（新增
+  `tool_durability_warning_only_for_low_durability_tools` 覆盖阈值/多工具/边界）+ fmt/clippy 干净。
+- **教训**：① MC 工具销毁是**静默**事件（无损坏状态残留），感知层必须主动暴露
+  耐久，否则 LLM 永远事后补救；② 凡"消失/失败无预兆"的现象，先查感知是否缺了
+  关键状态（耐久/饱食/工具持有），再查决策。
+
+### R37 jailbreak 精简（删除与 modes 系统重复的行为准则）
+
+- **背景**（2026-08-08 用户指令）：jailbreak 原含「失败时调整参数重试」与
+  「卡住行为准则（卡住计数≥3 时 goto 侧前方/跳跃脱困）」——两者与 modes 系统、
+  位置卡死检测、obs_streak 注入**重复**，实测驱动 bot 反复重试同一失败动作。
+- **修复**（craft-agent prompt.rs + data/profiles/_default.json）：删除重复指令，
+  只保留结果真实性纪律（「没回报实际获得X就当作没获得，不得虚构成功」），
+  文本下沉到代码默认值，_default.json 移除重复项。
+- **验证**：craft-agent lib 183 通过 + fmt/clippy 干净。
