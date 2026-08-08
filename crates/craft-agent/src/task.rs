@@ -185,7 +185,10 @@ impl TaskChecker {
     pub fn check(success: &SuccessCondition, perceive_text: &str) -> bool {
         match success {
             SuccessCondition::InventoryHas { item, count } => {
-                let have = parse_inventory_count(perceive_text, item);
+                // P133：背包 + 装备槽都算持有——LLM 把合成好的甲胄穿上后背包里
+                // 就没有了，只查背包会导致"甲已穿好但任务永远验证失败"死循环。
+                let have = parse_inventory_count(perceive_text, item)
+                    + parse_equipment_count(perceive_text, item);
                 have >= *count
             }
             SuccessCondition::InventoryExact { item, count } => {
@@ -270,6 +273,36 @@ fn parse_kill_count(perceive: &str, entity_kind: &str) -> u32 {
 /// 物品 id 可能带或不带 minecraft: 前缀，统一 strip 后比较。
 fn parse_inventory_count(perceive: &str, item: &str) -> u32 {
     parse_count_line(perceive, "背包:", item)
+}
+
+/// P133：从 perceive 文本解析装备槽中指定物品的数量。
+///
+/// perceive 装备行格式：`装备: [头盔: iron_helmet, 胸甲: 无, 护腿: 无, 靴子: 无]`
+/// 无数量字段，每槽最多 1 件；穿在身上的甲胄对 InventoryHas 类任务同样算
+/// "持有"（LLM 合理地把合成好的甲直接穿上，P133 前 tier3_iron_armor 因
+/// 此永远验证失败——背包里没有、装备槽里有，只能报错让 LLM 拆甲重造）。
+/// 仅甲胄类物品会出现在装备行，非甲胄物品此函数恒返回 0，语义不受影响。
+fn parse_equipment_count(perceive: &str, item: &str) -> u32 {
+    let wanted_norm = normalize_identifier(item);
+    for line in perceive.lines() {
+        let trimmed = line.trim();
+        let Some(rest) = trimmed.strip_prefix("装备:") else {
+            continue;
+        };
+        let inner = rest.trim().trim_start_matches('[').trim_end_matches(']');
+        let mut count = 0u32;
+        for entry in inner.split(',') {
+            let Some((_, item_id)) = entry.trim().rsplit_once(':') else {
+                continue;
+            };
+            let item_id = item_id.trim();
+            if item_id != "无" && normalize_identifier(item_id) == wanted_norm {
+                count += 1;
+            }
+        }
+        return count;
+    }
+    0
 }
 
 fn parse_count_line(perceive: &str, prefix: &str, wanted: &str) -> u32 {
@@ -656,6 +689,56 @@ mod tests {
         let perceive_fail = "背包: [oak_log:2]";
         assert!(TaskChecker::check(&cond, perceive_ok));
         assert!(!TaskChecker::check(&cond, perceive_fail));
+    }
+
+    /// P133 回归：甲胄穿在身上（装备行）也算持有——tier3_iron_armor 曾因此
+    /// 永远验证失败（LLM 把合成好的铁甲穿上后背包里没有，只能报错拆甲）。
+    #[test]
+    fn test_check_inventory_has_counts_worn_armor() {
+        let cond = SuccessCondition::InventoryHas {
+            item: "iron_helmet".into(),
+            count: 1,
+        };
+        // 背包没有、装备槽穿着 → 应通过
+        let worn = "装备: [头盔: iron_helmet, 胸甲: iron_chestplate, 护腿: iron_leggings, 靴子: iron_boots]\n背包: [cobblestone:64]";
+        assert!(TaskChecker::check(&cond, worn), "穿在身上的铁盔必须算持有");
+        // 完全没穿也没持有 → 不通过
+        let naked = "装备: [头盔: 无, 胸甲: 无, 护腿: 无, 靴子: 无]\n背包: [cobblestone:64]";
+        assert!(!TaskChecker::check(&cond, naked));
+        // 非甲胄物品不受装备行影响（装备行只可能含甲胄）
+        let not_armor = SuccessCondition::InventoryHas {
+            item: "cobblestone".into(),
+            count: 64,
+        };
+        assert!(TaskChecker::check(&not_armor, worn));
+        // 带前缀归一：装备行裸 id 匹配带前缀查询
+        let prefixed = SuccessCondition::InventoryHas {
+            item: "minecraft:iron_helmet".into(),
+            count: 1,
+        };
+        assert!(TaskChecker::check(&prefixed, worn));
+        // 全套铁甲任务：四件全穿 → All 条件通过
+        let full_armor_cond = SuccessCondition::All {
+            conditions: vec![
+                SuccessCondition::InventoryHas {
+                    item: "iron_helmet".into(),
+                    count: 1,
+                },
+                SuccessCondition::InventoryHas {
+                    item: "iron_chestplate".into(),
+                    count: 1,
+                },
+                SuccessCondition::InventoryHas {
+                    item: "iron_leggings".into(),
+                    count: 1,
+                },
+                SuccessCondition::InventoryHas {
+                    item: "iron_boots".into(),
+                    count: 1,
+                },
+            ],
+        };
+        assert!(TaskChecker::check(&full_armor_cond, worn));
     }
 
     #[test]
