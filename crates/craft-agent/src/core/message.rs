@@ -140,6 +140,53 @@ pub struct Usage {
 
 // ── 构造器 (pi: Message::assistant / Message::tool_result 风格) ──
 
+/// B3（2026-08-02）：轮间注入的瞬态 user 消息前缀——每轮重生，本轮用完后剔除，
+/// 不进历史/压缩摘要、不进 session 文件。包含：自动感知快照、各记忆信道、动态
+/// 上下文、全部 nudge/警告/引导类消息。真实交互（steering/[follow_up]/
+/// assistant/tool）不受影响。
+/// 注意：剔除名单只匹配 user 消息（`Message::User`），绝不碰 tool 占位消息
+/// （【已中止】等——OpenAI 约束每个 tool_call 必须有响应否则 400）。
+pub const TRANSIENT_USER_PREFIXES: &[&str] = &[
+    "【当前游戏状态（自动注入）】",
+    "【邻近世界记忆】",
+    "【长期记忆】",
+    "【任务进度】",
+    "【阶段知识】",
+    "[当前目标]",
+    // ── 动态上下文（build_dynamic_context_msg 各段）──
+    "【场景提示】",
+    "【经验参考】",
+    "【任务回顾】",
+    "【观察提醒】",
+    "【循环警告】",
+    "【关键警告】",
+    // ── 动态指令 / 引导 ──
+    "【指令】",
+    "【探索建议】",
+    // ── 全部 nudge / 警告 / 纠偏 ──
+    "【纠偏】",
+    "【纠正】",
+    "【最后通牒】",
+    "【严重警告】",
+    "【验证】",
+    "【强制行动】",
+    "【继续】",
+    "【循环异常】",
+    "【死循环警告】",
+    "【P58 拦截】",
+    "【错误驱动重规划】",
+    "【工具失败重规划】",
+    "【新指令中断】",
+    "【工具调用上限】",
+    "【连续失败警告】",
+    // ── 会话级一次性通知（仅当轮有意义，剔除防历史膨胀）──
+    "【自动滚动恢复】",
+    "【系统提示】",
+    // P1.1：P12/P31/P56 全部 nudge 的公共前缀（`你的目标是: {g}。` + 登记标签）。
+    // 此前从未登记 → 这些 nudge 永不剔除、混入压缩摘要。登记后每轮重生。
+    "你的目标是: ",
+];
+
 impl Message {
     pub fn user(content: impl Into<String>) -> Self {
         Self::User(UserMsg {
@@ -278,6 +325,26 @@ impl Message {
             Self::ToolResult(m) => m.tool_call_id.starts_with("fewshot"),
             Self::User(_) => false,
         }
+    }
+
+    /// 是否为轮间瞬态注入消息（B3：perceive 快照/记忆信道/动态上下文/nudge/引导等）。
+    /// 这类消息每轮重生、仅当轮有意义，**不应持久化**——否则 session 文件膨胀、
+    /// 恢复后上下文被过期噪音污染（观测：session 文件里堆积大量【邻近世界记忆】
+    /// 【指令】等瞬态 user 消息）。
+    pub fn is_transient(&self) -> bool {
+        match self {
+            Self::User(m) => TRANSIENT_USER_PREFIXES
+                .iter()
+                .any(|p| m.content.starts_with(p)),
+            _ => false,
+        }
+    }
+
+    /// 该消息是否应持久化（写 session 文件 / 压缩 checkpoint 快照 / 从文件恢复）：
+    /// few-shot 示例（prompt 素材，恢复后首轮会重新注入）与瞬态注入（每轮重生）
+    /// 都不持久化；真实交互（steering/[follow_up]/assistant/tool 对）永远保留。
+    pub fn is_persistable(&self) -> bool {
+        !self.is_few_shot() && !self.is_transient()
     }
 
     /// 转换为 OpenAI Chat Completions 的 message 格式

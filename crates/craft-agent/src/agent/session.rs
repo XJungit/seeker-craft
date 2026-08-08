@@ -105,8 +105,16 @@ impl Agent {
         }
         if self.pending_checkpoint {
             let skills_json = serde_json::to_string(&self.skill_lib).ok();
+            // P126d：checkpoint 快照同样过滤 few-shot/瞬态（压缩后的 recent 消息
+            // 可能残留本轮注入的瞬态；不过滤则恢复时历史被 prompt 素材污染）。
+            let messages: Vec<Message> = self
+                .messages
+                .iter()
+                .filter(|m| m.is_persistable())
+                .cloned()
+                .collect();
             let snapshot = AgentSnapshot {
-                messages: self.messages.clone(),
+                messages,
                 previous_summary: self.previous_summary.clone(),
                 usage: self.usage.clone(),
                 turn: self.turn,
@@ -117,12 +125,15 @@ impl Agent {
             self.session_msg_offset = self.messages.len();
         } else {
             let offset = self.session_msg_offset.min(self.messages.len());
-            // 过滤 few-shot 示例消息（A1 运行时注入的 prompt 素材，非真实历史）。
-            // 若不过滤，重启恢复后 few-shot 混入真实消息流 → tool_calls 配对错乱
-            // → LLM 400（实测：5 小时连续 "insufficient tool messages" 失败）。
+            // P126d：统一过滤非持久化消息——few-shot 示例（A1 运行时注入的 prompt
+            // 素材，非真实历史）与瞬态注入（每轮重生的 perceive/记忆/nudge，本轮
+            // 写盘时还未被下一轮 retain 剔除）。若不过滤，重启恢复后 few-shot
+            // 混入真实消息流 → tool_calls 配对错乱 → LLM 400（实测：5 小时连续
+            // "insufficient tool messages" 失败）；瞬态则让 session 文件无限膨胀、
+            // 恢复后上下文被过期噪音污染。
             let new_msgs: Vec<Message> = self.messages[offset..]
                 .iter()
-                .filter(|m| !m.is_few_shot())
+                .filter(|m| m.is_persistable())
                 .cloned()
                 .collect();
             for m in new_msgs {

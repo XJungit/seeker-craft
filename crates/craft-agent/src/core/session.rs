@@ -733,8 +733,10 @@ impl Session {
 
     /// 把当前分支的 entry 还原为 `Message` 列表（给 Agent 加载恢复，pi `to_messages_for_current_path`）
     /// 遇到最近的 Checkpoint 时，从它的快照开始（之后追加的 MessageEntry 继续）
-    /// 过滤 few-shot 示例消息：它们只是运行时注入的 prompt 素材，若被持久化
-    /// （历史 bug 曾写入），恢复后混入真实历史会破坏 tool_calls 配对 → LLM 400。
+    /// 过滤非持久化消息（`Message::is_persistable`——few-shot 示例 + 瞬态注入）：
+    /// 它们只是运行时注入的 prompt 素材/每轮重生的临时内容，若被持久化
+    /// （历史 bug 曾写入），恢复后混入真实历史会破坏 tool_calls 配对 → LLM 400，
+    /// 或让上下文被过期噪音污染。瞬态在恢复后第一轮会重新注入，过滤无损。
     pub fn messages_for_current_path(&self) -> Vec<Message> {
         let path = self.entries_for_current_path();
         // 找路径上最近的 checkpoint
@@ -753,13 +755,13 @@ impl Session {
                         cp.snapshot
                             .messages
                             .iter()
-                            .filter(|m| !m.is_few_shot())
+                            .filter(|m| m.is_persistable())
                             .cloned(),
                     );
                 }
                 for e in &path[ci + 1..] {
                     if let SessionEntry::Message(m) = e
-                        && !m.message.is_few_shot()
+                        && m.message.is_persistable()
                     {
                         out.push(m.message.clone());
                     }
@@ -768,7 +770,7 @@ impl Session {
             None => {
                 for e in &path {
                     if let SessionEntry::Message(m) = e
-                        && !m.message.is_few_shot()
+                        && m.message.is_persistable()
                     {
                         out.push(m.message.clone());
                     }
@@ -916,6 +918,75 @@ mod tests {
         assert!(fs_asst.is_few_shot());
         assert!(fs_tool.is_few_shot());
         assert!(!real.is_few_shot());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// 瞬态注入消息（perceive/记忆/nudge 等，B3）绝不能从 session 恢复进历史：
+    /// 它们每轮重生，恢复后第一轮 run_one_turn 会重新注入，恢复历史里出现
+    /// 旧瞬态只会膨胀上下文、污染压缩摘要。实测：session 文件里堆积大量
+    /// 【邻近世界记忆】【指令】【任务回顾】等瞬态 user 消息。
+    #[test]
+    fn transient_messages_filtered_on_restore() {
+        let path = tmp_path("transient_restore");
+        let _ = std::fs::remove_file(&path);
+        let mut s = Session::new("minecraft");
+        s.append_message(Message::user("真实用户消息"));
+        // 模拟历史 bug 写入的瞬态注入
+        s.append_message(Message::user("【邻近世界记忆】\nhome @(10,64,-20)"));
+        s.append_message(Message::user("【当前游戏状态（自动注入）】\n位置: ..."));
+        s.append_message(Message::assistant_tool_call(
+            "call_1",
+            "perceive",
+            serde_json::json!({}),
+        ));
+        s.append_message(Message::tool_result("call_1", "perceive", "树 x3"));
+        s.save_to(&path).unwrap();
+
+        let reloaded = Session::open(&path).unwrap();
+        let msgs = reloaded.messages_for_current_path();
+        // 瞬态 2 条被过滤，只留真实交互
+        assert_eq!(msgs.len(), 3, "瞬态应被过滤: {msgs:?}");
+        assert!(matches!(&msgs[0], Message::User(u) if u.content == "真实用户消息"));
+        assert!(matches!(msgs[1], Message::Assistant(_)));
+        assert!(matches!(msgs[2], Message::ToolResult(_)));
+
+        // is_transient / is_persistable 判定正确
+        assert!(Message::user("【任务回顾】\n✗ 失败").is_transient());
+        assert!(Message::user("[当前目标] 挖矿").is_transient());
+        assert!(Message::user("真实消息").is_persistable());
+        assert!(!Message::user("【任务回顾】x").is_persistable());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// checkpoint 快照里的瞬态（压缩后 recent 残留）恢复时同样被过滤。
+    #[test]
+    fn transient_messages_filtered_from_checkpoint_snapshot() {
+        let path = tmp_path("transient_cp");
+        let _ = std::fs::remove_file(&path);
+        let mut s = Session::new("minecraft");
+        s.append_message(Message::user("before"));
+        s.append_checkpoint(
+            "test",
+            AgentSnapshot {
+                // 快照里混入瞬态（模拟压缩后 recent 残留）
+                messages: vec![
+                    Message::user("【当前游戏状态（自动注入）】\n位置: ..."),
+                    Message::user("真实快照消息"),
+                ],
+                previous_summary: Some("summary-y".into()),
+                usage: Usage::default(),
+                turn: 5,
+                skills_json: None,
+            },
+        );
+        s.append_message(Message::assistant_text("after"));
+        s.save_to(&path).unwrap();
+
+        let reloaded = Session::open(&path).unwrap();
+        let msgs = reloaded.messages_for_current_path();
+        assert_eq!(msgs.len(), 2, "快照瞬态应被过滤: {msgs:?}");
+        assert!(matches!(&msgs[0], Message::User(u) if u.content == "真实快照消息"));
+        assert!(matches!(msgs[1], Message::Assistant(_)));
         let _ = std::fs::remove_file(&path);
     }
 

@@ -326,13 +326,10 @@ impl Agent {
 fn build_cm(messages: &[Message], previous_summary: Option<&str>) -> Vec<Value> {
     let old: Vec<String> = messages
         .iter()
-        .filter(|m| match m {
-            // B3：统一用 TRANSIENT_USER_PREFIXES 过滤全部轮间注入消息
+        .filter(|m| {
+            // B3：统一用 `Message::is_transient()` 过滤全部轮间注入消息
             // （perceive/记忆/目标/nudge/警告/引导）——不进入压缩摘要。
-            Message::User(u) => !super::TRANSIENT_USER_PREFIXES
-                .iter()
-                .any(|p| u.content.starts_with(p)),
-            _ => true,
+            !m.is_transient()
         })
         .map(Agent::serialize_msg)
         .collect();

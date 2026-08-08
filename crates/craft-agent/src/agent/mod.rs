@@ -32,51 +32,10 @@ use std::sync::{Arc, Mutex};
 // 改为 60 条硬上限 + 每轮 hard_truncate 环形缓冲，内存峰值恒定。
 const MAX_AGENT_MESSAGES: usize = 60;
 
-/// B3（2026-08-02）：轮间注入的瞬态 user 消息前缀——每轮重生，本轮用完后剔除，
-/// 不进历史/压缩摘要。包含：自动感知快照、各记忆信道、动态上下文、全部
-/// nudge/警告/引导类消息。真实交互（steering/[follow_up]/assistant/tool）不受影响。
-/// 注意：剔除名单只匹配 user 消息（`Message::User`），绝不碰 tool 占位消息
-/// （【已中止】等——OpenAI 约束每个 tool_call 必须有响应否则 400）。
-pub(super) const TRANSIENT_USER_PREFIXES: &[&str] = &[
-    "【当前游戏状态（自动注入）】",
-    "【邻近世界记忆】",
-    "【长期记忆】",
-    "【任务进度】",
-    "【阶段知识】",
-    "[当前目标]",
-    // ── 动态上下文（build_dynamic_context_msg 各段）──
-    "【场景提示】",
-    "【经验参考】",
-    "【任务回顾】",
-    "【观察提醒】",
-    "【循环警告】",
-    "【关键警告】",
-    // ── 动态指令 / 引导 ──
-    "【指令】",
-    "【探索建议】",
-    // ── 全部 nudge / 警告 / 纠偏 ──
-    "【纠偏】",
-    "【纠正】",
-    "【最后通牒】",
-    "【严重警告】",
-    "【验证】",
-    "【强制行动】",
-    "【继续】",
-    "【循环异常】",
-    "【死循环警告】",
-    "【P58 拦截】",
-    "【错误驱动重规划】",
-    "【工具失败重规划】",
-    "【新指令中断】",
-    "【工具调用上限】",
-    "【连续失败警告】",
-    // ── 会话级一次性通知（仅当轮有意义，剔除防历史膨胀）──
-    "【自动滚动恢复】",
-    "【系统提示】",
-    // P1.1：P12/P31/P56 全部 nudge 的公共前缀（`你的目标是: {g}。` + 登记标签）。
-    // 此前从未登记 → 这些 nudge 永不剔除、混入压缩摘要。登记后每轮重生。
-    "你的目标是: ",
-];
+/// 轮间瞬态 user 消息前缀表已下沉至 core/message.rs（`TRANSIENT_USER_PREFIXES`），
+/// 供持久化（persist_turn/checkpoint 快照）与恢复（messages_for_current_path）
+/// 与运行时剔除共用同一判定：`Message::is_transient()` / `Message::is_persistable()`。
+pub use crate::core::message::TRANSIENT_USER_PREFIXES;
 
 pub use compaction::is_obs_tool;
 
@@ -1872,14 +1831,9 @@ impl Agent {
         // 覆盖式清理：移除上一轮 run_one_turn 注入的易变瞬时消息
         // （perceive 状态快照、邻近世界记忆、上一轮的 [当前目标] 重注）。
         // 这些每轮重生，不应在 history 中累积成过期噪音，也不应污染上下文
-        // 压缩摘要。只删带固定标记前缀的 user 消息，绝不碰 assistant/tool
-        // 真实交互历史。
-        self.messages.retain(|m| match m {
-            Message::User(u) => !TRANSIENT_USER_PREFIXES
-                .iter()
-                .any(|p| u.content.starts_with(p)),
-            _ => true,
-        });
+        // 压缩摘要。只删带固定标记前缀的 user 消息（`Message::is_transient`），
+        // 绝不碰 assistant/tool 真实交互历史。
+        self.messages.retain(|m| !m.is_transient());
 
         // Auto-perceive
         if self.config.auto_perceive
@@ -2721,6 +2675,91 @@ mod tests {
             restored.task_manager.current_status(),
             Some(crate::task::TaskStatus::Running { .. })
         ));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// P126d：persist_turn 写盘必须过滤 few-shot（prompt 素材）与瞬态注入
+    /// （每轮重生的 perceive/记忆/nudge）——恢复后混入真实历史会破坏
+    /// tool_calls 配对 → LLM 400，或让上下文被过期噪音污染。
+    #[test]
+    fn persist_filters_fewshot_and_transient_from_session_file() {
+        let path =
+            std::env::temp_dir().join(format!("craft_agent_persist_filter_{}.jsonl", now_ms()));
+        let _ = std::fs::remove_file(&path);
+        let mut session = Session::new("minecraft");
+        session.save_to(&path).unwrap();
+        let mut agent = Agent::new(
+            Box::new(FakeProvider),
+            ToolRegistry::new(),
+            AgentConfig::new("test".into(), 1),
+        )
+        .with_session(session);
+        // 模拟一轮 run 后的消息集：few-shot 对 + 本轮注入的瞬态 + 真实交互
+        agent.messages.push(Message::assistant_tool_call(
+            "fewshot9_0_0",
+            "craft",
+            serde_json::json!({"item": "stick"}),
+        ));
+        agent.messages.push(Message::tool_result(
+            "fewshot9_0_0",
+            "craft",
+            "【示例】Action output: ...",
+        ));
+        agent.messages.push(Message::user(
+            "【当前游戏状态（自动注入）】\n位置: (0,64,0) 生命: 20/20",
+        ));
+        agent
+            .messages
+            .push(Message::user("【邻近世界记忆】\nhome @(10,64,-20)"));
+        agent.messages.push(Message::assistant_tool_call(
+            "call_a",
+            "perceive",
+            serde_json::json!({}),
+        ));
+        agent
+            .messages
+            .push(Message::tool_result("call_a", "perceive", "树 x3"));
+        agent.persist_turn().unwrap();
+
+        let reopened = Session::open(&path).unwrap();
+        let msgs = reopened.messages_for_current_path();
+        assert_eq!(
+            msgs.len(),
+            2,
+            "few-shot+瞬态应被过滤，只留真实交互: {msgs:?}"
+        );
+        assert!(matches!(msgs[0], Message::Assistant(_)));
+        assert!(matches!(msgs[1], Message::ToolResult(_)));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// P126d：checkpoint 快照（压缩后 clone）同样过滤 few-shot/瞬态。
+    #[test]
+    fn checkpoint_snapshot_filters_fewshot_and_transient() {
+        let path = std::env::temp_dir().join(format!("craft_agent_cp_filter_{}.jsonl", now_ms()));
+        let _ = std::fs::remove_file(&path);
+        let mut session = Session::new("minecraft");
+        session.save_to(&path).unwrap();
+        let mut agent = Agent::new(
+            Box::new(FakeProvider),
+            ToolRegistry::new(),
+            AgentConfig::new("test".into(), 1),
+        )
+        .with_session(session);
+        agent.messages.push(Message::assistant_tool_call(
+            "fewshot9_0_1",
+            "craft",
+            serde_json::json!({"item": "oak_planks"}),
+        ));
+        agent.messages.push(Message::user("【任务回顾】\n✗ 失败"));
+        agent.messages.push(Message::user("真实历史消息"));
+        agent.pending_checkpoint = true;
+        agent.persist_turn().unwrap();
+
+        let reopened = Session::open(&path).unwrap();
+        let msgs = reopened.messages_for_current_path();
+        assert_eq!(msgs.len(), 1, "快照应只留真实消息: {msgs:?}");
+        assert!(matches!(&msgs[0], Message::User(u) if u.content == "真实历史消息"));
         let _ = std::fs::remove_file(&path);
     }
 
