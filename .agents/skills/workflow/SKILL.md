@@ -29,8 +29,10 @@ description: Craft-Agent 持久维护工作流——先读 NOTEBOOK.md，按观�
 0. **差距分析先行**：扫 `docs/mindcraft-gap.md` 优先级队列，找出主线收益最高的缺失项；
    禁止跳过差距分析直接修 bug（被动修补 = 流程缺陷）。当前工作单元收益最高项见
    NOTEBOOK 末尾 "Next"。
-1. 查看 Viewer API 状态、游戏状态、会话尾部、进程日志（`craft-agent-ctl status` /
-   `GET /api/game-state`）
+1. 工具套件驱动观测：确认 autopilot 在跑（`craft-agent-ctl status`；不在则
+   `ctl build` + `ctl viewer "<主线目标>" 0` + `ctl start` 拉起）。
+   证据从套件留证读：`ctl tail auto5_out.log 30` + `sessions/events/workflow.jsonl` 尾部
+   （observation/anomaly）+ `GET /api/game-state`。不要手工盯日志。
 2. 从实机证据确认一个具体失败或缺失能力——工具层用 probe（秒级），区分
    harness bug vs LLM 决策；策略/规划行为才按工作单元开 LLM 实机观测
 3. 先搜索互联网解决不熟悉或重复出现的 Minecraft/Azalea/Mindcraft 问题
@@ -63,7 +65,10 @@ description: Craft-Agent 持久维护工作流——先读 NOTEBOOK.md，按观�
 - 保持一个 Viewer 和一个 `CraftAgent` 登录。不轮换用户名。
 - 不因监控轮次而重启 Viewer。仅在崩溃、断线或已验证的二进制更新后重启。
 - 通过 `POST /api/start` 启动 Agent；进程存在不代表它正在运行。
-- 监控 `/api/status`、`/api/game-state`、`sessions/mc_run.jsonl` 和 Viewer 日志。
+- 长期观测交给 autopilot（10s 轮询 + 停滞 steering + 崩溃恢复 + 异常留证）；
+  人工只做按需 `ctl status`/`ctl tail`/`ctl session` 抽查与 probe 级验证。
+- 监控 `/api/status`、`/api/game-state`、`sessions/mc_run.jsonl`、`sessions/events/workflow.jsonl`
+  和 Viewer 日志。autopilot 负责其中大部分，人工抽查。
 - `sessions/mc_run.jsonl` 是 Minecraft 对话/会话：一个头部加追加树条目。Viewer 重启时重新打开；每轮追加新条目。不用于工程笔记。
 - 工程笔记本是 `.agents/skills/workflow/NOTEBOOK.md`。
 - 不自动暂存或提交无关工作树变更。仅在被明确要求时提交。
@@ -143,6 +148,70 @@ description: Craft-Agent 持久维护工作流——先读 NOTEBOOK.md，按观�
 - 注入目标: `POST http://127.0.0.1:8080/api/goal` with `{"goal":"..."}`
 - 运行时会话: `sessions/mc_run.jsonl`
 - Viewer/Autopilot 日志: `craft-agent-ctl` 重定向到 `C:\Windows\TEMP\opencode\viewer_run.log(.err)` 等（`ctl status` / `ctl tail <log> <N>` 查看）
+
+## 工具套件速查（2026-08-08 起：工作流必须用工具套件驱动）
+
+> 定位：**probe = 工具层秒级验证（首选）**；**autopilot = 长期观测/恢复/留证**；
+> **viewer = LLM 实机观测（按工作单元启动）**；**ctl = 运维入口**。
+> 跑工作流 ≠ 自己盯着日志；启动 autopilot 让它持续观测、检测异常、恢复运行时、注入目标。
+
+### 自动化测试套件（autopilot）——持续迭代的引擎
+
+```bash
+cargo run -p craft-agent-ctl -- build     # 编译 viewer+autopilot
+cargo run -p craft-agent-ctl -- deploy    # 全流程：stop→build→viewer→autopilot→start
+# 分步部署（ctl deploy 的 build 可能超时，更稳）：
+#   1) ctl stop → 2) ctl build → 3) ctl viewer "goal 文本" 0（steps=0 无限循环）
+#   → 4) ctl start（必须手动）→ 5) ctl status 验证 running=true
+cargo run -p craft-agent-ctl -- status    # 进程 + API + game-state + 日志尾
+cargo run -p craft-agent-ctl -- tail auto5_out.log 30   # autopilot 日志（观测/恢复/steering 记录）
+cargo run -p craft-agent-ctl -- session 20             # 最近会话工具活动
+cargo run -p craft-agent-ctl -- goal "<目标>"          # 注入目标（等价 POST /api/goal）
+cargo run -p craft-agent-ctl -- health 300             # 健康监控：步数推进观察（5s 轮询）
+```
+
+autopilot 启动后**自动**执行：workspace check → 拉起/复用 viewer → start agent →
+10s 轮询 `/api/status` + `/api/game-state` + session 分析 → 无进展 240s 判停滞并 steering
+注入 → viewer 崩溃/API 连续失败自动恢复运行时（替换 viewer 防 duplicate_login）→
+**异常检测**（死亡/重生/装备丢失/濒死恢复，见下）。
+
+### 实机观测证据流（autopilot 自动留证）
+
+- `sessions/events/workflow.jsonl`：逐 10s 追加结构化观察（`type:"observation"`：status、
+  position/health/inventory、session 指标）与异常（`type:"anomaly"`：death/respawn/
+  armor_loss/near_death，含详情+时间戳）。**迭代证据以此文件为准**，不要只靠聊天记忆。
+- `sessions/events/supervisor_state.json`：监督器阶段（Starting/Monitoring/
+  RecoverRuntime/SteeringStall）、恢复次数、停滞次数、last_error。
+- 卡住诊断顺序：`ctl status`（进程/API）→ `ctl tail auto5_out.log 50`（最近 steering/
+  recovery/anomaly）→ `ctl session 20`（LLM 在干什么）→ `GET /api/game-state`（实机状态）。
+
+### 工具层验证（probe，秒级，不开 LLM）
+
+```bash
+cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot -- 4444 --cmd "equip iron_helmet helmet"
+cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot -- 4444 --script scripts\probe\smoke.json
+```
+
+- 工具层 bug 用 probe 复现/验证（秒级），需要 LLM 决策的策略/规划行为才开 viewer+agent 实机观测。
+- 支持命令见 `azalea/commands.rs::parse_chat_command`——**新增工具命令必须同步更新**。
+- probe bot 名 `craftbot_probe`，与 agent bot 共存不冲突。
+- 推送到 GitHub 前必须 probe 实测（主场景+边界）或 LLM 实机观测确认，仅编译/单测通过不推送。
+
+### 按需观测（viewer，观测完即停）
+
+```bash
+cargo run -p craft-agent-ctl -- viewer "goal 文本" 40   # 只起 viewer 不起 autopilot
+cargo run -p craft-agent-ctl -- stop                    # 观测完停止
+```
+
+### 跑工作流的正确姿势（新 agent 会话恢复时必读）
+
+1. `craft-agent-ctl status`：进程是否活着、agent 是否 running、当前 goal、game-state 摘要
+2. `craft-agent-ctl tail auto5_out.log 30`：最近 3 分钟 autopilot 观测/steering 记录
+3. `craft-agent-ctl session 20`：LLM 最近在做什么
+4. 读 `sessions/events/workflow.jsonl` 尾部：是否刚发生 death/armor_loss 异常（要跟进）
+5. 若无 autopilot 在跑：`ctl build` + `ctl viewer "<当前主线目标>" 0` + `ctl start` 重新拉起
+6. 差距分析先行（见上文迭代循环第 0 步），修完回填 NOTEBOOK + gap 文档
 
 ## 当前里程碑路径
 

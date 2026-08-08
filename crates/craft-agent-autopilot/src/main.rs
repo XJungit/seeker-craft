@@ -269,6 +269,7 @@ fn record_observation(
         std::fs::create_dir_all(parent)?;
     }
     let event = json!({
+        "type": "observation",
         "timestamp_ms": std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_millis(),
