@@ -87,6 +87,25 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full 13-step loop details.
 
 All 23 tasks (6 tiers) ship as machine-checkable JSON in [`data/tasks/`](data/tasks/).
 
+## Current Progress (2026-08-08)
+
+**Verified end-to-end (live server, no mods):**
+
+| Stage | Status | Evidence |
+|---|---|---|
+| Tier 1–2: wood → stone → iron pickaxe chain | ✅ live | bot autonomously gathered wood, crafted planks/sticks/pickaxes, and crafted an iron pickaxe via a nearby crafting table |
+| Tier 3: survival gear | ✅ live | full iron armor equipped + diamond sword + shield; HP/hunger fully recovered |
+| Tier 4: diamond age | 🔄 in progress | bot followed the Y-layer hint (mine_below to Y≤16), descended to the diamond layer (Y=-59), and located diamond_ore blocks with `search_for_block` |
+| Tier 5: nether & magic | ⬜ next | nether portal / enchanting / brewing not yet end-to-end verified |
+| Tier 6: finale | ⬜ pending | netherite / shulker / elytra / ender dragon |
+
+**P-series milestones recently shipped:**
+
+- **P135** — mushroom_stew recipe reverted to three ingredients (Wiki-verified); gather Y-range hint fixed (removed stale 1.16 static data, now driven by `y_range_hint`)
+- **P136** — full sweep of hard-coded version data: ore Y-layer knowledge base (diamond −64~16 densest −59, iron −64~384, emerald mountains-only, etc.), version-pin rules (MC 26.2)
+
+**Verification discipline:** every tool-layer behavior is probe-verified against the live server (see `scripts/probe/*.json`) before push; Y-hint correctness was probe-verified for diamond (out-of-range hint), emerald (biome hint), and iron/coal (no false positives in-range). Full milestone table: [`docs/benchmarks.md`](docs/benchmarks.md).
+
 ## 53 LLM tools
 
 | Category | Tools |
