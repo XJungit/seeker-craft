@@ -1,0 +1,12 @@
+{
+  "between_delay_ms": 2000,
+  "timeout_ms": 240000,
+  "steps": [
+    { "cmd": "chat /give craftbot_probe iron_pickaxe 1" },
+    { "wait_ms": 3000 },
+    { "cmd": "equip iron_pickaxe mainhand" },
+    { "cmd": "gather diamond_ore 1" },
+    { "cmd": "gather emerald_ore 1" },
+    { "state": true }
+  ]
+}

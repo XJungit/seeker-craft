@@ -1,0 +1,9 @@
+{
+  "between_delay_ms": 2000,
+  "timeout_ms": 120000,
+  "steps": [
+    { "cmd": "gather iron_ore 1" },
+    { "cmd": "gather coal_ore 1" },
+    { "state": true }
+  ]
+}
