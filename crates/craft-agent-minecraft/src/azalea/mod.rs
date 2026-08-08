@@ -1827,11 +1827,12 @@ pub async fn do_consume(bot: &Client, item: &str) -> String {
         } else {
             "可能不是可消耗物品或饥饿值已满".to_string()
         };
-        // P128：Java 版蘑菇不能生吃（无食物组件），但 1 蘑菇 + 1 碗可合成
-        // 蘑菇煲（+6 饥饿）。实测 LLM 会误以为"蘑菇不可食用"转去找其它食物，
-        // 忽略背包里现成的 red_mushroom + bowl——给明确合成指引。
+        // P128：Java 版蘑菇不能生吃（无食物组件），但红蘑菇 + 棕蘑菇 + 1 碗可合成
+        // 蘑菇煲（+6 饥饿，Wiki 官方配方）。实测 LLM 会误以为"蘑菇不可食用"转去找
+        // 其它食物，忽略背包里现成的 red_mushroom + brown_mushroom + bowl——
+        // 给明确合成指引（P135 修正：配方需要两种蘑菇，缺棕蘑菇时先 gather 再合成）。
         let stew_hint = if item.contains("mushroom") && !item.contains("stew") {
-            "。蘑菇不能生吃（Java 无食物组件）——用 craft('mushroom_stew') 合成蘑菇煲（1 蘑菇 + 1 碗，2x2）后再 consume('mushroom_stew')"
+            "。蘑菇不能生吃（Java 无食物组件）——用 craft('mushroom_stew') 合成蘑菇煲（红蘑菇 + 棕蘑菇 + 碗，2x2；缺哪种蘑菇先 gather）后再 consume('mushroom_stew')"
         } else {
             ""
         };

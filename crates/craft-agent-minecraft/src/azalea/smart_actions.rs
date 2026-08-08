@@ -664,11 +664,14 @@ pub async fn collect_block_smart(bot: &Client, item: &str, count: u32) -> Result
                 // P30 新增：Y 范围检测，给 LLM 明确的位置建议。
                 let bot_y = bot.position().map(|p| p.y.floor() as i32).unwrap_or(0);
                 let y_hint = y_range_hint(item, bot_y);
+                // P135 修正：旧文本写死"Y=15~80 石头层"（1.16 数据），对钻石等深层矿
+                // （1.18+ 分布 Y=-64~16）是错误引导——实测 LLM 在 Y=67 挖钻石挖不到。
+                // 改用 typical_y_range 动态 hint（y_hint 已按目标矿石给出精确范围），
+                // 不再输出误导性的静态规则。
                 return Err(format!(
                     "半径 16 内找不到 {item}（已采集 {gathered}/{need}），即使自动下挖 10 格也未暴露矿石。\
-                     vanilla 规则：{item} 通常生成在 Y=15~80 的石头层中。\
-                     建议：1) goto 到山体/洞穴入口再 gather；2) 用 mine_below 手动挖到 Y<60 后重试；\
-                     3) 换一个生物群系探索（沙漠/海洋下方矿石分布不同）。{alt_hint}{y_hint}"
+                     建议：1) 按下面的 Y 范围提示移动（goto 或 mine_below 到对应深度）；2) 换一个生物群系探索。\
+                     {alt_hint}{y_hint}"
                 ));
             }
             if round == max_rounds - 1 {
@@ -690,9 +693,11 @@ pub async fn collect_block_smart(bot: &Client, item: &str, count: u32) -> Result
                 // P30 新增：Y 范围检测
                 let bot_y = bot.position().map(|p| p.y.floor() as i32).unwrap_or(0);
                 let y_hint = y_range_hint(item, bot_y);
+                // P135：不再硬编码"挖到 Y<60 暴露岩石层"（对深层矿如钻石不适用），
+                // 交给 y_range_hint 动态范围提示。
                 return Err(format!(
                     "半径 {radius} 内找不到 {item}（已采集 {gathered}/{need}）。\
-                     若 {item} 在地下（如 stone 在地表下），先用 mine_below() 挖到 Y<60 暴露岩石层，再重试 gather。{alt_hint}{y_hint}"
+                     若 {item} 在地下（如 stone 在地表下），先看下面的 Y 范围提示用 mine_below() 挖到对应深度，再重试 gather。{alt_hint}{y_hint}"
                 ));
             }
             continue;
@@ -1382,5 +1387,33 @@ mod tests {
         // 目标在北边 (dz=-2<0)，bot 站在目标南边一格 (0, 64, -1)，朝北 (180)
         assert_eq!(stand, BlockPos::new(0, 64, -1));
         assert_eq!(yaw, 180.0);
+    }
+
+    // P135：钻石等深层矿的 Y 提示必须用 1.18+ 分布（-64~16），
+    // 绝不允许回退到 1.16 时代的 "Y=15~80"（曾误导 LLM 在 Y=67 挖钻石）。
+    #[test]
+    fn y_hint_diamond_uses_deep_distribution() {
+        let hint = y_range_hint("diamond_ore", 67);
+        assert!(
+            !hint.contains("15~80"),
+            "不得出现 1.16 旧分布（P135 已移除）: {hint}"
+        );
+        assert!(
+            hint.contains("mine_below") && hint.contains("16"),
+            "应提示 mine_below 到 Y≤16: {hint}"
+        );
+    }
+
+    #[test]
+    fn y_hint_iron_at_surface_says_mine_below() {
+        let hint = y_range_hint("iron_ore", 90);
+        assert!(!hint.is_empty());
+        assert!(hint.contains("mine_below"), "{hint}");
+    }
+
+    #[test]
+    fn y_hint_empty_when_in_range() {
+        let hint = y_range_hint("diamond_ore", -50);
+        assert!(hint.is_empty(), "Y=-50 在钻石分布内不应有提示: {hint}");
     }
 }

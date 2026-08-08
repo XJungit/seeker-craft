@@ -1,0 +1,11 @@
+{
+  "between_delay_ms": 1200,
+  "timeout_ms": 180000,
+  "steps": [
+    { "state": true },
+    { "cmd": "discard brown_mushroom 20" },
+    { "wait_ms": 2000 },
+    { "cmd": "craft mushroom_stew" },
+    { "state": true }
+  ]
+}

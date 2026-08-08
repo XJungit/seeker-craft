@@ -1,0 +1,11 @@
+{
+  "between_delay_ms": 800,
+  "timeout_ms": 60000,
+  "steps": [
+    { "cmd": "discard mushroom_stew 10" },
+    { "cmd": "discard bowl 10" },
+    { "cmd": "discard red_mushroom 10" },
+    { "cmd": "discard brown_mushroom 10" },
+    { "cmd": "discard red_mushroom 10" }
+  ]
+}

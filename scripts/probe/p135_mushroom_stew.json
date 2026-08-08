@@ -1,0 +1,15 @@
+{
+  "between_delay_ms": 1500,
+  "timeout_ms": 120000,
+  "steps": [
+    { "state": true },
+    { "cmd": "chat /give craftbot_probe bowl 5" },
+    { "wait_ms": 3000 },
+    { "cmd": "chat /give craftbot_probe red_mushroom 5" },
+    { "wait_ms": 3000 },
+    { "cmd": "chat /give craftbot_probe brown_mushroom 5" },
+    { "wait_ms": 3000 },
+    { "cmd": "craft mushroom_stew" },
+    { "state": true }
+  ]
+}

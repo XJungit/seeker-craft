@@ -561,31 +561,38 @@ mod tests {
         assert!(lookup_recipe("minecraft:crafting_table").is_some());
     }
 
-    /// P104 回归测试：mushroom_stew 是 2×2 shapeless 配方（bowl + 任意一种蘑菇）。
+    /// P104 回归测试：mushroom_stew 是 2×2 shapeless 配方（bowl + 蘑菇）。
     /// 必须能被 lookup_recipe（2×2 顺序填充）查到——此前只有 prompt 知识层教 LLM
     /// 做蘑菇炖菜、harness 无配方，导致 craft_3x3 失败且提示误导（P83 知识→能力断裂）。
-    /// P130：原配方误写 bowl + red + brown 三种原料，实测只有 red_mushroom 时
-    /// craft 报"缺少 brown_mushroom"→ LLM 跑 63m 外找棕蘑菇饿肚子；修正为
-    /// bowl + red（canonical），red/brown 互为替代（expand_ingredient_aliases）。
+    /// P130（错误修复）：改成 bowl + 任意一种蘑菇并让 red/brown 互替——违背 vanilla
+    /// （Wiki 配方 = 碗 + 红蘑菇 + 棕蘑菇三原料），LLM 放两格永远"网格未产生结果"。
+    /// P135 回退：三原料 + 移除蘑菇互替别名，缺料时如实提示缺哪种。
     #[test]
     fn regression_lookup_recipe_finds_mushroom_stew() {
         let stew = lookup_recipe("mushroom_stew").expect("mushroom_stew 必须可查（2×2 shapeless）");
         assert_eq!(stew.output_per_craft, 1, "1 次合成产出 1 碗炖菜");
         let ings: Vec<&str> = stew.ingredients.iter().map(|(k, _)| k.to_str()).collect();
-        assert_eq!(ings.len(), 2, "需要 2 种原料（bowl + 任意蘑菇）");
+        assert_eq!(
+            ings.len(),
+            3,
+            "需要 3 种原料（bowl + red + brown，Wiki 官方配方）"
+        );
         assert!(ings.contains(&"minecraft:bowl"), "需要 bowl");
         assert!(
             ings.contains(&"minecraft:red_mushroom"),
-            "需要 red_mushroom（canonical，brown 走别名替代）"
+            "需要 red_mushroom"
         );
-        // P130：别名扩展——red 缺料时能换用 brown（反之亦然）
+        assert!(
+            ings.contains(&"minecraft:brown_mushroom"),
+            "需要 brown_mushroom"
+        );
+        // P135：蘑菇不再互为替代（配方需要两种蘑菇同时在场）
         let red = ItemKind::from_str("minecraft:red_mushroom").unwrap();
         let brown = ItemKind::from_str("minecraft:brown_mushroom").unwrap();
         let aliases_red = expand_ingredient_aliases(red);
-        assert!(aliases_red.contains(&brown), "red 的别名必须含 brown");
         assert!(
-            expand_ingredient_aliases(brown).contains(&red),
-            "brown 的别名必须含 red"
+            !aliases_red.contains(&brown),
+            "red 的别名不得含 brown（P135 回退：配方需要两种蘑菇）"
         );
         // 带前缀也应能查到
         assert!(

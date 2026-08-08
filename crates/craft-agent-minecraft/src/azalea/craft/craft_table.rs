@@ -17,14 +17,18 @@ const RECIPES: &[RecipeEntry] = &[
     ("crafting_table", &[("oak_planks", 4)], 1),
     ("torch", &[("coal", 1), ("stick", 1)], 4),
     ("torch", &[("charcoal", 1), ("stick", 1)], 4),
-    // P104: mushroom_stew 是 shapeless 2×2（bowl + red_mushroom）。
+    // P104: mushroom_stew 是 shapeless 2×2（bowl + 蘑菇）。
     // 此前仅 prompt 知识层教 LLM 做蘑菇炖菜、harness 无配方 → "RecipeBook 和手写配方表均无此配方"
-    // 失败误导 LLM（P83 知识→能力断裂）。顺序填充 2 格即可（shapeless 任意排列匹配）。
-    // P130: 原条目误写为 bowl + red + brown 三种原料（vanilla 实际只需任意一种蘑菇 + 碗）——
-    // 实测 LLM 只有 red_mushroom 时 craft('mushroom_stew') 报"背包缺少原料 brown_mushroom"，
-    // 导致跑去 63m 外找 brown_mushroom 饿肚子。配方按 canonical red 记录，
-    // 执行时 red 缺失且 brown 在场自动换用 brown（find_stew_slot_alt）。
-    ("mushroom_stew", &[("bowl", 1), ("red_mushroom", 1)], 1),
+    // 失败误导 LLM（P83 知识→能力断裂）。顺序填充即可（shapeless 任意排列匹配）。
+    // P130（错误修复，P135 回退）：误把配方改成 bowl + 任意一种蘑菇，实测 LLM 只有
+    // red_mushroom 时 craft('mushroom_stew') 报"缺少 brown_mushroom"→ 跑去 63m 外找棕蘑菇
+    // 饿肚子。但 Minecraft Wiki 明确配方 = 碗 + 红蘑菇 + 棕蘑菇（三种原料）——P130 方向错了，
+    // 正确做法是保证背包有 3 种原料、缺料时如实提示。P135 改回三原料 + 移除蘑菇互替别名。
+    (
+        "mushroom_stew",
+        &[("bowl", 1), ("red_mushroom", 1), ("brown_mushroom", 1)],
+        1,
+    ),
     // P117: 木板变体（builtin RecipeBook 是 shapeless 单原料，走 2×2 路径但手写表原只有 oak）。
     // LLM 在红树林/云杉/深色橡木林区会用对应木板 → 此前 craft/auto_craft 失败（同 P117 断裂模式）。
     ("spruce_planks", &[("spruce_log", 1)], 4),
@@ -439,10 +443,6 @@ pub(crate) fn expand_ingredient_aliases(kind: ItemKind) -> Vec<ItemKind> {
     } else if matches!(bare, "coal" | "charcoal") {
         // 火把配方同时支持 coal 和 charcoal
         vec!["coal", "charcoal"]
-    } else if matches!(bare, "red_mushroom" | "brown_mushroom") {
-        // P130：蘑菇煲配方两种蘑菇互为替代（vanilla shapeless 任意蘑菇 + bowl）。
-        // 配方按 canonical red 记录；只有 red 缺失且 brown 在场时经别名换用 brown。
-        vec!["red_mushroom", "brown_mushroom"]
     } else {
         return Vec::new();
     };
@@ -658,7 +658,6 @@ pub async fn do_craft_2x2(bot: &Client, item: &str, count: u32) -> Result<String
         //    P8：不能用 shift_click——服务端自行决定落到哪一格，不按配方形状；
         //    也不能整堆塞一格，否则同种原料的其他格找不到料。
         for (slot, kind) in &placement {
-            // P130：蘑菇缺失时经 expand_ingredient_aliases 换用另一种蘑菇
             let src = find_ingredient_slot(&inv, *kind, GRID)
                 .ok_or_else(|| format!("背包缺少原料 {}", kind.to_str()))?;
             place_one(&inv, src, *slot).await;

@@ -591,17 +591,20 @@ earest_soft_column(bot, x, y, z, radius=4)：无镐且头顶硬方块时，扫�
   计划 = consume(现成食物) / craft('mushroom_stew') / 找食物。`is_edible` 覆盖常见食物。
 - **验证**：实机 game-state 场景 tail 确认触发（「背包有蘑菇+碗——立即 craft('mushroom_stew')…」）。
 
-### P130 mushroom_stew 配方修正（知识→能力断裂，P83 同模式）
+### P130 mushroom_stew 配方修正（知识→能力断裂，P83 同模式）——P135 已回退，见下
 
 - **症状**：`craft('mushroom_stew')` 报「背包缺少原料 minecraft:brown_mushroom」——
-  P104 曾把手写配方误写为 bowl + red + brown 三种原料，vanilla 实际只需**任意一种蘑菇 + 碗**。
+  P104 曾把手写配方误写为 bowl + red + brown 三种原料。
 - **后果链**：LLM 只有 red_mushroom → 跑去 63m 外找 brown_mushroom → 饿肚子（P128/P129 已引导
   它合成蘑菇煲，但配方卡死）。
-- **修复**（craft/craft_table.rs + craft.rs）：
-  1. RECIPES 条目改 bowl + red_mushroom（canonical），`expand_ingredient_aliases` red↔brown 互为
-     替代（red 缺失且 brown 在场自动换用，`pub(crate)` 供测试）。
-  2. 回归测试更新：2 种原料断言 + red/brown 别名双向验证。
-- **验证**：单测通过；bot 后续成功吃到蘑菇煲（饱食 4→20）。
+- **P130 修复**（错误方向，P135 回退）：RECIPES 条目改 bowl + red_mushroom（canonical），
+  `expand_ingredient_aliases` red↔brown 互为替代。**P135 查证 Minecraft Wiki：配方 = 碗 + 红蘑菇 +
+  棕蘑菇（三原料）**——P130 方向错了，实测 LLM 放 bowl+red 两格永远「网格未产生结果」。
+- **P135 修复**：配方改回三原料、移除蘑菇互替别名、缺料如实提示（probe 实测：缺 brown →「背包
+  缺少原料 minecraft:brown_mushroom」✓；三原料齐全 → 合成成功 ✓）。consume 失败提示同步更新
+  （「红蘑菇 + 棕蘑菇 + 碗，缺哪种蘑菇先 gather」）。
+- **验证**：probe 实机（/give 注入三原料 → craft 成功；只给 bowl+red → 如实报缺 brown）；单测
+  三原料断言 + 别名不含互替。
 
 ### P131 连续失败 nudge 追加饥饿应急（LLM 顽固计划覆盖）
 
@@ -707,3 +710,22 @@ earest_soft_column(bot, x, y, z, radius=4)：无镐且头顶硬方块时，扫�
   只保留结果真实性纪律（「没回报实际获得X就当作没获得，不得虚构成功」），
   文本下沉到代码默认值，_default.json 移除重复项。
 - **验证**：craft-agent lib 183 通过 + fmt/clippy 干净。
+
+### P135 gather 矿石 Y 提示纠错（1.16 旧数据误导钻石挖掘）+ P130 配方回退
+
+- **症状**：实机 session 观测——LLM 在 Y=67 挖 diamond_ore（半径 16 内找不到，自动下挖 10 格
+  也未暴露），重复失败。gather 失败提示写死「vanilla 规则：{item} 通常生成在 Y=15~80 的石头层中」
+  ——这是 1.16 时代数据，1.18+ 钻石分布为 Y=-64~16（最密集约 -59），提示直接误导 LLM 在浅层挖。
+  同时发现 mushroom_stew 合成持续失败（P130 改错配方）。
+- **修复**（smart_actions.rs + craft/craft_table.rs + craft.rs + azalea/mod.rs）：
+  1. gather 失败提示删除静态「Y=15~80 石头层」文本，改由 y_range_hint（typical_y_range 已含
+     1.18+ 正确分布 -64~16）动态给出深度建议；第二处「挖到 Y<60」同理。
+  2. mushroom_stew 配方回退为三原料（碗 + 红 + 棕，Minecraft Wiki 官方配方），移除 red↔brown
+     互替别名，缺料如实提示（probe 实测「背包缺少原料 minecraft:brown_mushroom」）；consume
+     失败提示改为「红蘑菇 + 棕蘑菇 + 碗，缺哪种蘑菇先 gather」。
+- **验证**：probe 实机（/give 注入三原料 → craft 成功 ✓；仅 bowl+red → 如实缺料 ✓）；
+  新增 3 单测（diamond Y 提示无 15~80/含 mine_below 到 16/范围内空提示）+ 配方三原料断言；
+  minecraft lib 172 + craft-agent 183 + fmt/clippy 全绿。
+- **Learning**：harness 提示文本是 LLM 决策的来源——写死旧版 MC 数据比不提示更危险；
+  配方类知识必须先查 Wiki（本项目已有 crafty.gg/mcasset 验证纪律），P130 当年凭印象改配方，
+  P135 用 probe + Wiki 双重验证回退——「配方向知识，只能由权威源+实机验证变更」。

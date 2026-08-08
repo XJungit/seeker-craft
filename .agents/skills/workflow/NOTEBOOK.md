@@ -338,3 +338,23 @@ earest_entities::<Without<Player>>() 全量计数，无距离过滤无距离标�
 - Verification: minecraft lib 168 通过 + craft-agent lib 183 通过 + fmt/clippy 干净；commit c7a88d8；重新部署（ctl stop/build/viewer/start）实机验证中——观测 bot 能否装上 stone_pickaxe 逃脱竖井。
 - Learning: ① 容器操作 slots() 是快照，click 序列优先用服务端语义操作（QuickMove），手动拿放必须保证光标平衡；② 走开/寻路兜底必须覆盖竖直维度（竖井是 MC 常见几何）；③ 任务完成条件必须验证可达性（对照基岩高度）。
 - Next: 观测 P134 实机效果（装备→脱困→钻石）；tier4 完成后下一主线是钻石镐/钻石甲 → 下界。
+
+## Round 38 - 2026-08-08 (P135: mushroom_stew 配方回退 + gather 矿石 Y 提示纠错)
+
+- Evidence: 实机 session 观测到两个工具层错误引导：(1) LLM 在 Y=67 挖 diamond_ore 重复失败——
+  gather 失败提示写死「Y=15~80 石头层」（1.16 数据，1.18+ 钻石在 -64~16）；(2) craft('mushroom_stew')
+  持续「网格未产生结果」——P130 当年把配方改成 bowl+任意蘑菇（错误），实机 LLM 放 bowl+red 两格永远失败。
+- Root cause: (1) smart_actions.rs 静态提示文本未随 MC 版本更新（typical_y_range 已正确但被写死
+  文本盖过）；(2) P130 凭印象改配方，违背 Minecraft Wiki 官方配方（碗+红+棕三原料），且 red/brown
+  互替别名掩盖了缺料事实。
+- Change: (1) gather 失败提示删除静态 Y 范围，改用 y_range_hint 动态深度建议（两处）；(2) 配方回退
+  三原料 + 移除蘑菇互替别名 + 缺料如实提示；(3) consume 失败提示同步更新（红+棕+碗）；(4) 新增 3 个
+  Y hint 单测 + 配方三原料断言更新。
+- Verification: probe 实机两场景——/give 注入 bowl+red+brown → craft 成功（各 -1）；仅 bowl+red →
+  如实报「背包缺少原料 minecraft:brown_mushroom」✓；清理残留。minecraft lib 172 + craft-agent 183 +
+  autopilot 13 全绿 + fmt/clippy 干净。
+- Learning: (1) harness 提示文本是 LLM 决策来源——写死旧版 MC 数据比不提示更危险（LLM 会照做）；
+  (2) 配方类知识必须 Wiki 验证（crafty.gg/mcasset 纪律），凭印象改配方 = 制造新 bug；(3) 实机 session
+  观测（ctl session）是发现「提示误导」类问题的关键通道——这类问题单测覆盖不到。
+- Next: 观察 bot 能否按正确 Y 提示挖到钻石（tier4 主线）；mushroom_stew 链路（gather 两种蘑菇 →
+  craft → consume 饱食恢复）实机闭环。
