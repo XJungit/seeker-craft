@@ -139,9 +139,9 @@ fn regression_system_prompt_has_no_dynamic_markers() {
     let ctx = agent.build_context();
     let sys = &ctx.system_prompt;
 
-    // 独立 oracle：固定字符串必须出现
-    assert!(sys.contains("自主行动"));
-    assert!(sys.contains("不准假装成功"));
+    // 独立 oracle：固定字符串必须出现（R37 精简后 jailbreak 只保留结果真实性纪律）
+    assert!(sys.contains("不得虚构成功"));
+    assert!(sys.contains("实际获得"));
     // 动态变量不得出现在 system prompt 中（obs_streak / bootstrap 已移出）
     assert!(
         !sys.contains("观察提醒"),
