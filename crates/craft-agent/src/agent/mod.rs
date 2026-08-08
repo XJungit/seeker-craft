@@ -612,12 +612,12 @@ pub fn build_knowledge_string(tools: &ToolRegistry, kb: Option<&str>) -> String 
         base.to_string()
     } else if base.is_empty() {
         format!(
-            "## Available Tools\nThe following tools are the ONLY ones available:\n\n{}",
+            "## 可用工具\n以下工具是唯一可以使用的工具：\n\n{}",
             tool_ref
         )
     } else {
         format!(
-            "{}\n\n## Available Tools\nThe following tools are the ONLY ones available:\n\n{}",
+            "{}\n\n## 可用工具\n以下工具是唯一可以使用的工具：\n\n{}",
             base, tool_ref
         )
     }

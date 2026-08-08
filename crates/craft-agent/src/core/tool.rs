@@ -203,7 +203,7 @@ fn build_index(tools: &[Box<dyn GameTool>]) -> HashMap<String, usize> {
 ///
 /// 对应 `craft-agent-minecraft` 实际注册的工具集（`tools_azalea.rs` 的
 /// `create_mc_azalea_tools_full`）。新增工具时必须归入某个分组，否则落
-/// `## Other Tools` 兜底并被回归测试拦截：
+/// `## 其他工具` 兜底并被回归测试拦截：
 /// - `crates/craft-agent-minecraft` 的 `regression_all_tool_names_in_knowledge_group`
 ///   （每个注册工具名都要在某个分组里）
 /// - 本模块的 `regression_knowledge_groups_well_formed`（无重复/无空组）
@@ -212,11 +212,11 @@ fn build_index(tools: &[Box<dyn GameTool>]) -> HashMap<String, usize> {
 /// DeepSeek 前缀缓存（一次性，C8 knowledge_cache 之后自动稳定）。
 pub const TOOL_GROUPS: &[(&str, &[&str])] = &[
     (
-        "Perception",
+        "感知",
         &["perceive", "memory", "search_wiki", "search_for_block"],
     ),
     (
-        "Movement",
+        "移动",
         &[
             "goto",
             "goto_player",
@@ -228,10 +228,10 @@ pub const TOOL_GROUPS: &[(&str, &[&str])] = &[
             "stop_follow",
         ],
     ),
-    ("Mining", &["mine", "make_obsidian"]),
-    ("Modes", &["set_mode"]),
+    ("挖矿", &["mine", "make_obsidian"]),
+    ("模式", &["set_mode"]),
     (
-        "Interaction",
+        "交互",
         &[
             "interact_block",
             "interact_entity",
@@ -243,22 +243,22 @@ pub const TOOL_GROUPS: &[(&str, &[&str])] = &[
         ],
     ),
     (
-        "Crafting",
+        "合成",
         &["craft", "craft_3x3", "smelt", "auto_craft", "enchant"],
     ),
-    ("Gathering", &["gather", "till_and_sow", "harvest"]),
+    ("采集", &["gather", "till_and_sow", "harvest"]),
     (
-        "Building",
+        "建造",
         &["place", "build", "build_blueprint", "list_blueprints"],
     ),
     (
-        "Containers",
+        "容器",
         &["open", "chest_view", "chest_withdraw", "chest_deposit"],
     ),
-    ("Inventory", &["equip", "discard", "consume"]),
-    ("Social", &["trade", "give"]),
+    ("背包", &["equip", "discard", "consume"]),
+    ("社交", &["trade", "give"]),
     (
-        "Meta",
+        "元操作",
         &[
             "chat",
             "set_goal",
@@ -345,7 +345,7 @@ impl ToolRegistry {
             }
             if !group_lines.is_empty() {
                 lines.push(String::new());
-                lines.push(format!("## {group_name} Tools"));
+                lines.push(format!("## {group_name}"));
                 lines.extend(group_lines);
             }
         }
@@ -358,7 +358,7 @@ impl ToolRegistry {
             .collect();
         if !ungrouped.is_empty() {
             lines.push(String::new());
-            lines.push("## Other Tools".to_string());
+            lines.push("## 其他工具".to_string());
             lines.extend(ungrouped);
         }
         lines.join("\n")
@@ -635,7 +635,7 @@ mod tests {
     }
 
     /// 知识字符串渲染：全部已分组工具都出现在对应组段头下，
-    /// 且注册工具全被分组时不会出现 `## Other Tools` 兜底段。
+    /// 且注册工具全被分组时不会出现 `## 其他工具` 兜底段。
     #[test]
     fn regression_knowledge_string_groups_all_registered_tools() {
         // 用分组表里全部工具名注册 stub 工具（模拟完整工具集）
@@ -668,21 +668,21 @@ mod tests {
         // 每个组段头都渲染（非空组必然有注册工具）
         for (group_name, _) in TOOL_GROUPS {
             assert!(
-                knowledge.contains(&format!("## {group_name} Tools")),
-                "缺少组段头 ## {group_name} Tools"
+                knowledge.contains(&format!("## {group_name}")),
+                "缺少组段头 ## {group_name}"
             );
         }
-        // 注册工具全覆盖 → 不应出现 Other Tools 兜底段
+        // 注册工具全覆盖 → 不应出现 其他工具 兜底段
         assert!(
-            !knowledge.contains("## Other Tools"),
-            "全部工具已分组，不应出现 ## Other Tools 兜底段"
+            !knowledge.contains("## 其他工具"),
+            "全部工具已分组，不应出现 ## 其他工具 兜底段"
         );
         // 每个工具都在其组段头之后渲染（抽查：组头行号 < 组内工具行号）
         let lines: Vec<&str> = knowledge.lines().collect();
         for (group_name, tools) in TOOL_GROUPS {
             let header_pos = lines
                 .iter()
-                .position(|l| *l == format!("## {group_name} Tools"))
+                .position(|l| *l == format!("## {group_name}"))
                 .expect("组段头存在");
             for t in *tools {
                 let tool_pos = lines

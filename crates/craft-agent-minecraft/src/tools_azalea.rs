@@ -595,7 +595,7 @@ mod tool_mapping_tests {
     }
 
     /// 防线：每个注册工具名都必须出现在知识分组表（TOOL_GROUPS）里，
-    /// 否则打进系统提示的工具知识会落到 `## Other Tools` 兜底段。
+    /// 否则打进系统提示的工具知识会落到 `## 其他工具` 兜底段。
     /// 反向：分组表里没有未注册的名字（防僵尸条目）。
     #[test]
     fn regression_all_tool_names_in_knowledge_group() {
@@ -608,7 +608,7 @@ mod tool_mapping_tests {
         for name in ALL_TOOL_NAMES {
             assert!(
                 grouped.contains(name),
-                "工具 `{name}` 未归入 TOOL_GROUPS：新增工具必须加入 core/tool.rs 分组表，否则落入 ## Other Tools"
+                "工具 `{name}` 未归入 TOOL_GROUPS：新增工具必须加入 core/tool.rs 分组表，否则落入 ## 其他工具"
             );
         }
         // 2) 反向：分组表里没有未注册的名字
