@@ -791,15 +791,12 @@ impl Agent {
         use crate::core::message::Message;
         // C7：jailbreak 可经 profile 覆盖（_default.json 的 "jailbreak" 字段，
         // 三层合并可被模式/个体 profile 覆盖）；None 回退内置默认。
-        let jailbreak = self
-            .config
-            .jailbreak
-            .clone()
-            .unwrap_or_else(|| {
-                "自主行动。工具失败时调整参数重试——不准假装成功。\n\
-                 行为准则：收到感知里的「卡住计数」≥3 时，说明坐标连续不变（可能下探被基岩/空气挡住或脚下方块无法破坏）——立即停止当前下探，改用 goto 侧前方 3 格空地或跳跃脱困，再重新 perceive；不要原地反复 perceive 或假装在下探。连续同工具≤3次后应向玩家 chat 汇报进度。工具没回报「实际获得X」就当作没获得，不得虚构成功。"
-                    .to_string()
-            });
+        // R37（2026-08-08，用户指令）：删除「失败时调整参数重试」与「卡住行为准则」
+        // ——它们与 modes 系统/位置卡死检测/obs_streak 注入重复，实测驱动 bot
+        // 反复重试同一失败动作；只保留结果真实性纪律（防虚构成功）。
+        let jailbreak = self.config.jailbreak.clone().unwrap_or_else(|| {
+            "工具结果以实际回报为准：没回报「实际获得X」就当作没获得，不得虚构成功。".to_string()
+        });
         let knowledge = self.knowledge_string();
 
         let builder = PromptBuilder::new()
