@@ -249,14 +249,39 @@ impl MinecraftAzaleaAdapter {
                                 pickaxe_warning(&nearby_blocks, &game_state, &held_item);
                             // P129：饱食过低 → 注入进食方案（确定性兜底，LLM 常无视 goal 指令）
                             let hunger_hint = hunger_warning(food, &game_state);
-                            // 末尾提示行：头顶信息 + 可选的无镐/饥饿警示（合并多行）
+                            // P135：工具耐久 ≤20% → 注入换工具警示（预判断镐，避免中途
+                            // 工具销毁困在地下；依赖 handler 注入的 dmg/max 槽位字段）
+                            let durable_hint = tool_durability_warning(&game_state);
+                            // 末尾提示行：头顶信息 + 可选警示（合并多行）
                             let mut tail_lines = vec![overhead_hint];
-                            for h in [pick_hint, hunger_hint] {
+                            for h in [pick_hint, hunger_hint, durable_hint] {
                                 if !h.is_empty() {
                                     tail_lines.push(h);
                                 }
                             }
                             let scene_tail = tail_lines.join("\n");
+                            // P135：主手耐久后缀（如 "stone_pickaxe (87/131)"，非工具不加）。
+                            // 主手槽 = hotbar 起始槽(36) + selected_hotbar_slot；handler 已把
+                            // dmg/max 注入 inventory 槽位 JSON，这里只做展示层拼接。
+                            let held_disp = {
+                                let sel =
+                                    game_state["selected_slot"].as_u64().unwrap_or(0) as usize;
+                                let hand_slot_pos = 36 + sel;
+                                let mut suffix = String::new();
+                                if let Some(arr) = game_state["inventory"].as_array() {
+                                    for s in arr {
+                                        if s["slot"].as_u64().unwrap_or(0) as usize == hand_slot_pos
+                                            && s["max"].as_i64().unwrap_or(0) > 0
+                                        {
+                                            let dmg = s["dmg"].as_i64().unwrap_or(0);
+                                            let max = s["max"].as_i64().unwrap_or(0);
+                                            suffix = format!(" (耐久 {}/{})", max - dmg, max);
+                                            break;
+                                        }
+                                    }
+                                }
+                                format!("{held_item}{suffix}")
+                            };
                             // P126d：当前执行动作（game_state 由 handler tick 注入，
                             // 对标 Mindcraft $ACTION）；无则显示「空闲」保持场景信息完整。
                             let current_action = game_state["current_action"]
@@ -289,7 +314,7 @@ impl MinecraftAzaleaAdapter {
                                 position.z,
                                 health,
                                 food,
-                                held_item,
+                                held_disp,
                                 current_action_line,
                                 dimension,
                                 biome,
@@ -827,6 +852,45 @@ fn hunger_warning(food: u32, game_state: &serde_json::Value) -> String {
     format!("警示：{severity}（饱食 {food}/20，长期不吃会掉血）。{plan}")
 }
 
+/// P135：工具耐久警示（剩余 ≤20% 时注入，否则空串）。
+///
+/// 背景（2026-08-08 实机观测）：stone/iron 镐三次"神秘消失"——MC 工具耐久
+/// 耗尽即自动销毁（无损坏状态残留），而 perceive 不显示耐久，LLM 无法预知
+/// 而规划换镐，断镐后才发现"背包无镐"（P124 警示）→ 重铸 → 再断，反复空转。
+/// 该警示让 LLM 在耐久不足前就看到"即将损坏"信号，提前 craft/equip 替换。
+fn tool_durability_warning(game_state: &serde_json::Value) -> String {
+    // 收集耐久 ≤20% 的工具（含主手与背包），按剩余百分比升序。
+    let mut low: Vec<(String, i32, i32)> = Vec::new();
+    if let Some(arr) = game_state["inventory"].as_array() {
+        for s in arr {
+            let max = s["max"].as_i64().unwrap_or(0);
+            if max <= 0 {
+                continue;
+            }
+            let dmg = s["dmg"].as_i64().unwrap_or(0);
+            let left = max - dmg;
+            if left * 5 <= max {
+                let id = s["id"].as_str().unwrap_or("");
+                let name = id.strip_prefix("minecraft:").unwrap_or(id);
+                low.push((name.to_string(), left as i32, max as i32));
+            }
+        }
+    }
+    if low.is_empty() {
+        return String::new();
+    }
+    low.sort_by_key(|(_, left, _)| *left);
+    let desc = low
+        .iter()
+        .map(|(n, l, m)| format!("{n}({l}/{m})"))
+        .collect::<Vec<_>>()
+        .join("、");
+    format!(
+        "警示：工具耐久告急（≤20%）——{desc}。MC 工具耐久归零会直接销毁（不会自动损坏）！\n\
+         建议：先 craft 一把备用镐/工具或 equip 已有的，再继续当前动作，避免中途断镐困在地下。"
+    )
+}
+
 /// Java 版可食用物品（含生食与熟食）。蘑菇/碗本身不可食用但可合成蘑菇煲。
 fn is_edible(name: &str) -> bool {
     matches!(
@@ -870,7 +934,10 @@ fn is_edible(name: &str) -> bool {
 
 #[cfg(test)]
 mod p124_pickaxe_warning_tests {
-    use super::{hunger_warning, inventory_has_pickaxe, is_edible, ore_in_view, pickaxe_warning};
+    use super::{
+        hunger_warning, inventory_has_pickaxe, is_edible, ore_in_view, pickaxe_warning,
+        tool_durability_warning,
+    };
     use serde_json::json;
 
     fn inv(items: &[(&str, u64)]) -> serde_json::Value {
@@ -969,5 +1036,48 @@ mod p124_pickaxe_warning_tests {
         assert!(!is_edible("bowl"));
         assert!(!is_edible("cobblestone"));
         assert!(!is_edible("iron_ingot"));
+    }
+
+    fn inv_with_durability(items: &[(&str, i64, i64)]) -> serde_json::Value {
+        // (id, dmg, max)——max=0 表示非工具
+        json!({"inventory": items.iter().map(|(id, d, m)| json!({"id": id, "dmg": d, "max": m})).collect::<Vec<_>>()})
+    }
+
+    #[test]
+    fn tool_durability_warning_only_for_low_durability_tools() {
+        // 所有工具满耐久 → 空
+        let fresh = inv_with_durability(&[
+            ("minecraft:stone_pickaxe", 0, 131),
+            ("minecraft:iron_pickaxe", 10, 250),
+        ]);
+        assert!(tool_durability_warning(&fresh).is_empty());
+
+        // 一把耐久 24/131（≈18% ≤20%）→ 警示，且点名该工具
+        let low = inv_with_durability(&[
+            ("minecraft:stone_pickaxe", 107, 131),
+            ("minecraft:iron_pickaxe", 10, 250),
+        ]);
+        let w = tool_durability_warning(&low);
+        assert!(w.contains("stone_pickaxe"));
+        assert!(w.contains("24/131"));
+        assert!(w.contains("耐久归零"));
+
+        // 多个低耐久 → 都列出；非工具（max=0）忽略
+        let multi = inv_with_durability(&[
+            ("minecraft:stone_pickaxe", 107, 131),
+            ("minecraft:iron_pickaxe", 225, 250),
+            ("minecraft:cobblestone", 0, 0),
+        ]);
+        let w = tool_durability_warning(&multi);
+        assert!(w.contains("stone_pickaxe"));
+        assert!(w.contains("iron_pickaxe"));
+        assert!(!w.contains("cobblestone"));
+
+        // 恰好 20% 也触发（边界）
+        let edge = inv_with_durability(&[("minecraft:iron_pickaxe", 200, 250)]);
+        assert!(!tool_durability_warning(&edge).is_empty());
+
+        // 空背包 → 空
+        assert!(tool_durability_warning(&json!({"inventory": []})).is_empty());
     }
 }

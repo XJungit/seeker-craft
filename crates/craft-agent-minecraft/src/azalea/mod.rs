@@ -1150,9 +1150,7 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
                                     slots
                                         .get(s)
                                         .map(|st| {
-                                            !st.is_empty()
-                                                && st.count() > 1
-                                                && st.kind() != kind
+                                            !st.is_empty() && st.count() > 1 && st.kind() != kind
                                         })
                                         .unwrap_or(false)
                                 })

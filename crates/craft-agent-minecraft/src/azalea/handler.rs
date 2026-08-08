@@ -39,6 +39,23 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// P135：读取物品耐久 (damage, max_damage)——剩余耐久 = max - damage。
+/// 非工具（max_damage=0）返回 None；工具用 azalea 组件默认表兜底满耐久。
+/// 解决根因：石镐反复"神秘消失"= 耐久耗尽自动销毁，LLM 却无法预知
+/// （perceive 不显示耐久 → 未在损坏前换镐）。此值注入 game_state 供 perceive 展示与警示。
+pub(crate) fn item_durability(st: &azalea_inventory::ItemStack) -> Option<(i32, i32)> {
+    use azalea_inventory::components::{Damage, MaxDamage};
+    let max = st
+        .get_component::<MaxDamage>()
+        .map(|c| c.amount)
+        .unwrap_or(0);
+    if max <= 0 {
+        return None;
+    }
+    let dmg = st.get_component::<Damage>().map(|c| c.amount).unwrap_or(0);
+    Some((dmg, max))
+}
+
 fn nearby_active_portal(bot: &Client, center: BlockPos) -> bool {
     let Ok(world) = bot.world() else {
         return false;
@@ -4074,7 +4091,17 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                             s.kind().to_str().to_string()
                                         };
                                         let cnt = if s.is_empty() { 0 } else { s.count() };
-                                        serde_json::json!({"slot": i, "id": id, "count": cnt})
+                                        // P135：工具耐久（damage/max_damage），非工具为 0。
+                                        // 供 perceive 显示主手/背包工具剩余耐久，避免耐久耗尽
+                                        // 自动销毁（镐"神秘消失"）前 LLM 毫不知情。
+                                        let (dmg, max) = item_durability(s).unwrap_or((0, 0));
+                                        serde_json::json!({
+                                            "slot": i,
+                                            "id": id,
+                                            "count": cnt,
+                                            "dmg": dmg,
+                                            "max": max,
+                                        })
                                     })
                                     .collect(),
                                 None => vec![],
