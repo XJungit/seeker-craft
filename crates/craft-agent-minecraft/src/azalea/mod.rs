@@ -1101,9 +1101,14 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
 
                 // 不在 hotbar，从主背包 shift_click 到 hotbar（服务端找第一个空槽）
                 let srcs = find_item_slots(&inv, kind);
-                if let Some(src) = srcs.first() {
-                    // P8 修复：hotbar 满时 shift_click 无法移动物品。
-                    // 先检查 hotbar 是否已满，若是则把第一个 hotbar 物品移到主背包腾出空位。
+                if !srcs.is_empty() {
+                    // P8/P134 修复：hotbar 满时 shift_click 无法移动物品。
+                    // 两级腾槽：① QuickMoveClick（服务端自动合并同类堆/找空槽，不产生
+                    // 光标悬挂——旧实现 left_click 手动拾放在主背包满时把物品卡在光标上，
+                    // 后续 click 全部错乱）；② QuickMove 仍失败（主背包 36 格全满且无
+                    // 同类堆可合并，实测 cobblestone 448 = 7 整堆）→ 直接丢弃 hotbar 中
+                    // 堆叠最大的非目标物品腾出一格（装备在 2s 吸回前完成，扔出的掉落物
+                    // 只能回主背包，不影响 hotbar 结果）。
                     if let Some(menu) = inv.menu().ok().flatten() {
                         let hotbar_range = menu.hotbar_slots_range();
                         if let Some(slots) = inv.slots() {
@@ -1111,11 +1116,6 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
                                 .clone()
                                 .all(|s| slots.get(s).map(|st| !st.is_empty()).unwrap_or(false));
                             if hotbar_full {
-                                // P134 修复：旧实现 left_click 拿起/找空槽/放下——主背包无
-                                // 空槽时物品卡在光标上，后续 shift_click 全部错乱（实机：
-                                // 装备 stone_pickaxe 反复失败，hotbar 满 + 背包满死锁）。
-                                // 改用 QuickMoveClick（shift_click）：服务端自动合并同类堆
-                                // + 找空槽，不产生光标悬挂；合并成功即腾出 hotbar 空位。
                                 for hs in hotbar_range.clone() {
                                     if let Some(st) = slots.get(hs)
                                         && !st.is_empty()
@@ -1128,7 +1128,40 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
                             }
                         }
                     }
-                    inv.shift_click(*src);
+                    // slots 是快照——重读验证腾挪结果，仍满则丢弃兜底
+                    drop(inv);
+                    let inv = match bot.get_inventory() {
+                        Ok(i) => i,
+                        Err(e) => return format!("获取背包失败: {e:?}"),
+                    };
+                    if let (Some(menu), Some(slots)) = (inv.menu().ok().flatten(), inv.slots()) {
+                        let hotbar_range = menu.hotbar_slots_range();
+                        let still_full = hotbar_range
+                            .clone()
+                            .all(|s| slots.get(s).map(|st| !st.is_empty()).unwrap_or(false));
+                        if still_full
+                            && let Some(victim) = hotbar_range
+                                .clone()
+                                .filter(|&s| {
+                                    slots
+                                        .get(s)
+                                        .map(|st| !st.is_empty() && st.kind() != kind)
+                                        .unwrap_or(false)
+                                })
+                                .max_by_key(|&s| slots.get(s).map(|st| st.count()).unwrap_or(0))
+                        {
+                            inv.click(ThrowClick::All {
+                                slot: victim as u16,
+                            });
+                            sleep(Duration::from_millis(200)).await;
+                        }
+                    }
+                    // 重定位槽位（丢弃/移动可能改变布局）
+                    let src = match find_item_slots(&inv, kind).first() {
+                        Some(s) => *s,
+                        None => return format!("背包未持有 {item}（腾槽后重新定位失败）"),
+                    };
+                    inv.shift_click(src);
                     sleep(Duration::from_millis(200)).await;
                     // 重新读 backpack 拿到新 hotbar 槽
                     drop(inv);
@@ -1154,8 +1187,8 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
                     // 改为明确报错，让 LLM 知道装备未完成。
                     return format!(
                         "装备 {item} 失败：shift_click 槽 {src} 后未在 hotbar 找到该物品。\
-                         可能原因：1) hotbar 已满（9 格全非空）；2) 服务端同步延迟。\
-                         建议：先 discard 一些 hotbar 里的无用物品腾出空位，再重试 equip。"
+                         可能原因：1) hotbar 已满（9 格全非空）且主背包也无空槽；2) 服务端同步延迟。\
+                         建议：先 discard 一些主背包的无用物品（丢后走开 2+ 格防吸回），再重试 equip。"
                     );
                 }
 
@@ -1579,13 +1612,29 @@ pub async fn do_discard(bot: &Client, item: &str, count: u32) -> String {
         }
         // P134：1x1 竖井/窄洞等水平 4 方向全堵场景，向上走是唯一脱身方向
         // （上方是挖出的空气柱）。竖直距离 4 格 > 1.5m 吸回半径，物品不会被吸回。
-        if let Ok(p) = bot.position() {
-            bot.start_goto(BlockPosGoal(BlockPos::new(
-                p.x.floor() as i32,
-                (p.y + 4.0).floor() as i32,
-                p.z.floor() as i32,
-            )));
-            sleep(Duration::from_millis(1300)).await;
+        // 逐格上移：4 格一跳 pathfinder 在竖井中经常判不可达，单格跳跃每次都能过
+        // （每格 700ms，4 格共 2.8s > 2s pickup delay 窗口）。
+        let mut last_y = start_pos.map(|p| p.y);
+        for _ in 0..4 {
+            if let Ok(p) = bot.position() {
+                bot.start_goto(BlockPosGoal(BlockPos::new(
+                    p.x.floor() as i32,
+                    (p.y + 1.0).floor() as i32,
+                    p.z.floor() as i32,
+                )));
+                sleep(Duration::from_millis(700)).await;
+            }
+            if let Ok(p) = bot.position() {
+                // 已脱离吸回半径，尽早停止
+                if start_pos.is_some_and(|s| (p.y - s.y).abs() > 2.0) {
+                    break;
+                }
+                // y 未上升说明上方也堵（头顶实心），放弃向上
+                if last_y.is_some_and(|prev| (p.y - prev).abs() < 0.5) {
+                    break;
+                }
+                last_y = Some(p.y);
+            }
         }
         bot.stop_pathfinding();
         // 验证是否真的走开（若原地打转则物品会被吸回）
