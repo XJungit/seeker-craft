@@ -314,3 +314,11 @@ earest_entities::<Without<Player>>() 全量计数，无距离过滤无距离标�
 - Verification: P132 probe 实测（goto 死循环坐标 → 自动修正 (-478,90,-141) 寻路成功）；P133 回归 6 例；全套铁甲穿上 + 生命/饱食回满 20/20 实机确认；task_complete 通过后任务链推进 tier4（搜索 diamond_ore）；gate：fmt/clippy/test 全绿。
 - Learning: ① 食物知识断裂分四层（配方/可食性/感知/顽固计划），需层层兜底——确定性提示（P129/P131）比 goal 指令可靠；② LLM 盲猜坐标是导航死循环根源，派发时自动修正（P132）与 P101/P102 同纪律；③ "穿在身上"是比"背包装着"更强的持有态，任务验证必须认（P133）；④ 任务链推进需验证器与实际游戏态对齐，否则 LLM 达成目标却无法交卷。
 - Next: tier4 钻石阶段（挖到基岩 → 钻石镐/甲）→ 黑曜石 → 下界传送门 → 烈焰棒 → 末影之眼 → 要塞 → 末地 → 龙战；P133 部署后首轮观测 task_complete 实机通过。
+
+## Round 35 - 2026-08-08 (README 双语对齐 + 文档同步纪律入契约)
+- Evidence: 用户指出README.zh-CN.md与README.md 结构/数字不一致——中文版缺工具表/13步循环/6阶段表/Probe 脚本等整节，且全套文档工具计数漂移：英文 49、中文 44、ARCHITECTURE 44、crate README 47、AGENTS.md 48/49 并存，实际权威 `ALL_TOOL_NAMES` 为 53（`create_mc_azalea_tools_full` vec 逐条核对一致）。
+- Root cause: 工具数从未有单一权威源同步——各文档按写文档时的旧状态登记，后续 P48/P85/P86/P111-P113/P124 等新增工具只同步代码没回写文档；README 双语无"逐节对齐"约束，中文版长期滞后。
+- Change: (1) AGENTS.md 新增**文档同步纪律**（用户指令，2026-08-08 起）：文档必须随时跟随代码更新、README 双语逐节对齐、工具数以 `tools_azalea.rs::ALL_TOOL_NAMES` 为唯一权威（现 53），史实型文档（PLAN.md）保留快照不追改；(2) 新增能力纪律 4 处→5 处（补文档同步点）；(3) 全仓库计数统一 53：README.md（49→53 + 工具表规范分组 + 交互行补 sleep）、README.zh-CN.md 整篇重写为英文版镜像（补亮点/架构树/13步循环/6阶段表/53 工具表/Probe 小节/文档全文表）、ARCHITECTURE.md（44→53 + 表补 goto_player/move_away/use_item/shoot/set_mode/search_for_block/till_and_sow/harvest/sleep/task 链）、crate README（47→53 同步表）、benchmarks 规模参数、design README、两篇 tutorial。
+- Verification: grep 全仓库 markdown 无残留 44/47/48/49 工具计数（PLAN.md 史实除外）；README 中英逐节一一对应；工具表 53 与 `ALL_TOOL_NAMES` + `create_mc_azalea_tools_full` vec 逐名核对一致；本轮纯文档无代码变更。
+- Learning: ①"单一权威源 + 纪律"是文档防漂移的唯一解——计数类事实必须引代码常量而非手记；② 双语文档必须同批更新，否则中文版永远是滞后快照；③ 给新工具加同步点（5 处）比事后回补成本低一个数量级。
+- Next: 本次同步把工具计数钉死在 53；下轮新增工具时按纪律第 5 条同步全部文档（README 双语/AGENTS/ARCHITECTURE/crate README/benchmarks）。

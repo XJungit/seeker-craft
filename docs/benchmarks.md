@@ -69,7 +69,7 @@ cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot 
 | 维度 | 数值 |
 |---|---|
 | crate 数 | 6（agent / minecraft / model / viewer / autopilot / ctl） |
-| LLM 工具数 | 49（`ALL_TOOL_NAMES` 权威登记） |
+| LLM 工具数 | 53（`ALL_TOOL_NAMES` 权威登记） |
 | 结构化任务 | 23（tier1-6，机器可判定 JSON） |
 | 反应式模式 | 10（tick 级，无 LLM 延迟） |
 | WorldMemory 记忆类型 | 7（资源/结构/容器/实体/危险/传送门/笔记） |

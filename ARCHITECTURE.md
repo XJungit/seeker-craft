@@ -93,35 +93,37 @@ Handler Layer (azalea/handler.rs Tick)
   queries, 6 types (Resource/Structure/Container/Entity/Hazard/Portal/Note),
   TTL 30s dedup, 64-block radius rendered each turn.
 
-## 44 LLM Tools
+## 53 LLM Tools
+
+> 权威清单：`tools_azalea.rs::ALL_TOOL_NAMES`（53 个，与 `create_mc_azalea_tools_full` vec 一一对应）。
 
 | Category | Tools | Side Effect |
 |---|---|---|
 | Perception | `perceive` | READ |
 | Memory | `memory` (save/anchor/query/forget) | READ/WRITE |
-| Movement | `goto` / `mine_below` / `mine_above` / `pickup` / `follow` / `stop_follow` | WRITE |
+| Block Search | `search_for_block` | READ |
+| Knowledge | `search_wiki` | NETWORK |
+| Movement | `goto` / `goto_player` / `move_away` / `mine_below` / `mine_above` / `pickup` / `follow` / `stop_follow` | WRITE |
 | Mining | `mine` / `make_obsidian` | WRITE |
-| Block Interaction | `interact_block` | WRITE |
-| Combat | `attack` / `defend` | WRITE |
+| Mode | `set_mode` | WRITE |
+| Block Interaction | `interact_block` / `interact_entity` | WRITE |
+| Combat | `attack` / `defend` / `use_item` / `shoot` | WRITE |
+| Sleeping | `sleep` | WRITE |
 | Crafting | `craft` (2×2) / `craft_3x3` | WRITE |
 | Smelting | `smelt` | WRITE (wait) |
 | Auto-craft | `auto_craft` | WRITE (recursive) |
 | Enchanting | `enchant` | WRITE |
-| Gathering | `gather` | WRITE (pathfinding) |
-| Placing | `place` | WRITE |
+| Gathering | `gather` / `till_and_sow` / `harvest` | WRITE (pathfinding) |
+| Placing | `place` / `build` / `build_blueprint` / `list_blueprints` | WRITE |
 | Container | `open` / `chest_view` / `chest_withdraw` / `chest_deposit` | READ/WRITE |
-| Equipment | `equip` / `discard` | WRITE |
-| Consumption | `consume` | WRITE (long press) |
-| Entity | `interact_entity` | WRITE |
+| Equipment | `equip` / `discard` / `consume` | WRITE |
 | Trading | `trade` | WRITE |
+| Social | `give` | WRITE |
 | Chat | `chat` | NETWORK |
 | Goal | `set_goal` / `pause_goal` / `resume_goal` | WRITE |
-| Building | `build` / `build_blueprint` / `list_blueprints` | WRITE |
-| Composite | `run_plan` | WRITE |
-| Scripting | `run_script` | WRITE (rhai) |
+| Composite | `run_plan` / `run_script` | WRITE |
 | Custom Action | `new_action` / `list_actions` | WRITE (persist) |
-| Knowledge | `search_wiki` | NETWORK |
-| Social | `give` | WRITE |
+| Task Chain | `task_complete` / `task_retry` | WRITE |
 | Task chain | `task_complete` / `task_retry` | WRITE |
 
 ## Critical Constraints

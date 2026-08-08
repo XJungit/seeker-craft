@@ -16,7 +16,7 @@
 | **Core question** | Can an LLM autonomously survive, craft, and defeat the Ender Dragon from nothing? |
 | **Runtime** | Pure Rust client via [Azalea](https://github.com/azalea-rs/azalea) (MC 26.2), no server mods |
 | **Brain** | Any OpenAI-compatible LLM (DeepSeek cache-optimized), VLM optional |
-| **Scale** | 6 crates, 49 LLM tools, 23 structured tasks, 10 reactive modes, spatial memory |
+| **Scale** | 6 crates, 53 LLM tools, 23 structured tasks, 10 reactive modes, spatial memory |
 | **Dev loop** | Autonomous: gap analysis → fix → probe verify → commit (see [AGENTS.md](AGENTS.md)) |
 
 > **Project nature.** This project is produced through AI-assisted development
@@ -30,7 +30,7 @@
 ## Highlights
 
 - **Real protocol client** — joins as a vanilla player via the Azalea Rust client (MC 26.2), built-in pathfinding; no mods, no screenshots.
-- **49 typed LLM tools** — perceive, goto, mine, craft (2x2/3x3/smelt/enchant/brew), place, build, containers, trading, combat, meta-tools.
+- **53 typed LLM tools** — perceive, goto, mine, craft (2x2/3x3/smelt/enchant/brew), place, build, containers, trading, combat, meta-tools.
 - **10 reactive modes** — self-defense, hunting, auto-pickup, torch-placing, unstuck, elbow-room, etc., running tick-level without LLM latency.
 - **Structured task system** — 23 tiered tasks (wood → stone → iron → diamond → netherite → ender dragon) with machine-checkable completion conditions.
 - **Spatial WorldMemory** — chunk-indexed memories (resources, structures, containers, hazards, portals) with TTL forgetting and named anchors.
@@ -46,7 +46,7 @@ seeker-craft/
 ├── Cargo.toml                     # workspace root (nightly-2026-07-21)
 ├── crates/
 │   ├── craft-agent/               # core agent: run_one_turn loop, modes, compaction, skills, WorldMemory
-│   ├── craft-agent-minecraft/     # Azalea adapter: bot + 49 tools (craft/smelt/enchant/brew/combat/farm)
+│   ├── craft-agent-minecraft/     # Azalea adapter: bot + 53 tools (craft/smelt/enchant/brew/combat/farm)
 │   ├── craft-agent-model/         # LLM/VLM clients (OpenAI-compatible, multi-backend)
 │   ├── craft-agent-viewer/        # web dashboard (Axum + SSE)
 │   ├── craft-agent-autopilot/     # autonomous dev loop (build/test/RCA/commit)
@@ -87,7 +87,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for the full 13-step loop details.
 
 All 23 tasks (6 tiers) ship as machine-checkable JSON in [`data/tasks/`](data/tasks/).
 
-## 49 LLM tools
+## 53 LLM tools
 
 | Category | Tools |
 |---|---|
@@ -95,13 +95,13 @@ All 23 tasks (6 tiers) ship as machine-checkable JSON in [`data/tasks/`](data/ta
 | Movement | `goto`, `goto_player`, `move_away`, `mine_below`, `mine_above`, `pickup`, `follow`, `stop_follow` |
 | Modes | `set_mode` |
 | Mining | `mine`, `make_obsidian` |
-| Combat | `attack`, `defend`, `shoot`, `use_item` |
+| Interaction | `interact_block`, `interact_entity`, `attack`, `defend`, `use_item`, `shoot`, `sleep` |
 | Craft | `craft`, `craft_3x3`, `smelt`, `auto_craft`, `enchant` |
 | Gathering | `gather`, `till_and_sow`, `harvest` |
 | Placement | `place`, `build`, `build_blueprint`, `list_blueprints` |
 | Containers | `open`, `chest_view`, `chest_withdraw`, `chest_deposit` |
 | Inventory | `equip`, `discard`, `consume` |
-| NPC/Social | `trade`, `give`, `interact_block`, `interact_entity` |
+| NPC/Social | `trade`, `give` |
 | Meta | `chat`, `set_goal`, `run_plan`, `run_script`, `new_action`, `list_actions`, `pause_goal`, `resume_goal`, `task_complete`, `task_retry` |
 
 ## Quick Start

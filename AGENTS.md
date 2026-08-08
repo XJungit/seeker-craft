@@ -63,6 +63,13 @@ cargo run -p craft-agent-minecraft --example agent_azalea_demo --features azalea
 > LLM 兼容性是不可破坏的契约（工具名、消息格式、prompt 文本、配置 schema）。
 > 通用迭代准则（先测试锁定/行为不变/单提交/全量门槛/回滚/文档回填/双点同步）
 > 已下沉至工作流技能 `.agents/skills/workflow/SKILL.md`。本文件只保留项目级硬契约。
+>
+> **文档同步纪律（2026-08-08 起，用户指令）**：文档必须随时跟随代码更新——改代码
+> 的同一轮工作完成时同步改文档，文档与代码不一致（过时数字/工具名/表格结构）视为缺陷。
+> **README.md（英文）与 README.zh-CN.md（中文）必须逐节对齐一致**；工具数量与工具表以
+> `tools_azalea.rs::ALL_TOOL_NAMES`（权威清单，现 53 个）为准，增删工具时同步更新所有
+> 引用工具数的文档（README 双语、AGENTS.md 工具表、ARCHITECTURE.md、crate README、
+> docs/benchmarks.md 等）。史实型文档（如 PLAN.md）保留当时快照，不追改。
 
 ### 架构演进路线图（稳定优先，逐步执行）
 
@@ -71,11 +78,13 @@ cargo run -p craft-agent-minecraft --example agent_azalea_demo --features azalea
 
 ### 新增能力纪律（工具/动作/消息格式的双点同步）
 
-工具名必须稳定（LLM prompt 兼容性）。新增工具需同步 4 处：
-1. `tools_azalea.rs` 注册 GameTool
+工具名必须稳定（LLM prompt 兼容性）。新增工具需同步 5 处：
+1. `tools_azalea.rs` 注册 GameTool + `ALL_TOOL_NAMES`
 2. `core/types.rs::MinecraftAction` 变体
 3. `adapter_azalea.rs` 映射表 `action_for()`（或 execute match）
 4. `azalea/mod.rs::parse_chat_command`（probe 驱动）
+5. 文档同步：README 双语工具表、AGENTS.md 工具表、ARCHITECTURE.md、crate README、
+   所有出现工具计数处（以 `ALL_TOOL_NAMES` 为权威，见上文文档同步纪律）
 防线：`regression_every_registered_tool_maps_to_action`（漏一处即测试红）。
 
 ### force_block 交互贴脸纪律（P100 教训）
@@ -127,7 +136,7 @@ craft-agent-minecraft    MC 适配器（azalea 协议，约 12000+ 行）
   azalea/actions.rs      基础 bot 动作（goto/mine/chat）
   azalea/smart_actions.rs 多工具聚合动作（1319 行）
   adapter_azalea.rs      GameAdapter 实现、perceive 格式、execute、工具↔动作映射
-  tools_azalea.rs        48 个 LLM 工具（4166 行）
+  tools_azalea.rs        53 个 LLM 工具（4166 行）
   action_lib.rs          LLM 定义的 rhai 脚本（338 行）
   blueprint.rs           蓝图库（310 行）
 
@@ -142,7 +151,7 @@ craft-agent-viewer       Web 仪表盘（Axum + SSE）
 craft-agent-autopilot    自主测试循环（build/test → anomaly → RCA → commit）
 ```
 
-## 49 个 LLM 工具
+## 53 个 LLM 工具
 
 | 类别 | 工具 |
 |---|---|
@@ -150,7 +159,7 @@ craft-agent-autopilot    自主测试循环（build/test → anomaly → RCA →
 | 移动 | `goto`, `goto_player`, `move_away`, `mine_below`, `mine_above`, `pickup`, `follow`, `stop_follow` |
 | 模式 | `set_mode` |
 | 挖掘 | `mine`, `make_obsidian` |
-| 交互 | `interact_block`, `interact_entity`, `attack`, `defend`, `use_item`, `shoot` |
+| 交互 | `interact_block`, `interact_entity`, `attack`, `defend`, `use_item`, `shoot`, `sleep` |
 | 合成 | `craft`, `craft_3x3`, `smelt`, `auto_craft`, `enchant` |
 | 采集 | `gather`, `till_and_sow`, `harvest` |
 | 放置 | `place`, `build`, `build_blueprint`, `list_blueprints` |

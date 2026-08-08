@@ -13,40 +13,38 @@ Minecraft 游戏适配器与工具集（Azalea 客户端路线）。
 craft-agent-minecraft = { features = ["azalea-bot"] }
 ```
 
-## 47 个 LLM 工具
+## 53 个 LLM 工具
 
-工具注册于 `create_mc_azalea_tools`，按副作用分组并行执行（READ 同批、NETWORK+READ 同批、
+工具注册于 `create_mc_azalea_tools`，权威清单见 `tools_azalea.rs::ALL_TOOL_NAMES`。
+按副作用分组并行执行（READ 同批、NETWORK+READ 同批、
 WRITE/APPEND/PROCESS 各自单独一批，BARRIER 切批）。
 
 | 类别 | 工具 | 副作用 |
 |------|------|--------|
 | 感知 | `perceive` | READ |
 | 记忆 | `memory` (save/anchor/query/forget) | READ/WRITE |
-| 移动 | `goto` / `mine_below` / `mine_above` / `pickup` / `follow` / `stop_follow` | WRITE |
+| 方块搜索 | `search_for_block` | READ |
+| 知识 | `search_wiki` | NETWORK |
+| 移动 | `goto` / `goto_player` / `move_away` / `mine_below` / `mine_above` / `pickup` / `follow` / `stop_follow` | WRITE |
 | 挖掘 | `mine` / `make_obsidian` | WRITE |
-| 交互方块 | `interact_block` | WRITE |
-| 战斗 | `attack` / `defend` | WRITE |
+| 模式 | `set_mode` | WRITE |
+| 交互 | `interact_block` / `interact_entity` | WRITE |
+| 战斗 | `attack` / `defend` / `use_item` / `shoot` | WRITE |
+| 睡觉 | `sleep` | WRITE |
 | 合成 | `craft` (2×2) / `craft_3x3` | WRITE |
 | 熔炼 | `smelt` | WRITE (等待) |
 | 自动合成 | `auto_craft` | WRITE (递归) |
 | 附魔 | `enchant` | WRITE |
-| 采集 | `gather` / `harvest` | WRITE (寻路) |
-| 种植 | `till_and_sow` | WRITE |
-| 放置 | `place` | WRITE |
+| 采集 | `gather` / `till_and_sow` / `harvest` | WRITE (寻路) |
+| 放置 | `place` / `build` / `build_blueprint` / `list_blueprints` | WRITE |
 | 容器 | `open` / `chest_view` / `chest_withdraw` / `chest_deposit` | READ/WRITE |
-| 装备 | `equip` / `discard` | WRITE |
-| 食用 | `consume` | WRITE (长按) |
-| 睡觉 | `sleep` | WRITE |
-| 实体交互 | `interact_entity` | WRITE |
+| 装备 | `equip` / `discard` / `consume` | WRITE |
 | 交易 | `trade` | WRITE |
-| 聊天 | `chat` | NETWORK |
-| 设目标 | `set_goal` / `pause_goal` / `resume_goal` | WRITE |
-| 建造 | `build` / `build_blueprint` / `list_blueprints` | WRITE |
-| 复合计划 | `run_plan` | WRITE |
-| 复合脚本 | `run_script` | WRITE (rhai) |
-| 自定义动作 | `new_action` / `list_actions` | WRITE (持久化) |
-| 知识搜索 | `search_wiki` | NETWORK |
 | 社交 | `give` | WRITE |
+| 聊天 | `chat` | NETWORK |
+| 目标 | `set_goal` / `pause_goal` / `resume_goal` | WRITE |
+| 复合 | `run_plan` / `run_script` | WRITE |
+| 自定义动作 | `new_action` / `list_actions` | WRITE (持久化) |
 | 任务链 | `task_complete` / `task_retry` | WRITE |
 
 ## 关键模块
@@ -54,7 +52,7 @@ WRITE/APPEND/PROCESS 各自单独一批，BARRIER 切批）。
 | 模块 | 作用 |
 |------|------|
 | `adapter_azalea.rs` | `GameAdapter` 实现：perceive / execute / state snapshot |
-| `tools_azalea.rs` | 47 个 LLM 工具定义 |
+| `tools_azalea.rs` | 53 个 LLM 工具定义 |
 | `azalea/mod.rs` | `AzaleaBot` + connect + 动作 API + 背包三件套（1995 行，P2.2 已拆出 commands.rs / handler.rs） |
 | `azalea/commands.rs` | `BotCommand` 33 变体 + `QueuedCommand` + `parse_chat_command`（probe 驱动） |
 | `azalea/handler.rs` | `BotState` + tick 主体 handle + 两层 modes 反应系统（P2.2 拆出） |
