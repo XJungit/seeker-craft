@@ -101,7 +101,7 @@ pathing/
 
 ### 3.1 可行性（已查证）
 - **API 成熟**：`baritone-api-fabric` 依赖 + `BaritoneAPI` 静态入口，可嵌入自定义 Fabric mod。官方 example：`wagyourtail/baritone-api-fabric-example`（CC0）。
-- **版本风险（重要）**：Baritone 目前最高支持到 **MC 1.21.x**（v1.13.1 对应 1.21.6，v1.14.0 对应 1.21.5+）。**我们的 MC 是 26.2（即 1.26.2），Baritone 尚无对应构建。**
+- **版本风险（重要）**：Baritone 目前最高支持到 **MC 1.21.x**（v1.13.1 对应 1.21.6，v1.14.0 对应 1.21.5+）。**我们的 MC 是 26.2，Baritone 尚无对应构建。**
   → 这是本方案最大的阻塞点，见 §6 风险。
 - **License**：Baritone 使用 **LGPL-3.0 / 部分 GPL**。作为库依赖（非修改源码）嵌入，对闭源/内部项目通常可接受，但需法务确认分发条款。**建议：仅依赖 `baritone-api-fabric`（API 接口，稳定且小），运行时由用户自行放置完整 Baritone jar**，规避源码 GPL 传染。
 
@@ -170,14 +170,14 @@ GoalEngine / CollectController 只调 `NavigationAdapter`，完全不感知 Bari
 
 | 风险 | 严重度 | 说明 / 缓解 |
 |---|---|---|
-| **MC 版本不匹配** | 高 | Baritone 最高 1.21.x，我们是 1.26.2。需等 Baritone 出 1.26.x 构建，或**降级 MC 到 1.21.x 以匹配 Baritone**（影响面大，需决策）。 |
+| **MC 版本不匹配** | 高 | Baritone 最高 1.21.x，我们是 26.2。需等 Baritone 出 26.2 构建，或**降级 MC 到 1.21.x 以匹配 Baritone**（影响面大，需决策）。 |
 | License 传染 | 中 | 仅依赖 API、运行时外挂完整 Baritone jar，规避 GPL 源码传染。需法务确认。 |
 | Baritone 对 FakePlayer 支持 | 中 | Baritone 通常绑定真实 client player。FakePlayer（服务端）能否挂载 Baritone 实例需 POC 验证（Phase 1 第一个实验）。 |
 | 战斗/搭柱等特例移动 Baritone 不覆盖 | 低 | pillarUp、kite 等仍需自研，保留在 MovementController。 |
 | 迁移期双寻路并存 | 低 | Phase 1-3 期间自研 A* 与 Baritone 并存，靠 NavigationAdapter 开关切换。 |
 
 **最高优先级待决策**：
-1. **MC 版本**：是否接受降级到 1.21.x 以解锁 Baritone？还是等 Baritone 适配 1.26.2（时间未知）？
+1. **MC 版本**：是否接受降级到 1.21.x 以解锁 Baritone？还是等 Baritone 适配 26.2（时间未知）？
 2. **License**：法务是否接受"API 依赖 + 运行时外挂"模式？
 
 ---
@@ -186,4 +186,4 @@ GoalEngine / CollectController 只调 `NavigationAdapter`，完全不感知 Bari
 
 "基于 Numen 重构"的正确落地 = **保留服务端深度控制架构 + 用 Baritone 替换自研寻路底座**，而非投奔 Mineflayer 客户端路线。这既补齐了 Mindcraft 同级的寻路能力，又不放弃我们相对 Mindcraft 的真正优势。
 
-最大不确定性是 **MC 1.26.2 与 Baritone 的版本错位**，需先做 Phase 1 的 POC（FakePlayer 能否挂 Baritone）和版本决策，再全面铺开。
+最大不确定性是 **MC 26.2 与 Baritone 的版本错位**，需先做 Phase 1 的 POC（FakePlayer 能否挂 Baritone）和版本决策，再全面铺开。

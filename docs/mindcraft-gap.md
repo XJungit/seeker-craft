@@ -128,7 +128,7 @@
 - **P94 轮内工具迭代预算 + 软交棒**（commit e2fb967）：单轮工具调用上限 20（跨 reroute 累计）；达上限中止剩余批次（【已中止】占位）+ 注入【工具调用上限】收敛 nudge（perceive → 回望目标 → 更直接方案如 run_plan），不重调 LLM。与 P89 死循环 nudge（重复信号）互补——数量信号。单测：25 调用只执行 20 ✓ 只调 1 次 LLM ✓ 5 条占位 ✓ nudge 含"回望当前目标" ✓。对标 pi MAX_TOOL_ITERATIONS=50 + 80% 软交棒警告。
 - **P96 后台异步预压缩**（commit 5deb721）：回合末 estimate_tokens ≥ 预算 40%（压缩触发线 60% 的提前量）→ 后台线程生成摘要（build_cm + request_summary 抽为 free fn，同步/异步共用），prefetch_summary 下一轮 compact() 直接取用——压缩不再阻塞主循环 LLM 调用；provider Box→Arc（Agent::new 签名不变，内部 Arc::from），trait 已 Send+Sync；幂等（在途/已有摘要不重复 spawn）。单测 2：后台生成 + compact 零调用取用 ✓ 幂等与消费后可再预取 ✓。对标 pi compaction_worker 两阶段非阻塞（应用已完成结果 / 配额允许再启动新任务）。
 - **P97 语义记忆层**（commit 3f3c55a）：pi-memory 三层注入的 MC 适配——(1) **索引**：remember 工具（Agent::new 自动注册，核心层跨路线可用）save/forget/list；(2) **按需浮现**：每轮以「当前目标 + 最近 3 个工具调用」为查询词，评分 top-4 注入【长期记忆】user 消息（tag 命中×3 + 词元交集 + uses 频次 + recency 半衰；tokenize = 英文单词 + 中文 bigram/单字双路，无需分词库）；(3) **跨会话持久化**：JSONL data/memory/agent.jsonl，同标题去重更新，touch 频率统计。**地图隔离**：MemoryEntry.scope（None=全局知识 / Some(server)=坐标基地类仅该服务器），AgentConfig.memory_scope + viewer 接线 --mc 地址——不同世界坐标记忆互不污染（用户补充要求）。与 WorldMemory（空间几何邻近渲染）互补：坐标事实走 memory 工具，知识策略走 remember。**注入纪律**：只进 user 消息不碰系统提示（DeepSeek 前缀缓存字节稳定）、轮间剔除 + 压缩 build_cm 过滤（与 perceive/邻近记忆同规则）。顺带修复 P96 回归：request_summary 双 provider 均失败时丢失"均失败"错误信息（P91 测试 compaction_errors_when_both_fail 恢复绿）。测试 +12（tokenize/评分/scope 隔离/JSONL 往返/工具注册/注入剔除/压缩过滤）。
-- **P97b 实机验证修复**（commit c399bfa）：真实 MC 服务器（localhost:4444，协议 1.26.2）+ 真实 LLM 跑 40 步，发现单测覆盖不到的 4 处：(1) **scope 自由填值**——LLM 按描述"通用知识留空"实际填 `scope="global"` 字符串，被 `relevant()` 精确匹配过滤 → 记忆**永不注入**（【长期记忆】在 session 中完全缺失，实机可观测）。修复：`scope_is_global()` 将 None/空串/global/any/* 统一归一为全局，单测 `scope_global_string_is_treated_as_universal` 锁定；(2) **系统提示版本过时**：_default.json 写 "vanilla 1.21.2"（用户指出），实际服务器/azalea 为 MC 1.26.2 → 修正（错误版本号会让 LLM 规划时按旧配方/机制推理）；(3) **remember 引导缺失**：首轮 LLM 全程 0 次 remember（工具存在但不知道何时用）→ _default.json 新增 LONG-TERM SEMANTIC MEMORY 段（何时 save/kind 四类/scope 语义/与 memory 工具分工/list 防重）；(4) **ctl viewer 子命令** + 修 kill_all 自杀 bug（deploy 时 ctl 会 taskkill 自己）。**实机闭环验证**：remember 写入 3 条高质量记忆（食物策略/临时基地布局/木头获取含坐标范围）→ JSONL 落盘 → 修复后【长期记忆】注入渲染 ✓ 缓存命中稳定（hit=63k）✓ 无 400/崩溃。data/memory/agent.jsonl 入库作为初始记忆库（LLM 实机产物的知识沉淀）。
+- **P97b 实机验证修复**（commit c399bfa）：真实 MC 服务器（localhost:4444，协议 26.2）+ 真实 LLM 跑 40 步，发现单测覆盖不到的 4 处：(1) **scope 自由填值**——LLM 按描述"通用知识留空"实际填 `scope="global"` 字符串，被 `relevant()` 精确匹配过滤 → 记忆**永不注入**（【长期记忆】在 session 中完全缺失，实机可观测）。修复：`scope_is_global()` 将 None/空串/global/any/* 统一归一为全局，单测 `scope_global_string_is_treated_as_universal` 锁定；(2) **系统提示版本过时**：_default.json 写 "vanilla 1.21.2"（用户指出），实际服务器/azalea 为 MC 26.2 → 修正（错误版本号会让 LLM 规划时按旧配方/机制推理）；(3) **remember 引导缺失**：首轮 LLM 全程 0 次 remember（工具存在但不知道何时用）→ _default.json 新增 LONG-TERM SEMANTIC MEMORY 段（何时 save/kind 四类/scope 语义/与 memory 工具分工/list 防重）；(4) **ctl viewer 子命令** + 修 kill_all 自杀 bug（deploy 时 ctl 会 taskkill 自己）。**实机闭环验证**：remember 写入 3 条高质量记忆（食物策略/临时基地布局/木头获取含坐标范围）→ JSONL 落盘 → 修复后【长期记忆】注入渲染 ✓ 缓存命中稳定（hit=63k）✓ 无 400/崩溃。data/memory/agent.jsonl 入库作为初始记忆库（LLM 实机产物的知识沉淀）。
 - **经验教训**：实机观测（viewer+LLM）能暴露单测盲区——LLM 自由填值、prompt 引导不足、版本漂移三类问题只能实机发现；工具层 bug 用 probe（秒级），策略/规划行为才开 viewer（30-60s/轮）。
 
 ## 最近修复记录（2026-08-02 · 上下文管理重构 P98）
@@ -729,3 +729,31 @@ earest_soft_column(bot, x, y, z, radius=4)：无镐且头顶硬方块时，扫�
 - **Learning**：harness 提示文本是 LLM 决策的来源——写死旧版 MC 数据比不提示更危险；
   配方类知识必须先查 Wiki（本项目已有 crafty.gg/mcasset 验证纪律），P130 当年凭印象改配方，
   P135 用 probe + Wiki 双重验证回退——「配方向知识，只能由权威源+实机验证变更」。
+
+### P136 版本写死内容全面排查（矿石 Y 层全套 + 知识层）+ 版本号规范 26.2
+
+- **背景**：用户指出版本号规范写法是 **26.2**（非 1.26.2，MC 2026 年版本体系），并要求
+  全面排查所有因 MC 版本差异而写死的内容（不止钻石层）。
+- **版本号纠错**：`docs/mindcraft-gap.md` P97b 段、`docs/design/refactor-numen-philosophy-baritone-base.md`
+  5 处 "1.26.2" → "26.2"（历史记录中把 26.2 误写成别名 1.26.2）。
+- **矿石 Y 层核查**（对照 minecraft.wiki + minecraftmaps 26.2 ore distribution，26.1/26.2
+  保持 1.18+ 布局）：发现 3 处旧数据写死在 `typical_y_range`（smart_actions.rs）：
+  1. **coal (-64,128)** → **(-64,256)**：128 是 1.17 时代上限，1.18+ 煤主带 0~256（最密约 96 山区）。
+  2. **iron (-64,72)** → **(-64,384)**：1.18+ 铁三批次——山区大脉 80~384（最密 232）、
+     地下 -24~56（最密 16）、-64~72 均匀小块；原范围漏了山区大脉（Y=90 也在带内，测试已锁定）。
+  3. **emerald (-64,32)** → **(-16,320)**：1.16 时代绿宝石才在 4~32；1.18+ 起仅【山地】生物群系
+     -16~320（最密 224）——附带 y_range_hint 特判：Y 匹配但非山地时仍输出群系提醒
+     （平原永远挖不到绿宝石）。
+  其余正确：diamond -64~16（最密 -59）、gold -64~32、lapis -64~64、redstone -64~16、
+  copper -16~112、远古残骸 Y=8~24 峰值 16。
+- **知识层修正**（data/profiles/_default.json）：tier2 铁知识写死 "Y=16 to Y=-58, most common
+  at Y=15"（1.16 数据，P135 只修了 gather 提示没修知识层）→ 改为 -64~72（最密 16）+ 山区 232；
+  tier4 钻石 "Y=-58~-64" → "-64~16 最密 -59"；tier6 远古残骸 "bastions/veins" → "Y=8~24 最密 16
+  （不只堡垒）+ 锻造需 netherite_upgrade_smithing_template"。
+- **验证**：新增/更新 7 个单测（铁 90 山区带内不误报 / 铁 400 提示 mine_below / 铁 -60 深带不误报 /
+  绿宝石 Y 匹配但提醒山地 / 绿宝石 -64 提示 goto / 煤 300 提示 mine_below 且无 1.17 上限 128 /
+  钻石 -50 空提示）；minecraft lib 177 全绿。26.2 新机制（sulfur cubes 吸收矿石）属生成层新特性，
+  与 bot 挖掘逻辑无关，无需写死。
+- **Learning**：版本写死排查要成体系——(1) 版本号规范写法全库统一（26.2）；(2) 数据表
+  （Y 层/配方/机制）必须对照权威源逐项核对；(3) 修 harness 提示时要同时查知识层
+  （_default.json stage_knowledge）与工具层（typical_y_range），两处都可能残留旧数据。

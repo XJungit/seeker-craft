@@ -358,3 +358,12 @@ earest_entities::<Without<Player>>() 全量计数，无距离过滤无距离标�
   观测（ctl session）是发现「提示误导」类问题的关键通道——这类问题单测覆盖不到。
 - Next: 观察 bot 能否按正确 Y 提示挖到钻石（tier4 主线）；mushroom_stew 链路（gather 两种蘑菇 →
   craft → consume 饱食恢复）实机闭环。
+
+## Round 39 - 2026-08-08 (P136: 版本写死内容全面排查——矿石 Y 层全套 + 知识层 + 版本号规范)
+
+- Evidence: 用户指出版本号规范写法是 **26.2**（非 1.26.2），并要求全面排查所有因 MC 版本差异写死的内容（不止钻石层）。逐项核对 smart_actions.rs typical_y_range + data/profiles/_default.json stage_knowledge + tasks/*.json + builtin_recipes.json。
+- Root cause: (1) 版本号误写 "1.26.2"（gap 文档 P97b 段 + design 文档 5 处）；(2) typical_y_range 残留 1.17/1.16 旧数据：coal 上限 128（1.17 时代，1.18+ 是 0~256 最密 96）、iron 漏山区大脉 80~384（最密 232）、emerald (-64,32) 是 1.16 数据（1.18+ 仅山地 -16~320 最密 224）；(3) _default.json tier2 铁知识写死 "Y=16 to Y=-58, most common at Y=15"（1.16 数据，P135 只修了 gather 提示没修知识层！）、tier4 钻石范围表述不准、tier6 远古残骸 "bastions/veins" 误导（1.18+ 为 Y=8~24 峰值 16，不只在堡垒）。
+- Change: (1) 版本号 6 处 1.26.2 → 26.2；(2) typical_y_range 修正 coal/iron/emerald 三处 + emerald 群系特判（Y 匹配但非山地仍提醒）；(3) _default.json tier2/tier4/tier6 知识层按 1.18+/26.2 分布修正；(4) tier6_netherite_ingot.json 远古残骸 y=15 → y=16；(5) 新增/更新 7 个 Y hint 单测（铁 90 山区带内不误报/铁 400 提示下挖/绿宝石群系提醒/煤 300 无 1.17 上限等）。
+- Verification: minecraft lib 177 全绿 + fmt/clippy 干净；26.2 矿石分布经 minecraft.wiki + minecraftmaps 双重核实（26.1/26.2 保持 1.18+ 布局，仅 1.20.2 钻石深板岩批次微调）。diamond/gold/lapis/redstone/copper/基岩层/远古残骸层经核对无误。26.2 新机制 sulfur cubes 吸收矿石属生成层特性，与 bot 逻辑无关。
+- Learning: (1) 版本写死排查要成体系：数据表（Y 层/配方/机制）必须对照权威源逐项核对，且修 harness 提示时要同时查工具层（typical_y_range）与知识层（_default.json stage_knowledge），两处都可能残留旧数据；(2) 版本号规范写法全库统一（26.2）；(3) P135 只修了一处旧数据，同一模式在相邻位置还有 3 处——「修一处要横向扫同类」。
+- Next: 观察 bot 实机是否能按新 Y 提示挖到钻石/铁（viewer session）；tier4 完成后进入下界阶段；若出现 sulfur cubes 相关异常再跟进。

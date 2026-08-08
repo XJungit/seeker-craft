@@ -2,7 +2,7 @@
     "id": "tier6_netherite_ingot",
     "name": "升级下界合金锭",
     "description": "下界合金锭是游戏中最顶级的材料，可用于在锻造台中升级钻石装备为下界合金装备（更高耐久、更高附魔加成、抗火抗岩浆）。需要 4 个远古残骸烧成下界合金碎片 + 4 个金锭合成 1 个下界合金锭。",
-    "goal": "合成 1 个下界合金锭。步骤：1) 进入下界后 mine_below(y=15) 在 Y=15 左右挖远古残骸 ancient_debris（需钻石镐，推荐用 TNT 炸开矿道加速）；2) gather(item=\"ancient_debris\", count=4) 收集 4 块远古残骸；3) smelt(output=\"netherite_scrap\", fuel=\"coal\", count=4) 烧成下界合金碎片；4) gather(item=\"gold_ore\", count=4) 挖金矿并 smelt 成 4 金锭；5) 放置工作台后 craft_3x3(item=\"netherite_ingot\", count=1)（4 scrap + 4 gold 无形状合成）。",
+    "goal": "合成 1 个下界合金锭。步骤：1) 进入下界后 mine_below(y=16) 在 Y=16 左右挖远古残骸 ancient_debris（需钻石镐，主批次生成于 Y=8~24 峰值 Y=16；推荐用 TNT 炸开矿道加速）；2) gather(item=\"ancient_debris\", count=4) 收集 4 块远古残骸；3) smelt(output=\"netherite_scrap\", fuel=\"coal\", count=4) 烧成下界合金碎片；4) gather(item=\"gold_ore\", count=4) 挖金矿并 smelt 成 4 金锭；5) 放置工作台后 craft_3x3(item=\"netherite_ingot\", count=1)（4 scrap + 4 gold 无形状合成）。",
     "tier": 6,
     "order": 1,
     "success": {

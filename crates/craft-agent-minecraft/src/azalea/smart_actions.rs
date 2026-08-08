@@ -253,7 +253,7 @@ pub async fn search_block_coords(
 /// - "oak_log 在 Y=60~100 生成，bot 当前 Y=43（地下），需要先 goto 地表"
 /// - "diamond_ore 在 Y=-64~-16 生成，bot 当前 Y=40（地表），需要先 mine_below 到深地下"
 ///
-/// 数据来源：minecraft.fandom.com 1.20+ ore distribution + vanilla block 生成规则。
+/// 数据来源：minecraft.wiki 1.18+ ore distribution + vanilla block 生成规则（与 26.2 一致）。
 /// 返回 None 表示该方块无明确 Y 限制（如 grass_block/dirt 在任何 Y 都可能存在）。
 fn typical_y_range(item: &str) -> Option<(i32, i32)> {
     let bare = item.strip_prefix("minecraft:").unwrap_or(item);
@@ -262,13 +262,17 @@ fn typical_y_range(item: &str) -> Option<(i32, i32)> {
         "oak_log" | "birch_log" | "spruce_log" | "jungle_log" | "acacia_log" | "dark_oak_log"
         | "mangrove_log" | "cherry_log" | "pale_oak_log" => Some((60, 100)),
         // 木板/工作台等：人造，无 Y 限制
-        // 矿石类（vanilla 1.18+ ore distribution）：
-        "coal_ore" | "deepslate_coal_ore" => Some((-64, 128)),
-        "iron_ore" | "deepslate_iron_ore" => Some((-64, 72)),
+        // 矿石类（vanilla 1.18+ ore distribution，26.2 沿用）：
+        // 煤：主带 Y=0~256（最密约 96~136 山区），深板岩层 -64~0 有少量次带。
+        "coal_ore" | "deepslate_coal_ore" => Some((-64, 256)),
+        // 铁：三批次——山区大脉 80~384（最密 232）、地下 -24~56（最密 16）、-64~72 均匀小块。
+        "iron_ore" | "deepslate_iron_ore" => Some((-64, 384)),
         "copper_ore" | "deepslate_copper_ore" => Some((-16, 112)),
         "gold_ore" | "deepslate_gold_ore" => Some((-64, 32)),
         "diamond_ore" | "deepslate_diamond_ore" => Some((-64, 16)),
-        "emerald_ore" | "deepslate_emerald_ore" => Some((-64, 32)),
+        // 绿宝石：1.18+ 起仅山地生物群系生成，Y=-16~320，最高密度约 224（孤立山峰附近）。
+        // 注意 1.16 时代是 4~32（已过时），且平原/沙漠永远挖不到绿宝石。
+        "emerald_ore" | "deepslate_emerald_ore" => Some((-16, 320)),
         "lapis_ore" | "deepslate_lapis_ore" => Some((-64, 64)),
         "redstone_ore" | "deepslate_redstone_ore" => Some((-64, 16)),
         // 石材类：地下（Y < 60）
@@ -308,10 +312,20 @@ fn y_range_hint(item: &str, bot_y: i32) -> String {
         return String::new();
     };
     if bot_y >= y_min && bot_y <= y_max {
+        // 绿宝石特判：1.18+ 起仅【山地】生物群系生成。即使 Y 在范围内，
+        // 平原/沙漠等群系也永远找不到——必须提醒 LLM 先找山地地形。
+        // （1.16 时代绿宝石生成于 4~32，无此群系限制；此为版本差异。）
+        if matches!(bare, "emerald_ore" | "deepslate_emerald_ore") {
+            return "\n【绿宝石】1.18+ 起仅在【山地】生物群系生成（Y=-16~320，高处更密）。\
+                    当前若不在山地，需先探索高山地形再 gather。"
+                .to_string();
+        }
         return String::new();
     }
     let target_desc = if bare.ends_with("_log") || bare.ends_with("_wood") {
         "（原木类需要先找到森林/树木群系）"
+    } else if matches!(bare, "emerald_ore" | "deepslate_emerald_ore") {
+        "（绿宝石矿仅在【山地】生物群系生成，平原/沙漠永远找不到）"
     } else if bare.ends_with("_ore") {
         "（矿石类需要挖到对应深度）"
     } else if matches!(
@@ -1406,9 +1420,45 @@ mod tests {
 
     #[test]
     fn y_hint_iron_at_surface_says_mine_below() {
-        let hint = y_range_hint("iron_ore", 90);
+        let hint = y_range_hint("iron_ore", 400);
         assert!(!hint.is_empty());
         assert!(hint.contains("mine_below"), "{hint}");
+    }
+
+    #[test]
+    fn y_hint_iron_surface_90_in_mountain_vein_range() {
+        // 1.18+ 铁有山区大脉带（80~384，最密 232），Y=90 落在此带内 → 不应误报
+        let hint = y_range_hint("iron_ore", 90);
+        assert!(hint.is_empty(), "Y=90 在铁分布带内不应提示: {hint}");
+    }
+
+    #[test]
+    fn y_hint_iron_very_deep_in_range() {
+        // 铁深带 -64~72 均匀生成，Y=-60 不应提示
+        let hint = y_range_hint("iron_ore", -60);
+        assert!(hint.is_empty(), "Y=-60 在铁分布带内不应提示: {hint}");
+    }
+
+    #[test]
+    fn y_hint_emerald_y_in_range_but_biome_reminder() {
+        // 绿宝石 1.18+ 仅山地群系：Y=70 虽在 -16~320 范围内，仍必须提醒群系限制
+        let hint = y_range_hint("emerald_ore", 70);
+        assert!(hint.contains("山地"), "应提醒山地群系: {hint}");
+    }
+
+    #[test]
+    fn y_hint_emerald_below_range_says_goto() {
+        // Y=-64 < -16 → 提示需要 goto 到更高处（并带山地群系提醒）
+        let hint = y_range_hint("emerald_ore", -64);
+        assert!(hint.contains("goto") || hint.contains("山地"), "{hint}");
+    }
+
+    #[test]
+    fn y_hint_coal_above_range_says_mine_below() {
+        // 煤 1.18+ 上限 256（旧代码写死 128 是 1.17 时代数据）
+        let hint = y_range_hint("coal_ore", 300);
+        assert!(hint.contains("mine_below"), "{hint}");
+        assert!(!hint.contains("128"), "不得出现 1.17 旧上限 128: {hint}");
     }
 
     #[test]

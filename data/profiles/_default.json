@@ -8,7 +8,7 @@
     },
     {
       "tier": 2,
-      "text": "### Iron Age (Y=16 to Y=-58 most common)\n- Mine iron_ore (found at Y=16 to Y=-58, most common at Y=15)\n- Smelt iron_ingot in furnace (iron_ore + coal/charcoal)\n- Craft iron_pickaxe (3 iron_ingot + 2 sticks)\n- Craft iron_sword (2 iron_ingot + 1 stick)"
+      "text": "### Iron Age (Y=-64 to Y=72 most common underground)\n- Mine iron_ore (found at Y=-64 to Y=72, most common around Y=16; huge vein deposits also in mountains around Y=232)\n- Smelt iron_ingot in furnace (iron_ore + coal/charcoal)\n- Craft iron_pickaxe (3 iron_ingot + 2 sticks)\n- Craft iron_sword (2 iron_ingot + 1 stick)"
     },
     {
       "tier": 3,
@@ -16,7 +16,7 @@
     },
     {
       "tier": 4,
-      "text": "### Diamond Age (Y=-58 to Y=-64 most common)\n- Mine diamond_ore (requires iron_pickaxe or better)\n- Craft diamond_pickaxe (3 diamond + 2 sticks)\n- Craft diamond_sword (2 diamond + 1 stick)\n- Craft diamond_armor\n- Craft enchanting_table (2 diamond + 4 obsidian + 1 book)\n- Obsidian forms when water flows onto lava; you need a diamond_pickaxe to mine it"
+      "text": "### Diamond Age (Y=-64 to Y=16, most common around Y=-59, just above bedrock)\n- Mine diamond_ore (requires iron_pickaxe or better)\n- Craft diamond_pickaxe (3 diamond + 2 sticks)\n- Craft diamond_sword (2 diamond + 1 stick)\n- Craft diamond_armor\n- Craft enchanting_table (2 diamond + 4 obsidian + 1 book)\n- Obsidian forms when water flows onto lava; you need a diamond_pickaxe to mine it"
     },
     {
       "tier": 5,
@@ -24,7 +24,7 @@
     },
     {
       "tier": 6,
-      "text": "### Netherite, The End & Ender Dragon\n- Ancient debris is found deep in the Nether (bastions/veins): smelt to netherite_scrap; 4 scrap + 4 gold_ingot -> netherite_ingot\n- Upgrade diamond tools/armor to netherite with a smithing table\n- Eyes of ender: ender_pearl + blaze_powder; throw to find stronghold\n- Activate end_portal with eyes, then defeat the Ender Dragon: destroy the crystals on top of obsidian towers first (they heal the dragon), use a bow and lots of arrows, watch out for the dragon's breath\n- After the dragon dies, find the end ship (via end gateway) for elytra and shulker boxes"
+      "text": "### Netherite, The End & Ender Dragon\n- Ancient debris is found deep in the Nether (Y=8~24, most common around Y=16, NOT just in bastions): smelt to netherite_scrap; 4 scrap + 4 gold_ingot -> netherite_ingot\n- Upgrade diamond tools/armor to netherite with a smithing table (requires netherite_upgrade_smithing_template from bastions)\n- Eyes of ender: ender_pearl + blaze_powder; throw to find stronghold\n- Activate end_portal with eyes, then defeat the Ender Dragon: destroy the crystals on top of obsidian towers first (they heal the dragon), use a bow and lots of arrows, watch out for the dragon's breath\n- After the dragon dies, find the end ship (via end gateway) for elytra and shulker boxes"
     }
   ],
   "cooldown": 3000,
