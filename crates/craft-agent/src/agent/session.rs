@@ -117,7 +117,14 @@ impl Agent {
             self.session_msg_offset = self.messages.len();
         } else {
             let offset = self.session_msg_offset.min(self.messages.len());
-            let new_msgs: Vec<Message> = self.messages[offset..].to_vec();
+            // 过滤 few-shot 示例消息（A1 运行时注入的 prompt 素材，非真实历史）。
+            // 若不过滤，重启恢复后 few-shot 混入真实消息流 → tool_calls 配对错乱
+            // → LLM 400（实测：5 小时连续 "insufficient tool messages" 失败）。
+            let new_msgs: Vec<Message> = self.messages[offset..]
+                .iter()
+                .filter(|m| !m.is_few_shot())
+                .cloned()
+                .collect();
             for m in new_msgs {
                 sess.append_message(m);
             }

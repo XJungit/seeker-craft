@@ -733,6 +733,8 @@ impl Session {
 
     /// 把当前分支的 entry 还原为 `Message` 列表（给 Agent 加载恢复，pi `to_messages_for_current_path`）
     /// 遇到最近的 Checkpoint 时，从它的快照开始（之后追加的 MessageEntry 继续）
+    /// 过滤 few-shot 示例消息：它们只是运行时注入的 prompt 素材，若被持久化
+    /// （历史 bug 曾写入），恢复后混入真实历史会破坏 tool_calls 配对 → LLM 400。
     pub fn messages_for_current_path(&self) -> Vec<Message> {
         let path = self.entries_for_current_path();
         // 找路径上最近的 checkpoint
@@ -747,17 +749,27 @@ impl Session {
         match checkpoint_idx {
             Some(ci) => {
                 if let SessionEntry::Checkpoint(cp) = &path[ci] {
-                    out.extend(cp.snapshot.messages.clone());
+                    out.extend(
+                        cp.snapshot
+                            .messages
+                            .iter()
+                            .filter(|m| !m.is_few_shot())
+                            .cloned(),
+                    );
                 }
                 for e in &path[ci + 1..] {
-                    if let SessionEntry::Message(m) = e {
+                    if let SessionEntry::Message(m) = e
+                        && !m.message.is_few_shot()
+                    {
                         out.push(m.message.clone());
                     }
                 }
             }
             None => {
                 for e in &path {
-                    if let SessionEntry::Message(m) = e {
+                    if let SessionEntry::Message(m) = e
+                        && !m.message.is_few_shot()
+                    {
                         out.push(m.message.clone());
                     }
                 }
@@ -860,6 +872,51 @@ mod tests {
     fn tmp_path(name: &str) -> PathBuf {
         let dir = std::env::temp_dir();
         dir.join(format!("craft_agent_session_test_{name}.jsonl"))
+    }
+
+    /// few-shot 示例消息（A1 运行时注入）绝不能被持久化/恢复：
+    /// 否则滚动恢复后混入真实历史 → tool_calls 配对错乱 → LLM 400。
+    /// 实测：session 中出现 fewshot7_0_1 孤儿 toolresult，LLM 连续 5 小时
+    /// "insufficient tool messages following tool_calls message"。
+    #[test]
+    fn few_shot_messages_filtered_on_restore() {
+        let path = tmp_path("fewshot");
+        let _ = std::fs::remove_file(&path);
+        let mut s = Session::new("minecraft");
+        s.append_message(Message::user("真实用户消息"));
+        // 模拟历史 bug 写入的 few-shot assistant + tool 对
+        s.append_message(Message::assistant_tool_call(
+            "fewshot0_0_0",
+            "craft",
+            serde_json::json!({"item": "oak_planks"}),
+        ));
+        s.append_message(Message::tool_result(
+            "fewshot0_0_0",
+            "craft",
+            "【示例】Action output: ...",
+        ));
+        s.append_message(Message::user("另一条真实消息"));
+        s.save_to(&path).unwrap();
+
+        let reloaded = Session::open(&path).unwrap();
+        let msgs = reloaded.messages_for_current_path();
+        // few-shot 两条被过滤，只留真实消息
+        assert_eq!(msgs.len(), 2, "few-shot 应被过滤: {msgs:?}");
+        assert!(matches!(&msgs[0], Message::User(u) if u.content == "真实用户消息"));
+        assert!(matches!(&msgs[1], Message::User(u) if u.content == "另一条真实消息"));
+
+        // is_few_shot 判定正确
+        let fs_asst = Message::assistant_tool_call(
+            "fewshot1_0_0",
+            "craft",
+            serde_json::json!({"item": "stick"}),
+        );
+        let fs_tool = Message::tool_result("fewshot1_0_0", "craft", "x");
+        let real = Message::tool_result("call_abc", "craft", "y");
+        assert!(fs_asst.is_few_shot());
+        assert!(fs_tool.is_few_shot());
+        assert!(!real.is_few_shot());
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

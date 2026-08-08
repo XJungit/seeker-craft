@@ -266,6 +266,20 @@ impl Message {
 // ── 转换为 OpenAI ChatML 格式 (发送给 LLM) ──
 
 impl Message {
+    /// 是否为 A1 few-shot 示例消息（id 带 `fewshot` 前缀，见 prompt.rs
+    /// example_to_messages）。这类消息是运行时注入的 prompt 素材，**绝不
+    /// 应持久化进 session**——否则滚动恢复时 few-shot 混入真实历史，
+    /// assistant(tool_calls) 与 tool 结果配对错乱，LLM 持续 400
+    /// （"insufficient tool messages following tool_calls message"）。
+    /// 写入 session 与从 session 恢复时都要过滤。
+    pub fn is_few_shot(&self) -> bool {
+        match self {
+            Self::Assistant(m) => m.tool_calls.iter().any(|tc| tc.id.starts_with("fewshot")),
+            Self::ToolResult(m) => m.tool_call_id.starts_with("fewshot"),
+            Self::User(_) => false,
+        }
+    }
+
     /// 转换为 OpenAI Chat Completions 的 message 格式
     pub fn to_chatml(&self) -> Value {
         match self {
