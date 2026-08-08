@@ -322,3 +322,11 @@ earest_entities::<Without<Player>>() 全量计数，无距离过滤无距离标�
 - Verification: grep 全仓库 markdown 无残留 44/47/48/49 工具计数（PLAN.md 史实除外）；README 中英逐节一一对应；工具表 53 与 `ALL_TOOL_NAMES` + `create_mc_azalea_tools_full` vec 逐名核对一致；本轮纯文档无代码变更。
 - Learning: ①"单一权威源 + 纪律"是文档防漂移的唯一解——计数类事实必须引代码常量而非手记；② 双语文档必须同批更新，否则中文版永远是滞后快照；③ 给新工具加同步点（5 处）比事后回补成本低一个数量级。
 - Next: 本次同步把工具计数钉死在 53；下轮新增工具时按纪律第 5 条同步全部文档（README 双语/AGENTS/ARCHITECTURE/crate README/benchmarks）。
+
+## Round 36 - 2026-08-08 (AGENTS.md 激进精简 Round 2：AAIF 指南落地)
+- Evidence: 用户问"AGENTS.md 怎么写？有标准吗"，查证后确认事实标准——AGENTS.md 由 OpenAI Codex 发起、2025-12 捐给 Linux Foundation 旗下 Agentic AI Foundation（AAIF）托管（agents.md 官网，6万+ 仓库采用）：无 schema、普通 Markdown、仓库根目录；AAIF 五轮基准结论"更短更高信号"。用户选择激进方案。
+- Root cause: Round 33 已把方法论下沉 workflow 技能（-30 行），但 AGENTS.md 仍 445 行——描述性/重复性内容（工具表、13 步循环、任务/模式/Profile/WorldMemory 系统描述、命令清单）在 README/ARCHITECTURE/crate README 已覆盖；另发现漂移：架构节写"5 个 crate"实际 6 个（漏 craft-agent-ctl）、目录布局未迁移 crates/ 结构。
+- Change: (1) 只保留"agent 无法从代码推断"的硬契约：Git 安全/推送 4 项自检/汇报纪律/迭代工作流/文档同步纪律、新增能力纪律 5 点（标题原样——SKILL.md 按名引用）、P100/P101/P102 修正纪律、系统提示字节稳定性、工具调用协议（reasoning_content 400/to_chatml/不折叠）、vendor/azalea 5 步、ctl 纪律（Start-Process 禁令/ctl viewer 教训）、Probe 纪律、常见构建错误表（唯一来源）；(2) 折叠为指针：工具表→ALL_TOOL_NAMES、13 步循环→ARCHITECTURE（保留 Nudge 400 规则）、构建/测试命令→压缩块、Perceive 格式保留代码块去散文、probe 命令列表→parse_chat_command、任务/模式/WorldMemory/Profile/项目文件→1-3 行；(3) 修正 5→6 crate 漂移 + crates/ 布局。
+- Verification: 445→287 行（-35%）；18 项硬契约关键词 grep 全数在位；SKILL.md 引用的「新增能力纪律」标题保留；workspace members 确认 6 crate；纯文档变更无需构建。Mimosa hook 提示完整安全审计未跑完（scanner_enobufs），未声明安全结论。
+- Learning: ① AAIF"只写无法推断的信息 + 短版优先"可直接套用本项目——高频引用（工具表）也可靠权威清单指针替代；② 精简 AGENTS.md 时顺带暴露了 5→6 crate 漂移——文档瘦身是最好的漂移扫描；③ 引用的标题（SKILL.md→新增能力纪律）是删改的硬约束，先查引用再动刀。
+- Next: Mimosa 完整审计补跑（本轮 hook 提示未完成）；AGENTS.md 后续增补内容时按"硬契约/指针"二分法评估，避免回涨。
