@@ -1,7 +1,9 @@
 //! Synchronous supervisor for the Viewer and Minecraft agent.
 
+mod anomaly;
 mod session_analysis;
 
+use anomaly::{AnomalyState, detect_anomalies};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use session_analysis::{SessionAnalysis, analyze_session};
@@ -85,6 +87,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut baseline = analyze_session(&session_path);
     let mut previous_game_state = try_get_json(&client, &format!("{base_url}/api/game-state"));
+    let mut anomaly_state = AnomalyState::default();
     let mut last_progress = Instant::now();
     let mut status_failures = 0_u32;
     supervisor.phase = SupervisorPhase::Monitoring;
@@ -165,6 +168,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let game_state = try_get_json(&client, &format!("{base_url}/api/game-state"));
         let current = analyze_session(&session_path);
         record_observation(&event_path, &status, game_state.as_ref(), &current)?;
+        // P138: anomaly 检测（死亡/重生/装备丢失/濒死恢复）。结构化 game-state 快照
+        // 喂给有状态检测器，异常写入 workflow.jsonl（type=anomaly）+ 打印，供迭代留证。
+        if let Some(game_state) = game_state.as_ref() {
+            let anomalies = detect_anomalies(&mut anomaly_state, game_state, now_ms());
+            for anomaly in &anomalies {
+                println!(
+                    "[anomaly] {} @{}: {}",
+                    anomaly.kind_name(),
+                    anomaly.timestamp_ms,
+                    anomaly.detail
+                );
+                record_anomaly(&event_path, anomaly)?;
+            }
+            if !anomalies.is_empty() {
+                // 重大异常（死亡/装备丢失）→ 强 steering 提示恢复（重建装备/回死亡点拾物）
+                steer_anomaly_recovery(&client, &base_url, &anomalies)?;
+            }
+        }
         let game_progress = match (&previous_game_state, &game_state) {
             (Some(previous), Some(current)) => game_state_changed(previous, current),
             _ => false,
@@ -270,6 +291,53 @@ fn record_observation(
     serde_json::to_writer(&mut file, &event)?;
     file.write_all(b"\n")?;
     file.flush()?;
+    Ok(())
+}
+
+/// 追加一条 anomaly 事件（death/respawn/armor_loss/near_death）到 workflow.jsonl。
+fn record_anomaly(
+    path: &Path,
+    anomaly: &anomaly::Anomaly,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let event = json!({
+        "type": "anomaly",
+        "kind": anomaly.kind_name(),
+        "timestamp_ms": anomaly.timestamp_ms,
+        "detail": anomaly.detail,
+    });
+    let mut file = OpenOptions::new().create(true).append(true).open(path)?;
+    serde_json::to_writer(&mut file, &event)?;
+    file.write_all(b"\n")?;
+    file.flush()?;
+    Ok(())
+}
+
+/// 死亡/装备丢失等重大异常 → 强 steering 提示 bot 恢复（重建装备/回死亡点拾物）。
+fn steer_anomaly_recovery(
+    client: &reqwest::blocking::Client,
+    base_url: &str,
+    anomalies: &[anomaly::Anomaly],
+) -> Result<(), Box<dyn std::error::Error>> {
+    let details: Vec<String> = anomalies
+        .iter()
+        .map(|a| format!("{}: {}", a.kind_name(), a.detail))
+        .collect();
+    let goal = format!(
+        "检测到重大异常：{}. 立即停止当前动作：1) 若死亡——回到死亡点附近拾回掉落物，\
+         检查背包丢失的工具/装备，缺什么补什么（合成/熔炼）；2) 若装备丢失——优先重新装备/合成\
+         铁甲与武器；3) 用 perceive 确认生命、饱食、背包、装备已恢复。",
+        details.join("；")
+    );
+    let response: Value = client
+        .post(format!("{base_url}/api/goal"))
+        .json(&json!({"goal": goal}))
+        .send()?
+        .error_for_status()?
+        .json()?;
+    println!("[anomaly] steering result={response}");
     Ok(())
 }
 
