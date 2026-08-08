@@ -1111,26 +1111,17 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
                                 .clone()
                                 .all(|s| slots.get(s).map(|st| !st.is_empty()).unwrap_or(false));
                             if hotbar_full {
-                                // 把第一个 hotbar 物品移到主背包腾空位
-                                let player_range = menu.player_slots_range();
+                                // P134 修复：旧实现 left_click 拿起/找空槽/放下——主背包无
+                                // 空槽时物品卡在光标上，后续 shift_click 全部错乱（实机：
+                                // 装备 stone_pickaxe 反复失败，hotbar 满 + 背包满死锁）。
+                                // 改用 QuickMoveClick（shift_click）：服务端自动合并同类堆
+                                // + 找空槽，不产生光标悬挂；合并成功即腾出 hotbar 空位。
                                 for hs in hotbar_range.clone() {
                                     if let Some(st) = slots.get(hs)
                                         && !st.is_empty()
                                     {
-                                        inv.left_click(hs);
-                                        sleep(Duration::from_millis(80)).await;
-                                        // 找一个空的主背包槽位放下
-                                        for ps in player_range.clone() {
-                                            let is_empty = slots
-                                                .get(ps)
-                                                .map(|st| st.is_empty())
-                                                .unwrap_or(false);
-                                            if is_empty || ps >= slots.len() {
-                                                inv.left_click(ps);
-                                                sleep(Duration::from_millis(80)).await;
-                                                break;
-                                            }
-                                        }
+                                        inv.shift_click(hs);
+                                        sleep(Duration::from_millis(200)).await;
                                         break;
                                     }
                                 }
@@ -1586,10 +1577,22 @@ pub async fn do_discard(bot: &Client, item: &str, count: u32) -> String {
                 sleep(Duration::from_millis(1300)).await;
             }
         }
+        // P134：1x1 竖井/窄洞等水平 4 方向全堵场景，向上走是唯一脱身方向
+        // （上方是挖出的空气柱）。竖直距离 4 格 > 1.5m 吸回半径，物品不会被吸回。
+        if let Ok(p) = bot.position() {
+            bot.start_goto(BlockPosGoal(BlockPos::new(
+                p.x.floor() as i32,
+                (p.y + 4.0).floor() as i32,
+                p.z.floor() as i32,
+            )));
+            sleep(Duration::from_millis(1300)).await;
+        }
         bot.stop_pathfinding();
         // 验证是否真的走开（若原地打转则物品会被吸回）
         let moved_away = match (start_pos, bot.position().ok()) {
-            (Some(s), Some(p)) => (p.x - s.x).abs() > 2.0 || (p.z - s.z).abs() > 2.0,
+            (Some(s), Some(p)) => {
+                (p.x - s.x).abs() > 2.0 || (p.y - s.y).abs() > 2.0 || (p.z - s.z).abs() > 2.0
+            }
             _ => true,
         };
         // 验证物品是否还在背包（吸回检测）
@@ -1644,7 +1647,9 @@ pub async fn do_consume(bot: &Client, item: &str) -> String {
         // P127：移植 do_equip 的 P8 修复——hotbar 满时 shift_click 无法移动物品
         // （服务端没有空 hotbar 槽可接收），表现为"背包未持有 X"但 perceive 明明
         // 显示 X 在主背包（实测 red_mushroom 就在 slot 17 却无法消耗）。
-        // 先腾一个空 hotbar 槽：把第一个 hotbar 物品左击拾起、放到主背包空槽。
+        // 先腾一个空 hotbar 槽：把第一个 hotbar 物品 QuickMove 到主背包
+        // （P134 修复：旧 left_click 拿放逻辑在主背包无空槽时物品卡在光标上，
+        // 后续 click 全乱——QuickMoveClick 由服务端自动合并同类堆/找空槽）。
         if let Some(menu) = inv.menu().ok().flatten() {
             let hotbar_range = menu.hotbar_slots_range();
             if let Some(slots) = inv.slots() {
@@ -1652,22 +1657,12 @@ pub async fn do_consume(bot: &Client, item: &str) -> String {
                     .clone()
                     .all(|s| slots.get(s).map(|st| !st.is_empty()).unwrap_or(false));
                 if hotbar_full {
-                    let player_range = menu.player_slots_range();
                     for hs in hotbar_range.clone() {
                         if let Some(st) = slots.get(hs)
                             && !st.is_empty()
                         {
-                            inv.left_click(hs);
-                            sleep(Duration::from_millis(80)).await;
-                            for ps in player_range.clone() {
-                                let is_empty =
-                                    slots.get(ps).map(|st| st.is_empty()).unwrap_or(false);
-                                if is_empty || ps >= slots.len() {
-                                    inv.left_click(ps);
-                                    sleep(Duration::from_millis(80)).await;
-                                    break;
-                                }
-                            }
+                            inv.shift_click(hs);
+                            sleep(Duration::from_millis(200)).await;
                             break;
                         }
                     }
