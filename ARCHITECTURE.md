@@ -140,7 +140,7 @@ every API call. Regression test: `regression_system_prompt_byte_stable_across_ob
 ### Mindcraft Philosophy Alignment
 
 Bot tools only do what they can do; if they can't, return `Err` and let the LLM
-decide. See [`AGENTS.md`](./AGENTS.md) section 9-bis for full rules.
+decide (full rules kept in local workflow notes, not shipped).
 
 - ❌ Never auto-craft tool blocks (furnace/pickaxe/axe/sword) inside tools
 - ❌ Never auto-satisfy material dependencies (no `gather → auto_craft → smelt` chains)
@@ -192,5 +192,5 @@ cargo test -p craft-agent-model --lib        # 23 model tests
 - PowerShell scripts (`auto_diag.ps1` / `verify_build.ps1` / `scan_run.ps1`)
   drive the full automation loop: build → test → LLM e2e → analyze → fix → rerun.
 
-See [`AGENTS.md`](./AGENTS.md) for the full automation workflow manual.
+See [`docs/mindcraft-gap.md`](./docs/mindcraft-gap.md) for the automation workflow records.
 See [`docs/tutorials/`](./docs/tutorials/) for developer guides.

@@ -17,7 +17,7 @@
 | **Runtime** | Pure Rust client via [Azalea](https://github.com/azalea-rs/azalea) (MC 26.2), no server mods |
 | **Brain** | Any OpenAI-compatible LLM (DeepSeek cache-optimized), VLM optional |
 | **Scale** | 6 crates, 53 LLM tools, 23 structured tasks, 10 reactive modes, spatial memory |
-| **Dev loop** | Autonomous: gap analysis → fix → probe verify → commit (see [AGENTS.md](AGENTS.md)) |
+| **Dev loop** | Autonomous: gap analysis → fix → probe verify → commit (workflow notes kept locally, not shipped) |
 
 > **Project nature.** This project is produced through AI-assisted development
 > ("vibe coding") as a personal experiment — deliberately adopting a Rust-only
@@ -172,7 +172,6 @@ cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot 
 | Doc | What it covers |
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | Layered architecture, 13-step agent loop, module layout |
-| [AGENTS.md](AGENTS.md) | Autonomous development workflow (gap analysis → fix → verify) |
 | [docs/mindcraft-gap.md](docs/mindcraft-gap.md) | Mindcraft parity audit + prioritized backlog |
 | [docs/benchmarks.md](docs/benchmarks.md) | Test baselines, probe coverage, cache hit rates, Ender-Dragon progress |
 | [docs/adr.md](docs/adr.md) | Architecture decision records |

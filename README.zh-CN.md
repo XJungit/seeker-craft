@@ -18,7 +18,7 @@
 | **运行时** | 纯 Rust 客户端，基于 [Azalea](https://github.com/azalea-rs/azalea)（MC 26.2），无需服务端 mod |
 | **大脑** | 任意 OpenAI 兼容 LLM（DeepSeek 前缀缓存优化），VLM 可选 |
 | **规模** | 6 个 crate、53 个 LLM 工具、23 个结构化任务、10 个反应式模式、空间记忆 |
-| **开发循环** | 自主：差距分析 → 修复 → probe 验证 → 提交（见 [AGENTS.md](AGENTS.md)） |
+| **开发循环** | 自主：差距分析 → 修复 → probe 验证 → 提交（工作流笔记仅存本地，不随仓库发布） |
 
 > **项目性质声明。** 本项目完全由 AI 辅助编程（vibe coding）生成，属个人实验项目，
 > 不作为工程最佳实践、学习资料或生产参考。项目目的在于探索 AI Agent 与
@@ -87,7 +87,7 @@ seeker-craft/
 | 5 | **下界与魔法** | 附魔台、附魔剑、酿造台、下界传送门 |
 | 6 | **终局** | 下界合金锭/镐、潜影盒、鞘翅、末影龙 |
 
-23 个任务（6 层）全部以机器可判定 JSON 形式随仓库发布（[`data/tasks/`](data/tasks/)，任务系统见 [AGENTS.md](AGENTS.md)）。
+23 个任务（6 层）全部以机器可判定 JSON 形式随仓库发布（[`data/tasks/`](data/tasks/)，任务系统说明见 [`docs/ARCHITECTURE.md`](ARCHITECTURE.md)）。
 
 ## 当前进度（2026-08-08）
 
@@ -174,7 +174,6 @@ cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot 
 | 文档 | 内容 |
 |---|---|
 | [ARCHITECTURE.md](ARCHITECTURE.md) | 分层架构、13 步 Agent 循环、模块布局 |
-| [AGENTS.md](AGENTS.md) | 自主开发工作流（差距分析 → 修复 → 验证） |
 | [docs/mindcraft-gap.md](docs/mindcraft-gap.md) | Mindcraft 差距审计 + 优先级队列 |
 | [docs/benchmarks.md](docs/benchmarks.md) | 测试基线、运行探测覆盖、缓存命中率、末影龙进度 |
 | [docs/adr.md](docs/adr.md) | 架构决策记录 |
