@@ -7,10 +7,17 @@ with [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The project is
 currently in active development as a single-maintainer project; the first tagged
 release (`v0.1.0`) corresponds to the initial stable feature baseline below.
 
-## [Unreleased]
+## [0.2.0] - 2026-08-10
 
 ### Added
 
+- **P136 hard-coded version-data sweep** — ore Y-layer knowledge driven by `y_range_hint`
+  (diamond −64~16 densest −59, emerald mountains-only −16~320, iron −64~384, coal −64~256,
+  etc., per MC 26.2); live-probe-verified: out-of-range hints for diamond/emerald, no false
+  positives in-range for iron/coal.
+- **Tier 4 live milestone** — full iron armor + diamond sword + shield equipped; bot
+  followed Y-layer hints (mine_below to Y≤16), descended to the diamond layer (Y≈−59), and
+  located diamond_ore via `search_for_block` (live LLM session).
 - **P126 Mindcraft learning batch (4 items, user-driven)** — prompt/tooling parity with Mindcraft:
   - **P126a tool knowledge grouping table** — `to_knowledge_string` rebuilt around the actual
     53 registered tool names in 12 real groups (previously referenced obsolete Mindcraft names,
@@ -24,7 +31,8 @@ release (`v0.1.0`) corresponds to the initial stable feature baseline below.
   - **P126d perceive current-action label** — game state exposes the pending bot command and the
     perceive scene shows `当前动作: …` (or 空闲), matching Mindcraft `$ACTION`.
 - **Documentation / repo hygiene** — README overhaul (badges, architecture diagram,
-  6-stage path, 49-tool table), root-level `CHANGELOG.md`, `CITATION.cff`, `AUTHORS`.
+  6-stage path, 49-tool table), root-level `CHANGELOG.md`, `CITATION.cff`, `AUTHORS`;
+  README bilingual progress section (live-verified tiers 1–3 complete, tier 4 in progress).
 - **Engineering benchmark layer** — CI coverage job (`cargo llvm-cov` → lcov artifact),
   `docs/benchmarks.md` (410-test baseline, 52 probe scripts, cache hit rates, Ender-Dragon
   progress), and `scripts/bench/` one-shot probe runner + optional Docker repro.
@@ -33,6 +41,20 @@ release (`v0.1.0`) corresponds to the initial stable feature baseline below.
   escape column instead of hard-refusing; bare-hand fallback path added (P120, P120b).
 - **P117/P117b end-game recipe fixes** — flint_and_steel and blaze_powder/plank variants
   added to the handwritten 2x2 table, fixing the broken ender-eye crafting chain.
+
+### Changed
+
+- **P135 recipe + Y-hint fixes** — mushroom_stew reverted to three ingredients
+  (Wiki-verified, P130 correction); gather ore Y-hint corrected (removed stale 1.16 static
+  data, now driven by `y_range_hint`).
+- **P134 equip/discard deadlocks + tier4 bedrock task condition** — equip no longer throws
+  away single pieces (keeps pickaxe), discard walks away per-slot; `BelowY(-60)` → `BelowY(-58)`
+  (station on bedrock top satisfies it).
+- **Repo scope** — agent work-info files (AGENTS.md, `.agents/`, `.zcode/`) no longer shipped;
+  kept locally, gitignored; doc links cleaned up.
+- **Security audit CI fixed** — event-listener 5.4.1 → 5.4.2 (RUSTSEC-2026-0221 unsound,
+  patch available); paste / ttf-parser (unmaintained, no patch) added to ignore list with
+  reachability rationale — scheduled audit no longer fails daily.
 
 ## [0.1.0] - 2026-08-03
 
