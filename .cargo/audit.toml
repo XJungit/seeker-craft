@@ -9,6 +9,14 @@ format = "terminal"
 # 来源：azalea-auth（azalea 上游传递依赖，用于微软账号认证），无补丁版本。
 # 本项目 bot 仅连局域网 vanilla 服务器（离线/局域网认证），不走微软账号认证，
 # 攻击面不可达；azalea 上游修复前无法在本仓库解除，故忽略并在每次升级 azalea 时复查。
+# RUSTSEC-2024-0436 paste：上游宣布不再维护（dtolnay 归档），无补丁版本。
+#   paste 是宏辅助 crate（dtolnay 生态，如 async-trait 等上游传递依赖），
+#   仅编译期展开、无运行时攻击面；替换为 fork 会破坏上游锁定，故忽略（unmaintained 类）。
+# RUSTSEC-2026-0192 ttf-parser：上游宣布不再维护，无补丁版本。
+#   传递依赖（字体渲染链，如 shadow_text/文本测量），仅渲染用、处理受信字体，
+#   攻击面不可达；官方建议 skrifa 迁移属上游决策，故忽略（unmaintained 类）。
 ignore = [
     "RUSTSEC-2023-0071",
+    "RUSTSEC-2024-0436",
+    "RUSTSEC-2026-0192",
 ]
