@@ -15,5 +15,4 @@ serde_json.workspace = true
 #   imageproc  — 画标记框
 #   enigo      — 键鼠控制（0.6.1）
 #   qdrant     — 向量记忆
-#   craft-agent-model — VLM/LLM 客户端（P1.4 集成 MinecraftAdapter 时加入）
 #   tokio      — 异步主循环

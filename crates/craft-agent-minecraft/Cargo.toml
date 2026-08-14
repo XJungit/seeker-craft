@@ -6,8 +6,6 @@ edition.workspace = true
 [dependencies]
 # 核心抽象（types / GameAdapter / Action / WorldState）—— 单向依赖，core 不反向依赖本 crate
 craft-agent.workspace = true
-# 模型层（LLM 决策客户端）—— azalea 路线需要真实 HTTP LLM 客户端
-craft-agent-model.workspace = true
 anyhow.workspace = true
 # 项目根 .env 自动加载（示例里用它把 API_KEY 等注入环境，与 setx 持久化互补）
 dotenvy.workspace = true
@@ -34,7 +32,7 @@ rhai = { version = "1.25.1", features = ["sync", "serde"] }
 [features]
 # 唯一路线：Azalea 客户端协议层（Rust 全栈 bot 直连普通 MC 服务器）。
 # 旧 mod-bridge / real（Fabric mod TCP 桥接 + 真机 VLM 键鼠）路线已从源码删除。
-azalea-bot = ["dep:azalea", "dep:azalea-client", "dep:azalea-inventory", "dep:azalea-registry", "dep:azalea-world", "dep:azalea-protocol", "dep:bevy_app", "dep:bevy_ecs", "dep:tokio", "craft-agent-model/real"]
+azalea-bot = ["dep:azalea", "dep:azalea-client", "dep:azalea-inventory", "dep:azalea-registry", "dep:azalea-world", "dep:azalea-protocol", "dep:bevy_app", "dep:bevy_ecs", "dep:tokio"]
 
 # 仅 Windows 编译：前台窗口接管（AttachThreadInput + SetForegroundWindow），
 # 确保 MC 在独占全屏/后台时收得到 enigo 合成输入（SendInput 只投前台窗口队列）。
