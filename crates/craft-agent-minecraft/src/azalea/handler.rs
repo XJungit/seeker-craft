@@ -5105,6 +5105,15 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                         }
                     }
                 }
+                // P153：空闲时强制停止移动——实测 bot 在无命令时会持续漂移
+                // （25s 漂移 11 格，Y 持续变化），导致 tp/goto/mine 后位置不稳定、
+                // 深挖作业无法持续。根因疑似 azalea 残留 move_direction 或跳跃状态。
+                // 仅在真正空闲（无 pending 命令、非 busy、无战斗）时复位移动方向，
+                // 不影响 goto/mine/战斗中的正常移动。
+                if state.action_mgr.is_idle() && !state.action_mgr.is_busy() {
+                    bot.walk(azalea::WalkDirection::None);
+                    let _ = bot.set_jumping(false);
+                }
             }
             _ => {}
         }

@@ -226,6 +226,9 @@ window.__ModuleLoader__.load({
       // 订阅会话列表（ObservableSnapshot.subscribe）→ 当前会话切到/离开 craft-bot 时
       // 自动显隐。正经做法，替代脆弱的 setInterval 轮询。
       function sync() {
+        // 依赖 DSH client 的 sessions.list（ObservableSnapshot）契约：
+        // getSnapshot() 同步返回 { current, byId }，subscribe(fn) 在变更时回调。
+        // 若 DSH API 变更此形状，这里是唯一需要同步调整的消费点。
         var snap = null
         try { if (sessions && sessions.list) snap = sessions.list.getSnapshot() } catch (e) { snap = null }
         var currentId = snap && snap.current

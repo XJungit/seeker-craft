@@ -46,7 +46,8 @@ export const Config = z.object({
    * 是否挂仪表盘代理（/craft/api/*）。
    * - profile 全局行（hostTools:false, proxy 默认 true）：client 面板需要代理读 viewer。
    * - craft-bot 预设行（hostTools:true, proxy:false）：预设内不需要代理（client 面板由
-   *   全局行提供），避免 webServer 同路径重复注册。
+   *   全局行提供），避免 webServer 同路径重复注册。注意：proxy 默认是 true，预设行必须
+   *   显式传 false，否则会在预设 scope 里重复注册同一条 /craft/api/* 路由。
    */
   proxy: z.boolean().default(true),
 })
@@ -307,7 +308,6 @@ export function apply(ctx, config) {
           ...(body !== undefined ? { body } : {}),
           headers: {
             'content-type': 'application/json',
-            ...(req.headers['x-craft-forward'] ? {} : {}),
           },
         })
         const text = await res2.text()
