@@ -164,7 +164,11 @@ All 23 tasks (6 tiers) ship as machine-checkable JSON in [`data/tasks/`](data/ta
 | **Git** | For cloning the repo and submodules |
 | **Node.js ≥ 20 + pnpm** | For the DSH bridge plugin |
 | **Minecraft Java 26.2 server** | Bring your own vanilla server (LAN is fine); bot connects to `localhost:4444` by default |
-| **DeepSeek Harness (DSH)** | Bring your own install; this repo only generates the craft-bot preset |
+| **DeepSeek Harness (DSH)** | Bring your own install (https://github.com/deepseek-ai/deepseek-harness); this repo only generates the craft-bot preset |
+
+> **Why DSH is not bundled**: DSH is the external "brain" (the same harness you code with);
+> bundling it would duplicate the whole toolchain and pin a version. You install DSH once;
+> `setup.ps1` then registers the craft-bot preset into your existing `~/.dsh`.
 
 ### 2. Clone (with azalea submodule)
 

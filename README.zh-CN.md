@@ -163,7 +163,10 @@ azalea (vendor) ──► MC server (TCP)
 | **Git** | 拉取仓库与子模块 |
 | **Node.js ≥ 20 + pnpm** | DSH 桥插件安装用 |
 | **Minecraft Java 版 26.2 服务器** | 自备 vanilla 服务器（局域网即可）；bot 默认连接 `localhost:4444` |
-| **DeepSeek Harness（DSH）** | 自备安装；本项目不打包，只负责生成 craft-bot 预设 |
+| **DeepSeek Harness（DSH）** | 自备安装（https://github.com/deepseek-ai/deepseek-harness）；本项目不打包——只负责生成 craft-bot 预设 |
+
+> **为什么 DSH 不打包**：DSH 是外部"大脑"（和编码用的同一套 harness），打包会重复整套
+> 工具链并钉死版本。你装一次 DSH，`setup.ps1` 会把 craft-bot 预设注册进你已有的 `~/.dsh`。
 
 ### 2. 克隆仓库（含 azalea 子模块）
 
