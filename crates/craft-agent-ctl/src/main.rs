@@ -12,6 +12,7 @@
 //!   craft-agent-ctl tail F N    # 打印日志文件尾部 N 行
 //!   craft-agent-ctl health      # 持续健康检查（最多 10 分钟，检测到进步就退出）
 
+use std::os::windows::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -105,6 +106,11 @@ fn spawn_detached(exe: &str, args: &[&str], out_log: &str) -> bool {
     if let Some(f) = err {
         cmd.stderr(f);
     }
+    // Windows：父进程（ctl 命令）spawn 后立即退出，若不设进程组/脱离标志，
+    // 子进程（viewer/autopilot）会随父进程一起被回收——表现为 banner 打印后进程消失、
+    // API 不可达。设 CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS 让子进程独立存活。
+    #[cfg(windows)]
+    cmd.creation_flags(0x00000200 | 0x00000008); // CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS
     match cmd.spawn() {
         Ok(child) => {
             println!("[ctl] spawned {exe} pid={}", child.id());
