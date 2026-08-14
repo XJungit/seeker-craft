@@ -8,7 +8,7 @@
 [![Docs](https://img.shields.io/github/actions/workflow/status/XJungit/seeker-craft/deploy-docs.yml?label=docs&logo=github)](https://github.com/XJungit/seeker-craft/actions/workflows/deploy-docs.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust: nightly-2026-07-21](https://img.shields.io/badge/rust-nightly--2026--07--21-orange.svg)](rust-toolchain.toml)
-[![Release: v1.0.0](https://img.shields.io/badge/release-v1.0.0-blue.svg)](https://github.com/XJungit/seeker-craft/releases)
+[![Release: v1.1.0](https://img.shields.io/badge/release-v1.1.0-blue.svg)](https://github.com/XJungit/seeker-craft/releases)
 
 **一个由 LLM 驱动的 Minecraft 机器人，目标是击败末影龙。Rust + Azalea 协议客户端，
 无 mod、无截图——通过类型化工具观察、规划、执行的真正的协议级玩家。**

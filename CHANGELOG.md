@@ -7,6 +7,24 @@ with [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The project is
 currently in active development as a single-maintainer project; `v1.0.0` is the
 first tagged **1.0 release** (DSH bridge mode is the only supported usage).
 
+## [1.1.0] - 2026-08-15
+
+### Added
+
+- **P156 semantic memory (`remember` tool, 53→54 tools)** — cross-session semantic
+  long-term memory persisted to `data/memory/agent.jsonl`: `remember` tool
+  (save/forget/list, kind=tactics/strategy/insight/preference, scope-aware) +
+  `SemanticMemoryTool` wired into the DSH bridge factory
+  (`create_mc_azalea_tools_full_with_semantic`); nearby spatial WorldMemory rendered
+  into the perceive scene (`记忆: [已知世界记忆·邻近]` with resource/hazard/structure
+  entries + `__self__` anchor). Live-verified via viewer `/api/bot_tool`.
+
+### Changed
+
+- **Tool count 53 → 54** across docs — README bilingual, ARCHITECTURE, crate READMEs,
+  benchmarks, dsh-bridge README, ADR; `ALL_TOOL_NAMES` (authoritative) and the
+  dsh-bridge `TOOL_NAMES` mirror both list 54, verified by `verify-in-harness.mjs`.
+
 ## [1.0.0] - 2026-08-15
 
 ### Added
@@ -23,13 +41,6 @@ first tagged **1.0 release** (DSH bridge mode is the only supported usage).
 - **Portable `craft-agent-ctl`** — all machine-specific paths (`VIEWER_EXE` /
   `AUTOPILOT_EXE` / `SESSION` / `WORKSPACE` / `LOG_DIR`) replaced with runtime derivation
   from `CARGO_MANIFEST_DIR` (clone anywhere; `SEEKER_LOG_DIR` overrides the log dir).
-- **P156 semantic memory (`remember` tool, 53→54 tools)** — cross-session semantic
-  long-term memory persisted to `data/memory/agent.jsonl`: `remember` tool
-  (save/forget/list, kind=tactics/strategy/insight/preference, scope-aware) +
-  `SemanticMemoryTool` wired into the DSH bridge factory
-  (`create_mc_azalea_tools_full_with_semantic`); nearby spatial WorldMemory rendered
-  into the perceive scene (`记忆: [已知世界记忆·邻近]` with resource/hazard/structure
-  entries + `__self__` anchor). Live-verified via viewer `/api/bot_tool`.
 
 ### Changed
 
