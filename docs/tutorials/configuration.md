@@ -1,5 +1,11 @@
 # Configuration
 
+> **现状说明**：本教程部分描述 in-bot 循环时代（`AgentConfig` 的 `max_iter` /
+> `enable_self_prompt` / `enable_compaction` 等字段、`build_dynamic_instructions_msg`）
+> 的配置。DSH 桥接模式（2026-08-14 起）下，LLM 后端与上下文/提示词装配由 **DSH 大脑**
+> 负责；Rust 侧 `craft-agent-model` 配置保留为兼容。LLM 后端配置段仍然有效（若走
+> `craft-agent-model` 路径），Agent 行为字段仅历史参考。
+
 Configure LLM/VLM backends, agent behavior, and runtime parameters.
 
 ## Backends
@@ -55,8 +61,9 @@ The system prompt is loaded from `profiles/_default.json` and rendered with the
 bot name. Critical constraints:
 
 - **Byte stability**: the rendered system prompt must be byte-identical across
-  all turns for DeepSeek prefix cache to hit. Dynamic variables go into
-  `build_dynamic_instructions_msg()` user messages, not the system prompt.
+  all turns for DeepSeek prefix cache to hit. Dynamic variables go into user
+  messages (in-bot era: `build_dynamic_instructions_msg()`; DSH era: the DSH
+  brain assembles these), not the system prompt.
 - **P56 rule**: the system prompt explicitly forbids the LLM from declaring
   "task complete ✅" mid-progress (see `session-and-compaction.md`).
 

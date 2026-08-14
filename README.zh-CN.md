@@ -16,7 +16,7 @@
 |---|---|
 | **核心问题** | LLM 能否从一无所有开始自主生存、制造并击败末影龙？ |
 | **运行时** | 纯 Rust 客户端，基于 [Azalea](https://github.com/azalea-rs/azalea)（MC 26.2），无需服务端 mod |
-| **大脑** | 任意 OpenAI 兼容 LLM（DeepSeek 前缀缓存优化），VLM 可选 |
+| **大脑** | 任意 OpenAI 兼容 LLM（DeepSeek 前缀缓存优化）；2026-08-14 起为 DSH（DeepSeek Harness）桥接模式 |
 | **规模** | 6 个 crate、53 个 LLM 工具、23 个结构化任务、10 个反应式模式、空间记忆 |
 | **开发循环** | 自主：差距分析 → 修复 → probe 验证 → 提交（工作流笔记仅存本地，不随仓库发布） |
 
@@ -33,13 +33,13 @@
 
 - **真实协议客户端** — 通过 Azalea Rust 客户端（MC 26.2）以普通玩家身份连接，内置寻路；无 mod、无截图。
 - **53 个类型化 LLM 工具** — 感知、移动、挖矿、合成（2x2/3x3/熔炼/附魔/酿造）、放置、建造、容器、交易、战斗及元工具。
-- **10 个反应式模式** — 自卫、狩猎、自动拾取、插火把、脱困、清理拥挤空间等，tick 级运行，不受 LLM 延迟影响。
+- **10 个反应式模式** — 自卫、狩猎、自动拾取、插火把、脱困、清理拥挤空间等，tick 级运行，不受 LLM 延迟影响（bot 端；LLM 姿态经 `set_mode` 切换）。
 - **结构化任务系统** — 23 个分层任务（木头 → 石头 → 铁 → 钻石 → 下界合金 → 末影龙），带机器可校验的完成条件。
 - **空间 WorldMemory** — 按区块索引的记忆（资源/建筑/容器/危险/传送门），带 TTL 遗忘与命名锚点。
-- **字节稳定的系统提示** — 为 DeepSeek 风格前缀缓存设计；动态状态以用户消息注入，前缀缓存命中率 >93%。
+- **DSH 桥接模式** — 2026-08-14 起 in-bot LLM 循环已移除，DSH（DeepSeek Harness）成为唯一大脑，经 viewer 桥（`/api/connect` + `/api/bot_tool` + `/api/game-state` + `/api/goal`）驱动 bot。
 - **Probe 模式** — 无 LLM 的工具层测试框架，秒级验证工具行为（而非分钟的 LLM 运行时）。
 - **运维控制台（craft-agent-ctl）** — 进程生命周期、目标注入、会话检查。
-- **Autopilot** — 自主开发循环：构建、测试、异常分类、根因分析并提交。
+- **Autopilot** — 运维监督器（10s 轮询）：拉起 viewer + 连接 bot、停滞 steering、崩溃恢复、异常检测（无改代码逻辑）。
 
 ## 架构
 
@@ -47,11 +47,11 @@
 seeker-craft/
 ├── Cargo.toml                     # workspace 根（nightly-2026-07-21）
 ├── crates/
-│   ├── craft-agent/               # 核心 agent：run_one_turn 循环、模式、压缩、技能、WorldMemory
+│   ├── craft-agent/               # 纯逻辑库：types/GameTool/ToolRegistry/WorldMemory/session/task/profile/skill
 │   ├── craft-agent-minecraft/     # Azalea 适配器：bot + 53 个工具
-│   ├── craft-agent-model/         # LLM/VLM 客户端（OpenAI 兼容，多后端）
-│   ├── craft-agent-viewer/        # Web 仪表盘（Axum + SSE）
-│   ├── craft-agent-autopilot/     # 自动开发循环（build/test/RCA/commit）
+│   ├── craft-agent-model/         # LLM/VLM 客户端（in-bot 时代，保留兼容；现 LLM 由 DSH 提供）
+│   ├── craft-agent-viewer/        # Web 仪表盘（Axum + SSE）+ DSH 桥（connect/bot_tool/game-state/goal）
+│   ├── craft-agent-autopilot/     # 运维监督器（10s 轮询：viewer+连接、停滞 steering、崩溃恢复）
 │   └── craft-agent-ctl/           # 运维控制台
 ├── data/
 │   ├── config/agent.example.toml  # LLM 后端配置模板（复制为 agent.toml）
@@ -62,19 +62,24 @@ seeker-craft/
 └── vendor/azalea/                 # 固定版本的 Azalea 源码（submodule，官方上游）
 ```
 
-### 13 步 Agent 主循环
+### DSH 桥接运行时（2026-08-14 起）
 
 ```
- 1  读取队列 ───────────► 2 压缩 ──► 3 剔除瞬态消息
- 5  反应式模式 ──► 4 自动感知 ────► 7 动态上下文（技能/示例）
- 6. 自我提示 ├── 8 WorldMemory（半径 64）──► 9 LLM 调用（重试/退避）
- 10. 纯文本检查（nudge）─ 11. 死循环守卫 ─ 12. 执行批次（READ 并行 /
-                           WRITE 串行 / 慢工具探测）
- 13. 技能抽取 └───────────────────────────────────────────────────────►
-
-详见 [ARCHITECTURE.md](ARCHITECTURE.md) 的完整 13 步循环。
+DSH（DeepSeek Harness）大脑 ──HTTP──► craft-agent-viewer 桥
+  │  /api/connect    → azalea 客户端加入 MC（账号 CraftAgent）
+  │  /api/bot_tool   → 派发 53 工具之一（GameTool::execute）
+  │  /api/game-state → 实时 BotState 快照（perceive 格式）
+  │  /api/goal       → 更新运营目标
+  ▼
+craft-agent-minecraft（53 工具 + WorldMemory 每 20 tick 扫描 + handler.rs 反应式模式）
+  ▼
+azalea (vendor) ──► MC server (TCP)
 ```
-（流程见 ARCHITECTURE.md，循环实现在 `craft-agent/agent/run_one_turn.rs`。）
+
+> **in-bot 13 步主循环已移除**（2026-08-14，阶段3 清理）：`run_one_turn`、auto-perceive、
+> SelfPrompter、execute_batch、每轮动态上下文注入在 Rust 侧已不存在。大脑（DSH）现在负责
+> 决策/规划/上下文注入/系统提示稳定性；Rust 只经 viewer 桥暴露 bot 实时能力。
+> 详见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
 ## 击败末影龙的 6 阶段
 
@@ -173,7 +178,7 @@ cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot 
 
 | 文档 | 内容 |
 |---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | 分层架构、13 步 Agent 循环、模块布局 |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | 分层架构、DSH 桥接运行时、模块布局 |
 | [docs/mindcraft-gap.md](docs/mindcraft-gap.md) | Mindcraft 差距审计 + 优先级队列 |
 | [docs/benchmarks.md](docs/benchmarks.md) | 测试基线、运行探测覆盖、缓存命中率、末影龙进度 |
 | [docs/adr.md](docs/adr.md) | 架构决策记录 |

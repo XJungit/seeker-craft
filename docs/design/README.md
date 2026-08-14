@@ -8,7 +8,7 @@ single-route architecture and P55-P58 fixes.
 - [upgrade-to-mindcraft-parity-2026-07-15.md](./upgrade-to-mindcraft-parity-2026-07-15.md) — Capability comparison & remaining gaps.
 
 See also:
-- [`ARCHITECTURE.md`](../../ARCHITECTURE.md) — Layered overview, 13-step main loop, 53 tools, P56-P58 governance.
+- [`ARCHITECTURE.md`](../../ARCHITECTURE.md) — Layered overview, DSH bridge runtime, 53 tools, P56-P58 governance (historical).
 - [`PLAN.md`](../../PLAN.md) — Current project plan (azalea-bot route, Mindcraft philosophy,通关路径).
 - [`AGENTS.md`](../../AGENTS.md) — Full automation workflow manual + section 9-bis Mindcraft philosophy rules.
 - [`adr.md`](../adr.md) — ADR-001 (azalea-only) / ADR-004 (LLM-driven tools, supersedes old GoalEngine plan).

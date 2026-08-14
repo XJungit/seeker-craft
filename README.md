@@ -15,7 +15,7 @@
 |---|---|
 | **Core question** | Can an LLM autonomously survive, craft, and defeat the Ender Dragon from nothing? |
 | **Runtime** | Pure Rust client via [Azalea](https://github.com/azalea-rs/azalea) (MC 26.2), no server mods |
-| **Brain** | Any OpenAI-compatible LLM (DeepSeek cache-optimized), VLM optional |
+| **Brain** | Any OpenAI-compatible LLM (DeepSeek cache-optimized); DSH (DeepSeek Harness) bridge mode as of 2026-08-14 |
 | **Scale** | 6 crates, 53 LLM tools, 23 structured tasks, 10 reactive modes, spatial memory |
 | **Dev loop** | Autonomous: gap analysis → fix → probe verify → commit (workflow notes kept locally, not shipped) |
 
@@ -31,13 +31,13 @@
 
 - **Real protocol client** — joins as a vanilla player via the Azalea Rust client (MC 26.2), built-in pathfinding; no mods, no screenshots.
 - **53 typed LLM tools** — perceive, goto, mine, craft (2x2/3x3/smelt/enchant/brew), place, build, containers, trading, combat, meta-tools.
-- **10 reactive modes** — self-defense, hunting, auto-pickup, torch-placing, unstuck, elbow-room, etc., running tick-level without LLM latency.
+- **10 reactive modes** — self-defense, hunting, auto-pickup, torch-placing, unstuck, elbow-room, etc., running tick-level without LLM latency (bot-side; LLM posture switched via `set_mode`).
 - **Structured task system** — 23 tiered tasks (wood → stone → iron → diamond → netherite → ender dragon) with machine-checkable completion conditions.
 - **Spatial WorldMemory** — chunk-indexed memories (resources, structures, containers, hazards, portals) with TTL forgetting and named anchors.
-- **Byte-stable system prompt** — engineered for DeepSeek-style prefix caching; dynamic state injected as user messages, >93% prefix cache hit.
+- **DSH bridge mode** — since 2026-08-14 the in-bot LLM loop is removed; DSH (DeepSeek Harness) is the sole brain driving the bot through the viewer bridge (`/api/connect` + `/api/bot_tool` + `/api/game-state` + `/api/goal`).
 - **Probe mode** — a no-LLM tool-layer test harness that verifies tool behavior in seconds (not minutes of LLM runtime).
 - **Ops console (`craft-agent-ctl`)** — process lifecycle, goal injection, session inspection.
-- **Autopilot** — autonomous dev loop that builds, tests, triages anomalies, root-causes, and commits.
+- **Autopilot** — ops supervisor (10s polling): brings up viewer + connects bot, stall steering, crash recovery, anomaly detection (no code-editing logic).
 
 ## Architecture
 
@@ -45,11 +45,11 @@
 seeker-craft/
 ├── Cargo.toml                     # workspace root (nightly-2026-07-21)
 ├── crates/
-│   ├── craft-agent/               # core agent: run_one_turn loop, modes, compaction, skills, WorldMemory
+│   ├── craft-agent/               # pure logic lib: types/GameTool/ToolRegistry/WorldMemory/session/task/profile/skill
 │   ├── craft-agent-minecraft/     # Azalea adapter: bot + 53 tools (craft/smelt/enchant/brew/combat/farm)
-│   ├── craft-agent-model/         # LLM/VLM clients (OpenAI-compatible, multi-backend)
-│   ├── craft-agent-viewer/        # web dashboard (Axum + SSE)
-│   ├── craft-agent-autopilot/     # autonomous dev loop (build/test/RCA/commit)
+│   ├── craft-agent-model/         # LLM/VLM clients (in-bot era, kept for compat; DSH provides the LLM now)
+│   ├── craft-agent-viewer/        # web dashboard (Axum + SSE) + DSH bridge (connect/bot_tool/game-state/goal)
+│   ├── craft-agent-autopilot/     # ops supervisor (10s polling: viewer+connect, stall steering, crash recovery)
 │   └── craft-agent-ctl/           # ops console
 ├── data/
 │   ├── config/agent.example.toml  # LLM backend template (copy to agent.toml)
@@ -60,19 +60,25 @@ seeker-craft/
 └── vendor/azalea/                 # pinned Azalea source (submodule, official upstream)
 ```
 
-### The 13-step agent loop
+### DSH bridge runtime (since 2026-08-14)
 
 ```
- 1  drain queues ────────────► 2 compaction ──► 3 strip transient msgs
- 5  reactive modes ──► 4 auto-perceive ────► 7 dynamic context (skills/examples)
- 6. self-prompt ├── 8 WorldMemory (radius 64) ──► 9 LLM call (retry/backoff)
- 10. plain-text check (nudge) ─ 11. dead-loop guard ─ 12. execute batch (READ parallel /
-                                                               WRITE serial / slow-tool probe)
- 13. skill extraction └─────────────────────────────────────────────────────────►
-
-See [ARCHITECTURE.md](ARCHITECTURE.md) for the full 13-step loop details.
+DSH (DeepSeek Harness) brain ──HTTP──► craft-agent-viewer bridge
+  │  /api/connect    → azalea client joins MC (account CraftAgent)
+  │  /api/bot_tool   → dispatch one of 53 tools (GameTool::execute)
+  │  /api/game-state → real-time BotState snapshot (perceive format)
+  │  /api/goal       → update ops goal
+  ▼
+craft-agent-minecraft (53 tools + WorldMemory per-20-tick scan + handler.rs reactive modes)
+  ▼
+azalea (vendor) ──► MC server (TCP)
 ```
-(drawn as flow → see ARCHITECTURE.md, the loop is implemented in `craft-agent/agent/run_one_turn.rs`.)
+
+> **The in-bot 13-step agent loop was removed** (2026-08-14, phase-3 cleanup): `run_one_turn`,
+> auto-perceive, SelfPrompter, execute_batch, and per-turn dynamic-context injection no longer
+> exist in Rust. The brain (DSH) now owns decision/planning/context-injection/system-prompt
+> stability; Rust only exposes real-time bot capabilities through the viewer bridge.
+> See [ARCHITECTURE.md](ARCHITECTURE.md) for details.
 
 ## The 6-stage path to beating the dragon
 
@@ -171,7 +177,7 @@ cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot 
 
 | Doc | What it covers |
 |---|---|
-| [ARCHITECTURE.md](ARCHITECTURE.md) | Layered architecture, 13-step agent loop, module layout |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | Layered architecture, DSH bridge runtime, module layout |
 | [docs/mindcraft-gap.md](docs/mindcraft-gap.md) | Mindcraft parity audit + prioritized backlog |
 | [docs/benchmarks.md](docs/benchmarks.md) | Test baselines, probe coverage, cache hit rates, Ender-Dragon progress |
 | [docs/adr.md](docs/adr.md) | Architecture decision records |
