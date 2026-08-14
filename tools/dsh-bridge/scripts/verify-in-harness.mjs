@@ -115,4 +115,47 @@ if (!clientSrc.includes("agentPreset") || !clientSrc.includes("'craft-bot'")) {
 }
 console.log(`✅ client.js ${clientPath} 含 __ModuleLoader__.load + agentPreset 判断（${clientSrc.length} 字符）`)
 
-console.log('\n全部通过：dsh-bridge 加载 + 3 工具 + 3 占位符变量 + webServer 代理 + client.js（craft-bot 限定）')
+// 6) 工具清单与 Rust 权威 ALL_TOOL_NAMES 比对（防静默失配）
+// index.js 的 TOOL_NAMES 是 tools_azalea.rs::ALL_TOOL_NAMES 的静态镜像；Rust 侧增删工具
+// 时必须同步（新增能力纪律第 5 条：文档同步点之一）。这里从源码提取两份清单做集合比对。
+import { fileURLToPath } from 'node:url'
+import { dirname, join } from 'node:path'
+
+const here = dirname(fileURLToPath(import.meta.url))
+const bridgeRoot = join(here, '..')
+
+// 从 index.js 提取 TOOL_NAMES 数组（const TOOL_NAMES = [...]）
+const indexSrc = readFileSync(join(bridgeRoot, 'index.js'), 'utf8')
+const toolNamesMatch = indexSrc.match(/const TOOL_NAMES = \[([\s\S]*?)\]/)
+if (!toolNamesMatch) {
+  console.error('❌ 无法从 index.js 提取 TOOL_NAMES 数组')
+  process.exit(1)
+}
+const bridgeTools = [...toolNamesMatch[1].matchAll(/'([^']+)'/g)].map((m) => m[1])
+
+// 从 tools_azalea.rs 提取 ALL_TOOL_NAMES 数组（pub const ALL_TOOL_NAMES: &[&str] = &[...]）
+const rsRoot = join(bridgeRoot, '..', '..')
+const rsSrc = readFileSync(join(rsRoot, 'crates', 'craft-agent-minecraft', 'src', 'tools_azalea.rs'), 'utf8')
+const allNamesMatch = rsSrc.match(/pub const ALL_TOOL_NAMES: &\[&str\] = &\[([\s\S]*?)\];/)
+if (!allNamesMatch) {
+  console.error('❌ 无法从 tools_azalea.rs 提取 ALL_TOOL_NAMES 数组')
+  process.exit(1)
+}
+const rustTools = [...allNamesMatch[1].matchAll(/"([^"]+)"/g)].map((m) => m[1])
+
+const missing = rustTools.filter((t) => !bridgeTools.includes(t))
+const extra = bridgeTools.filter((t) => !rustTools.includes(t))
+const dupes = bridgeTools.filter((t, i) => bridgeTools.indexOf(t) !== i)
+if (missing.length || extra.length || dupes.length) {
+  console.error(`❌ 工具清单失配！rust=${rustTools.length} bridge=${bridgeTools.length}`)
+  if (missing.length) console.error(`   Rust 有但 bridge 缺: ${missing.join(', ')}`)
+  if (extra.length) console.error(`   bridge 有但 Rust 无: ${extra.join(', ')}`)
+  if (dupes.length) console.error(`   bridge 重复: ${dupes.join(', ')}`)
+  process.exit(1)
+}
+console.log(`✅ 工具清单比对一致：${rustTools.length} 个（rust ALL_TOOL_NAMES == bridge TOOL_NAMES）`)
+
+// 脚本末尾显式退出：index.js 的 registerPromptVariables 会注册 setInterval 后台刷新
+// botState 缓存，使 Node 事件循环保持存活、stdout 缓冲不落盘——必须显式 process.exit。
+console.log('\n全部通过：dsh-bridge 加载 + 3 工具 + 3 占位符变量 + webServer 代理 + client.js（craft-bot 限定） + 工具清单与 Rust 一致')
+process.exit(0)
