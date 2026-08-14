@@ -1,33 +1,37 @@
-# Craft-Agent Documentation
+# SeekerCraft (Craft-Agent) Documentation
 
 Start with `tutorials/INDEX.md` for the full guide map.
 
 ## Reference
 
 - `../CHANGELOG.md` — versioned change log (Keep a Changelog)
+- `../ARCHITECTURE.md` — current architecture (DSH bridge runtime, module layout, azalea fork maintenance)
 - `../docs/mindcraft-gap.md` — Mindcraft parity audit + priority queue
 - `../docs/adr.md` — architecture decision records
-- `../ARCHITECTURE.md` — current architecture (DSH bridge runtime, module layout)
 - `../PLAN.md` — project plan & current status
 
 ## Tutorials
 
 - `tutorials/new-contributor-guide.md` — fastest onboarding
-- `tutorials/getting-started.md` — build and run
+- `tutorials/getting-started.md` — clone/build/run (v1.0 DSH bridge mode)
 - `tutorials/project-structure.md` — repo layout
-- `tutorials/agent-loop.md` — agent runtime flow
+- `tutorials/agent-loop.md` — **historical** in-bot 13-step loop (removed 2026-08-14)
 - `tutorials/adding-tools.md` — how to add tools
 - `tutorials/adding-adapters.md` — how to add game adapters
 - `tutorials/configuration.md` — config reference
 - `tutorials/session-and-compaction.md` — session persistence & cache
 - `tutorials/troubleshooting.md` — common problems
 
+## DSH Bridge Plugin
+
+- `../tools/dsh-bridge/README.md` — the DSH bridge plugin (game_state / bot_tool / set_goal + dashboard)
+
 ## Crate-level Docs
 
-- `../crates/craft-agent/README.md` — core runtime API
+- `../crates/craft-agent/README.md` — core logic library API
 - `../crates/craft-agent-minecraft/README.md` — Minecraft adapter
 - `../crates/craft-agent-model/README.md` — LLM/VLM clients
-- `../crates/craft-agent-viewer/README.md` — TUI viewer
+- `../crates/craft-agent-viewer/README.md` — viewer / bridge
 
 ## Design Archive
 

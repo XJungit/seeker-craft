@@ -13,15 +13,52 @@
 //!   craft-agent-ctl health      # 持续健康检查（最多 10 分钟，检测到进步就退出）
 
 use std::os::windows::process::CommandExt;
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
 const BASE_URL: &str = "http://127.0.0.1:8080";
-const VIEWER_EXE: &str = "D:\\Craft-Agent\\target\\debug\\craft-agent-viewer.exe";
-const AUTOPILOT_EXE: &str = "D:\\Craft-Agent\\target\\debug\\craft-agent-autopilot.exe";
-const SESSION: &str = "D:\\Craft-Agent\\sessions\\mc_run.jsonl";
-const WORKSPACE: &str = "D:\\Craft-Agent";
-const LOG_DIR: &str = "C:\\Windows\\TEMP\\opencode";
+// 仓库根目录：craft-agent-ctl 位于 <repo>/crates/craft-agent-ctl，
+// 编译期 CARGO_MANIFEST_DIR 指向该 crate 目录，上溯两级即仓库根。
+// 绝不硬编码本机路径——仓库可被 clone 到任意位置。
+fn workspace_root() -> PathBuf {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    manifest_dir
+        .parent()
+        .and_then(|p| p.parent())
+        .map(|p| p.to_path_buf())
+        .unwrap_or(manifest_dir)
+}
+
+fn viewer_exe() -> PathBuf {
+    workspace_root()
+        .join("target")
+        .join("debug")
+        .join("craft-agent-viewer.exe")
+}
+
+fn autopilot_exe() -> PathBuf {
+    workspace_root()
+        .join("target")
+        .join("debug")
+        .join("craft-agent-autopilot.exe")
+}
+
+fn session_path() -> PathBuf {
+    workspace_root().join("sessions").join("mc_run.jsonl")
+}
+
+/// 运行日志目录：默认系统 TEMP/opencode，可用环境变量 SEEKER_LOG_DIR 覆盖。
+fn log_dir() -> PathBuf {
+    if let Ok(dir) = std::env::var("SEEKER_LOG_DIR")
+        && !dir.trim().is_empty()
+    {
+        return PathBuf::from(dir);
+    }
+    PathBuf::from(std::env::var("TEMP").unwrap_or_else(|_| "C:\\Windows\\TEMP".into()))
+        .join("opencode")
+}
+
 const GOAL: &str = "优先解决食物保障并恢复饥饿，然后继续生存主线，最终击败末影龙";
 
 fn http_get(path: &str) -> Option<serde_json::Value> {
@@ -95,8 +132,8 @@ fn kill_all() {
 }
 
 fn spawn_detached(exe: &str, args: &[&str], out_log: &str) -> bool {
-    let out = std::fs::File::create(format!("{LOG_DIR}\\{out_log}")).ok();
-    let err = std::fs::File::create(format!("{LOG_DIR}\\{out_log}.err")).ok();
+    let out = std::fs::File::create(log_dir().join(out_log)).ok();
+    let err = std::fs::File::create(log_dir().join(format!("{out_log}.err"))).ok();
     let mut cmd = Command::new(exe);
     cmd.args(args);
     cmd.stdin(Stdio::null());
@@ -172,7 +209,7 @@ fn cmd_status() {
             println!("[status] {name} NOT RUNNING（跳过旧日志，避免误导）");
             continue;
         }
-        let lines = tail_file(&format!("{LOG_DIR}\\{path}"), 3);
+        let lines = tail_file(&log_dir().join(path).to_string_lossy(), 3);
         if !lines.is_empty() {
             println!("[status] --- {name} log tail ---");
             for l in lines {
@@ -183,7 +220,7 @@ fn cmd_status() {
 }
 
 fn cmd_session(n: usize) {
-    let content = match std::fs::read_to_string(SESSION) {
+    let content = match std::fs::read_to_string(session_path()) {
         Ok(c) => c,
         Err(e) => {
             println!("[session] read failed: {e}");
@@ -249,7 +286,7 @@ fn cmd_viewer(goal: Option<&str>, steps: Option<&str>) {
     let goal = goal.unwrap_or(GOAL);
     let steps = steps.unwrap_or("40");
     let spawned = spawn_detached(
-        VIEWER_EXE,
+        viewer_exe().to_string_lossy().as_ref(),
         &[
             "--goal",
             goal,
@@ -275,7 +312,7 @@ fn cmd_build() {
     for pkg in ["craft-agent-viewer", "craft-agent-autopilot"] {
         let mut cmd = Command::new("cargo");
         cmd.args(["build", "-p", pkg]);
-        cmd.current_dir(WORKSPACE);
+        cmd.current_dir(workspace_root());
         let out = cmd.output().expect("cargo build");
         let text = String::from_utf8_lossy(&out.stderr).to_string();
         if text.contains("Finished") {
@@ -297,7 +334,7 @@ fn cmd_deploy() {
     cmd_build();
     println!("[deploy] spawning viewer");
     spawn_detached(
-        VIEWER_EXE,
+        viewer_exe().to_string_lossy().as_ref(),
         &[
             "--goal",
             GOAL,
@@ -314,7 +351,11 @@ fn cmd_deploy() {
     );
     std::thread::sleep(Duration::from_secs(1));
     println!("[deploy] spawning autopilot");
-    spawn_detached(AUTOPILOT_EXE, &[], "auto5_out.log");
+    spawn_detached(
+        autopilot_exe().to_string_lossy().as_ref(),
+        &[],
+        "auto5_out.log",
+    );
     std::thread::sleep(Duration::from_secs(12));
     // 等 autopilot 自动 start；若未 running 则手动 start
     let running = http_get("/api/status")
@@ -401,7 +442,7 @@ fn main() {
         "tail" => {
             let path = args.get(2).map(|s| s.as_str()).unwrap_or("auto5_out.log");
             let n = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(10);
-            for l in tail_file(&format!("{LOG_DIR}\\{path}"), n) {
+            for l in tail_file(&log_dir().join(path).to_string_lossy(), n) {
                 println!("{l}");
             }
         }

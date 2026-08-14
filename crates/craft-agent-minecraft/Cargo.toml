@@ -15,14 +15,16 @@ serde_json = "1"
 reqwest.workspace = true
 # Azalea 客户端协议层（Rust 全栈 bot 连入普通 MC 服务器，MC 26.2 原生支持）。
 # azalea 锁定到 26.2 支持的 commit，以 git 源引入（独立 workspace，不与本 workspace 配置冲突）。
+# 依赖源是上游 azalea 的维护 fork（XJungit/azalea，craft-agent 分支）：上游 main 缺少本项目
+# 弓箭/穿戴所需 API（stop_use_item / use_item_air / force_miss），详见 vendor/azalea 的本地提交。
 # 永久写 https 源（可移植，别人 clone 能直接编）；本地离线开发由 .cargo/config.toml 的
 # [patch] 自动重定向到 vendor/azalea 本地副本，无需再手动改 file://。
-azalea = { git = "https://github.com/azalea-rs/azalea", rev = "c35b57ebf82fa8b26ada77ab9eb795e3827d6c16", optional = true }
-azalea-client = { git = "https://github.com/azalea-rs/azalea", rev = "c35b57ebf82fa8b26ada77ab9eb795e3827d6c16", optional = true }
-azalea-inventory = { git = "https://github.com/azalea-rs/azalea", rev = "c35b57ebf82fa8b26ada77ab9eb795e3827d6c16", optional = true }
-azalea-registry = { git = "https://github.com/azalea-rs/azalea", rev = "c35b57ebf82fa8b26ada77ab9eb795e3827d6c16", optional = true }
-azalea-world = { git = "https://github.com/azalea-rs/azalea", rev = "c35b57ebf82fa8b26ada77ab9eb795e3827d6c16", optional = true }
-azalea-protocol = { git = "https://github.com/azalea-rs/azalea", rev = "c35b57ebf82fa8b26ada77ab9eb795e3827d6c16", default-features = false, optional = true }
+azalea = { git = "https://github.com/XJungit/azalea", rev = "e384e7087de53f6596bc0553659fcb3c80d0e64b", optional = true }
+azalea-client = { git = "https://github.com/XJungit/azalea", rev = "e384e7087de53f6596bc0553659fcb3c80d0e64b", optional = true }
+azalea-inventory = { git = "https://github.com/XJungit/azalea", rev = "e384e7087de53f6596bc0553659fcb3c80d0e64b", optional = true }
+azalea-registry = { git = "https://github.com/XJungit/azalea", rev = "e384e7087de53f6596bc0553659fcb3c80d0e64b", optional = true }
+azalea-world = { git = "https://github.com/XJungit/azalea", rev = "e384e7087de53f6596bc0553659fcb3c80d0e64b", optional = true }
+azalea-protocol = { git = "https://github.com/XJungit/azalea", rev = "e384e7087de53f6596bc0553659fcb3c80d0e64b", default-features = false, optional = true }
 # bevy 应用/ecs（azalea 内部依赖，版本须与 azalea 完全一致，否则 ecs 类型不兼容）
 bevy_app = { version = "0.19.0", optional = true }
 bevy_ecs = { version = "0.19.0", default-features = false, optional = true }

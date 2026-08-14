@@ -2,8 +2,30 @@
 // 用法: node tools/dsh-bridge/scripts/verify-in-harness.mjs
 import { createRequire } from 'node:module'
 import { pathToFileURL } from 'node:url'
+import { execSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import path from 'node:path'
+import os from 'node:os'
 
-const npxRoot = process.env.DSH_NPX_ROOT || 'C:/Users/xj/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules'
+// 自动探测 DSH 的 node_modules 根（@deepseek-ai/dsh 所在目录）。
+// 候选来源：环境变量 > npm 全局根 > pnpm 全局根。找不到则给出可读错误。
+function detectDshNpxRoot() {
+  if (process.env.DSH_NPX_ROOT) return process.env.DSH_NPX_ROOT
+  const candidates = []
+  try {
+    const npmRoot = execSync('npm root -g', { encoding: 'utf8' }).trim()
+    candidates.push(path.join(npmRoot, '@deepseek-ai', 'dsh', 'node_modules'))
+  } catch {}
+  const pnpmGlobal = path.join(os.homedir(), 'AppData', 'Local', 'pnpm', 'global', '5', 'node_modules', '@deepseek-ai', 'dsh', 'node_modules')
+  candidates.push(pnpmGlobal)
+  for (const c of candidates) {
+    if (existsSync(path.join(c, 'schemastery'))) return c
+  }
+  console.error(`❌ 未定位 DSH node_modules（@deepseek-ai/dsh）。请先安装 DeepSeek Harness，或设置 DSH_NPX_ROOT 指向其 node_modules。\n   已尝试: ${candidates.join(' | ')}`)
+  process.exit(1)
+}
+
+const npxRoot = detectDshNpxRoot()
 
 // 用 DSH 的 node_modules 根作为 base，模拟 loader 的 harness-base 解析
 const req = createRequire(pathToFileURL(npxRoot + '/__probe__.js').href)

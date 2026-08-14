@@ -223,7 +223,7 @@ dependencies = [
 [[package]]
 name = "azalea"
 version = "0.16.0+mc26.2"
-source = "git+file:///D:/Craft-Agent/vendor/azalea?rev=e384e70#e384e7087de53f6596bc0553659fcb3c80d0e64b"
+source = "git+https://github.com/XJungit/azalea?rev=e384e7087de53f6596bc0553659fcb3c80d0e64b#e384e7087de53f6596bc0553659fcb3c80d0e64b"
 dependencies = [
  "azalea-auth",
  "azalea-block",
@@ -261,7 +261,7 @@ dependencies = [
 [[package]]
 name = "azalea-auth"
 version = "0.16.0+mc26.2"
-source = "git+file:///D:/Craft-Agent/vendor/azalea?rev=e384e70#e384e7087de53f6596bc0553659fcb3c80d0e64b"
+source = "git+https://github.com/XJungit/azalea?rev=e384e7087de53f6596bc0553659fcb3c80d0e64b#e384e7087de53f6596bc0553659fcb3c80d0e64b"
 dependencies = [
  "azalea-buf",
  "azalea-crypto",
@@ -281,7 +281,7 @@ dependencies = [
 [[package]]
 name = "azalea-block"
 version = "0.16.0+mc26.2"
-source = "git+file:///D:/Craft-Agent/vendor/azalea?rev=e384e70#e384e7087de53f6596bc0553659fcb3c80d0e64b"
+source = "git+https://github.com/XJungit/azalea?rev=e384e7087de53f6596bc0553659fcb3c80d0e64b#e384e7087de53f6596bc0553659fcb3c80d0e64b"
 dependencies = [
  "azalea-block-macros",
  "azalea-buf",
@@ -291,7 +291,7 @@ dependencies = [
 [[package]]
 name = "azalea-block-macros"
 version = "0.16.0+mc26.2"
-source = "git+file:///D:/Craft-Agent/vendor/azalea?rev=e384e70#e384e7087de53f6596bc0553659fcb3c80d0e64b"
+source = "git+https://github.com/XJungit/azalea?rev=e384e7087de53f6596bc0553659fcb3c80d0e64b#e384e7087de53f6596bc0553659fcb3c80d0e64b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -301,7 +301,7 @@ dependencies = [
 [[package]]
 name = "azalea-brigadier"
 version = "0.16.0+mc26.2"
-source = "git+file:///D:/Craft-Agent/vendor/azalea?rev=e384e70#e384e7087de53f6596bc0553659fcb3c80d0e64b"
+source = "git+https://github.com/XJungit/azalea?rev=e384e7087de53f6596bc0553659fcb3c80d0e64b#e384e7087de53f6596bc0553659fcb3c80d0e64b"
 dependencies = [
  "azalea-buf",
  "azalea-chat",
@@ -311,7 +311,7 @@ dependencies = [
 [[package]]
 name = "azalea-buf"
 version = "0.16.0+mc26.2"
-source = "git+file:///D:/Craft-Agent/vendor/azalea?rev=e384e70#e384e7087de53f6596bc0553659fcb3c80d0e64b"
+source = "git+https://github.com/XJungit/azalea?rev=e384e7087de53f6596bc0553659fcb3c80d0e64b#e384e7087de53f6596bc0553659fcb3c80d0e64b"
 dependencies = [
  "azalea-buf-macros",
  "byteorder",
@@ -326,7 +326,7 @@ dependencies = [
 [[package]]
 name = "azalea-buf-macros"
 version = "0.16.0+mc26.2"
-source = "git+file:///D:/Craft-Agent/vendor/azalea?rev=e384e70#e384e7087de53f6596bc0553659fcb3c80d0e64b"
+source = "git+https://github.com/XJungit/azalea?rev=e384e7087de53f6596bc0553659fcb3c80d0e64b#e384e7087de53f6596bc0553659fcb3c80d0e64b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -336,7 +336,7 @@ dependencies = [
 [[package]]
 name = "azalea-chat"
 version = "0.16.0+mc26.2"
-source = "git+file:///D:/Craft-Agent/vendor/azalea?rev=e384e70#e384e7087de53f6596bc0553659fcb3c80d0e64b"
+source = "git+https://github.com/XJungit/azalea?rev=e384e7087de53f6596bc0553659fcb3c80d0e64b#e384e7087de53f6596bc0553659fcb3c80d0e64b"
 dependencies = [
  "azalea-buf",
  "azalea-language",
@@ -350,7 +350,7 @@ dependencies = [
 [[package]]
 name = "azalea-client"
 version = "0.16.0+mc26.2"
-source = "git+file:///D:/Craft-Agent/vendor/azalea?rev=e384e70#e384e7087de53f6596bc0553659fcb3c80d0e64b"
+source = "git+https://github.com/XJungit/azalea?rev=e384e7087de53f6596bc0553659fcb3c80d0e64b#e384e7087de53f6596bc0553659fcb3c80d0e64b"
 dependencies = [
  "async-compat",
  "azalea-auth",
@@ -388,7 +388,7 @@ dependencies = [
 [[package]]
 name = "azalea-core"
 version = "0.16.0+mc26.2"
-source = "git+file:///D:/Craft-Agent/vendor/azalea?rev=e384e70#e384e7087de53f6596bc0553659fcb3c80d0e64b"
+source = "git+https://github.com/XJungit/azalea?rev=e384e7087de53f6596bc0553659fcb3c80d0e64b#e384e7087de53f6596bc0553659fcb3c80d0e64b"
 dependencies = [
  "azalea-buf",
  "azalea-chat",
@@ -409,7 +409,7 @@ dependencies = [
 [[package]]
 name = "azalea-crypto"
 version = "0.16.0+mc26.2"
-source = "git+file:///D:/Craft-Agent/vendor/azalea?rev=e384e70#e384e7087de53f6596bc0553659fcb3c80d0e64b"
+source = "git+https://github.com/XJungit/azalea?rev=e384e7087de53f6596bc0553659fcb3c80d0e64b#e384e7087de53f6596bc0553659fcb3c80d0e64b"
 dependencies = [
  "aes",
  "azalea-buf",
@@ -428,7 +428,7 @@ dependencies = [
 [[package]]
 name = "azalea-entity"
 version = "0.16.0+mc26.2"
-source = "git+file:///D:/Craft-Agent/vendor/azalea?rev=e384e70#e384e7087de53f6596bc0553659fcb3c80d0e64b"
+source = "git+https://github.com/XJungit/azalea?rev=e384e7087de53f6596bc0553659fcb3c80d0e64b#e384e7087de53f6596bc0553659fcb3c80d0e64b"
 dependencies = [
  "azalea-block",
  "azalea-buf",
@@ -451,7 +451,7 @@ dependencies = [
 [[package]]
 name = "azalea-inventory"
 version = "0.16.0+mc26.2"
-source = "git+file:///D:/Craft-Agent/vendor/azalea?rev=e384e70#e384e7087de53f6596bc0553659fcb3c80d0e64b"
+source = "git+https://github.com/XJungit/azalea?rev=e384e7087de53f6596bc0553659fcb3c80d0e64b#e384e7087de53f6596bc0553659fcb3c80d0e64b"
 dependencies = [
  "azalea-auth",
  "azalea-buf",
@@ -469,7 +469,7 @@ dependencies = [
 [[package]]
 name = "azalea-inventory-macros"
 version = "0.16.0+mc26.2"
-source = "git+file:///D:/Craft-Agent/vendor/azalea?rev=e384e70#e384e7087de53f6596bc0553659fcb3c80d0e64b"
+source = "git+https://github.com/XJungit/azalea?rev=e384e7087de53f6596bc0553659fcb3c80d0e64b#e384e7087de53f6596bc0553659fcb3c80d0e64b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -479,7 +479,7 @@ dependencies = [
 [[package]]
 name = "azalea-language"
 version = "0.16.0+mc26.2"
-source = "git+file:///D:/Craft-Agent/vendor/azalea?rev=e384e70#e384e7087de53f6596bc0553659fcb3c80d0e64b"
+source = "git+https://github.com/XJungit/azalea?rev=e384e7087de53f6596bc0553659fcb3c80d0e64b#e384e7087de53f6596bc0553659fcb3c80d0e64b"
 dependencies = [
  "compact_str",
  "serde_json",
@@ -488,7 +488,7 @@ dependencies = [
 [[package]]
 name = "azalea-physics"
 version = "0.16.0+mc26.2"
-source = "git+file:///D:/Craft-Agent/vendor/azalea?rev=e384e70#e384e7087de53f6596bc0553659fcb3c80d0e64b"
+source = "git+https://github.com/XJungit/azalea?rev=e384e7087de53f6596bc0553659fcb3c80d0e64b#e384e7087de53f6596bc0553659fcb3c80d0e64b"
 dependencies = [
  "azalea-block",
  "azalea-core",
@@ -505,7 +505,7 @@ dependencies = [
 [[package]]
 name = "azalea-protocol"
 version = "0.16.0+mc26.2"
-source = "git+file:///D:/Craft-Agent/vendor/azalea?rev=e384e70#e384e7087de53f6596bc0553659fcb3c80d0e64b"
+source = "git+https://github.com/XJungit/azalea?rev=e384e7087de53f6596bc0553659fcb3c80d0e64b#e384e7087de53f6596bc0553659fcb3c80d0e64b"
 dependencies = [
  "azalea-auth",
  "azalea-block",
@@ -540,7 +540,7 @@ dependencies = [
 [[package]]
 name = "azalea-protocol-macros"
 version = "0.16.0+mc26.2"
-source = "git+file:///D:/Craft-Agent/vendor/azalea?rev=e384e70#e384e7087de53f6596bc0553659fcb3c80d0e64b"
+source = "git+https://github.com/XJungit/azalea?rev=e384e7087de53f6596bc0553659fcb3c80d0e64b#e384e7087de53f6596bc0553659fcb3c80d0e64b"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -550,7 +550,7 @@ dependencies = [
 [[package]]
 name = "azalea-registry"
 version = "0.16.0+mc26.2"
-source = "git+file:///D:/Craft-Agent/vendor/azalea?rev=e384e70#e384e7087de53f6596bc0553659fcb3c80d0e64b"
+source = "git+https://github.com/XJungit/azalea?rev=e384e7087de53f6596bc0553659fcb3c80d0e64b#e384e7087de53f6596bc0553659fcb3c80d0e64b"
 dependencies = [
  "azalea-buf",
  "azalea-registry-macros",
@@ -561,7 +561,7 @@ dependencies = [
 [[package]]
 name = "azalea-registry-macros"
 version = "0.16.0+mc26.2"
-source = "git+file:///D:/Craft-Agent/vendor/azalea?rev=e384e70#e384e7087de53f6596bc0553659fcb3c80d0e64b"
+source = "git+https://github.com/XJungit/azalea?rev=e384e7087de53f6596bc0553659fcb3c80d0e64b#e384e7087de53f6596bc0553659fcb3c80d0e64b"
 dependencies = [
  "quote",
  "syn",
@@ -570,7 +570,7 @@ dependencies = [
 [[package]]
 name = "azalea-world"
 version = "0.16.0+mc26.2"
-source = "git+file:///D:/Craft-Agent/vendor/azalea?rev=e384e70#e384e7087de53f6596bc0553659fcb3c80d0e64b"
+source = "git+https://github.com/XJungit/azalea?rev=e384e7087de53f6596bc0553659fcb3c80d0e64b#e384e7087de53f6596bc0553659fcb3c80d0e64b"
 dependencies = [
  "azalea-block",
  "azalea-buf",
@@ -1120,7 +1120,7 @@ dependencies = [
 
 [[package]]
 name = "craft-agent"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "serde",
@@ -1130,7 +1130,7 @@ dependencies = [
 
 [[package]]
 name = "craft-agent-autopilot"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "reqwest 0.12.28",
  "serde",
@@ -1139,7 +1139,7 @@ dependencies = [
 
 [[package]]
 name = "craft-agent-ctl"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "reqwest 0.12.28",
  "serde_json",
@@ -1147,7 +1147,7 @@ dependencies = [
 
 [[package]]
 name = "craft-agent-minecraft"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "azalea",
@@ -1170,7 +1170,7 @@ dependencies = [
 
 [[package]]
 name = "craft-agent-viewer"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -3576,7 +3576,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

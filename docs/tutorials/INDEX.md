@@ -2,25 +2,25 @@
 
 Start here if you are new to the project.
 
-## Quick Start
+## Quick Start (v1.0 · DSH bridge mode)
 
-1. Read `getting-started.md`.
-2. Read `project-structure.md`.
-3. Run the viewer (`cargo run -p craft-agent-viewer -- --goal "explore" --steps 20 --port 8080`).
-4. Read `agent-loop.md`.
-5. Pick a task and read the matching tutorial.
+1. Read `getting-started.md` — clone, setup, start, drive from DSH.
+2. Read `project-structure.md` — repo layout.
+3. Run `.\scripts\setup.ps1` then `.\scripts\start.ps1` (see `getting-started.md`).
+4. Open DSH → craft-bot preset session → use `game_state` / `bot_tool` / `set_goal`.
+5. Read `configuration.md` and `troubleshooting.md` as needed.
 
 ## Full Path
 
-- `new-contributor-guide.md` -- curated onboarding path
-- `getting-started.md` -- build and run
-- `project-structure.md` -- repo layout
-- `configuration.md` -- runtime config
-- `agent-loop.md` -- core loop
-- `adding-tools.md` -- add tools
-- `adding-adapters.md` -- add adapters
-- `session-and-compaction.md` -- sessions & cache
-- `troubleshooting.md` -- runtime issues
+- `new-contributor-guide.md` — curated onboarding path
+- `getting-started.md` — clone/build/run (DSH bridge mode)
+- `project-structure.md` — repo layout
+- `configuration.md` — runtime config
+- `agent-loop.md` — **historical** in-bot 13-step loop (removed 2026-08-14)
+- `adding-tools.md` — add tools
+- `adding-adapters.md` — add adapters
+- `session-and-compaction.md` — sessions & cache
+- `troubleshooting.md` — runtime issues
 
 ## Crate-level Docs
 
@@ -32,3 +32,8 @@ Each crate has its own README with API details:
 | `craft-agent-minecraft` | [`../../crates/craft-agent-minecraft/README.md`](../../crates/craft-agent-minecraft/README.md) |
 | `craft-agent-model` | [`../../crates/craft-agent-model/README.md`](../../crates/craft-agent-model/README.md) |
 | `craft-agent-viewer` | [`../../crates/craft-agent-viewer/README.md`](../../crates/craft-agent-viewer/README.md) |
+
+## DSH Bridge Plugin
+
+The `tools/dsh-bridge/` plugin adds `game_state` / `bot_tool` / `set_goal` to DSH and
+embeds a live bot dashboard. See [`../../tools/dsh-bridge/README.md`](../../tools/dsh-bridge/README.md).

@@ -202,3 +202,57 @@ cargo test -p craft-agent-model --lib        # 模型测试
 
 See [`docs/mindcraft-gap.md`](./docs/mindcraft-gap.md) for the automation workflow records.
 See [`docs/tutorials/`](./docs/tutorials/) for developer guides.
+
+## azalea fork maintenance
+
+> **为什么是 fork**：本项目使用 azalea 的弓箭（`stop_use_item` / `ReleaseUseItem`）与
+> 盔甲穿戴（`use_item_air` / `force_miss`）API，这些在上游 azalea 官方 main 上不存在。
+> 因此维护了一个 fork：**`XJungit/azalea`（`craft-agent` 分支）**，承载这些自定义提交。
+> manifest 声明该 fork 的 https 源 + 固定 rev，保证**任何 clone 无需本地 patch 即可编译**。
+
+### 依赖声明
+
+- `crates/craft-agent-minecraft/Cargo.toml` — 6 个 azalea 依赖统一声明
+  `git = "https://github.com/XJungit/azalea"` + `rev = "e384e70..."`（`craft-agent` 分支 HEAD）。
+- `Cargo.lock` — 记录 https 源 + rev（随 commit 提交）。
+- `vendor/azalea/` — 本地离线镜像（submodule，独立 git repo + workspace）。开发时由
+  `.cargo/config.toml`（**gitignored**）的 `[patch."https://github.com/XJungit/azalea"]`
+  重定向到 `file:///.../vendor/azalea`，离线可编、不依赖网络。
+- 新 clone 没有 `.cargo/config.toml`，cargo 直接拉 fork 的 https 源 + rev。
+
+### 更新 fork（上游有新版本 / 需要改 azalea 代码）
+
+1. **拉上游**（在 vendor 里）：
+   ```bash
+   git -C vendor/azalea fetch https://github.com/azalea-rs/azalea main
+   ```
+2. **在 `craft-agent` 分支上重放自定义提交**：把 `e384e70` 之后新增的自定义改动
+   rebase/merge 到上游新 main 之上；保持 `craft-agent` 分支为「上游 + 自定义 API」。
+   ```bash
+   git -C vendor/azalea checkout craft-agent   # 若无本地分支：git branch -t craft-agent xj/craft-agent
+   git -C vendor/azalea merge <upstream-main-sha>  # 或 rebase
+   ```
+3. **推送到 fork**：
+   ```bash
+   git -C vendor/azalea push xj HEAD:craft-agent
+   ```
+4. **更新 manifest rev**：把 `crates/craft-agent-minecraft/Cargo.toml` 里 6 个 azalea
+   依赖的 `rev` 改为新 HEAD SHA（必须存在于 fork 上）。
+5. **同步 Cargo.lock**（关键——lock 必须记录 https 源，不能是本地 file://）：
+   - 临时移走 `.cargo/config.toml`（去掉本地 patch）→ `cargo update -p azalea` →
+     确认 lock 里 source 是 `git+https://github.com/XJungit/azalea?rev=<新SHA>` →
+     恢复 `.cargo/config.toml`。
+   - 同时更新本地 patch 条目（`.cargo/config.toml`）的 rev 为新 SHA，指向 vendor HEAD。
+6. **本地验证**：`cargo check -p craft-agent-minecraft --features azalea-bot`，
+   再 `cargo test` 全量门槛。
+7. **提交父仓库**：`git add crates/craft-agent-minecraft/Cargo.toml Cargo.lock vendor/azalea`
+   （gitlink 一并更新）→ 提交 → 推送。
+
+> 若上游 main 已包含我们需要的 API（未来某天），可切回上游源，删除 fork 依赖。
+
+### 常见问题
+
+- **Cargo.lock 里 source 是 `file:///...`**：别人 clone 会失败。按上面第 5 步用
+  `cargo update -p azalea`（临时无 patch）重生成。
+- **`cargo update` 报 "rev not found"**：新 rev 还没推到 fork，先 push。
+- **编译报 API 不存在**：manifest rev 落后于代码使用的 API，先同步到 fork 最新。

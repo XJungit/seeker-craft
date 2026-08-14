@@ -10,7 +10,7 @@ Configure LLM/VLM backends, agent behavior, and runtime parameters.
 
 ## Backends
 
-Edit `config/agent.toml` to select active LLM/VLM backends.
+Edit `data/config/agent.toml` to select active LLM/VLM backends.
 Each backend can define model name, endpoint, API key env var, context window,
 timeout, and max tokens.
 
@@ -57,7 +57,7 @@ modes have been removed (see `docs/adr.md` ADR-004).
 
 ## Profile (system prompt)
 
-The system prompt is loaded from `profiles/_default.json` and rendered with the
+The system prompt is loaded from `data/profiles/_default.json` and rendered with the
 bot name. Critical constraints:
 
 - **Byte stability**: the rendered system prompt must be byte-identical across

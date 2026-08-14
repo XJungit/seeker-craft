@@ -4,8 +4,40 @@ All notable changes to **SeekerCraft (Craft-Agent)** are documented here.
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) conventions
 with [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The project is
-currently in active development as a single-maintainer project; the first tagged
-release (`v0.1.0`) corresponds to the initial stable feature baseline below.
+currently in active development as a single-maintainer project; `v1.0.0` is the
+first tagged **1.0 release** (DSH bridge mode is the only supported usage).
+
+## [1.0.0] - 2026-08-15
+
+### Added
+
+- **1.0 one-shot scripts** — `scripts/setup.ps1` (prereq check → build → DSH bridge
+  plugin → craft-bot preset → verify), `scripts/start.ps1` (viewer + connect bot),
+  `scripts/stop.ps1` (stop viewer/autopilot). Fresh-clone friendly.
+- **DSH craft-bot preset** — `data/dsh/craft-bot-preset/` template; `setup.ps1` generates
+  `~/.dsh/.agent-presets/craft-bot` from it (substituting `{{PROJECT_ROOT}}` / `{{DSH_PKG_ROOT}}`).
+- **azalea fork dependency** — azalea moved to the maintained fork
+  `XJungit/azalea` (`craft-agent` branch), https source + pinned rev `e384e70`; a fresh
+  clone compiles with **no local patch**. Fork-update workflow documented in
+  `ARCHITECTURE.md` → "azalea fork maintenance".
+- **Portable `craft-agent-ctl`** — all machine-specific paths (`VIEWER_EXE` /
+  `AUTOPILOT_EXE` / `SESSION` / `WORKSPACE` / `LOG_DIR`) replaced with runtime derivation
+  from `CARGO_MANIFEST_DIR` (clone anywhere; `SEEKER_LOG_DIR` overrides the log dir).
+
+### Changed
+
+- **Workspace version → 1.0.0** (was 0.1.0); `craft-agent-viewer` bumped to match.
+- **Repo URL corrected** — `Cargo.toml` `repository` → `https://github.com/XJungit/seeker-craft`
+  (was stale `anomalyco/craft-agent`).
+- **Hard-coded paths removed** — `scripts/llm/switch_llm.js` / `revert_llm.js` derive the
+  repo root at runtime; `tools/dsh-bridge/scripts/verify-in-harness.mjs` auto-detects the DSH
+  install root (env `DSH_NPX_ROOT` override); `tools/dsh-bridge/README.md` install docs point
+  to `setup.ps1` with generic `<repo-root>` placeholders.
+- **Obsolete deploy scripts removed** — `scripts/deploy/*` (hard-coded machine paths,
+  superseded by `craft-agent-ctl` + `scripts/start.ps1`).
+- **Docs rewritten for 1.0** — bilingual README Quick Start → DSH bridge mode
+  (setup/start/stop + craft-bot preset + three tools); tutorials (getting-started /
+  project-structure / INDEX / README) updated; ARCHITECTURE azalea fork section added.
 
 ## [0.2.0] - 2026-08-10
 

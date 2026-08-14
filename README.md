@@ -8,6 +8,7 @@
 [![Docs](https://img.shields.io/github/actions/workflow/status/XJungit/seeker-craft/deploy-docs.yml?label=docs&logo=github)](https://github.com/XJungit/seeker-craft/actions/workflows/deploy-docs.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust: nightly-2026-07-21](https://img.shields.io/badge/rust-nightly--2026--07--21-orange.svg)](rust-toolchain.toml)
+[![Release: v1.0.0](https://img.shields.io/badge/release-v1.0.0-blue.svg)](https://github.com/XJungit/seeker-craft/releases)
 
 **An LLM-driven Minecraft bot that beats the Ender Dragon. Rust + Azalea protocol client, no mods, no screenshots — a real protocol-level player that observes, plans, and executes through typed tools.**
 
@@ -56,9 +57,22 @@ seeker-craft/
 │   ├── tasks/                     # 23 task JSONs (tier 1-6)
 │   ├── profiles/                  # 3-layer prompt templates
 │   ├── blueprints/                # build blueprints
-│   └── actions/                   # LLM-defined rhai scripts
-└── vendor/azalea/                 # pinned Azalea source (submodule, official upstream)
+│   ├── actions/                   # LLM-defined rhai scripts
+│   └── dsh/craft-bot-preset/      # DSH craft-bot preset template (setup.ps1 generates into ~/.dsh)
+├── scripts/
+│   ├── setup.ps1                  # one-shot install & configure (build + DSH bridge + preset + verify)
+│   ├── start.ps1                  # one-shot start viewer + connect bot
+│   ├── stop.ps1                   # one-shot stop
+│   └── probe/*.json               # tool-layer live-test scripts (no LLM)
+├── tools/dsh-bridge/              # DSH bridge plugin (game_state/bot_tool/set_goal + dashboard)
+└── vendor/azalea/                 # local mirror of the maintained azalea fork (submodule)
 ```
+
+> **azalea dependency**: the manifest declares the maintained fork `XJungit/azalea`
+> (`craft-agent` branch) as an https source with a pinned rev — upstream main lacks the
+> archery/equipping APIs. `vendor/azalea` is the local offline mirror (submodule); during
+> development a gitignored `.cargo/config.toml` `[patch]` redirects to it. **Fresh clones
+> compile without that patch.** Fork-update workflow: see [ARCHITECTURE.md](ARCHITECTURE.md).
 
 ### DSH bridge runtime (since 2026-08-14)
 
@@ -93,7 +107,7 @@ azalea (vendor) ──► MC server (TCP)
 
 All 23 tasks (6 tiers) ship as machine-checkable JSON in [`data/tasks/`](data/tasks/).
 
-## Current Progress (2026-08-08)
+## Current Progress (2026-08-15 · v1.0.0)
 
 **Verified end-to-end (live server, no mods):**
 
@@ -105,10 +119,15 @@ All 23 tasks (6 tiers) ship as machine-checkable JSON in [`data/tasks/`](data/ta
 | Tier 5: nether & magic | ⬜ next | nether portal / enchanting / brewing not yet end-to-end verified |
 | Tier 6: finale | ⬜ pending | netherite / shulker / elytra / ender dragon |
 
-**P-series milestones recently shipped:**
+**Milestones recently shipped (v1.0.0 release baseline):**
 
-- **P135** — mushroom_stew recipe reverted to three ingredients (Wiki-verified); gather Y-range hint fixed (removed stale 1.16 static data, now driven by `y_range_hint`)
-- **P136** — full sweep of hard-coded version data: ore Y-layer knowledge base (diamond −64~16 densest −59, iron −64~384, emerald mountains-only, etc.), version-pin rules (MC 26.2)
+- **v1.0.0 (2026-08-15)** — 1.0 release: DSH bridge mode is the only supported usage (one-shot setup/start/stop scripts +
+  craft-bot preset); azalea dependency moved to a maintained fork (`XJungit/azalea`) with a pinned rev — **fresh clones compile
+  with no local patch**; `craft-agent-ctl` paths are derived at runtime (no machine-specific paths); repo URL corrected.
+- **P154** — equip falls back to vanilla right-click equipping (use_item_air) when left_click fails
+- **P152/P151/P150** — mine approach-branch intermediate results, look_at before mining, approach before mining far targets (fixes dropped loot)
+- **P149/P148/P147** — pickup supports vertical drops; goto underground nav fix; auto-pickup after mining
+- **P135/P136** — recipe & Y-layer knowledge-base fixes (below)
 
 **Verification discipline:** every tool-layer behavior is probe-verified against the live server (see `scripts/probe/*.json`) before push; Y-hint correctness was probe-verified for diamond (out-of-range hint), emerald (biome hint), and iron/coal (no false positives in-range). Full milestone table: [`docs/benchmarks.md`](docs/benchmarks.md).
 
@@ -129,14 +148,104 @@ All 23 tasks (6 tiers) ship as machine-checkable JSON in [`data/tasks/`](data/ta
 | NPC/Social | `trade`, `give` |
 | Meta | `chat`, `set_goal`, `run_plan`, `run_script`, `new_action`, `list_actions`, `pause_goal`, `resume_goal`, `task_complete`, `task_retry` |
 
-## Quick Start
+## Quick Start (v1.0 · DSH bridge mode)
 
-### Prerequisites
+> **In v1.0 the usage is DSH bridge mode**: `craft-agent-viewer` only provides the
+> HTTP bridge (`/api/connect` + `/api/bot_tool` + `/api/game-state` + `/api/goal`),
+> and the **brain is DeepSeek Harness (DSH)** — you drive the bot from DSH using
+> three tools (`game_state` / `bot_tool` / `set_goal`). The steps below are verified
+> on Windows PowerShell.
 
-- Rust **nightly** (see `rust-toolchain.toml`; stable fails — azalea requires nightly)
-- A Minecraft Java server the bot can join (vanilla 1.20.4+ / MC 26.2, LAN included)
+### 1. Prerequisites
 
-### Build & test
+| Dependency | Notes |
+|---|---|
+| **Rust nightly** | Pinned `nightly-2026-07-21` in `rust-toolchain.toml` (azalea needs nightly; stable fails) |
+| **Git** | For cloning the repo and submodules |
+| **Node.js ≥ 20 + pnpm** | For the DSH bridge plugin |
+| **Minecraft Java 26.2 server** | Bring your own vanilla server (LAN is fine); bot connects to `localhost:4444` by default |
+| **DeepSeek Harness (DSH)** | Bring your own install; this repo only generates the craft-bot preset |
+
+### 2. Clone (with azalea submodule)
+
+```bash
+git clone --recurse-submodules https://github.com/XJungit/seeker-craft.git
+cd seeker-craft
+```
+
+> The azalea dependency is a maintained fork (`XJungit/azalea`, `craft-agent` branch) —
+> upstream lacks the APIs the bot needs for archery/equipping. The manifest declares
+> the fork's https source with a pinned rev, so **a fresh clone compiles with no local
+> patch**. See [ARCHITECTURE.md](ARCHITECTURE.md) → "azalea fork maintenance".
+
+### 3. One-shot install & configure (setup.ps1)
+
+```powershell
+.\scripts\setup.ps1
+```
+
+Idempotent and repeatable. It:
+
+1. Checks prerequisites (cargo / git / node / pnpm; prompts installs if missing)
+2. Runs `cargo build --workspace`
+3. Configures the DSH bridge plugin (registers into `~/.dsh` + links deps + `pnpm install`)
+4. Generates the **craft-bot preset** (`~/.dsh/.agent-presets/craft-bot`), substituting local path placeholders
+5. Copies `.env.example` → `.env` if absent
+6. Runs the DSH plugin verification script
+
+> Only want to build, not touch DSH? `.\scripts\setup.ps1 -SkipDsh` (skips steps 3/4).
+> Skip the build? `-SkipBuild`.
+
+### 4. Start MC server + viewer + connect bot
+
+```powershell
+# First start your MC 26.2 server (listening on localhost:4444)
+
+# One shot: build viewer → start viewer → connect bot (polls until ready)
+.\scripts\start.ps1
+```
+
+`start.ps1` parameters (all have defaults):
+
+| Parameter | Default | Notes |
+|---|---|---|
+| `-Goal` | explore the world… | Operational goal shown in the viewer |
+| `-Steps` | `0` (infinite) | Number of steps |
+| `-Port` | `8080` | Viewer HTTP port |
+| `-Mc` | `localhost:4444` | MC server address |
+| `-Username` | `CraftAgent` | Bot name |
+
+Or step-by-step with `craft-agent-ctl`:
+
+```powershell
+cargo run -p craft-agent-ctl -- viewer "explore the world" 0   # viewer only
+cargo run -p craft-agent-ctl -- start                          # connect bot
+cargo run -p craft-agent-ctl -- status                         # verify running=true
+```
+
+### 5. Drive the bot from DSH (core usage)
+
+1. Open **DeepSeek Harness**, create/enter a **craft-bot** preset session
+2. A **Craft Bot dashboard** embeds on the right side (live bot state)
+3. Call the three tools in conversation:
+
+```
+game_state()                    # perceive: position/health/hunger/inventory/nearby/memory
+bot_tool(name:"mine", args:{x:.., y:.., z:..})   # execute one of the 53 tools
+set_goal("Collect 24 iron ore and smelt into ingots")           # set the ops goal
+```
+
+> Tool names are a stable contract (`tools_azalea.rs::ALL_TOOL_NAMES`, 53 total).
+> Auto-corrections (mine-on-air → nearest solid; interaction → auto-approach ≤2.5m)
+> are built in — pass the intended target directly.
+
+### 6. Stop
+
+```powershell
+.\scripts\stop.ps1        # stops viewer/autopilot (does not affect MC server or DSH)
+```
+
+### Build & test (for development)
 
 ```bash
 cargo build --workspace
@@ -144,7 +253,16 @@ cargo test -p craft-agent --lib
 cargo test -p craft-agent-minecraft --features azalea-bot --lib
 ```
 
-### Configure LLM backends
+### Probe mode (test the tool layer WITHOUT the LLM, seconds not minutes)
+
+```bash
+# Single command
+cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot -- 4444 --cmd "equip iron_helmet helmet"
+# Script (see scripts/probe/*.json)
+cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot -- 4444 --script scripts\probe\smoke.json
+```
+
+### Configure LLM backends (craft-agent-model path only; not needed in DSH mode)
 
 ```bash
 cp data/config/agent.example.toml data/config/agent.toml
@@ -153,25 +271,8 @@ cp data/config/agent.example.toml data/config/agent.toml
 
 Any OpenAI-compatible endpoint works (DeepSeek, OpenAI, local gateways, ...).
 Keys are never committed: `agent.toml` is gitignored.
-
-### Run the bot
-
-```bash
-# Web dashboard + agent (LLM-driven)
-cargo run -p craft-agent-viewer --bin craft-agent-viewer \
-  -- --goal "挖矿下探" --steps 0 --port 8080 --mc localhost:4444 --username CraftAgent
-# open http://127.0.0.1:8080
-
-# Probe mode — test tools WITHOUT the LLM (seconds, not minutes)
-cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot -- 4444 --cmd "equip iron_helmet helmet"
-```
-
-### Probe scripts
-
-```bash
-# Feature/end-to-end verification (see scripts/probe/*.json)
-cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot -- 4444 --script scripts\probe\smoke.json
-```
+(In DSH mode the LLM comes from the DSH brain; this file is only used when running
+the legacy `craft-agent-model` path.)
 
 ## Documentation
 
@@ -193,6 +294,8 @@ Docs are also published to **GitHub Pages** (rustdoc + docs) — see the
 
 - [Mindcraft](https://github.com/mindcraft-bots/mindcraft) — JS + mineflayer LLM bot; reference for tasks/profiles/modes
 - [Azalea](https://github.com/azalea-rs/azalea) — Rust Minecraft client protocol library
+- [XJungit/azalea](https://github.com/XJungit/azalea) — maintained fork used by this project (adds `stop_use_item` /
+  `use_item_air` / `force_miss` for archery & equipping; `craft-agent` branch)
 
 ## License
 

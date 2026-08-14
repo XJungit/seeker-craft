@@ -1,28 +1,29 @@
 # Developer Tutorials
 
-This directory contains hands-on guides for working on Craft-Agent.
+This directory contains hands-on guides for working on SeekerCraft (Craft-Agent) v1.0.
 
 ## Start Here
 
-- `INDEX.md` -- tutorial map
-- `new-contributor-guide.md` -- fastest onboarding path
+- `INDEX.md` — tutorial map
+- `new-contributor-guide.md` — fastest onboarding path
+- `getting-started.md` — clone/build/run (DSH bridge mode)
 
 ## Core
 
-1. `getting-started.md` -- build, run, and debug the workspace.
-2. `project-structure.md` -- repo layout.
-3. `configuration.md` -- runtime configuration.
-4. `agent-loop.md` -- core loop.
+1. `getting-started.md` — clone, build, run, drive from DSH.
+2. `project-structure.md` — repo layout.
+3. `configuration.md` — runtime configuration.
+4. `agent-loop.md` — **historical** in-bot 13-step loop (removed 2026-08-14); kept for reference.
 
 ## Extending
 
-5. `adding-tools.md` -- add a new Minecraft tool.
-6. `adding-adapters.md` -- add or swap a game adapter.
-7. `session-and-compaction.md` -- understand session persistence and compaction.
+5. `adding-tools.md` — add a new Minecraft tool.
+6. `adding-adapters.md` — add or swap a game adapter.
+7. `session-and-compaction.md` — session persistence & cache design.
 
 ## Operations
 
-8. `troubleshooting.md` -- runtime problems and fixes.
+8. `troubleshooting.md` — runtime problems and fixes.
 
 ## Crate-level Docs
 
@@ -35,7 +36,8 @@ This directory contains hands-on guides for working on Craft-Agent.
 
 ## Quick Start
 
-```bash
-cargo build --workspace
-cargo run -p craft-agent-viewer -- --goal "collect wood" --steps 40 --port 8080
+```powershell
+.\scripts\setup.ps1      # build + DSH bridge + craft-bot preset
+.\scripts\start.ps1      # viewer + connect bot
+# then open DSH → craft-bot preset session
 ```

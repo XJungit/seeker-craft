@@ -8,6 +8,7 @@
 [![Docs](https://img.shields.io/github/actions/workflow/status/XJungit/seeker-craft/deploy-docs.yml?label=docs&logo=github)](https://github.com/XJungit/seeker-craft/actions/workflows/deploy-docs.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust: nightly-2026-07-21](https://img.shields.io/badge/rust-nightly--2026--07--21-orange.svg)](rust-toolchain.toml)
+[![Release: v1.0.0](https://img.shields.io/badge/release-v1.0.0-blue.svg)](https://github.com/XJungit/seeker-craft/releases)
 
 **一个由 LLM 驱动的 Minecraft 机器人，目标是击败末影龙。Rust + Azalea 协议客户端，
 无 mod、无截图——通过类型化工具观察、规划、执行的真正的协议级玩家。**
@@ -58,9 +59,21 @@ seeker-craft/
 │   ├── tasks/                     # 23 个任务 JSON（tier 1-6）
 │   ├── profiles/                  # 3 层提示词模板
 │   ├── blueprints/                # 建造蓝图
-│   └── actions/                   # LLM 定义的 rhai 脚本
-└── vendor/azalea/                 # 固定版本的 Azalea 源码（submodule，官方上游）
+│   ├── actions/                   # LLM 定义的 rhai 脚本
+│   └── dsh/craft-bot-preset/      # DSH craft-bot 预设模板（setup.ps1 生成到 ~/.dsh）
+├── scripts/
+│   ├── setup.ps1                  # 一键安装配置（构建 + DSH 桥 + 预设 + 验证）
+│   ├── start.ps1                  # 一键启动 viewer + 连接 bot
+│   ├── stop.ps1                   # 一键停止
+│   └── probe/*.json               # 工具层实测脚本（无 LLM）
+├── tools/dsh-bridge/              # DSH 桥插件（game_state/bot_tool/set_goal + 仪表盘）
+└── vendor/azalea/                 # azalea 源码副本（维护 fork 的本地镜像，submodule）
 ```
+
+> **azalea 依赖**：manifest 声明维护 fork `XJungit/azalea`（`craft-agent` 分支）的
+> https 源 + 固定 rev——上游 main 缺少 bot 弓箭/穿戴所需 API。`vendor/azalea` 是本地
+> 离线镜像（submodule），开发时由 `.cargo/config.toml`（gitignored）的 `[patch]` 重定向；
+> **别人 clone 无需该 patch 也能直接编译**。fork 更新流程见 [ARCHITECTURE.md](ARCHITECTURE.md)。
 
 ### DSH 桥接运行时（2026-08-14 起）
 
@@ -94,7 +107,7 @@ azalea (vendor) ──► MC server (TCP)
 
 23 个任务（6 层）全部以机器可判定 JSON 形式随仓库发布（[`data/tasks/`](data/tasks/)，任务系统说明见 [`docs/ARCHITECTURE.md`](ARCHITECTURE.md)）。
 
-## 当前进度（2026-08-08）
+## 当前进度（2026-08-15 · v1.0.0）
 
 **已实机端到端验证（真实服务器、无 mod）：**
 
@@ -106,10 +119,15 @@ azalea (vendor) ──► MC server (TCP)
 | Tier 5：下界与魔法 | ⬜ 下一步 | 下界传送门 / 附魔 / 酿造尚未端到端验证 |
 | Tier 6：终局 | ⬜ 待办 | 下界合金 / 潜影盒 / 鞘翅 / 末影龙 |
 
-**近期已推送的 P 系列里程碑：**
+**近期里程碑（v1.0.0 发布基线）：**
 
-- **P135** — mushroom_stew 配方回退三原料（Wiki 验证）；gather 矿石 Y 提示纠错（移除 1.16 静态数据，改为 `y_range_hint` 动态驱动）
-- **P136** — 版本写死内容全面排查：矿石 Y 层知识库（钻石 −64~16 最密 −59、铁 −64~384、绿宝石仅山地等）、版本号规范（MC 26.2）
+- **v1.0.0（2026-08-15）** — 1.0 正式版：DSH 桥接模式为唯一使用方式（一键 setup/start/stop 脚本 +
+  craft-bot 预设）；azalea 依赖改为维护 fork（`XJungit/azalea`）固定 rev，**clone 即可编译**；
+  `craft-agent-ctl` 路径全部改为运行时推导（不再依赖本机路径）；仓库地址修正。
+- **P154** — equip 盔甲 left_click 失败后回退 vanilla 右键穿戴（use_item_air）
+- **P152/P151/P150** — mine 靠近分支发送中间结果、挖矿前 look_at、目标过远先靠近再挖（修复掉落物丢失）
+- **P149/P148/P147** — pickup 支持垂直掉落物；goto 地下导航误判修复；mine 挖矿后自动拾取
+- **P135/P136** — 配方与 Y 层知识库修正（详见下方）
 
 **验证纪律：** 所有工具层行为推送前均经 probe 实机验证（见 `scripts/probe/*.json`）；Y 提示正确性已 probe 验证——钻石（越界提示）、绿宝石（群系提示）、铁/煤（范围内不误报）。完整里程碑表见 [`docs/benchmarks.md`](docs/benchmarks.md)。
 
@@ -130,14 +148,101 @@ azalea (vendor) ──► MC server (TCP)
 | NPC/社交 | `trade`, `give` |
 | 元操作 | `chat`, `set_goal`, `run_plan`, `run_script`, `new_action`, `list_actions`, `pause_goal`, `resume_goal`, `task_complete`, `task_retry` |
 
-## 快速开始
+## 快速开始（v1.0 · DSH 桥接模式）
 
-### 前置条件
+> **1.0 的使用方式是 DSH 桥接模式**：`craft-agent-viewer` 只提供 HTTP 桥
+> （`/api/connect` + `/api/bot_tool` + `/api/game-state` + `/api/goal`），
+> **大脑是 DeepSeek Harness（DSH）**——你在 DSH 里用三个工具（`game_state` /
+> `bot_tool` / `set_goal`）驱动 bot。以下步骤在 **Windows PowerShell** 上验证通过。
 
-- Rust **nightly**（见 `rust-toolchain.toml`；stable 会失败——azalea 需要 nightly）
-- 一个机器人能加入的 Minecraft Java 服务器（任意 vanilla 1.20.4+ / MC 26.2 服务端，局域网也行）
+### 1. 前置条件
 
-### 构建与测试
+| 依赖 | 说明 |
+|---|---|
+| **Rust nightly** | `rust-toolchain.toml` 固定 `nightly-2026-07-21`（azalea 需要 nightly，stable 会失败） |
+| **Git** | 拉取仓库与子模块 |
+| **Node.js ≥ 20 + pnpm** | DSH 桥插件安装用 |
+| **Minecraft Java 版 26.2 服务器** | 自备 vanilla 服务器（局域网即可）；bot 默认连接 `localhost:4444` |
+| **DeepSeek Harness（DSH）** | 自备安装；本项目不打包，只负责生成 craft-bot 预设 |
+
+### 2. 克隆仓库（含 azalea 子模块）
+
+```bash
+git clone --recurse-submodules https://github.com/XJungit/seeker-craft.git
+cd seeker-craft
+```
+
+> azalea 依赖是项目的维护 fork（`XJungit/azalea`，`craft-agent` 分支）——上游缺少
+> bot 弓箭/穿戴所需 API。manifest 直接声明 fork 的 https 源 + 固定 rev，
+> **clone 后无需任何本地 patch 即可编译**。详见 [ARCHITECTURE.md](ARCHITECTURE.md)「azalea fork 维护」。
+
+### 3. 一键安装配置（setup.ps1）
+
+```powershell
+.\scripts\setup.ps1
+```
+
+脚本幂等、可重复运行，自动完成：
+
+1. 前置检查（cargo / git / node / pnpm，缺失会提示安装）
+2. `cargo build --workspace` 构建全部 crate
+3. 配置 DSH 桥插件（注册到 `~/.dsh` + 链接依赖 + `pnpm install`）
+4. 生成 **craft-bot 预设**（`~/.dsh/.agent-presets/craft-bot`），替换本机路径占位符
+5. 复制 `.env.example` → `.env`（如不存在）
+6. 运行 DSH 插件验证脚本
+
+> 只想先编译不碰 DSH？`.\scripts\setup.ps1 -SkipDsh`（跳过第 3/4 步）。
+> 只做环境检查不构建？`-SkipBuild`。
+
+### 4. 启动 Minecraft 服务器 + viewer + 连接 bot
+
+```powershell
+# 先启动你的 MC 26.2 服务器（监听 localhost:4444）
+
+# 一键：构建 viewer → 启动 viewer → 连接 bot（轮询等待就绪）
+.\scripts\start.ps1
+```
+
+`start.ps1` 参数（均有默认值）：
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `-Goal` | 探索世界… | viewer 显示的运营目标 |
+| `-Steps` | `0`（无限） | 运行步数 |
+| `-Port` | `8080` | viewer HTTP 端口 |
+| `-Mc` | `localhost:4444` | MC 服务器地址 |
+| `-Username` | `CraftAgent` | bot 游戏名 |
+
+也可手动用 `craft-agent-ctl` 逐步操作：
+
+```powershell
+cargo run -p craft-agent-ctl -- viewer "探索世界" 0   # 只起 viewer
+cargo run -p craft-agent-ctl -- start                # 连接 bot
+cargo run -p craft-agent-ctl -- status               # 验证 running=true
+```
+
+### 5. 用 DSH 驱动 bot（核心用法）
+
+1. 打开 **DeepSeek Harness**，新建/进入 **craft-bot** 预设会话
+2. 会话右侧会自动内嵌 **Craft Bot 仪表盘**（实时 bot 状态）
+3. 对话中调用三个工具：
+
+```
+game_state()                    # 感知：位置/生命/饱食/背包/附近/记忆
+bot_tool(name:"mine", args:{x:.., y:.., z:..})   # 执行 53 个工具之一
+set_goal("收集 24 个铁矿并熔炼成铁锭")           # 设置运营目标
+```
+
+> 工具名是稳定契约（`tools_azalea.rs::ALL_TOOL_NAMES`，53 个）。自动修正
+> （挖空气→最近实心、交互→自动靠近≤2.5m）已内置，直接传意图目标即可。
+
+### 6. 停止
+
+```powershell
+.\scripts\stop.ps1        # 停止 viewer/autopilot（不影响 MC 服务器与 DSH）
+```
+
+### 构建与测试（开发用）
 
 ```bash
 cargo build --workspace
@@ -145,7 +250,16 @@ cargo test -p craft-agent --lib
 cargo test -p craft-agent-minecraft --features azalea-bot --lib
 ```
 
-### 配置 LLM 后端
+### Probe 模式（不开 LLM 测试工具层，秒级）
+
+```bash
+# 单命令
+cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot -- 4444 --cmd "equip iron_helmet helmet"
+# 脚本（见 scripts/probe/*.json）
+cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot -- 4444 --script scripts\probe\smoke.json
+```
+
+### 配置 LLM 后端（仅 craft-agent-model 路径，DSH 模式不需要）
 
 ```bash
 cp data/config/agent.example.toml data/config/agent.toml
@@ -154,25 +268,7 @@ cp data/config/agent.example.toml data/config/agent.toml
 
 任何 OpenAI 兼容端点都可以（DeepSeek、OpenAI、本地网关等）。
 Key 永远不会被提交：`agent.toml` 已被 gitignore。
-
-### 运行 bot
-
-```bash
-# Web 仪表盘 + agent（LLM 驱动）
-cargo run -p craft-agent-viewer --bin craft-agent-viewer \
-  -- --goal "挖矿下探" --steps 0 --port 8080 --mc localhost:4444 --username CraftAgent
-# 打开 http://127.0.0.1:8080
-
-# Probe 模式 — 不经过 LLM 测试工具层（秒级，而非分钟级）
-cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot -- 4444 --cmd "equip iron_helmet helmet"
-```
-
-### Probe 脚本
-
-```bash
-# 功能/端到端验证（见 scripts/probe/*.json）
-cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot -- 4444 --script scripts\probe\smoke.json
-```
+（DSH 模式下 LLM 由 DSH 大脑提供，此文件仅在走 `craft-agent-model` 兼容路径时使用。）
 
 ## 文档
 
@@ -194,6 +290,8 @@ cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot 
 
 - [Mindcraft](https://github.com/mindcraft-bots/mindcraft) — JS + mineflayer LLM bot；任务/配置/模式参考实现
 - [Azalea](https://github.com/azalea-rs/azalea) — Rust Minecraft 客户端协议
+- [XJungit/azalea](https://github.com/XJungit/azalea) — 本项目使用的维护 fork（为弓箭/穿戴补充 `stop_use_item` /
+  `use_item_air` / `force_miss` API；`craft-agent` 分支）
 
 ## License
 
