@@ -536,6 +536,8 @@ function formatPos(pos){
   try{return pos.map(v=>+v.toFixed(1)).join(", ")}catch(e){return"-"}
 }
 async function pollGameState(){
+  // 先安排下一次轮询（放最前，保证任何提前 return / 异常都不会中断自动更新）
+  setTimeout(pollGameState,2000);
   try{
     const r=await fetch("/api/game-state",{cache:"no-store"});
     if(!r.ok)return;
@@ -543,8 +545,7 @@ async function pollGameState(){
     if(!st||st.status==="not_connected"){
       document.getElementById("gs-pos").textContent="未连接";
       return;
-    }
-    // 血量
+    }    // 血量
     const hp=st.health??0;
     document.querySelector("#gs-vitals .gs-bar-fill.health").style.width=Math.min(100,hp/20*100)+"%";
     document.querySelector("#gs-vitals .gs-bar-fill.health").parentNode.querySelector(".gs-bar-text").textContent=hp.toFixed(1)+"/20";
@@ -583,7 +584,6 @@ async function pollGameState(){
       buildInvGrid(st.inventory,st.held_item&&st.held_item!=="minecraft:air"?st.selected_slot??0:null);
     }
   }catch(_){}
-  setTimeout(pollGameState,2000);
 }
 pollGameState();
 </script>
