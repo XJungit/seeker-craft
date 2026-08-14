@@ -27,11 +27,29 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 /** Cordis 插件契约：插件名。 */
 export const name = 'dsh-bridge'
 
-/** Cordis 插件契约：注入工具注册表 + prompt 变量注册表。 */
-export const inject = ['tools', 'systemPrompt']
+/** Cordis 插件契约：注入工具注册表 + prompt 变量注册表 + webServer（仪表盘代理）。 */
+export const inject = ['tools', 'systemPrompt', 'webServer']
 
-/** Cordis 插件契约：可选配置（保留空 schema，未来可加 viewer 地址等）。 */
-export const Config = z.object({})
+/** Cordis 插件契约：可选配置。 */
+export const Config = z.object({
+  /**
+   * 是否注册 host 工具（game_state/bot_tool/set_goal）与 prompt 变量。
+   * - craft-bot 预设（绝对路径加载，hostTools 默认 true）：注册工具，驱动 bot。
+   * - profile 全局行（包名加载，hostTools:false）：只提供 client 半边（仪表盘面板），
+   *   不向其他项目的会话暴露 Minecraft 工具。
+   * 注意：client 半边（client.js 的浏览器面板）不依赖 hostTools——只要包被 loader
+   * 以包名加载，DSH 的 client-modules 就会独立发现 dsh.client 声明并注入浏览器，
+   * 面板的显示与否由 client.js 的 agentPreset === 'craft-bot' 判断决定。
+   */
+  hostTools: z.boolean().default(true),
+  /**
+   * 是否挂仪表盘代理（/craft/api/*）。
+   * - profile 全局行（hostTools:false, proxy 默认 true）：client 面板需要代理读 viewer。
+   * - craft-bot 预设行（hostTools:true, proxy:false）：预设内不需要代理（client 面板由
+   *   全局行提供），避免 webServer 同路径重复注册。
+   */
+  proxy: z.boolean().default(true),
+})
 
 function viewerUrl() {
   const fromEnv = process.env.DSH_CRAFT_VIEWER_URL
@@ -130,11 +148,19 @@ function registerPromptVariables(ctx) {
   ctx.systemPrompt.variable('viewer_url', () => viewerUrl())
 }
 
-/** Cordis 插件契约：注册三个桥工具 + 占位符变量。 */
-export function apply(ctx) {
-  registerPromptVariables(ctx)
+/** Cordis 插件契约：注册三个桥工具 + 占位符变量 + 仪表盘代理。
+ * @param {import('@deepseek-ai/cordis').Context} ctx
+ * @param {{ hostTools?: boolean }} [config] - hostTools=false 时只挂仪表盘代理，
+ *   不注册 Minecraft 工具（profile 全局行用，避免污染其他项目）。
+ */
+export function apply(ctx, config) {
+  const hostTools = config?.hostTools !== false
+  const proxyEnabled = config?.proxy !== false
 
-  ctx.tools.register(defineTool({
+  if (hostTools) {
+    registerPromptVariables(ctx)
+
+    ctx.tools.register(defineTool({
     name: 'game_state',
     description: '读取 live bot 的实时世界状态（位置/生命/饱食/维度/群系/附近方块与实体/背包/hotbar/装备/世界记忆/警示）。' +
       '每次行动前先调用它感知。返回结构化 JSON（scene_desc 为中文摘要，其余为机器可读字段）。',
@@ -240,4 +266,68 @@ export function apply(ctx) {
       }
     },
   }))
+  } // end if (hostTools)
+
+  // ── 仪表盘代理（/craft/api/*）────────────────────────────────────────────
+  // client 端 iframe 面板在浏览器里读取 viewer API 会跨域（DSH web 端口 vs
+  // viewer 8080）。这里在 DSH 的 webServer 上挂一个同源代理，把 /craft/api/* 转发到
+  // craft-agent-viewer 的对应 /api/* 端点（GET/POST 透传），浏览器端零跨域。
+  // 端点清单（viewer main.rs）：
+  //   GET  /craft/api/status       → /api/status       运行状态
+  //   GET  /craft/api/game-state   → /api/game-state   实时世界状态（结构化+中文摘要）
+  //   POST /craft/api/bot_tool     → /api/bot_tool     执行 53 个 Minecraft 工具
+  //   POST /craft/api/goal         → /api/goal         设置运营目标
+  const CRAFT_API_PREFIX = '/craft/api'
+  async function craftProxy(req, res) {
+    const url = new URL(req.url, 'http://localhost')
+    const path = url.pathname
+    if (!path.startsWith(CRAFT_API_PREFIX)) {
+      res.writeHead(404)
+      res.end()
+      return
+    }
+    const viewerPath = '/api' + (path.slice(CRAFT_API_PREFIX.length) || '/')
+    const method = req.method ?? 'GET'
+    try {
+      // 读请求体（POST 场景：bot_tool / goal）
+      let body = undefined
+      if (method === 'POST') {
+        const chunks = []
+        for await (const chunk of req) chunks.push(chunk)
+        const raw = Buffer.concat(chunks).toString('utf8')
+        if (raw.trim().length > 0) body = raw
+      }
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 60000)
+      try {
+        const res2 = await fetch(viewerUrl() + viewerPath, {
+          method,
+          signal: controller.signal,
+          ...(body !== undefined ? { body } : {}),
+          headers: {
+            'content-type': 'application/json',
+            ...(req.headers['x-craft-forward'] ? {} : {}),
+          },
+        })
+        const text = await res2.text()
+        res.writeHead(res2.status, {
+          'Content-Type': res2.headers.get('content-type') ?? 'application/json; charset=utf-8',
+          'Cache-Control': 'no-store',
+        })
+        res.end(text)
+      } finally {
+        clearTimeout(timer)
+      }
+    } catch (error) {
+      const logger = ctx.get('logger')
+      if (logger && typeof logger.error === 'function') logger.error(`craft-proxy: ${error?.stack ?? error}`)
+      res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' })
+      res.end(JSON.stringify({ ok: false, error: `craft-agent-viewer 不可达（${viewerUrl()}）：${String(error?.message ?? error).slice(0, 200)}` }))
+    }
+  }
+
+  if (proxyEnabled) {
+    const craftHandle = ctx.webServer.register({ kind: 'prefix', path: CRAFT_API_PREFIX, handler: craftProxy })
+    ctx.effect(() => craftHandle)
+  }
 }
