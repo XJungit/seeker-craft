@@ -68,10 +68,12 @@ window.__ModuleLoader__.load({
       '.dsh-craft-close{cursor:pointer;font-size:12px;padding:2px 10px;border:1px solid rgba(128,128,128,.4);' +
       'border-radius:6px;background:transparent;color:inherit}' +
       '.' + PANEL_CLS + ' iframe{flex:1;width:100%;border:0;background:#0f1419}' +
-      // 启动器小标签：仅 craft-bot 且用户关闭时才出现，用于重开（其他会话完全不显示）
-      '.' + LAUNCHER_CLS + '{position:fixed;top:12px;right:12px;z-index:41;display:none;' +
-      'align-items:center;gap:6px;padding:6px 10px;border-radius:10px;cursor:pointer;' +
-      'border:1px solid rgba(74,163,255,.5);background:rgba(74,163,255,.15);color:inherit;font:inherit;font-size:12px}' +
+      // 启动器小标签：仅 craft-bot 且用户关闭时才出现，用于重开（其他会话完全不显示）。
+      // 位置：右边缘垂直居中（不占右上角，避免与 DSH 官方 Session log 等右上角按钮重叠）
+      '.' + LAUNCHER_CLS + '{position:fixed;top:50%;right:0;transform:translateY(-50%);z-index:41;display:none;' +
+      'align-items:center;gap:6px;padding:8px 5px;border-radius:8px 0 0 8px;cursor:pointer;' +
+      'border:1px solid rgba(74,163,255,.5);border-right:none;background:rgba(74,163,255,.15);color:inherit;font:inherit;font-size:12px;' +
+      'writing-mode:vertical-rl;letter-spacing:.12em}' +
       '.' + LAUNCHER_CLS + '[data-show]{display:flex}'
 
     if (typeof document !== 'undefined' && document.querySelector('style[data-plugin-css="dsh-bridge"]') === null) {
@@ -122,7 +124,7 @@ window.__ModuleLoader__.load({
       var launcher = document.createElement('button')
       launcher.type = 'button'
       launcher.className = LAUNCHER_CLS
-      launcher.textContent = '🎮 Craft Bot 仪表盘'
+      launcher.textContent = '🎮 Craft'
       launcher.addEventListener('click', function () {
         W.__dshCraftUserClosed = false
         renderCurrent()
