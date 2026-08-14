@@ -164,6 +164,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/events", get(api_events))
         .route("/api/game-state", get(api_game_state))
         .route("/api/bot_tool", post(api_bot_tool))
+        .route("/api/chat", get(api_chat))
         .route("/api/connect", post(api_connect))
         .with_state(state.clone());
 
@@ -320,6 +321,25 @@ async fn api_events(
 }
 
 // ── 游戏状态 API ──
+
+/// 读取 bot 收到的服务器聊天消息队列（含 /gamerule 等命令反馈）。
+/// 用于调试/确认服务器配置（如 doTileDrops）。
+async fn api_chat(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let adapter = state.controller.game_adapter.read().unwrap().clone();
+    if let Some(arc) = adapter {
+        let msgs = arc.drain_chat();
+        return (
+            StatusCode::OK,
+            axum::Json(json!({"ok": true, "messages": msgs})),
+        )
+            .into_response();
+    }
+    (
+        StatusCode::OK,
+        axum::Json(json!({"ok": false, "messages": []})),
+    )
+        .into_response()
+}
 
 async fn api_game_state(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     let adapter = state.controller.game_adapter.read().unwrap().clone();

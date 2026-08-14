@@ -1,9 +1,11 @@
 {
-  "between_delay_ms": 2000,
-  "timeout_ms": 60000,
+  "between_delay_ms": 4000,
+  "timeout_ms": 90000,
   "steps": [
     { "state": true },
-    { "cmd": "goto -490 100 -150" },
+    { "cmd": "goto -490 62 -150" },
+    { "state": true },
+    { "cmd": "minebelow" },
     { "state": true },
     { "cmd": "minebelow" },
     { "state": true }

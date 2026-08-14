@@ -1262,6 +1262,9 @@ impl AzaleaBot {
                             // P148：mine 成功挖掉矿石后自动拾取掉落物（钻石/铁等掉进缝隙
                             // 后 item_collecting 每 200 tick 才兜底一次，且下挖时被跳过——
                             // 挖完立即入队 Pickup，确保矿石掉落物当次入包）。
+                            // P151 结论：掉落物缺失根因是服务器 block_drops=false（MC 26.2
+                            // gamerule 改名，doTileDrops→block_drops），非 P148 移动干扰；
+                            // 已用 /gamerule block_drops true 开启。P148 保持启用。
                             if done && matches!(&qc.cmd, BotCommand::Mine { .. }) {
                                 let tx_clone = qc.result_tx.clone();
                                 cmd_queue.lock().unwrap().push(QueuedCommand {
@@ -1993,6 +1996,16 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                 state.action_mgr.clear_pending();
                                 return bot;
                             }
+                            // P151：挖矿前必须 look_at 目标方块中心——azalea mine 不强制视线，
+                            // 但不看向方块时服务端不完整认可这次破坏（table_flow.rs P34 同款：
+                            // "look_at 提高挖掘成功率"）。实机：mine 不 look_at 时方块被破坏但
+                            // 掉落物从不生成（probe + 主 bot 双验证，cobblestone/dirt/coal 均不变）。
+                            let mine_center = azalea::Vec3::new(
+                                mx as f64 + 0.5,
+                                my as f64 + 0.5,
+                                mz as f64 + 0.5,
+                            );
+                            bot.look_at(mine_center);
                             bot.start_mining(mine_pos);
                             // P93：mine 进度流式事件（每 20 tick 一次）
                             if bot.ticks_connected().is_multiple_of(20)
