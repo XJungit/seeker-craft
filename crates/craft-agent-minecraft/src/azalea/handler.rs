@@ -350,6 +350,17 @@ fn record_surroundings(
     }
 }
 
+/// P155：mine 靠近看门狗状态。
+/// (目标 x, 目标 y, 目标 z, 锚点 x, 锚点 y, 锚点 z, 开始 tick, 无进展 tick 数)。
+/// 锚点是上次有进展时 bot 的位置；无进展 tick 数在净移动 >1.5 格时重置为 0。
+#[derive(Clone, Copy, Debug)]
+pub struct MineApproachWatchdog {
+    pub target: (i32, i32, i32),
+    pub anchor: (f64, f64, f64),
+    pub start_tick: u64,
+    pub stall_ticks: u64,
+}
+
 /// handler 状态：持有命令队列、事件发送端与最近坐标（跨事件持久，Arc 共享）。
 #[derive(Component, Clone)]
 pub struct BotState {
@@ -410,6 +421,13 @@ pub struct BotState {
     /// P116：被禁用的自动反应式模式集合（set_mode 开关）。空=全部启用。
     /// 模式名：self_preservation/self_defense/cowardice/hunting/item_collecting。
     pub mode_switches: Arc<Mutex<HashSet<String>>>,
+    /// P155：mine 靠近看门狗。P150 的 mine 靠近分支（距离>2.5m 时 start_goto
+    /// RadiusGoal）会 clear_pending + return，ActionManager 的 check_timeout 永远
+    /// 追不到"正在靠近"状态——pathfinder 找不到路径时 mine 无限卡在靠近循环，
+    /// LLM 每轮看到"目标距 X.Xm，正在靠近"却从不 start_mining（本会话反复复现）。
+    /// 记录 (目标坐标, 上次位置, 无进展 tick 数, 开始 tick)。连续 120 tick（6s）
+    /// 且净移动 <1.5 格 → 判定寻路失败：force_stop_pathfinding + 报错让 LLM 换策略。
+    pub mine_approach_watchdog: Arc<Mutex<Option<MineApproachWatchdog>>>,
     /// P120：mine_above 无镐徒手挖警告去重（dispatch 每 tick 重入 + P60b/ceiling
     /// 持续 tick 分支都会触发）。首次警告后置 true，命令结束（done/超时）重置。
     pub mining_above_no_pick_warned: Arc<Mutex<bool>>,
@@ -448,6 +466,7 @@ impl Default for BotState {
             last_mine_eff: Arc::new(Mutex::new(None)),
             cancel_flag: Arc::new(AtomicBool::new(false)),
             mode_switches: Arc::new(Mutex::new(HashSet::new())),
+            mine_approach_watchdog: Arc::new(Mutex::new(None)),
             mining_above_no_pick_warned: Arc::new(Mutex::new(false)),
             mining_above_soft_column: Arc::new(Mutex::new(None)),
         }
@@ -1078,6 +1097,9 @@ impl AzaleaBot {
                                     //   3) 原目标空气且无实心可修正（no-op）→ P57 空气错误 + 建议
                                     // 旧逻辑（P57）只看 done 时原目标是否空气：挖掘成功后目标
                                     // 当然是空气，却报"该位置已是空气"——LLM 反复 mine 同一格。
+                                    // P155：mine 完成/超时/取消时清空靠近看门狗，避免残留状态
+                                    // 影响下一个 mine 命令。
+                                    *state.mine_approach_watchdog.lock().unwrap() = None;
                                     let mine_eff = state.last_mine_eff.lock().unwrap().take();
                                     let (ex, ey, ez) = mine_eff
                                         .map(|(p, _)| (p.x, p.y, p.z))
@@ -1169,7 +1191,9 @@ impl AzaleaBot {
                                 BotCommand::Mine { x, y, z } => {
                                     // P101：命令结束（超时/取消路径）必须清空实际目标记录，
                                     // 否则残留状态会让下一个 mine 命令的 done 判定错位。
+                                    // P155：同时清空靠近看门狗。
                                     *state.last_mine_eff.lock().unwrap() = None;
+                                    *state.mine_approach_watchdog.lock().unwrap() = None;
                                     format!(
                                         "Action output:\nmine ({},{},{}) 超时——可能方块太硬（需更高品质镐）或距离太远。建议 gather(item=..., count=...) 自动寻路挖掘。",
                                         x, y, z
@@ -1988,6 +2012,67 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                 })
                                 .unwrap_or(f64::MAX);
                             if mine_dist > 2.5 {
+                                // P155：mine 靠近看门狗——pathfinder 找不到路径时
+                                // start_goto(RadiusGoal) 永不到达，靠近分支无限循环。
+                                // 连续 120 tick（6s）且 bot 净移动 <1.5 格 → 判定寻路失败。
+                                let tick = bot.ticks_connected();
+                                let now_pos = bot.position().ok();
+                                let mut wd = state.mine_approach_watchdog.lock().unwrap();
+                                match *wd {
+                                    Some(ref w) if w.target == (mx, my, mz) => {
+                                        let (wx, wy, wz) = w.target;
+                                        let (lx, ly, lz) = w.anchor;
+                                        let start_tick = w.start_tick;
+                                        // 净移动检测：bot 实际位置距上次锚点的位移
+                                        let moved = now_pos
+                                            .map(|p| {
+                                                ((p.x - lx).powi(2)
+                                                    + (p.y - ly).powi(2)
+                                                    + (p.z - lz).powi(2))
+                                                .sqrt()
+                                            })
+                                            .unwrap_or(0.0)
+                                            > 1.5;
+                                        if moved {
+                                            // 有进展：重置无进展计数，更新锚点
+                                            *wd = Some(MineApproachWatchdog {
+                                                target: (wx, wy, wz),
+                                                anchor: (
+                                                    now_pos.as_ref().map(|p| p.x).unwrap_or(lx),
+                                                    now_pos.as_ref().map(|p| p.y).unwrap_or(ly),
+                                                    now_pos.as_ref().map(|p| p.z).unwrap_or(lz),
+                                                ),
+                                                start_tick: tick,
+                                                stall_ticks: 0,
+                                            });
+                                        } else if tick.saturating_sub(start_tick) >= 120 {
+                                            // 判定寻路失败：强停 + 报错
+                                            bot.force_stop_pathfinding();
+                                            *wd = None;
+                                            if let Some(tx) = &result_tx {
+                                                let _ = tx.send(format!(
+                                                    "Action output:\nmine ({mx},{my},{mz}) 靠近失败——6s 内 bot 几乎没移动（路径被阻或目标不可达）。已停止靠近。建议：1) 用 goto 分小段接近目标 2) 换一个更近/可达的方块 3) 先 perceive 确认位置。"
+                                                ));
+                                            }
+                                            state.action_mgr.clear_pending();
+                                            drop(wd);
+                                            return bot;
+                                        }
+                                    }
+                                    _ => {
+                                        *wd = Some(MineApproachWatchdog {
+                                            target: (mx, my, mz),
+                                            anchor: (
+                                                now_pos.as_ref().map(|p| p.x).unwrap_or(mx as f64),
+                                                now_pos.as_ref().map(|p| p.y).unwrap_or(my as f64),
+                                                now_pos.as_ref().map(|p| p.z).unwrap_or(mz as f64),
+                                            ),
+                                            start_tick: tick,
+                                            stall_ticks: 0,
+                                        });
+                                    }
+                                }
+                                drop(wd);
                                 // 走到目标旁：用 RadiusGoal 让 pathfinder 靠近到 2m 内
                                 bot.start_goto(RadiusGoal {
                                     pos: azalea::Vec3::new(mx as f64, my as f64, mz as f64),
@@ -2004,6 +2089,9 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                 }
                                 state.action_mgr.clear_pending();
                                 return bot;
+                            } else {
+                                // 距离已足够：清看门狗
+                                *state.mine_approach_watchdog.lock().unwrap() = None;
                             }
                             // P151：挖矿前必须 look_at 目标方块中心——azalea mine 不强制视线，
                             // 但不看向方块时服务端不完整认可这次破坏（table_flow.rs P34 同款：
