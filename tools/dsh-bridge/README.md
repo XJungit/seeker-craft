@@ -26,7 +26,27 @@ craft-bot 预设的 viewer 桥插件（DSH 侧）。让 [DSH](https://github.com
       name: dsh-bridge
 ```
 
-并在 `~/.dsh/profiles/web/package.json` 的 dependencies 加 link 依赖指向本目录。
+并在 `~/.dsh/profiles/web/package.json` 的 dependencies 加 link 依赖指向本目录：
+
+```json
+"dsh-bridge": "link:D:/Craft-Agent/tools/dsh-bridge"
+```
+
+然后 `cd ~/.dsh/profiles/web && pnpm install`。
+
+### 依赖解析（node_modules 链接）
+
+`index.js` import `@deepseek-ai/dsh-tools` / `@deepseek-ai/schemastery`。link 包的真实路径在
+仓库内，Node 默认从该路径向上解析依赖会失败。需要把 DSH 实际使用的包链接到插件本地：
+
+```powershell
+# 定位 DSH 的 npx 安装根（dsh CLI 所在 node_modules/@deepseek-ai）
+$npx = "C:\Users\xj\AppData\Local\npm-cache\_npx\<hash>\node_modules\@deepseek-ai"
+New-Item -ItemType Junction tools\dsh-bridge\node_modules\@deepseek-ai\dsh-tools -Target "$npx\dsh-tools"
+New-Item -ItemType Junction tools\dsh-bridge\node_modules\@deepseek-ai\schemastery -Target "$npx\schemastery"
+```
+
+`node_modules/` 已加入 `.gitignore`（机器相关，勿提交）。
 
 ## 前置
 

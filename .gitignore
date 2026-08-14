@@ -1,4 +1,4 @@
-﻿# Rust 构建产物
+# Rust 构建产物
 /target
 
 # 密钥 / 本地配置（切勿提交）
@@ -65,6 +65,9 @@ compile-log.txt
 
 # 工作流状态
 .workflow_state.json
+
+# DSH 本地插件依赖链接（指向本机 DSH/npx 安装，机器相关，勿提交）
+/tools/dsh-bridge/node_modules/
 
 # Mimosa 安全插件运行时数据（hook 源码快照/状态，私有，勿提交）
 .mimosa/
