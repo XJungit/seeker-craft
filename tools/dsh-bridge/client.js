@@ -11,15 +11,19 @@
  * 挂载方式（遵循 DSH 官方插件开发文档 §3.4“选择正确的 UI 接缝：slot 优先，body
  * portal 兜底”）：本面板是“跨会话、固定在 shell 角落”的全局面板，故用 body portal +
  * fixed 定位（而非塞进某个语义 slot）。要点：
- *   - host 必须是 DOM 单例（data 属性标记），无论 apply 被调用多少次、模块是否被按
- *     会话重新求值，document 中只存在一个 `#dsh-craft-host`；这是杜绝“开 N 个会话出现
- *     N 个仪表盘”的根本手段。
+ *   - host 必须是 DOM 单例（`[data-dsh-craft-host]`），`apply` 开头用 DOM 守卫：
+ *     已存在则返回 no-op disposer（参考 whale-girl 的 `[data-whale-girl]` 守卫）——
+ *     无论插件被挂载几次（如全局行 + craft-bot 预设行同时存在），页面中永远只存在
+ *     一个仪表盘，根治“多仪表盘”。
+ *   - DSH 的 client bundle 是一个 cordis 插件 entry（见 web/src/boot.tsx：一个 plugin
+ *     包 = 一个 loader entry = 一次 apply），`apply` 返回的函数即 cordis disposer，
+ *     在插件卸载/HMR 时清理订阅、监听、让位与 DOM。
  *   - 通过 `ctx.sessions.list.subscribe()` 订阅会话变化来显隐（正经做法，替代轮询）。
  *   - 面板打开时给 DSH 三列布局的 grid frame 加右侧 padding（JS 动态让位）→ 真正
  *     “页面旁”，而非遮挡对话。稳定锚点是 layout 的 `[data-shell-overlay]` 的父元素
  *     （即 grid frame），不依赖任何哈希类名/易变选择器（真实 DSH 无 data-phase）。
- *   - 所有跨重求值状态（userClosed / iframeLoaded / 当前是否 craft-bot）都放在 window
- *     上，函数每次重查 DOM，使插件在 DSH 按会话重求值模块时也安全。
+ *   - 面板状态（userClosed / iframeLoaded / 当前是否 craft-bot）放在 window 上，
+ *     函数每次重查 DOM，插件生命周期内始终拿到最新状态。
  *
  * viewer 地址：默认 http://127.0.0.1:8080，可用 localStorage 覆盖（settings 卡片）。
  * client 端不直接 fetch viewer（跨域），一律走 host 的 /craft/api/* 同源代理。
@@ -191,32 +195,36 @@ window.__ModuleLoader__.load({
       setOpen(true, !!W.__dshCraftIsCraft) // setOpen 内部会按 userClosed 决定最终态
     }
 
-    // 窗口缩放时重算让位宽度（46vw 随视口变化）；一次性绑定，幂等
-    if (typeof window !== 'undefined' && window.addEventListener && !W.__dshCraftResizeBound) {
-      W.__dshCraftResizeBound = true
-      window.addEventListener('resize', function () { renderCurrent() })
-    }
-
     // ── 插件 apply（client 半边）────────────────────────────────────────────
     /**
+     * DSH 会把 client bundle 当作一个 cordis 插件 entry 挂载：apply 只被调用
+     * 一次（每个 plugin 包一个 entry/fiber，见 web/src/boot.tsx），且返回的
+     * 函数就是 cordis 的 disposer（插件卸载/HMR 时被调用）。参考优秀实现
+     * whale-girl：重复挂载用 DOM 单例守卫直接返回 no-op，杜绝多面板。
+     *
      * @param {import('@deepseek-ai/dsh-client-runtime/client').ClientContext} ctx
+     * @returns {() => void} disposer
      */
     function apply(ctx) {
-      if (!ctx) return
-      // 兼容两种注入形态：ctx.sessions（声明式）或 ctx.get('sessions')（旧式）
-      var sessions = ctx.sessions || (typeof ctx.get === 'function' && ctx.get('sessions'))
-      if (!sessions || !sessions.list) return
+      // DOM 单例守卫：无论插件被挂载几次（如全局行 + craft-bot 预设行同时存在），
+      // 页面中永远只允许一个仪表盘 host；重复挂载直接返回 no-op disposer。
+      if (typeof document !== 'undefined' && document.querySelector('[' + HOST_ATTR + ']') !== null) {
+        return function noopDisposer() { /* 已有实例，跳过重复挂载 */ }
+      }
 
-      // DOM 单例 host：已存在则复用（多会话/多次 apply 只一个仪表盘），
-      // 不存在才构建；之后所有引用都按 DOM 重查，安全对抗模块重求值。
-      var existing = typeof document !== 'undefined' ? document.querySelector('[' + HOST_ATTR + ']') : null
-      if (existing === null) buildHost()
+      // 兼容两种注入形态：ctx.sessions（声明式）或 ctx.get('sessions')（旧式）。
+      // 缺 sessions 时仍建 host（隐藏），但无法订阅显隐——插件声明了 inject:['sessions']，
+      // 正常不会走到。
+      var sessions = ctx && (ctx.sessions || (typeof ctx.get === 'function' && ctx.get('sessions')))
+
+      // 构建 host（此时必为空，守卫已保证单例）
+      buildHost()
 
       // 订阅会话列表（ObservableSnapshot.subscribe）→ 当前会话切到/离开 craft-bot 时
       // 自动显隐。正经做法，替代脆弱的 setInterval 轮询。
       function sync() {
-        var snap
-        try { snap = sessions.list.getSnapshot() } catch (e) { snap = null }
+        var snap = null
+        try { if (sessions && sessions.list) snap = sessions.list.getSnapshot() } catch (e) { snap = null }
         var currentId = snap && snap.current
         var current = currentId !== undefined && snap.byId ? snap.byId[currentId] : undefined
         var isCraft = !!(current && current.agentPreset === PRESET_ID)
@@ -227,12 +235,33 @@ window.__ModuleLoader__.load({
       }
 
       var unsub = null
-      try { unsub = sessions.list.subscribe(sync) } catch (e) { unsub = null }
+      try { if (sessions && sessions.list && typeof sessions.list.subscribe === 'function') unsub = sessions.list.subscribe(sync) } catch (e) { unsub = null }
       sync()
 
-      // 清理本 apply 的订阅（不移除共享 host；面板随页面生命周期存在，符合“页面旁实时显示”）。
-      if (typeof ctx.effect === 'function') {
-        ctx.effect(function () { if (unsub) { try { unsub() } catch (e) { /* noop */ } } }, 'dsh-bridge: craft session sub')
+      // 窗口缩放时重算让位宽度（46vw 随视口变化）
+      var onResize = function () { renderCurrent() }
+      if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('resize', onResize)
+
+      // cordis disposer：插件卸载/HMR 时清理订阅、监听、让位与 DOM。
+      return function disposer() {
+        try { if (unsub) unsub() } catch (e) { /* noop */ }
+        try { if (typeof window !== 'undefined' && window.removeEventListener) window.removeEventListener('resize', onResize) } catch (e) { /* noop */ }
+        // 恢复 grid frame 让位
+        try {
+          var overlay = document.querySelector('[data-shell-overlay]')
+          var frame = overlay && overlay.parentElement
+          if (frame && frame.style) frame.style.paddingRight = ''
+        } catch (e) { /* noop */ }
+        // 移除面板 DOM 与样式
+        try {
+          var host = document.querySelector('[' + HOST_ATTR + ']')
+          if (host && host.parentElement) host.parentElement.removeChild(host)
+        } catch (e) { /* noop */ }
+        try {
+          var style = document.querySelector('style[data-plugin-css="dsh-bridge"]')
+          if (style && style.parentElement) style.parentElement.removeChild(style)
+        } catch (e) { /* noop */ }
+        try { document.documentElement.removeAttribute(OPEN_ATTR) } catch (e) { /* noop */ }
       }
     }
 

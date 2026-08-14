@@ -24,8 +24,12 @@ craft-bot 预设的 viewer 桥插件（DSH 侧）。让 [DSH](https://github.com
 
 - **挂载方式（body-portal 全局面板）**：参照 DSH 官方插件开发规范，面板是“跨会话、固定在
   shell 角落”的全局面板，故用 **body portal + fixed 定位**（而非塞进某个语义 slot）。`apply` 在
-  `document.body` 下挂载一个 DOM 单例 host（`[data-dsh-craft-host]`），无论 `apply` 被调用多少次、
-  模块是否被按会话重新求值，页面中**始终只存在一个**仪表盘（杜绝“开 N 个会话出现 N 个仪表盘”）。
+  `document.body` 下挂载一个 DOM 单例 host（`[data-dsh-craft-host]`），并**返回 cordis disposer**
+  （卸载/HMR 时清理订阅、监听、让位与 DOM）。
+- **DOM 单例守卫（根治多仪表盘）**：`apply` 开头若发现 `[data-dsh-craft-host]` 已存在则直接返回
+  no-op disposer（参考 whale-girl 的 `[data-whale-girl]` 守卫）。DSH 的 client bundle 是一个 cordis
+  plugin entry（一个包 = 一个 loader entry = 一次 apply，见 web/src/boot.tsx），即使全局行与
+  craft-bot 预设行同时挂载同一插件，页面中也**始终只存在一个**仪表盘。
 - **面板**：craft-bot 会话加载即**自动打开**，固定右侧停靠（"页面旁"），iframe 嵌入
   viewer（`http://127.0.0.1:8080`，无 X-Frame-Options 可直接嵌）实时显示状态流；iframe 只加载一次、
   保留 viewer 的 SSE 连接，切换会话只显隐不重载。用户可点 ✕ 关闭，关闭后右上角出现 “🎮 Craft Bot
