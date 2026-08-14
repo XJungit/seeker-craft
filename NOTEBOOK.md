@@ -46,6 +46,40 @@ DSH 成为唯一大脑后，需要把 bot 感知状态注入模型，同时保�
   message 契约、复刻 agent-loop 内部逻辑，太脆；DSH 官方用 append+去重+compaction
   已达到「历史不无限累积」的目标。
 
+### 生态调研（2026-08-15 补充：同类插件实证）
+
+用户在问「有没有人把这种上下文管理做好且没出 400」后，GitHub 检索 DSH 插件生态，
+找到两个**同类型（动态状态/记忆注入模型上下文）且已开源**的插件，二者都印证了上述结论：
+
+1. **`Towzai/dsh-memory`**（跨会话记忆 + 自动注入，最像我们的场景）
+   - 静态注入：`ctx.systemPrompt.context({ name:'memory:recall', order:-50, text: () => buildMemorySectionSync(storage) })` —— 与 bot_state 完全同一 API。
+   - 动态注入：`ctx.on('agent/pre-step', ...)` 检索记忆后**追加到消息列表尾部**
+     （`createUserMessage` + `source:{kind:'plugin', form:'recall'}`），
+     注释明确：**"Appending at the tail (never mid-list) keeps the prompt prefix stable,
+     so provider prefix-cache hits are preserved"** —— 主动遵守"只尾部追加、不中断缀、不删历史"。
+   - 去重：`DynamicInjector` 按 session 记录 `lastSnapshots`，`if (snapshot === last) return decision`
+     —— 与 `RuntimeContextProjection` 同思路。
+   - **从未尝试 replace 旧消息**（无 400 风险点）。
+
+2. **`quan2005/dsh-plugin-jinji`**（谨迹记忆，启动注入路线）
+   - 只在 `agent/session-start` 异步预计算一次摘要，`ctx.systemPrompt.context({ name:'jinji:memory-summary', order:130, text: ... })`
+     同步返回缓存（按 agent 缓存，不随每步变化 → 根本不需要折叠/删除）。
+   - 明确遵守"context provider 同步、fs 异步 → 预取缓存"契约 —— 与我们的 botStateCache+setInterval 同模式。
+
+3. **`Leo-Ayh-Oday/dsh-orcana`**（运行时治理，Evidence Freshness）
+   - 有"证据新鲜度"概念，但实现是**注入"证据是否过期"的元信息 + steer 提醒**（告诉模型哪个旧、别信），
+     不是物理删旧状态。
+
+**结论（第三方实证）**：DSH 生态里做同类注入的插件**全部走 `systemPrompt.context` + 尾部追加 + 去重 +
+compaction 兜底，没有一家实现"快照删除、下一轮重新注入"**。用户预想的"删旧快照"方案：
+① 我们实测手动 append/replace → 400 `invalid_parameter_value`（见上第 5 条）；
+② 生态无成功先例；
+③ DSH 官方把快照留在 append-only 日志里（回放/审计），模型窗口裁剪交给 compaction。
+→ 维持当前方案（`systemPrompt.context`）正确，用户方案不采用。
+
+参考实现：`Towzai/dsh-memory`（尤其 `src/dynamic.ts` 的 pre-step 动态注入写法）可作为
+dsh-bridge 后续迭代的同类参考。
+
 ### 待办
 - [ ] craft-bot 预设端到端验证（重启 DSH 后开 craft-bot 会话，确认工具出现、面板显示、
       {{viewer_url}}/{{tool_list}} 不报错、bot 状态作为 user 快照注入且 30s 去重）
