@@ -85,6 +85,11 @@ impl ArcAzaleaAdapter {
     pub fn perceive_shared(&self) -> Result<WorldState> {
         self.0.lock().unwrap().perceive()
     }
+    /// 取出当前共享的世界记忆库（供外部工具注册表复用，确保锚点类自动修正生效）。
+    pub fn world_memory(&self) -> WorldMemory {
+        self.0.lock().unwrap().memory.clone().unwrap_or_default()
+    }
+
     /// 轻量实时位置（读 `bot.last_position` 每 tick 缓存，不做感知扫描）。
     /// 返回 `Some((x, y, z))`；未连上/无位置时 `None`。
     pub fn current_position(&self) -> Option<(f64, f64, f64)> {

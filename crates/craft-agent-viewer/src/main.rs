@@ -23,7 +23,11 @@ use axum::{
 };
 use craft_agent::core::message::Message;
 use craft_agent::core::session::{SessionEntry, SessionHeader};
+use craft_agent::core::tool::ToolRegistry;
 use craft_agent::core::types::WorldState;
+use craft_agent_minecraft::action_lib::ActionLibrary;
+use craft_agent_minecraft::blueprint::BlueprintLibrary;
+use craft_agent_minecraft::tools_azalea::create_mc_azalea_tools_full;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::convert::Infallible;
@@ -168,6 +172,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/goal", post(api_goal))
         .route("/api/events", get(api_events))
         .route("/api/game-state", get(api_game_state))
+        .route("/api/bot_tool", post(api_bot_tool))
         .with_state(state.clone());
 
     let addr = format!("127.0.0.1:{port}");
@@ -262,6 +267,58 @@ async fn api_goal(
     }
     state.controller.push_goal(goal.to_string());
     axum::Json(json!({"ok": true, "goal": goal}))
+}
+
+// ── 桥接：DSH/Cordis 经 HTTP 驱动 bot ───────────────────────────────────────
+//
+// 复用与 agent_loop 完全相同的工具注册表（create_mc_azalea_tools_full），从而保留
+// P100/P101/P102/P132 的派发时自动修正（这些逻辑在 GameTool::execute 闭包里，
+// parse_step→execute_shared 路径会绕过）。每调用重建注册表以复用 adapter 内最新的
+// WorldMemory 锚点（缓存注册表会让记忆陈旧，破坏 goto 锚点修正）。
+
+async fn api_bot_tool(
+    State(state): State<Arc<AppState>>,
+    axum::Json(body): axum::Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let name = body.get("name").and_then(|v| v.as_str()).unwrap_or("");
+    if name.is_empty() {
+        return axum::Json(json!({"ok": false, "error": "name 不能为空"}));
+    }
+    let args = body.get("args").cloned().unwrap_or_else(|| json!({}));
+
+    // bot 未连接则无法执行
+    let adapter = {
+        let guard = state.controller.game_adapter.read().unwrap();
+        match guard.as_ref() {
+            Some(a) => a.clone(),
+            None => {
+                return axum::Json(json!({"ok": false, "error": "bot 未连接（无 game_adapter）"}));
+            }
+        }
+    };
+
+    // 与 agent_loop 完全一致的注册表构建（保留自动修正）。
+    let memory = adapter.world_memory();
+    let blueprints = BlueprintLibrary::load_dir(Path::new("data/blueprints"));
+    let actions = ActionLibrary::load_dir(Path::new("data/actions"));
+    let mut registry = ToolRegistry::new();
+    for tool in create_mc_azalea_tools_full(adapter, memory, blueprints, actions) {
+        registry.register(tool);
+    }
+
+    let Some(tool) = registry.get(name) else {
+        return axum::Json(json!({"ok": false, "error": format!("未知工具: {name}")}));
+    };
+
+    let call_id = format!("bridge-{name}");
+    match tool.execute(&call_id, args, None) {
+        Ok(res) => axum::Json(json!({
+            "ok": !res.is_error,
+            "message": res.message,
+            "images": res.images,
+        })),
+        Err(e) => axum::Json(json!({"ok": false, "error": format!("{e:#}")})),
+    }
 }
 
 // ── SSE 事件流 ──
