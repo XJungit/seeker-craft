@@ -1,3 +1,4 @@
 [submodule "vendor/azalea"]
 	path = vendor/azalea
-	url = https://github.com/azalea-rs/azalea.git
+	# 维护 fork（craft-agent 分支）：gitlink 指向 e384e70，该 commit 只在 fork 存在
+	url = https://github.com/XJungit/azalea.git
