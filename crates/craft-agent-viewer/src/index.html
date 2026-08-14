@@ -212,6 +212,14 @@
 </main>
 
 <script>
+// 紧凑模式（?compact=1）：隐藏"对话历史/工具调用与结果"两列，只保留顶部 bot 实时状态
+// （位置/生命/饱食/背包/记忆）。DSH 内嵌仪表盘用该模式加载；独立打开 viewer 时无此参数保持原样。
+if (new URLSearchParams(location.search).has("compact")) {
+  var compactMain = document.querySelector("main");
+  if (compactMain) compactMain.style.display = "none";
+  document.documentElement.style.height = "auto";
+  document.body.style.height = "auto";
+}
 const TOOLS = {perceive:"perceive",look:"look",mine:"mine",press:"press",visual_perceive:"visual_perceive",manage_knowledge:"manage_knowledge",collect:"collect",craft:"craft",place:"place",equip:"equip",use_item:"use_item",attack:"attack",combat:"combat",move_to:"move_to",look_at:"look_at",search_block:"search_block",move_away:"move_away",dig_down:"dig_down",consume:"consume",build:"build",blueprints:"blueprints"};
 function esc(s){return String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;")}
 function shortArgs(a){const s=typeof a=="string"?a:JSON.stringify(a);return s.length>120?s.slice(0,120)+" …":s}

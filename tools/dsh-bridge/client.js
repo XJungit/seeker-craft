@@ -171,9 +171,10 @@ window.__ModuleLoader__.load({
       var show = open && isCraft && !W.__dshCraftUserClosed
       applyFramePadding(show)
       if (show) {
-        // iframe 只加载一次（保留 viewer 的 SSE 连接）；切换会话只显隐不重载
+        // iframe 只加载一次（保留 viewer 的 SSE 连接）；切换会话只显隐不重载。
+        // ?compact=1 = viewer 紧凑模式：隐藏"对话历史/工具调用"两列，只留 bot 实时状态
         if (!W.__dshCraftIframeLoaded && p.iframe) {
-          p.iframe.src = viewerUrl() + '/'
+          p.iframe.src = viewerUrl() + '/?compact=1'
           W.__dshCraftIframeLoaded = true
         }
         if (p.urlSpan) p.urlSpan.textContent = viewerUrl()
