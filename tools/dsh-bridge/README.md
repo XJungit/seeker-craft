@@ -15,6 +15,30 @@ craft-bot 预设的 viewer 桥插件（DSH 侧）。让 [DSH](https://github.com
 - `bot_tool` 复用与 agent_loop 完全相同的工具注册表（`create_mc_azalea_tools_full`），
   P100/P101/P102/P132 的派发时自动修正在 `GameTool::execute` 闭包内，桥接天然保留。
 
+## 内嵌仪表盘（client 半边）
+
+把 craft-agent-viewer 的 Web 仪表盘内嵌进 DSH 页面，在对话区旁实时显示 bot 状态
+（位置/生命/饱食/背包/附近/会话流）。**只在 craft-bot 预设（DSH 控制 Minecraft bot 的
+会话）显示**——判断依据 `ctx.sessions.list.getSnapshot()` 当前会话 `agentPreset === 'craft-bot'`；
+其他预设/普通会话完全不注册 UI（不控制 bot 时显示无意义）。
+
+- **入口**：侧边栏底部按钮（`sidebar.footer.action` 插槽；插槽未声明时 DOM 注入兜底）。
+- **面板**：点击后 iframe 嵌入 viewer（`http://127.0.0.1:8080`，无 X-Frame-Options 可直接嵌），
+  DOM 级挂载到中心列 `[data-pane="conversation"]`，html data 属性开合，跨插件激活互斥
+  （`dsh-panel-activate` 事件，与 task-board/ssh 面板互不打架）。
+- **同源代理**：host 端挂 `/craft/api/*` → viewer `/api/*` 转发（GET/POST 透传），
+  浏览器端零跨域读取 viewer API。
+
+**双行配置**（避免 webServer 路径重复注册）：
+
+| 位置 | hostTools | proxy | 作用 |
+|---|---|---|---|
+| profile 全局行（`cordis.patch.yml`，包名 `dsh-bridge`） | `false` | `true` | client 半边（面板 + 代理），不污染其他项目工具 |
+| craft-bot 预设行（`agent.cordis.yml`，绝对路径） | `true` | `false` | host 工具（三工具 + prompt 变量）驱动 bot |
+
+> client 半边（client.js 浏览器面板）不依赖 hostTools：只要包被 loader 以包名加载，
+> DSH 的 client-modules 就会独立发现 `dsh.client` 声明并注入浏览器。
+
 ## Prompt 占位符变量（{{...}} 动态注入）
 
 插件同时注册 prompt 占位符（`systemPrompt.variable`），让预设 persona 用 `{{...}}`
@@ -78,8 +102,15 @@ node scripts/verify-bridge.mjs
 
 # 2) DSH 模块图内加载（模拟 DSH loader 的 harness-base 解析，无需 DSH 重启）
 node scripts/verify-in-harness.mjs
+
+# 3) 仪表盘代理 /craft/api/* 单元验证（mock viewer，测 GET/POST/404/502）
+node scripts/verify-proxy.mjs
+
+# 4) client 半边 agentPreset 判断（craft-bot 注册 / code 不注册）
+node scripts/verify-client.mjs
 ```
 
 端到端（DSH 会话内）：`game_state` 感知 → `bot_tool(name, args)` 执行 → `set_goal(text)` 设目标。
 三工具出现在工具目录即挂载成功。`bot_tool` 的参数按各工具 schema 传（如 `equip` 需
 `{item, slot}`，`slot` 枚举 hand/helmet/chestplate/leggings/boots）。
+仪表盘面板：重启 DSH 后，craft-bot 会话侧边栏出现 "Craft Bot 仪表盘" 按钮，点击内嵌显示。
