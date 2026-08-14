@@ -95,13 +95,17 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
     // P5 关键修复 5：LLM 常给 bot 自己占据的坐标（如 bot 当前位置 +1 高度），
     // 服务端拒绝在 bot bounding box 内放方块 → place 100% 失败。
     // 检测：若 pos 与 bot 自身位置重合（foot 或 head），强制重定位到附近。
+    // P159（2026-08-15）：**只排除 foot 格，不排除 head 格**——放头顶（head 格上方）是
+    // pillar-up 的合法操作（MC 允许在玩家头顶上方 1 格放方块，玩家站上去上升），
+    // 原实现把 head 格也排除导致 pillar-up 永远失败（本会话实测 place 头顶反复被
+    // 自动重定位到旁边地面）。foot 格（自己脚下）仍排除：放自己脚下会把自己卡进方块。
     let bot_pos = bot.position().ok();
     let pos_blocked_by_bot = if let Some(bp) = bot_pos {
         let bx = bp.x.floor() as i32;
         let by = bp.y.floor() as i32;
         let bz = bp.z.floor() as i32;
-        // bot 占据 foot (bx,by,bz) + head (bx,by+1,bz)
-        pos.x == bx && pos.z == bz && (pos.y == by || pos.y == by + 1)
+        // bot 占据 foot (bx,by,bz)；head 格 (bx,by+1,bz) 允许放置（pillar-up 需要）
+        pos.x == bx && pos.z == bz && pos.y == by
     } else {
         false
     };
@@ -692,8 +696,8 @@ fn find_valid_placement_nearby_radius(
                     continue;
                 }
                 let pos = BlockPos::new(origin.x + dx, y, origin.z + dz);
-                // 排除 bot 自身占据的两格
-                if pos.x == bot_x && pos.z == bot_z && (pos.y == bot_y || pos.y == bot_y + 1) {
+                // 排除 bot 自身占据的 foot 格；head 格不再排除（P159：pillar-up 需要）
+                if pos.x == bot_x && pos.z == bot_z && pos.y == bot_y {
                     continue;
                 }
                 let is_air = world
@@ -760,8 +764,9 @@ fn find_valid_placement_nearby(bot: &Client, origin: BlockPos) -> Option<BlockPo
                     continue; // 跳过 origin 本身（已知无效）
                 }
                 let pos = BlockPos::new(origin.x + dx, y, origin.z + dz);
-                // 排除 bot 自身占据的两格（foot + head）
-                if pos.x == bot_x && pos.z == bot_z && (pos.y == bot_y || pos.y == bot_y + 1) {
+                // 排除 bot 自身占据的 foot 格（防止放自己脚下把自己卡进方块）；
+                // head 格不再排除（P159：pillar-up 需要在头顶放方块上升）。
+                if pos.x == bot_x && pos.z == bot_z && pos.y == bot_y {
                     continue;
                 }
                 let is_air = world
