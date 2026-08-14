@@ -21,11 +21,13 @@ use axum::{
     },
     routing::{get, post},
 };
+use craft_agent::core::memory::WorldMemory;
 use craft_agent::core::message::Message;
 use craft_agent::core::session::{SessionEntry, SessionHeader};
 use craft_agent::core::tool::ToolRegistry;
 use craft_agent::core::types::WorldState;
 use craft_agent_minecraft::action_lib::ActionLibrary;
+use craft_agent_minecraft::adapter_azalea::ArcAzaleaAdapter;
 use craft_agent_minecraft::blueprint::BlueprintLibrary;
 use craft_agent_minecraft::tools_azalea::create_mc_azalea_tools_full;
 use serde_json::{Value, json};
@@ -173,6 +175,7 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/events", get(api_events))
         .route("/api/game-state", get(api_game_state))
         .route("/api/bot_tool", post(api_bot_tool))
+        .route("/api/connect", post(api_connect))
         .with_state(state.clone());
 
     let addr = format!("127.0.0.1:{port}");
@@ -317,6 +320,27 @@ async fn api_bot_tool(
             "message": res.message,
             "images": res.images,
         })),
+        Err(e) => axum::Json(json!({"ok": false, "error": format!("{e:#}")})),
+    }
+}
+
+// ── 仅连接 bot（不启动 in-bot LLM 循环）─────────────────────────────────────
+//
+// DSH/Cordis 接管大脑后，viewer 只需把 azalea 客户端连上 MC 并填充 game_adapter，
+// 由 DSH 经 /api/bot_tool 驱动。与 /api/start（启动完整 agent 循环）区分，避免
+// 新旧大脑同时操控同一个 bot。
+
+async fn api_connect(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    if state.controller.game_adapter.read().unwrap().is_some() {
+        return axum::Json(json!({"ok": true, "already_connected": true}));
+    }
+    match ArcAzaleaAdapter::connect_with_memory(&state.mc_addr, &state.username, WorldMemory::new())
+        .await
+    {
+        Ok(adapter) => {
+            *state.controller.game_adapter.write().unwrap() = Some(adapter);
+            axum::Json(json!({"ok": true}))
+        }
         Err(e) => axum::Json(json!({"ok": false, "error": format!("{e:#}")})),
     }
 }
