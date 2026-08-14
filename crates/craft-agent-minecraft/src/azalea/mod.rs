@@ -1438,8 +1438,56 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
                         "已装备 {item} 到 {slot_norm}（left_click 槽 {src}→{armor_slot_idx}）"
                     );
                 }
+                // P154 修复（2026-08-15）：left_click 穿甲对 Player 菜单 armor 槽在服务端
+                // 不可靠（本地 verify 误判成功但服务端槽位没变，实测头盔穿上后又被胸甲覆盖）。
+                // 回退 vanilla 右键穿戴：把盔甲移到 hotbar → 选中 → use_item_air()（右键），
+                // 服务端会把对应种类盔甲自动穿到正确装备槽（头盔/胸甲/护腿/靴子）。
+                if !placed {
+                    eprintln!("[equip] armor left_click 3 轮失败，改用 vanilla 右键穿戴 {item}");
+                    let inv = match bot.get_inventory() {
+                        Ok(i) => i,
+                        Err(e) => return format!("获取背包失败: {e:?}"),
+                    };
+                    let srcs = find_item_slots(&inv, kind);
+                    if let Some(src) = srcs.first() {
+                        let src = *src;
+                        // shift_click 让服务端把盔甲挪到 hotbar 空槽
+                        inv.shift_click(src);
+                        drop(inv);
+                        sleep(Duration::from_millis(400)).await;
+                        let inv2 = match bot.get_inventory() {
+                            Ok(i) => i,
+                            Err(_) => return "获取背包失败（右键穿戴准备）".to_string(),
+                        };
+                        if let Some(h) = find_hotbar_slot_for(&inv2, kind) {
+                            drop(inv2);
+                            bot.set_selected_hotbar_slot(h);
+                            // 轮询主手就绪后右键穿戴
+                            for _ in 0..10u8 {
+                                sleep(Duration::from_millis(100)).await;
+                                if verify_held_item(bot, kind).await {
+                                    break;
+                                }
+                            }
+                            bot.use_item_air();
+                            // 轮询验证服务端真的穿上（最多 2s）
+                            for _ in 0..20u8 {
+                                sleep(Duration::from_millis(100)).await;
+                                if verify_armor_slot(bot, armor_slot_idx, kind).await {
+                                    placed = true;
+                                    break;
+                                }
+                            }
+                        } else {
+                            drop(inv2);
+                        }
+                    }
+                }
+                if placed {
+                    return format!("已装备 {item} 到 {slot_norm}（vanilla 右键穿戴）");
+                }
                 return format!(
-                    "装备 {item} 到 {slot_norm} 失败：left_click 后轮询 2s×3，盔甲槽仍未持有 {item}。\
+                    "装备 {item} 到 {slot_norm} 失败：left_click + vanilla 右键穿戴均未成功，盔甲槽仍未持有 {item}。\
                      可能原因：1) {item} 不是 {slot_norm} 类型的盔甲（如 leggings 放 helmet 槽）；\
                      2) 服务端同步持续延迟。建议：用 perceive 查看当前盔甲槽状态。"
                 );
