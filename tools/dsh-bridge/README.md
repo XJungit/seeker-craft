@@ -26,10 +26,14 @@ craft-bot 预设的 viewer 桥插件（DSH 侧）。让 [DSH](https://github.com
   shell 角落”的全局面板，故用 **body portal + fixed 定位**（而非塞进某个语义 slot）。`apply` 在
   `document.body` 下挂载一个 DOM 单例 host（`[data-dsh-craft-host]`），无论 `apply` 被调用多少次、
   模块是否被按会话重新求值，页面中**始终只存在一个**仪表盘（杜绝“开 N 个会话出现 N 个仪表盘”）。
-- **面板**：craft-bot 会话加载即**自动打开**，固定右侧停靠（"页面旁"，不遮挡对话列），iframe 嵌入
+- **面板**：craft-bot 会话加载即**自动打开**，固定右侧停靠（"页面旁"），iframe 嵌入
   viewer（`http://127.0.0.1:8080`，无 X-Frame-Options 可直接嵌）实时显示状态流；iframe 只加载一次、
   保留 viewer 的 SSE 连接，切换会话只显隐不重载。用户可点 ✕ 关闭，关闭后右上角出现 “🎮 Craft Bot
   仪表盘” 启动器用于重开（尊重手动关闭，本会话内不强制重开）。
+- **对话列让位（真正“页面旁”而非遮挡）**：DSH 布局是三列 CSS grid（sidebar/center/details），列类名是
+  哈希过的、无稳定选择器。实现用 JS 动态让位：面板打开时给 grid frame 加 `padding-right`（宽度与面板
+  一致），把对话区让到面板左侧。稳定锚点是 layout 的 `[data-shell-overlay]` 的父元素（即 grid frame）；
+  找不到时退化为纯 fixed 停靠（仍可用）。
 - **仅 craft-bot 显示**：通过 `ctx.sessions.list.subscribe()` 订阅会话列表，当前会话切到/离开
   craft-bot 时自动显隐（`agentPreset === 'craft-bot'` 才显示；其他预设/普通会话面板保持隐藏、侧边栏
   无任何入口）。离开 craft-bot 会重置“手动关闭”标志，下次进入自动重开。

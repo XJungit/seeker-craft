@@ -15,8 +15,9 @@
  *     会话重新求值，document 中只存在一个 `#dsh-craft-host`；这是杜绝“开 N 个会话出现
  *     N 个仪表盘”的根本手段。
  *   - 通过 `ctx.sessions.list.subscribe()` 订阅会话变化来显隐（正经做法，替代轮询）。
- *   - 面板打开时把 open 状态广播到 `document.documentElement[data-dsh-craft-open]`，
- *     用 CSS 把对话列 `[data-phase='active']` 右移让位 → 真正“页面旁”，而非遮挡对话。
+ *   - 面板打开时给 DSH 三列布局的 grid frame 加右侧 padding（JS 动态让位）→ 真正
+ *     “页面旁”，而非遮挡对话。稳定锚点是 layout 的 `[data-shell-overlay]` 的父元素
+ *     （即 grid frame），不依赖任何哈希类名/易变选择器（真实 DSH 无 data-phase）。
  *   - 所有跨重求值状态（userClosed / iframeLoaded / 当前是否 craft-bot）都放在 window
  *     上，函数每次重查 DOM，使插件在 DSH 按会话重求值模块时也安全。
  *
@@ -54,9 +55,8 @@ window.__ModuleLoader__.load({
       'display:flex;flex-direction:column;background:var(--dsw-alias-bg-base,#0f1419);' +
       'box-shadow:-2px 0 14px rgba(0,0,0,.4);border-left:1px solid rgba(128,128,128,.25)}' +
       '.' + PANEL_CLS + '[data-hidden]{display:none}' +
-      // 对话列让位（“页面旁”而非遮挡）；两条选择器兼容不同 DSH 版本
-      'html[' + OPEN_ATTR + '] [data-phase="active"],' +
-      'html[' + OPEN_ATTR + '] [data-pane="conversation"]{padding-right:min(720px,46vw);transition:padding-right .18s ease}' +
+      // 面板打开时隐藏启动器（打开状态下右上角不再显示重开标签）
+      'html[' + OPEN_ATTR + '] .' + LAUNCHER_CLS + '{display:none}' +
       '.dsh-craft-bar{display:flex;align-items:center;gap:8px;padding:6px 12px;' +
       'border-bottom:1px solid rgba(128,128,128,.2);font-size:12px;color:var(--dsw-alias-label-secondary,#888)}' +
       '.dsh-craft-bar b{color:inherit;font-weight:600}' +
@@ -68,7 +68,6 @@ window.__ModuleLoader__.load({
       '.' + LAUNCHER_CLS + '{position:fixed;top:12px;right:12px;z-index:41;display:none;' +
       'align-items:center;gap:6px;padding:6px 10px;border-radius:10px;cursor:pointer;' +
       'border:1px solid rgba(74,163,255,.5);background:rgba(74,163,255,.15);color:inherit;font:inherit;font-size:12px}' +
-      'html[' + OPEN_ATTR + '] .' + LAUNCHER_CLS + '{display:none}' +
       '.' + LAUNCHER_CLS + '[data-show]{display:flex}'
 
     if (typeof document !== 'undefined' && document.querySelector('style[data-plugin-css="dsh-bridge"]') === null) {
@@ -146,10 +145,28 @@ window.__ModuleLoader__.load({
     }
 
     // ── 显隐渲染（纯 DOM 驱动，重求值安全）──────────────────────────────────
+    // 面板宽度：与 CSS 的 width:min(720px,46vw) 保持一致，用于给三列 grid frame 让位
+    function panelWidthPx() {
+      var vw = (typeof window !== 'undefined' && window.innerWidth) || 0
+      return Math.round(Math.min(720, vw * 0.46))
+    }
+    // 给 DSH 三列布局的 frame 加右侧 padding，把面板宽度让出来（“页面旁”而非遮挡）。
+    // 稳定锚点：layout 的 overlay layer 带 data-shell-overlay，其父元素就是 grid frame；
+    // 不依赖任何哈希类名/易变选择器。frame 找不到时退化为纯 fixed 停靠（可接受）。
+    function applyFramePadding(open) {
+      if (typeof document === 'undefined') return
+      var overlay = document.querySelector('[data-shell-overlay]')
+      var frame = overlay && overlay.parentElement
+      if (!frame || !frame.style) return
+      frame.style.paddingRight = open ? panelWidthPx() + 'px' : ''
+    }
+
     function setOpen(open, isCraft) {
       var p = queryParts()
       if (p === null) return
-      if (open && isCraft && !W.__dshCraftUserClosed) {
+      var show = open && isCraft && !W.__dshCraftUserClosed
+      applyFramePadding(show)
+      if (show) {
         // iframe 只加载一次（保留 viewer 的 SSE 连接）；切换会话只显隐不重载
         if (!W.__dshCraftIframeLoaded && p.iframe) {
           p.iframe.src = viewerUrl() + '/'
@@ -174,12 +191,21 @@ window.__ModuleLoader__.load({
       setOpen(true, !!W.__dshCraftIsCraft) // setOpen 内部会按 userClosed 决定最终态
     }
 
+    // 窗口缩放时重算让位宽度（46vw 随视口变化）；一次性绑定，幂等
+    if (typeof window !== 'undefined' && window.addEventListener && !W.__dshCraftResizeBound) {
+      W.__dshCraftResizeBound = true
+      window.addEventListener('resize', function () { renderCurrent() })
+    }
+
     // ── 插件 apply（client 半边）────────────────────────────────────────────
     /**
      * @param {import('@deepseek-ai/dsh-client-runtime/client').ClientContext} ctx
      */
     function apply(ctx) {
-      if (!ctx || !ctx.sessions || !ctx.sessions.list) return
+      if (!ctx) return
+      // 兼容两种注入形态：ctx.sessions（声明式）或 ctx.get('sessions')（旧式）
+      var sessions = ctx.sessions || (typeof ctx.get === 'function' && ctx.get('sessions'))
+      if (!sessions || !sessions.list) return
 
       // DOM 单例 host：已存在则复用（多会话/多次 apply 只一个仪表盘），
       // 不存在才构建；之后所有引用都按 DOM 重查，安全对抗模块重求值。
@@ -190,7 +216,7 @@ window.__ModuleLoader__.load({
       // 自动显隐。正经做法，替代脆弱的 setInterval 轮询。
       function sync() {
         var snap
-        try { snap = ctx.sessions.list.getSnapshot() } catch (e) { snap = null }
+        try { snap = sessions.list.getSnapshot() } catch (e) { snap = null }
         var currentId = snap && snap.current
         var current = currentId !== undefined && snap.byId ? snap.byId[currentId] : undefined
         var isCraft = !!(current && current.agentPreset === PRESET_ID)
@@ -201,7 +227,7 @@ window.__ModuleLoader__.load({
       }
 
       var unsub = null
-      try { unsub = ctx.sessions.list.subscribe(sync) } catch (e) { unsub = null }
+      try { unsub = sessions.list.subscribe(sync) } catch (e) { unsub = null }
       sync()
 
       // 清理本 apply 的订阅（不移除共享 host；面板随页面生命周期存在，符合“页面旁实时显示”）。

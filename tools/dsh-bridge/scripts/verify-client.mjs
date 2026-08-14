@@ -68,7 +68,21 @@ function loadClient() {
           appendChild(c) { el.children.push(c); return c },
           addEventListener() {},
           removeEventListener() {},
-          querySelector: () => genericEl(),
+          querySelector: (sel) => {
+            // 在自身 children 里按 .class / [attr] / 标签名查找真实子节点；找不到给 genericEl
+            const cls = /\.([\w-]+)/.exec(sel || '')
+            if (cls) {
+              const found = el.children.find((c) => c.className && String(c.className).split(' ').includes(cls[1]))
+              if (found) return found
+            }
+            const attr = /\[([\w-]+)\]/.exec(sel || '')
+            if (attr) {
+              const found = el.children.find((c) => c._attrs && Object.prototype.hasOwnProperty.call(c._attrs, attr[1]))
+              if (found) return found
+            }
+            if (sel === 'iframe') return el.children.find((c) => c.tagName === 'IFRAME') || genericEl()
+            return genericEl()
+          },
           querySelectorAll: () => [],
           closest: () => null,
           textContent: '',
@@ -161,25 +175,41 @@ function countHosts() {
   return bodyChildren.filter((c) => c._attrs && Object.prototype.hasOwnProperty.call(c._attrs, 'data-dsh-craft-host')).length
 }
 
-// 1) craft-bot 会话 → 构建面板 host（DOM 单例，此时应有 1 个）
+function findHost() {
+  return bodyChildren.find((c) => c._attrs && Object.prototype.hasOwnProperty.call(c._attrs, 'data-dsh-craft-host')) || null
+}
+function findPanel() {
+  const host = findHost()
+  return host ? host.querySelector('.dsh-craft-panel') : null
+}
+// 面板是否处于“隐藏”态（data-hidden 属性存在）
+function panelHidden() {
+  const p = findPanel()
+  return p ? p.hasAttribute('data-hidden') : true
+}
+
+// 1) craft-bot 会话 → 构建面板 host 且面板可见（data-hidden 移除）
 {
   const { ctx } = makeCtx('craft-bot')
   clientMod.apply(ctx)
   check('craft-bot 会话构建仪表盘 host', countHosts() === 1, `hosts=${countHosts()}`)
+  check('craft-bot 会话面板可见（未隐藏）', !panelHidden(), `hidden=${panelHidden()}`)
 }
 
-// 2) code 预设 → 复用同一 host，不再新建（不出现第二个仪表盘）
+// 2) code 预设 → 复用同一 host，面板隐藏（其他会话不显示）
 {
   const { ctx } = makeCtx('code')
   clientMod.apply(ctx)
   check('code 预设会话不新建仪表盘（仍只 1 个）', countHosts() === 1, `hosts=${countHosts()}`)
+  check('code 预设会话面板隐藏（不显示）', panelHidden(), `hidden=${panelHidden()}`)
 }
 
-// 3) 无 preset 字段 → 同样复用，不新建
+// 3) 无 preset 字段 → 同样复用，面板隐藏
 {
   const { ctx } = makeCtx(undefined)
   clientMod.apply(ctx)
   check('无 agentPreset 的普通会话不新建仪表盘', countHosts() === 1, `hosts=${countHosts()}`)
+  check('无 agentPreset 的普通会话面板隐藏', panelHidden(), `hidden=${panelHidden()}`)
 }
 
 // 4) 全新模块实例 + 同一 craft-bot ctx 多次 apply（模拟多会话/模块重求值）→ 只存在一个 host
