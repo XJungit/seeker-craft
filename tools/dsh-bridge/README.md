@@ -56,7 +56,13 @@ New-Item -ItemType Junction tools\dsh-bridge\node_modules\@deepseek-ai\schemaste
 ## 验证
 
 ```bash
+# 1) viewer API 连通性（独立于 DSH，需 viewer 运行且 bot 已连接）
 node scripts/verify-bridge.mjs
+
+# 2) DSH 模块图内加载（模拟 DSH loader 的 harness-base 解析，无需 DSH 重启）
+node scripts/verify-in-harness.mjs
 ```
 
-逐一验证 `game_state` / `bot_tool` / `set_goal` 三个端点的连通性。
+端到端（DSH 会话内）：`game_state` 感知 → `bot_tool(name, args)` 执行 → `set_goal(text)` 设目标。
+三工具出现在工具目录即挂载成功。`bot_tool` 的参数按各工具 schema 传（如 `equip` 需
+`{item, slot}`，`slot` 枚举 hand/helmet/chestplate/leggings/boots）。
