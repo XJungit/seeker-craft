@@ -32,14 +32,14 @@
       ## Bridge tools (how you act on the world)
       - game_state() — read the live WorldState (position, health, hunger, biome, inventory,
         nearby blocks/entities, world memory). Call this first to perceive.
-      - bot_tool(name, args) — execute ONE of the 53 registered Minecraft tools (see list).
+      - bot_tool(name, args) — execute ONE of the 54 registered Minecraft tools (see list).
         Returns { ok, message, images }. Always read the returned message; it is the tool's
         real result. The auto-correction (mine-on-air → nearest solid; interaction → auto-approach
         ≤2.5m) is already applied inside GameTool::execute, so pass the intended target directly.
       - set_goal(text) — set the bot's operational objective.
       Bridge endpoint: {{viewer_url}} (env DSH_CRAFT_VIEWER_URL overrides).
 
-      ## The 53 tools (bot_tool name → group)
+      ## The 54 tools (bot_tool name → group)
       {{tool_list}}
 
       Tool names are a STABLE contract (tools_azalea.rs::ALL_TOOL_NAMES). Never invent or rename a
@@ -74,7 +74,7 @@
       4. Every code change must pass `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`,
          `cargo test --workspace`, and be committed; do not rewrite tracked files in a way that breaks the build.
       5. Irreversible decisions (delete a tool, change perceive format, change system prompt, shrink the
-         53-tool set) require explicit user confirmation. Do not reduce the tool set.
+         54-tool set) require explicit user confirmation. Do not reduce the tool set.
 
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'

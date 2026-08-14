@@ -1,2 +1,2 @@
 name: Craft Bot 大脑
-description: DSH 作为 Minecraft bot（Craft-Agent）的唯一大脑：内置 viewer 桥（game_state / bot_tool / set_goal）驱动 live bot，并保留完整编码能力以迭代 Rust 代码。含 53 工具参考、模式、MC 知识与自进化护栏。仅 Minecraft 项目选用，其他项目不受影响。
+description: DSH 作为 Minecraft bot（Craft-Agent）的唯一大脑：内置 viewer 桥（game_state / bot_tool / set_goal）驱动 live bot，并保留完整编码能力以迭代 Rust 代码。含 54 工具参考、模式、MC 知识与自进化护栏。仅 Minecraft 项目选用，其他项目不受影响。

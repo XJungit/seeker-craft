@@ -331,10 +331,12 @@ impl MinecraftAzaleaAdapter {
                                     m.render_nearby(around, 64)
                                 })
                                 .unwrap_or_default();
+                            // 记忆块以换行开头（插在「玩家: N」之后），确保记忆多行内容
+                            // 不与玩家行粘连（P157：曾渲染成「玩家: 1记忆: ...」挤一行）。
                             let memory_line = if memory_hint.is_empty() {
                                 String::new()
                             } else {
-                                format!("记忆: {}\n", memory_hint)
+                                format!("\n记忆: {memory_hint}")
                             };
                             let scene = format!(
                                 "位置: ({:.0}, {:.0}, {:.0})\n\

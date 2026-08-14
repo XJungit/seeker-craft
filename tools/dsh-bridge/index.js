@@ -5,13 +5,13 @@
  * 的 HTTP API 驱动 live bot。三个工具：
  *
  *   - game_state()               GET  /api/game-state  读取实时世界状态（结构化 + 中文摘要）
- *   - bot_tool(name, args)       POST /api/bot_tool    执行 53 个 Minecraft 工具之一（含 P100/P101/P102/P132 自动修正）
+ *   - bot_tool(name, args)       POST /api/bot_tool    执行 54 个 Minecraft 工具之一（含 P100/P101/P102/P132 自动修正）
  *   - set_goal(text)             POST /api/goal        设置 bot 的运营目标
  *
  * 同时注册 prompt 贡献（systemPrompt.variable + systemPrompt.context），使预设 persona
  * 能引用运行时数据，改外部数据不碰预设文件、不重启 DSH：
  *
- *   - {{tool_list}}   53 工具清单（ALL_TOOL_NAMES 静态镜像）——system 段变量，字节稳定
+ *   - {{tool_list}}   54 工具清单（ALL_TOOL_NAMES 静态镜像）——system 段变量，字节稳定
  *   - {{viewer_url}}  viewer 地址（环境变量 DSH_CRAFT_VIEWER_URL 或默认 8080）——system 段变量
  *   - bot_state      动态 bot 状态摘要（systemPrompt.context，user 角色快照，见 registerPromptVariables）
  *
@@ -100,7 +100,7 @@ function renderResult(payload) {
 // system prompt 装配时求值，改外部数据（viewer 状态 / 环境变量）不碰预设、
 // 不重启 DSH。
 
-/** 53 工具清单（tools_azalea.rs::ALL_TOOL_NAMES 的静态镜像，稳定契约）。 */
+/** 54 工具清单（tools_azalea.rs::ALL_TOOL_NAMES 的静态镜像，稳定契约）。 */
 const TOOL_NAMES = [
   'perceive', 'goto', 'mine_below', 'mine_above', 'mine', 'interact_block',
   'till_and_sow', 'sleep', 'harvest', 'attack', 'craft', 'craft_3x3', 'smelt',
@@ -207,7 +207,7 @@ export function apply(ctx, config) {
 
   ctx.tools.register(defineTool({
     name: 'bot_tool',
-    description: '对 live bot 执行一个 Minecraft 工具（name 为 53 个已注册工具之一，见 persona 清单；args 为该工具参数对象）。' +
+    description: '对 live bot 执行一个 Minecraft 工具（name 为 54 个已注册工具之一，见 persona 清单；args 为该工具参数对象）。' +
       '返回 { ok, message }。message 是工具的真实结果；自动修正（挖空气→最近实心、交互→自动靠近≤2.5m）已在 GameTool::execute 内应用，直接传意图目标即可。',
     parameters: {
       name: {
@@ -291,7 +291,7 @@ export function apply(ctx, config) {
   // 端点清单（viewer main.rs）：
   //   GET  /craft/api/status       → /api/status       运行状态
   //   GET  /craft/api/game-state   → /api/game-state   实时世界状态（结构化+中文摘要）
-  //   POST /craft/api/bot_tool     → /api/bot_tool     执行 53 个 Minecraft 工具
+  //   POST /craft/api/bot_tool     → /api/bot_tool     执行 54 个 Minecraft 工具
   //   POST /craft/api/goal         → /api/goal         设置运营目标
   const CRAFT_API_PREFIX = '/craft/api'
   async function craftProxy(req, res) {
