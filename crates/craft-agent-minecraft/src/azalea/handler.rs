@@ -1259,6 +1259,16 @@ impl AzaleaBot {
                             if let Some(tx) = &qc.result_tx {
                                 let _ = tx.send(result_msg);
                             }
+                            // P148：mine 成功挖掉矿石后自动拾取掉落物（钻石/铁等掉进缝隙
+                            // 后 item_collecting 每 200 tick 才兜底一次，且下挖时被跳过——
+                            // 挖完立即入队 Pickup，确保矿石掉落物当次入包）。
+                            if done && matches!(&qc.cmd, BotCommand::Mine { .. }) {
+                                let tx_clone = qc.result_tx.clone();
+                                cmd_queue.lock().unwrap().push(QueuedCommand {
+                                    cmd: BotCommand::Pickup,
+                                    result_tx: tx_clone,
+                                });
+                            }
                             if matches!(&qc.cmd, BotCommand::MineAbove) {
                                 *state.mining_above_start_y.lock().unwrap() = None;
                                 *state.mining_above_no_pick_warned.lock().unwrap() = false;
@@ -1753,29 +1763,33 @@ impl AzaleaBot {
                                     return bot;
                                 }
                             }
-                            // P60: 自动挖回地表后再 goto——当 bot 在地下时，pathfinder 无法穿墙导航
-                            // 先检测是否在地下，如果是，优先挖回地表再执行 goto
+                            // P60: 自动挖回地表后再 goto——当 bot 被实心方块封闭（头顶实心，
+                            // 无空气通道）时，pathfinder 无法穿墙导航，需挖出再 goto。
+                            // 注意：判定标准是「被埋」而非 Y<62——洞穴/地下开放空间（头顶空气、
+                            // 可水平寻路）是 bot 的合法活动区（工作台/熔炉/矿点都在地下），
+                            // 若一入 Y<62 就强制挖回地表，bot 永远无法在层间导航（P147 修复）。
                             let mut needs_surface = false;
-                            if let Ok(p) = bot.position() {
-                                if (p.y as i32) < 62 {
+                            if let (Ok(p), Ok(world)) = (bot.position(), bot.world()) {
+                                let world = world.read();
+                                // 头顶 1 格与 2 格是否全是实心：头顶被封闭 = 被埋，需挖出
+                                let head_pos = BlockPos::new(
+                                    p.x.floor() as i32,
+                                    p.y.floor() as i32 + 1,
+                                    p.z.floor() as i32,
+                                );
+                                let head2_pos = BlockPos::new(
+                                    p.x.floor() as i32,
+                                    p.y.floor() as i32 + 2,
+                                    p.z.floor() as i32,
+                                );
+                                let head_block = world.get_block_state(head_pos);
+                                let head2_block = world.get_block_state(head2_pos);
+                                let head_solid = head_block.map(|b| !b.is_air()).unwrap_or(false);
+                                let head2_solid = head2_block.map(|b| !b.is_air()).unwrap_or(false);
+                                // 仅当头顶（及上方第 2 格）都被实心方块封闭时才判定被埋。
+                                // 头顶是空气（洞穴/室内/矿井竖井）→ 可正常 goto 导航。
+                                if head_solid && head2_solid {
                                     needs_surface = true;
-                                } else {
-                                    // 检查头上有无方块（可能在洞穴/室内）
-                                    if let Ok(world) = bot.world() {
-                                        let world = world.read();
-                                        let head_pos = BlockPos::new(
-                                            p.x.floor() as i32,
-                                            p.y.floor() as i32 + 1,
-                                            p.z.floor() as i32,
-                                        );
-                                        if let Some(head_block) = world.get_block_state(head_pos) {
-                                            let bk: azalea_registry::builtin::BlockKind =
-                                                head_block.into();
-                                            if bk != azalea_registry::builtin::BlockKind::Air {
-                                                needs_surface = true;
-                                            }
-                                        }
-                                    }
                                 }
                             }
                             if needs_surface {
@@ -1812,23 +1826,13 @@ goto ({},{},{}) ——bot 在地下，先自动挖回地表。mine_above 已启�
                                     if let Some(head_block) = world.get_block_state(head_pos) {
                                         let bk: azalea_registry::builtin::BlockKind =
                                             head_block.into();
-                                        if bk != azalea_registry::builtin::BlockKind::Air
-                                            || (p.y as i32) < 62
-                                        {
-                                            let reason = if (p.y as i32) < 62 {
-                                                format!(
-                                                    "bot 当前 Y={} 在地下（Y<62）。",
-                                                    p.y as i32
-                                                )
-                                            } else {
-                                                "bot 头上有方块（可能在地下）。".to_string()
-                                            };
+                                        if bk != azalea_registry::builtin::BlockKind::Air {
                                             if let Some(tx) = &result_tx {
                                                 let _ = tx.send(format!(
                                                     "Action output:
-goto ({},{},{}) 失败——{}
-必须先用 mine_above() 挖回地表（Y>=62），才能用 goto 导航。",
-                                                    x, y, z, reason
+goto ({},{},{}) 失败——bot 头上有方块（可能被埋）。
+先用 perceive 确认位置，若被实心方块封闭需用 mine_above 挖出。",
+                                                    x, y, z
                                                 ));
                                             }
                                             state.action_mgr.clear_pending();
