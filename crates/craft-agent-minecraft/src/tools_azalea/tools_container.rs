@@ -131,6 +131,24 @@ impl GameTool for ChestViewTool {
             .ctx
             .adapter
             .execute_shared(Action::Minecraft(MinecraftAction::ChestView { x, y, z }))?;
+        // P157：chest_view 成功后自动写世界记忆——记录容器位置 + 内容概要，
+        // 形成"打开箱子 → 记忆位置/内容 → 后续可回访/更新"的闭环。
+        // 否则 LLM 打开过箱子却忘记位置，杂物无处可存、物资无法取用。
+        if r.ok {
+            let summary: String = r
+                .detail
+                .lines()
+                .find(|l| l.contains(':'))
+                .map(|l| l.trim().to_string())
+                .unwrap_or_else(|| r.detail.trim().to_string());
+            self.ctx.memory.record(
+                MemoryPos::new(x, y, z),
+                MemoryKind::Container,
+                Some("chest"),
+                &format!("容器@({x},{y},{z}): {summary}"),
+                None,
+            );
+        }
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,
@@ -287,6 +305,22 @@ impl GameTool for ChestDepositTool {
                     item,
                     count,
                 }))?;
+        // P157：deposit 成功后更新容器记忆（内容已变化），保持记忆与实际一致。
+        if r.ok {
+            let summary: String = r
+                .detail
+                .lines()
+                .find(|l| l.contains(':'))
+                .map(|l| l.trim().to_string())
+                .unwrap_or_else(|| r.detail.trim().to_string());
+            self.ctx.memory.record(
+                MemoryPos::new(x, y, z),
+                MemoryKind::Container,
+                Some("chest"),
+                &format!("容器@({x},{y},{z}): {summary}"),
+                None,
+            );
+        }
         Ok(ToolResult {
             message: r.detail,
             is_error: !r.ok,

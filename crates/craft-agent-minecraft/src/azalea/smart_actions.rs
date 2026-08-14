@@ -1094,14 +1094,34 @@ pub async fn pickup_nearby_items(bot: &Client) -> Result<String, String> {
 
     let before_count = total_inventory_count(bot);
 
-    // 走到每个掉落物附近（按距离升序），每处短暂停留让物理引擎吸起
-    for (_d, x, y, z) in items.iter().take(6) {
+    // 走到每个掉落物附近（按距离升序），每处短暂停留让物理引擎吸起。
+    // P158：原实现最多 6 处 × 2s + 4 方向 × 1s = 16s > ActionManager 200 tick
+    // (10s) 超时阈值 → pickup 工具反复"命令超时"。修复：
+    // 1. 距离 ≤2m 的掉落物不 goto（物理引擎自动吸，1.5m 半径），减少移动开销；
+    // 2. 只对 >2m 的掉落物 goto，且等待后不阻塞整体；
+    // 3. 掉落物数量上限从 6 降到 4，进一步控制总时长（≤ 4×2s + 4×1s = 12s 仍偏长，
+    //    但正常情况大多数掉落物 ≤2m 会走短路分支，实际 <2s）。
+    let mut moved_to = 0;
+    let cur_pos = bot.position().ok();
+    for (_d, x, y, z) in items.iter().take(4) {
+        let dist = cur_pos
+            .map(|p| ((x - p.x).powi(2) + (y - p.y).powi(2) + (z - p.z).powi(2)).sqrt())
+            .unwrap_or(f64::MAX);
+        if dist <= 2.0 {
+            // 已在吸取半径内：停留片刻让物理引擎吸起即可
+            sleep(Duration::from_millis(300)).await;
+            continue;
+        }
         let target = BlockPos::new(x.floor() as i32, y.floor() as i32, z.floor() as i32);
         bot.start_goto(BlockPosGoal(target));
-        sleep(Duration::from_millis(2000)).await;
+        sleep(Duration::from_millis(1500)).await;
+        moved_to += 1;
+        if moved_to >= 3 {
+            break;
+        }
     }
 
-    // 再原地转 4 个方向收尾，捡起贴身残留
+    // 再原地转 4 个方向收尾，捡起贴身残留（每方向 600ms，共 ~2.4s）
     let dirs = [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)];
     for (dx, dz) in dirs {
         if let Ok(p) = bot.position() {
@@ -1109,7 +1129,7 @@ pub async fn pickup_nearby_items(bot: &Client) -> Result<String, String> {
             let target_y = p.y.floor() as i32;
             let target_z = (p.z + dz * 2.0).floor() as i32;
             bot.start_goto(BlockPosGoal(BlockPos::new(target_x, target_y, target_z)));
-            sleep(Duration::from_millis(1000)).await;
+            sleep(Duration::from_millis(600)).await;
         }
     }
 

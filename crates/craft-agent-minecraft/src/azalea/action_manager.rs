@@ -248,7 +248,7 @@ pub fn timeout_ticks(cmd: &BotCommand) -> u64 {
         BotCommand::Trade { .. } => 200,          // 10s
         BotCommand::InteractEntity { .. } => 100, // 5s
         // 智能技能
-        BotCommand::Pickup => 200, // 10s
+        BotCommand::Pickup => 400, // 20s（P158：原 10s 不够走多个掉落物，靠近+转向可能超时）
         BotCommand::Defend => 300, // 15s
         // 背包管理
         BotCommand::Equip { .. } => 100, // 5s（shift_click + 选槽）
