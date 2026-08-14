@@ -140,6 +140,24 @@ impl AzaleaBot {
     }
 }
 
+/// 测试构造：离线 bot（不连接服务器），仅用于纯逻辑/schema 测试。
+/// 被 azalea 内部 cancel_tests 与 adapter_azalea 的 `MinecraftAzaleaAdapter::default()`
+/// 复用（字段私有，只有本模块可构造）。
+#[cfg(test)]
+impl AzaleaBot {
+    pub(crate) fn offline_for_test() -> AzaleaBot {
+        let (_, evt_rx) = mpsc::unbounded_channel::<BotEvent>();
+        AzaleaBot {
+            cmd_queue: Arc::new(Mutex::new(Vec::new())),
+            events: Arc::new(tokio::sync::Mutex::new(evt_rx)),
+            last_position: Arc::new(Mutex::new(None)),
+            ext: Arc::new(Mutex::new(crate::azalea::ext_state::BotExtState::default())),
+            memory: None,
+            cancel_flag: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
 impl AzaleaBot {
     /// 离线账号连入指定地址（如 "localhost:4444"），返回就绪的 bot 句柄。
     /// 本方法 spawn 后台 task 运行 azalea 客户端循环，立即返回句柄。

@@ -817,4 +817,42 @@ mod run_script_tests {
             .expect("pos_x/pos_y/pos_z 应可调用");
         assert_eq!(out, "(-490.5,103.0,-155.7)");
     }
+
+    /// P145 回归测试（Round 41 遗留，2026-08-14 修复）：EquipTool schema 曾把 slot
+    /// 标为 required，但 parse_chat_command / MinecraftAction 解析默认 "hand"——
+    /// LLM 走 bot_tool 漏传 slot 报「缺少 slot」，走 probe 命令则自动默认 hand。
+    /// 修复：slot 可选 + 缺省 hand + required 只含 item，与解析层/执行层语义一致。
+    #[test]
+    fn regression_equip_tool_slot_is_optional_default_hand() {
+        use serde_json::Value;
+        let tool = EquipTool::new(Arc::new(AzaleaToolCtx::new(
+            ArcAzaleaAdapter(Arc::new(Mutex::new(MinecraftAzaleaAdapter::default()))),
+            WorldMemory::default(),
+        )));
+        assert_eq!(tool.name(), "equip");
+        let params: Value = tool.parameters();
+        let required = params
+            .get("required")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        let required_names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
+        // item 必填，slot 不再是必填
+        assert!(
+            required_names.contains(&"item"),
+            "equip schema 必须要求 item"
+        );
+        assert!(
+            !required_names.contains(&"slot"),
+            "equip schema 不应把 slot 标为必填（解析层默认 hand）"
+        );
+        let slot = params
+            .pointer("/properties/slot")
+            .expect("equip schema 应含 slot 属性");
+        assert_eq!(
+            slot.get("default").and_then(|v| v.as_str()),
+            Some("hand"),
+            "equip slot 默认值应为 hand"
+        );
+    }
 }

@@ -20,7 +20,7 @@ impl GameTool for EquipTool {
         "装备背包中的物品到指定槽位。\n\
          slot=\"hand\"：把物品移到主手（武器/工具/方块都走这条路径）。\n\
          slot=\"helmet\"/\"chestplate\"/\"leggings\"/\"boots\"：穿戴对应盔甲。\n\
-         参数：item（物品 id 如 wooden_pickaxe/iron_sword/iron_helmet），slot（槽位名）。\n\
+         参数：item（物品 id 如 wooden_pickaxe/iron_sword/iron_helmet），slot（槽位名，缺省 hand）。\n\
          场景：挖矿前装备镐、战斗前装备剑、有盔甲时穿上。"
     }
     fn parameters(&self) -> Value {
@@ -31,10 +31,11 @@ impl GameTool for EquipTool {
                 "slot": {
                     "type": "string",
                     "enum": ["hand", "helmet", "chestplate", "leggings", "boots"],
-                    "description": "目标槽位"
+                    "description": "目标槽位（缺省 hand）",
+                    "default": "hand"
                 }
             },
-            "required": ["item", "slot"]
+            "required": ["item"]
         })
     }
     fn effects(&self) -> ToolEffects {
@@ -54,7 +55,7 @@ impl GameTool for EquipTool {
         let slot = args
             .get("slot")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| anyhow::anyhow!("缺少 slot"))?
+            .unwrap_or("hand")
             .to_string();
         let r = self
             .ctx

@@ -36,6 +36,23 @@ pub struct MinecraftAzaleaAdapter {
     pub should_stop: Arc<AtomicBool>,
 }
 
+#[cfg(test)]
+impl Default for MinecraftAzaleaAdapter {
+    /// 离线测试构造：不连接服务器，仅用于工具 schema / 纯逻辑测试。
+    /// 复用 azalea 的测试构造器（`AzaleaBot::offline_for_test`，见 azalea/mod.rs）。
+    fn default() -> Self {
+        Self {
+            bot: Arc::new(AzaleaBot::offline_for_test()),
+            last: Mutex::new(None),
+            last_y: Mutex::new(None),
+            stuck_since: Mutex::new(None),
+            memory: None,
+            chat_queue: Arc::new(Mutex::new(VecDeque::new())),
+            should_stop: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct ArcAzaleaAdapter(pub Arc<Mutex<MinecraftAzaleaAdapter>>);
 
