@@ -213,11 +213,16 @@
 </main>
 
 <script>
-// 紧凑模式（?compact=1）：隐藏"对话历史/工具调用与结果"两列，只保留顶部 bot 实时状态
-// （位置/生命/饱食/背包/记忆）。DSH 内嵌仪表盘用该模式加载；独立打开 viewer 时无此参数保持原样。
+// 紧凑模式（?compact=1）：只显示 bot 实时状态（状态/位置/快捷栏/背包 + LLM 感知 + 世界记忆）。
+// 隐藏控制台（目标输入/启动暂停停止/步数/工具/token 统计）、底部日志、对话历史与工具调用两列。
+// DSH 内嵌仪表盘用该模式加载；独立打开 viewer 时无此参数保持原样（完整控制台）。
 if (new URLSearchParams(location.search).has("compact")) {
   var compactMain = document.querySelector("main");
   if (compactMain) compactMain.style.display = "none";
+  var compactCtl = document.getElementById("ctl");
+  if (compactCtl) compactCtl.style.display = "none";
+  var compactLog = document.getElementById("log");
+  if (compactLog) compactLog.style.display = "none";
   document.documentElement.style.height = "auto";
   document.body.style.height = "auto";
 }
