@@ -50,7 +50,6 @@ seeker-craft/
 ├── crates/
 │   ├── craft-agent/               # 纯逻辑库：types/GameTool/ToolRegistry/WorldMemory/session/task/profile/skill
 │   ├── craft-agent-minecraft/     # Azalea 适配器：bot + 54 个工具
-│   ├── craft-agent-model/         # LLM/VLM 客户端（in-bot 时代，保留兼容；现 LLM 由 DSH 提供）
 │   ├── craft-agent-viewer/        # Web 仪表盘（Axum + SSE）+ DSH 桥（connect/bot_tool/game-state/goal）
 │   ├── craft-agent-autopilot/     # 运维监督器（10s 轮询：viewer+连接、停滞 steering、崩溃恢复）
 │   └── craft-agent-ctl/           # 运维控制台
@@ -262,16 +261,8 @@ cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot 
 cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot -- 4444 --script scripts\probe\smoke.json
 ```
 
-### 配置 LLM 后端（仅 craft-agent-model 路径，DSH 模式不需要）
-
-```bash
-cp data/config/agent.example.toml data/config/agent.toml
-# 编辑 data/config/agent.toml — 填入你的 API key（或用 api_key_env + 环境变量）
-```
-
-任何 OpenAI 兼容端点都可以（DeepSeek、OpenAI、本地网关等）。
-Key 永远不会被提交：`agent.toml` 已被 gitignore。
-（DSH 模式下 LLM 由 DSH 大脑提供，此文件仅在走 `craft-agent-model` 兼容路径时使用。）
+> LLM 由 **DSH**（大脑）提供——本仓库没有独立的 LLM 后端配置文件。
+> `data/config/agent.example.toml` 是 in-bot 时代的遗留模板（仅作参考，DSH 模式不使用）。
 
 ## 文档
 

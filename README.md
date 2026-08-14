@@ -48,7 +48,6 @@ seeker-craft/
 ├── crates/
 │   ├── craft-agent/               # pure logic lib: types/GameTool/ToolRegistry/WorldMemory/session/task/profile/skill
 │   ├── craft-agent-minecraft/     # Azalea adapter: bot + 54 tools (craft/smelt/enchant/brew/combat/farm)
-│   ├── craft-agent-model/         # LLM/VLM clients (in-bot era, kept for compat; DSH provides the LLM now)
 │   ├── craft-agent-viewer/        # web dashboard (Axum + SSE) + DSH bridge (connect/bot_tool/game-state/goal)
 │   ├── craft-agent-autopilot/     # ops supervisor (10s polling: viewer+connect, stall steering, crash recovery)
 │   └── craft-agent-ctl/           # ops console
@@ -266,17 +265,9 @@ cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot 
 cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot -- 4444 --script scripts\probe\smoke.json
 ```
 
-### Configure LLM backends (craft-agent-model path only; not needed in DSH mode)
-
-```bash
-cp data/config/agent.example.toml data/config/agent.toml
-# edit data/config/agent.toml — set your API keys (or use api_key_env + env vars)
-```
-
-Any OpenAI-compatible endpoint works (DeepSeek, OpenAI, local gateways, ...).
-Keys are never committed: `agent.toml` is gitignored.
-(In DSH mode the LLM comes from the DSH brain; this file is only used when running
-the legacy `craft-agent-model` path.)
+> The LLM is provided by **DSH** (the brain) — there is no separate LLM backend
+> configuration file in this repo. `data/config/agent.example.toml` is a legacy
+> template from the in-bot era (kept for reference only; not used in DSH mode).
 
 ## Documentation
 
