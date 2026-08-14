@@ -1,12 +1,9 @@
 //! 控制面板核心控制状态（AgentController）与事件类型（AgentEvent）。
 //!
-//! 自原 `agent_loop.rs` 抽出：保留 bot 连接 / 运行状态 / 目标队列等控制能力，
-//! 但**不再包含** in-bot LLM 循环——DSH/Cordis 接管大脑后，bot 仅由 DSH 经
-//! `/api/bot_tool` 驱动，viewer 负责连接与状态呈现。
-//!
-//! 注：`AgentController` 中部分为「供未来 DSH 集成复用」的预留字段/方法
-//! （如 `started_once` / `stop` / `abort` / `mode_profile` / `drain_goals` 等），
-//! 当前未读取，统一以 `#[allow(dead_code)]` 标注，避免破坏 `-D warnings` 门槛。
+//! DSH 桥接模式：viewer 不再运行 in-bot LLM 循环，只负责连接 azalea 客户端
+//! （`/api/connect`）与状态呈现，bot 由 DSH/Cordis 经 `/api/bot_tool` 驱动。
+//! `AgentController` 保留运行/暂停/停止/目标队列等控制面能力（被对应
+//! `/api/*` 路由读取），以及 CLI 注入的 mode/individual profile 字段。
 
 use craft_agent_minecraft::adapter_azalea::ArcAzaleaAdapter;
 use serde::{Deserialize, Serialize};
@@ -33,9 +30,6 @@ pub struct AgentController {
     /// Shared with agent.retry_abort — set by stop button to cancel LLM retries instantly.
     pub abort: Arc<AtomicBool>,
     pub running: Arc<AtomicBool>,
-    /// Azalea may leave reconnect tasks alive after the Agent thread exits.
-    /// Never create a second client in the same Viewer process.
-    started_once: AtomicBool,
     pub status: Mutex<Status>,
     goal_queue: Mutex<VecDeque<String>>,
     /// 共享的 azalea 适配器引用（bot 连接后填充，viewer 从中读取游戏状态）。
@@ -57,7 +51,6 @@ impl AgentController {
             stop: Arc::new(AtomicBool::new(false)),
             abort: Arc::new(AtomicBool::new(false)),
             running: Arc::new(AtomicBool::new(false)),
-            started_once: AtomicBool::new(false),
             status: Mutex::new(Status {
                 running: false,
                 paused: false,

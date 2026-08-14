@@ -83,13 +83,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let rollover_on_start = std::env::var_os("CRAFT_AGENT_ROLLOVER_SESSION").is_some();
     let mut viewer = ensure_viewer(&workspace_root, &base_url, viewer_port, rollover_on_start)?;
-    ensure_agent_started(&client, &base_url)?;
+    ensure_bot_connected(&client, &base_url)?;
 
     let mut baseline = analyze_session(&session_path);
     let mut previous_game_state = try_get_json(&client, &format!("{base_url}/api/game-state"));
     let mut anomaly_state = AnomalyState::default();
     let mut last_progress = Instant::now();
     let mut status_failures = 0_u32;
+    let mut disconnect_streak = 0_u32;
     supervisor.phase = SupervisorPhase::Monitoring;
     supervisor.last_error = None;
     persist_supervisor_state(&state_path, &supervisor)?;
@@ -150,19 +151,30 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 continue;
             }
         };
-        if !status["running"].as_bool().unwrap_or(false) {
-            recover_runtime(
-                &workspace_root,
-                &client,
-                &base_url,
-                viewer_port,
-                &state_path,
-                &mut supervisor,
-                "Agent stopped; replacing Viewer to avoid duplicate_login".into(),
-                &mut viewer,
-            )?;
-            last_progress = Instant::now();
-            continue;
+        // DSH 模式下 viewer /api/status 永远 running:false（无 in-bot agent 标志），
+        // 旧 `if !status["running"]` 会把正常 DSH 模式误判为「agent 停止」→ 每 10s 杀掉
+        // 重启 viewer，造成永久重启死循环（bot 永远连不上）。
+        // 改用 bot_connected：viewer 进程崩溃已由上方 try_wait() 检测，这里只兜底
+        // 「进程活着但 bot 长时间没连上 MC」的异常（连续 6 次 ~60s 才恢复，容忍重连抖动）。
+        if !bot_connected(&client, &base_url) {
+            disconnect_streak += 1;
+            if disconnect_streak >= 6 {
+                recover_runtime(
+                    &workspace_root,
+                    &client,
+                    &base_url,
+                    viewer_port,
+                    &state_path,
+                    &mut supervisor,
+                    "Bot disconnected for ~60s; replacing Viewer to reconnect".into(),
+                    &mut viewer,
+                )?;
+                disconnect_streak = 0;
+                last_progress = Instant::now();
+                continue;
+            }
+        } else {
+            disconnect_streak = 0;
         }
 
         let game_state = try_get_json(&client, &format!("{base_url}/api/game-state"));
@@ -428,7 +440,7 @@ fn recover_runtime(
         }
         match ensure_viewer(workspace_root, base_url, viewer_port, false).and_then(|child| {
             *viewer = child;
-            ensure_agent_started(client, base_url)
+            ensure_bot_connected(client, base_url)
         }) {
             Ok(()) => break,
             Err(error) => {
@@ -534,35 +546,49 @@ fn now_ms() -> u128 {
         .as_millis()
 }
 
-fn ensure_agent_started(
+/// DSH 模式下「启动 agent」语义已不存在（in-bot LLM 循环在阶段3移除，
+/// viewer 只暴露 /api/connect 连 bot，大脑由 DSH/Cordis 经 /api/bot_tool 驱动）。
+/// 因此 autopilot 不再 POST /api/start（该端点不存在，会 404 → 无限重启 viewer），
+/// 而是确保 viewer 已把 azalea 客户端连上 MC：触发 /api/connect 后轮询
+/// /api/game-state 直到 bot 真正连上（非 not_connected）。
+fn ensure_bot_connected(
     client: &reqwest::blocking::Client,
     base_url: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let status = get_json(client, &format!("{base_url}/api/status"))?;
-    if status["running"].as_bool().unwrap_or(false) {
-        println!("[agent] already running at step {}", status["step"]);
-        return Ok(());
-    }
-
+    // 触发连接（viewer 内部幂等：已连接则返回 already_connected，不会重建客户端）。
     let response: Value = client
-        .post(format!("{base_url}/api/start"))
+        .post(format!("{base_url}/api/connect"))
         .send()?
         .error_for_status()?
         .json()?;
-    if !response["ok"].as_bool().unwrap_or(false) {
-        return Err(format!("agent start rejected: {response}").into());
-    }
+    println!("[bot] connect response={response}");
 
-    let deadline = Instant::now() + Duration::from_secs(20);
+    // 轮询 game-state 直到 bot 连上（game_adapter 填充后可实时拉取世界状态）。
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let mut waited = 0u32;
     while Instant::now() < deadline {
-        let status = get_json(client, &format!("{base_url}/api/status"))?;
-        if status["running"].as_bool().unwrap_or(false) {
-            println!("[agent] started");
+        let state = try_get_json(client, &format!("{base_url}/api/game-state"));
+        if let Some(s) = state.as_ref()
+            && s.get("status").and_then(|v| v.as_str()) != Some("not_connected")
+        {
+            println!("[bot] connected after ~{}s", waited / 2);
             return Ok(());
         }
         std::thread::sleep(Duration::from_millis(500));
+        waited += 1;
     }
-    Err("agent did not enter running state within 20 seconds".into())
+    Err("bot did not connect within 30 seconds".into())
+}
+
+/// 判断 bot 是否已连接（替代旧 `status[\"running\"]` 语义）。
+/// DSH 模式下 viewer /api/status 永远返回 running:false（无 in-bot agent 标志），
+/// 不能用它判断崩溃——bot 是否在线应以 game-state 是否可达为准。
+fn bot_connected(client: &reqwest::blocking::Client, base_url: &str) -> bool {
+    let state = try_get_json(client, &format!("{base_url}/api/game-state"));
+    state
+        .as_ref()
+        .map(|s| s.get("status").and_then(|v| v.as_str()) != Some("not_connected"))
+        .unwrap_or(false)
 }
 
 fn steer_stalled_agent(

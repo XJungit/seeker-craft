@@ -42,8 +42,23 @@ window.__ModuleLoader__.load({
     var OTHER_ACTIVE_ATTRS = ['data-dsh-taskboard-active', 'data-dsh-ssh-active']
     var ACTIVATE_EVENT = 'dsh-panel-activate'
     var PANEL_NAME = 'craft-viewer'
-    var CONVERSATION_COLUMN_SELECTOR = '[data-pane="conversation"]'
     var PANEL_ROOT_ID = 'dsh-craft-panel-root'
+    // 用户在 craft-bot 会话内手动关闭后，reconcile 不再强制重开（尊重用户）；
+    // 离开 craft-bot 再回来会重置该标志（见 reconcile）。模块可能被 DSH 按会话重新求值，
+    // 故屏蔹态仅作会话内参考，跨 apply 的唯一真源是 document 中的 #dsh-craft-panel-root 元素。
+    var userClosed = false
+    // 面板开合时同步所有入口按钮的 active 态（多个 craft-bot 会话各有一个按钮，共享同一面板）
+    function syncEntryActive(v) {
+      var els = document.querySelectorAll('[data-dsh-craft-entry]')
+      for (var i = 0; i < els.length; i++) {
+        if (v) els[i].setAttribute('data-active', 'true')
+        else els[i].removeAttribute('data-active')
+      }
+    }
+    function onPanelState(v) {
+      if (!v) userClosed = true
+      syncEntryActive(v)
+    }
 
     // ── CSS（内联注入，避免额外构建）─────────────────────────────────────────
     var css =
@@ -54,8 +69,9 @@ window.__ModuleLoader__.load({
       '.dsh-craft-entry[data-active]{background:rgba(74,163,255,.15);border-color:rgba(74,163,255,.5)}' +
       '.dsh-craft-entry .dsh-craft-ico{width:14px;height:14px;flex:none}' +
       '.dsh-craft-entry .dsh-craft-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
-      '.dsh-craft-panel{position:absolute;inset:0;z-index:30;display:flex;flex-direction:column;' +
-      'background:var(--dsw-alias-bg-base,#0f1419)}' +
+      '.dsh-craft-panel{position:fixed;top:0;right:0;bottom:0;width:min(720px,46vw);z-index:30;' +
+      'display:flex;flex-direction:column;background:var(--dsw-alias-bg-base,#0f1419);' +
+      'box-shadow:-2px 0 14px rgba(0,0,0,.4);border-left:1px solid rgba(128,128,128,.25)}' +
       '.dsh-craft-panel[data-hidden]{display:none}' +
       '.dsh-craft-panel-bar{display:flex;align-items:center;gap:8px;padding:6px 12px;' +
       'border-bottom:1px solid rgba(128,128,128,.2);font-size:12px;color:var(--dsw-alias-label-secondary,#888)}' +
@@ -137,15 +153,18 @@ window.__ModuleLoader__.load({
     function createPanelController(ctx, onStateChange) {
       var panelEl = null
       var iframeEl = null
-      var open = false
-      var column = null
-      var columnObserver = null
+      var visible = false
 
-      function ensureColumn() {
-        if (column !== null && document.body.contains(column)) return true
-        column = document.querySelector(CONVERSATION_COLUMN_SELECTOR)
-        if (column === null) return false
-        // 面板容器：绝对定位覆盖整个中心列（会话切换时由 DOM 保留，React 不管）
+      function ensureRoot() {
+        // 跨多次 apply（多会话）复用同一面板元素，避免重复仪表盘
+        var existing = typeof document !== 'undefined' ? document.getElementById(PANEL_ROOT_ID) : null
+        if (existing !== null) {
+          panelEl = existing
+          iframeEl = existing.querySelector('iframe')
+          return true
+        }
+        if (panelEl !== null && document.body.contains(panelEl)) return true
+        // 面板容器：固定右侧停靠（"页面旁"），不扰动对话列 React 子树
         panelEl = document.createElement('div')
         panelEl.id = PANEL_ROOT_ID
         panelEl.className = 'dsh-craft-panel'
@@ -163,21 +182,18 @@ window.__ModuleLoader__.load({
         iframeEl.setAttribute('referrerPolicy', 'no-referrer')
         panelEl.appendChild(iframeEl)
         panelEl.querySelector('.dsh-craft-close').addEventListener('click', function () { close() })
-        // 中心列需要 position:relative 才能让 absolute 面板覆盖；找不到就 fallback 固定定位。
-        var cs = window.getComputedStyle(column)
-        if (cs.position === 'static') column.style.position = 'relative'
-        column.appendChild(panelEl)
+        document.body.appendChild(panelEl)
         return true
       }
 
       function open() {
-        open = true
-        if (!ensureColumn()) return
+        visible = true
+        if (!ensureRoot()) return
         iframeEl.src = viewerUrl() + '/'
         var urlSpan = panelEl.querySelector('.dsh-craft-url')
         if (urlSpan) urlSpan.textContent = viewerUrl()
         panelEl.removeAttribute('data-hidden')
-        // 单占用中心列：打开本面板要驱逐兄弟面板（task-board / ssh）
+        // 单占用右侧栏：打开本面板驱逐兄弟面板（task-board / ssh）
         OTHER_ACTIVE_ATTRS.forEach(function (a) { document.documentElement.removeAttribute(a) })
         document.documentElement.setAttribute(ACTIVE_ATTR, '')
         document.dispatchEvent(new CustomEvent(ACTIVATE_EVENT, { detail: PANEL_NAME }))
@@ -185,47 +201,42 @@ window.__ModuleLoader__.load({
       }
 
       function close() {
-        open = false
+        visible = false
         if (panelEl !== null) panelEl.setAttribute('data-hidden', '')
         document.documentElement.removeAttribute(ACTIVE_ATTR)
         onStateChange && onStateChange(false)
       }
 
       function toggle() {
-        if (open) close()
+        if (visible) close()
         else open()
       }
 
-      // 等待中心列出现（boot 后 frame 挂载）
-      columnObserver = new MutationObserver(function () { if (open) ensureColumn() })
-      columnObserver.observe(document.body, { childList: true, subtree: true })
-
       // 兄弟面板激活时关闭本面板
       function onOtherActivate(e) {
-        if (e.detail !== PANEL_NAME && open) close()
+        if (e.detail !== PANEL_NAME && visible) close()
       }
       document.addEventListener(ACTIVATE_EVENT, onOtherActivate)
 
-      // 侧边栏点击会话/工作区时关面板（把中心列还给对话）
+      // 侧边栏点击会话/工作区时关面板（把右侧栏还给对话）
       var SIDEBAR_ROW = '[class*="sessionRow"], [class*="projectRow"], [class*="newSession"]'
       function onClickSidebar(e) {
-        if (!open) return
+        if (!visible) return
         var t = e.target
         if (t && t.closest && t.closest(SIDEBAR_ROW) !== null) close()
       }
       document.addEventListener('click', onClickSidebar, true)
 
-      ensureColumn()
+      ensureRoot()
 
       return {
         toggle: toggle,
         open: open,
         close: close,
-        isOpen: function () { return open },
+        isOpen: function () { return visible },
         dispose: function () {
           document.removeEventListener(ACTIVATE_EVENT, onOtherActivate)
           document.removeEventListener('click', onClickSidebar, true)
-          if (columnObserver !== null) columnObserver.disconnect()
           if (panelEl !== null && panelEl.parentElement) panelEl.parentElement.removeChild(panelEl)
           document.documentElement.removeAttribute(ACTIVE_ATTR)
         },
@@ -237,27 +248,32 @@ window.__ModuleLoader__.load({
      * @param {import('@deepseek-ai/dsh-client-runtime/client').ClientContext} ctx
      */
     function apply(ctx) {
-      // 仅在 craft-bot 预设会话显示：非 craft-bot 直接返回，不注册任何 UI。
+      // 仅在 craft-bot 预设会话注册 UI；其他预设/普通会话直接返回（不控制 bot 时不显示）。
       if (!isCraftBotSession(ctx)) return
 
-      var panel = null
-      var entryActive = false
+      // 面板：DOM 级单例——无论 apply 被调用多少次、模块是否被按会话重新求值，
+      // document 中只存在一个 #dsh-craft-panel-root；createPanelController 内的 ensureRoot
+      // 会复用已存在元素，从根本上杜绝"开 N 个会话出现 N 个仪表盘"。
+      var panel = createPanelController(ctx, onPanelState)
+      panel.open() // 自动打开（"页面旁"实时显示 bot 状态）
 
-      function setEntryActive(v) {
-        entryActive = v
-        var els = document.querySelectorAll('[data-dsh-craft-entry]')
-        for (var i = 0; i < els.length; i++) {
-          if (v) els[i].setAttribute('data-active', 'true')
-          else els[i].removeAttribute('data-active')
+      // reconcile：用 window 句柄做单例，跨模块重求值/多次 apply 只跑一个定时器；
+      // 离开 craft-bot 收起、切回自动重开（除非用户在当前 craft-bot 会话手动关闭过）。
+      if (typeof window !== 'undefined') {
+        if (!window.__dshCraftReconcile) {
+          window.__dshCraftReconcile = setInterval(function () {
+            var isCraft = isCraftBotSession(ctx)
+            if (!isCraft) {
+              userClosed = false
+              if (panel.isOpen()) panel.close()
+            } else if (!userClosed && !panel.isOpen()) {
+              panel.open()
+            }
+          }, 1000)
         }
       }
 
-      function ensurePanel() {
-        if (panel === null) panel = createPanelController(ctx, setEntryActive)
-        return panel
-      }
-
-      // 入口按钮：优先 sidebar.footer.action（list 插槽）。
+      // 入口按钮：每个 craft-bot 会话注册一个（各自侧边栏）；点击开合共享面板。
       var footerRegistered = false
       try {
         ctx.slots.inject('sidebar.footer.action', function () {
@@ -270,10 +286,10 @@ window.__ModuleLoader__.load({
           }, function FooterEntry(props) {
             return createElement(CraftEntry, {
               wide: props && props.wide !== false,
-              active: entryActive,
+              active: panel.isOpen(),
               onClick: function () {
-                ensurePanel().toggle()
-                setEntryActive(panel.isOpen())
+                if (panel.isOpen()) { userClosed = true; panel.close() }
+                else { userClosed = false; panel.open() }
               },
             })
           })
@@ -283,8 +299,8 @@ window.__ModuleLoader__.load({
         footerRegistered = false
       }
 
-      // 兜底：插槽未声明时 DOM 注入到侧边栏底部（task-board sidebar-entry 思路）
-      if (!footerRegistered) {
+      // 兜底：插槽未声明时 DOM 注入到侧边栏底部（带单例判断，避免重复按钮）
+      if (!footerRegistered && document.querySelector('[data-dsh-craft-entry]') === null) {
         var entryEl = null
         var placed = false
         var entryObserver = null
@@ -301,8 +317,8 @@ window.__ModuleLoader__.load({
             entryEl.dataset.dshCraftEntry = ''
             entryEl.innerHTML = '<span class="dsh-craft-label">Craft Bot 仪表盘</span>'
             entryEl.addEventListener('click', function () {
-              ensurePanel().toggle()
-              setEntryActive(panel.isOpen())
+              if (panel.isOpen()) { userClosed = true; panel.close() }
+              else { userClosed = false; panel.open() }
             })
           }
           if (entryEl.parentElement !== root) root.appendChild(entryEl)
@@ -311,7 +327,7 @@ window.__ModuleLoader__.load({
         entryObserver = new MutationObserver(function () { tryPlace() })
         entryObserver.observe(document.body, { childList: true, subtree: true })
         tryPlace()
-        ctx.effect(function () { entryObserver.disconnect() })
+        if (typeof ctx.effect === 'function') ctx.effect(function () { entryObserver.disconnect() })
       }
     }
 

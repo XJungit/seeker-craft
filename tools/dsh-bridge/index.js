@@ -201,7 +201,8 @@ export function apply(ctx, config) {
         description: '要执行的工具名，如 "perceive"、"goto"、"craft"、"mine"、"equip"、"attack"、"set_mode"。',
       },
       args: {
-        type: 'json',
+        type: 'object',
+        additionalProperties: true,
         description: '工具参数对象（如 {"x":1,"y":64,"z":2,"item":"iron_ore"}）。无参数可省略。',
       },
     },

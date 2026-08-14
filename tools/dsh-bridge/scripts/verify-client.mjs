@@ -16,27 +16,33 @@ import { createRequire } from 'node:module'
 
 const clientSrc = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
 
+// 跨 apply 共享的 body 子节点表（按 id 追踪仪表盘元素，用于断言"只存在一个仪表盘"）
+const bodyChildren = []
+
 // 模拟 __ModuleLoader__：加载 client.js，捕获 load 定义
 function loadClient() {
   let loaded = null
+  bodyChildren.length = 0
   const sandbox = {
     window: {},
     document: {
-      querySelector: (sel) => {
-        // style 检查：模拟"尚未注入"，返回 null 触发创建
-        return null
-      },
+      querySelector: () => null,
       querySelectorAll: () => [],
+      getElementById: (id) => bodyChildren.find((c) => c.id === id) || null,
       createElement: (tag) => {
         const el = {
           tagName: String(tag).toUpperCase(),
+          id: '',
           style: {},
           dataset: {},
+          children: [],
           setAttribute() {},
           removeAttribute() {},
-          appendChild() {},
+          appendChild(c) { el.children.push(c); return c },
           addEventListener() {},
           removeEventListener() {},
+          querySelector: () => ({ addEventListener() {}, textContent: '', src: '' }),
+          closest: () => null,
           textContent: '',
           innerHTML: '',
           className: '',
@@ -47,7 +53,12 @@ function loadClient() {
       head: { appendChild() {} },
       addEventListener() {},
       removeEventListener() {},
-      body: { contains: () => false, appendChild() {} },
+      dispatchEvent() {},
+      body: {
+        children: bodyChildren,
+        contains: (el) => bodyChildren.includes(el),
+        appendChild: (el) => { bodyChildren.push(el); return el },
+      },
       documentElement: { removeAttribute() {}, setAttribute() {} },
     },
     CustomEvent: class { constructor(type, opts) { this.type = type; this.detail = opts?.detail } },
@@ -57,6 +68,8 @@ function loadClient() {
     console,
     setTimeout,
     clearTimeout,
+    setInterval,
+    clearInterval,
   }
   sandbox.window.__ModuleLoader__ = {
     load: (def) => { loaded = def },
@@ -152,6 +165,17 @@ function makeCtx(agentPreset) {
   clientMod.apply(ctx)
   check('无 agentPreset 的普通会话不注册', injects.length === 0,
     `injects=${JSON.stringify(injects)}`)
+}
+
+// 4) 全新模块实例 + 同一 craft-bot ctx 多次 apply（模拟多会话/重复加载）→ 只初始化一次
+{
+  const freshMod = factoryExports(def) // 独立闭包，bootstrapped 重新为 false
+  const { ctx, injects, registers } = makeCtx('craft-bot')
+  freshMod.apply(ctx)
+  freshMod.apply(ctx)
+  freshMod.apply(ctx)
+  check('多次 apply 只初始化一次（无重复仪表盘/重复注册）', injects.length === 1,
+    `injects=${injects.length}, registers=${registers.length}`)
 }
 
 console.log(failures ? `\n存在 ${failures} 项失败` : '\n全部通过')

@@ -17,14 +17,17 @@ craft-bot 预设的 viewer 桥插件（DSH 侧）。让 [DSH](https://github.com
 
 ## 内嵌仪表盘（client 半边）
 
-把 craft-agent-viewer 的 Web 仪表盘内嵌进 DSH 页面，在对话区旁实时显示 bot 状态
+把 craft-agent-viewer 的 Web 仪表盘内嵌进 DSH 页面，在对话区**旁**实时显示 bot 状态
 （位置/生命/饱食/背包/附近/会话流）。**只在 craft-bot 预设（DSH 控制 Minecraft bot 的
 会话）显示**——判断依据 `ctx.sessions.list.getSnapshot()` 当前会话 `agentPreset === 'craft-bot'`；
 其他预设/普通会话完全不注册 UI（不控制 bot 时显示无意义）。
 
-- **入口**：侧边栏底部按钮（`sidebar.footer.action` 插槽；插槽未声明时 DOM 注入兜底）。
-- **面板**：点击后 iframe 嵌入 viewer（`http://127.0.0.1:8080`，无 X-Frame-Options 可直接嵌），
-  DOM 级挂载到中心列 `[data-pane="conversation"]`，html data 属性开合，跨插件激活互斥
+- **入口**：侧边栏底部按钮（`sidebar.footer.action` 插槽；插槽未声明时 DOM 注入兜底），点击开合面板。
+- **面板**：craft-bot 会话加载即**自动打开**，固定右侧停靠（"页面旁"，不遮挡对话列），iframe 嵌入
+  viewer（`http://127.0.0.1:8080`，无 X-Frame-Options 可直接嵌）实时显示状态流；用户可点 ✕ 或入口
+  按钮关闭（尊重手动关闭，本会话内不强制重开）。
+- **仅 craft-bot 显示**：`apply` 对 `agentPreset !== 'craft-bot'` 直接返回、不注册任何 UI；并通过每秒
+  `reconcile` 在**会话切换**时动态隐藏（切到非 craft-bot 立即收起、切回自动重开），跨插件激活互斥
   （`dsh-panel-activate` 事件，与 task-board/ssh 面板互不打架）。
 - **同源代理**：host 端挂 `/craft/api/*` → viewer `/api/*` 转发（GET/POST 透传），
   浏览器端零跨域读取 viewer API。

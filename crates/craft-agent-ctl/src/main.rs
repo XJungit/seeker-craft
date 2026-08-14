@@ -5,9 +5,9 @@
 //!   craft-agent-ctl status      # 全面状态：进程 + API + game-state 摘要 + 会话最近动作
 //!   craft-agent-ctl stop        # 停止所有 craft-agent 进程
 //!   craft-agent-ctl build       # 编译 viewer + autopilot exe
-//!   craft-agent-ctl deploy      # stop → build → 启动 viewer + autopilot → start agent
+//!   craft-agent-ctl deploy      # stop → build → 启动 viewer + autopilot（autopilot 自动连接 bot）
 //!   craft-agent-ctl goal "<g>"  # 注入新 goal
-//!   craft-agent-ctl start       # POST /api/start
+//!   craft-agent-ctl start       # POST /api/connect（DSH 模式无 in-bot agent，仅触发 bot 连接）
 //!   craft-agent-ctl session N   # 分析会话最近 N 个工具结果（默认 10）
 //!   craft-agent-ctl tail F N    # 打印日志文件尾部 N 行
 //!   craft-agent-ctl health      # 持续健康检查（最多 10 分钟，检测到进步就退出）
@@ -226,10 +226,12 @@ fn cmd_goal(goal: &str) {
     }
 }
 
+/// 触发 viewer 连接 bot（DSH 模式下无 in-bot agent 可启动，/api/start 端点不存在；
+/// 大脑由 DSH/Cordis 经 /api/bot_tool 驱动）。等价于让 viewer 把 azalea 客户端连上 MC。
 fn cmd_start() {
-    match http_post("/api/start", serde_json::json!({})) {
-        Some(v) => println!("[ctl] start response: {v}"),
-        None => println!("[ctl] start request failed"),
+    match http_post("/api/connect", serde_json::json!({})) {
+        Some(v) => println!("[ctl] connect response: {v}"),
+        None => println!("[ctl] connect request failed"),
     }
 }
 
