@@ -1057,21 +1057,51 @@ fn count_item_kind(inv: &azalea::container::ContainerHandleRef, kind: ItemKind) 
 /// 捡起附近所有掉落物（学习自 Mindcraft pickupNearbyItems）。
 ///
 /// bot 挖矿/战斗后掉落物散落在地，原版不会主动走过去捡。这个函数：
-/// 1. 扫描半径 8 格内的所有 ItemEntity
-/// 2. 走到每个掉落物位置（按距离升序）
+/// 1. 扫描半径 12 格内的所有 ItemEntity（含 Y 差——挖矿掉落物常掉进下方缝隙）
+/// 2. 走到每个掉落物位置（按距离升序，goto 支持垂直寻路）
 /// 3. 等待背包数量增加（确认捡到）
 /// 4. 返回捡到的物品清单
 ///
-/// 战斗/挖矿后调用一次，避免"挖了 8 个石头但只捡到 3 个"。
+/// 战斗/挖矿后调用一次，避免"挖了 8 个石头但只捡到 3 个"（P149：原实现只水平走圈，
+/// 不处理掉进下方缝隙的掉落物——注释声称走到每个掉落物但实际没实现）。
 pub async fn pickup_nearby_items(bot: &Client) -> Result<String, String> {
-    let center = bot.position().map_err(|e| format!("读取坐标失败: {e:?}"))?;
-    let _ = center; // 暂未使用，保留语义
+    // 扫描附近 ItemEntity（含 Y 差），按距离升序排列
+    let mut items: Vec<(f64, f64, f64, f64)> = Vec::new(); // (dist, x, y, z)
+    if let (Ok(self_pos), Ok(entities)) = (
+        bot.position(),
+        bot.nearest_entities::<bevy_ecs::query::Without<azalea::entity::metadata::Player>>(),
+    ) {
+        let self_id = bot.entity().id();
+        for e in entities.iter() {
+            if e.id() == self_id {
+                continue;
+            }
+            let Ok(kind) = e.kind() else { continue };
+            if kind != EntityKind::Item {
+                continue;
+            }
+            let Ok(ep) = e.position() else { continue };
+            let d = ((self_pos.x - ep.x).powi(2)
+                + (self_pos.y - ep.y).powi(2)
+                + (self_pos.z - ep.z).powi(2))
+            .sqrt();
+            if d <= 12.0 {
+                items.push((d, ep.x, ep.y, ep.z));
+            }
+        }
+    }
+    items.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
 
-    // 简化实现：走一圈让物理引擎自然捡起
-    // bot 蹲下 + 转圈，让掉落物被吸过来（vanilla 半径 1.5 自动捡）
     let before_count = total_inventory_count(bot);
 
-    // 原地转 4 个方向，每个方向走 2 格再回来，扫掉落物
+    // 走到每个掉落物附近（按距离升序），每处短暂停留让物理引擎吸起
+    for (_d, x, y, z) in items.iter().take(6) {
+        let target = BlockPos::new(x.floor() as i32, y.floor() as i32, z.floor() as i32);
+        bot.start_goto(BlockPosGoal(target));
+        sleep(Duration::from_millis(2000)).await;
+    }
+
+    // 再原地转 4 个方向收尾，捡起贴身残留
     let dirs = [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)];
     for (dx, dz) in dirs {
         if let Ok(p) = bot.position() {
@@ -1079,8 +1109,7 @@ pub async fn pickup_nearby_items(bot: &Client) -> Result<String, String> {
             let target_y = p.y.floor() as i32;
             let target_z = (p.z + dz * 2.0).floor() as i32;
             bot.start_goto(BlockPosGoal(BlockPos::new(target_x, target_y, target_z)));
-            // 走 1.5 秒
-            sleep(Duration::from_millis(1500)).await;
+            sleep(Duration::from_millis(1000)).await;
         }
     }
 
