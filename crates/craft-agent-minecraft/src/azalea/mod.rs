@@ -1676,7 +1676,54 @@ pub async fn do_discard(bot: &Client, item: &str, count: u32) -> String {
             format!("已丢弃全部 {item}（共 {dropped} 个）")
         }
     } else {
-        format!("已丢弃 {dropped} 个 {item}")
+        // P144（2026-08-14 实机）：指定数量丢弃（count>0）缺少走开防吸回——
+        // 实测 discard("cobblestone",64) 返回"已丢弃 64"，但 2s pickup delay 后
+        // 掉落物被 1.5m 自动吸回，背包数量不变，LLM 被假成功误导。
+        // 修复：与全丢分支一致——走开 + 验证，如实报告剩余。
+        // 指定数量丢弃只需腾少量空间，走 1 个方向 3 格（>1.5m 吸回半径）即可。
+        // 单方向可能撞墙（洞穴/竖井常见），依次尝试 +x / -x / +z / -z，任一成功即停；
+        // 全部失败（卡死）时物品被吸回，still_held 会如实暴露。
+        let start_pos = bot.position().ok();
+        let dirs = [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)];
+        for (dx, dz) in dirs {
+            if let Ok(p) = bot.position() {
+                bot.start_goto(BlockPosGoal(BlockPos::new(
+                    (p.x + dx * 3.0).floor() as i32,
+                    p.y.floor() as i32,
+                    (p.z + dz * 3.0).floor() as i32,
+                )));
+                sleep(Duration::from_millis(700)).await;
+                bot.stop_pathfinding();
+                // 走开成功（位移 >1.5m）即停
+                if let (Some(s), Ok(p)) = (start_pos, bot.position())
+                    && ((p.x - s.x).abs() > 1.5 || (p.z - s.z).abs() > 1.5)
+                {
+                    break;
+                }
+            }
+        }
+        let still_held = bot
+            .get_inventory()
+            .ok()
+            .and_then(|inv| {
+                let slots = inv.slots()?;
+                Some(
+                    slots
+                        .iter()
+                        .filter(|st| !st.is_empty() && st.kind() == kind)
+                        .map(|st| st.count() as u32)
+                        .sum::<u32>(),
+                )
+            })
+            .unwrap_or(0);
+        if still_held > 0 && dropped > 0 {
+            format!(
+                "已丢弃 {dropped} 个 {item}，但扔出的掉落物被 1.5m 自动拾取吸回，背包仍剩 {still_held} 个。\
+                 可能原因：走开失败（被卡住/路径不可达）。请先换个开阔平坦的位置，再重试 discard。"
+            )
+        } else {
+            format!("已丢弃 {dropped} 个 {item}")
+        }
     }
 }
 
@@ -1785,8 +1832,14 @@ pub async fn do_consume(bot: &Client, item: &str) -> String {
     let hold_total_ms = 2500u64;
     let step_ms = 50u64;
     let mut steps = 0u64;
+    // P143（2026-08-14 实机）：azalea 的 start_use_item() 每次只发一个
+    // ServerboundUseItem 包（= 单次右键）。旧实现循环重发 50 次，等价 50 次
+    // 快速右键——服务端对食物按「按住 32 tick」管理消耗，重发不会加速反而可能
+    // 干扰状态机，实机表现「数量未减少、饥饿不恢复」。
+    // 正确姿势：发一次 start_use_item()（服务端开始进食计时），轮询等待数量
+    // 减少（上限 ~2.5s 覆盖 32 tick），最后 stop_use_item() 收尾。
+    bot.start_use_item();
     while steps * step_ms < hold_total_ms {
-        bot.start_use_item();
         sleep(Duration::from_millis(step_ms)).await;
         steps += 1;
         // 提前检测：数量已减少说明消耗成功，无需继续按住
@@ -1796,6 +1849,8 @@ pub async fn do_consume(bot: &Client, item: &str) -> String {
             break;
         }
     }
+    // 收尾：松开右键（对未完成/已完成的进食都是安全操作）
+    bot.stop_use_item();
     // 恢复原方向
     if let Some(orig) = orig_direction {
         let _ = bot.set_direction(orig.y_rot(), orig.x_rot());
