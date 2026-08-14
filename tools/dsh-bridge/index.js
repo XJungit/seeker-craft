@@ -8,6 +8,13 @@
  *   - bot_tool(name, args)       POST /api/bot_tool    执行 53 个 Minecraft 工具之一（含 P100/P101/P102/P132 自动修正）
  *   - set_goal(text)             POST /api/goal        设置 bot 的运营目标
  *
+ * 同时注册 prompt 占位符变量（systemPrompt.variable），使预设 persona 能用
+ * {{...}} 动态引用运行时数据，改外部数据不碰预设文件、不重启 DSH：
+ *
+ *   - {{bot_state}}   动态 bot 状态摘要（调 /api/game-state，带短缓存）
+ *   - {{tool_list}}   53 工具清单（ALL_TOOL_NAMES 静态镜像）
+ *   - {{viewer_url}}  viewer 地址（环境变量 DSH_CRAFT_VIEWER_URL 或默认 8080）
+ *
  * viewer 地址默认 http://127.0.0.1:8080，可用环境变量 DSH_CRAFT_VIEWER_URL 覆盖。
  * 工具名是 craft-bot 预设 persona 声明的稳定契约，不要改名。
  *
@@ -20,8 +27,8 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 /** Cordis 插件契约：插件名。 */
 export const name = 'dsh-bridge'
 
-/** Cordis 插件契约：注入工具注册表。 */
-export const inject = ['tools']
+/** Cordis 插件契约：注入工具注册表 + prompt 变量注册表。 */
+export const inject = ['tools', 'systemPrompt']
 
 /** Cordis 插件契约：可选配置（保留空 schema，未来可加 viewer 地址等）。 */
 export const Config = z.object({})
@@ -68,8 +75,65 @@ function renderResult(payload) {
   return `[bot_tool 失败] ${err}`
 }
 
-/** Cordis 插件契约：注册三个桥工具。 */
+// ── prompt 占位符变量（{{...}} 动态注入）─────────────────────────────────────
+//
+// 让 persona 用占位符引用运行时数据，预设文件保持稳定。变量 provider 在
+// system prompt 装配时求值，改外部数据（viewer 状态 / 环境变量）不碰预设、
+// 不重启 DSH。
+
+/** 53 工具清单（tools_azalea.rs::ALL_TOOL_NAMES 的静态镜像，稳定契约）。 */
+const TOOL_NAMES = [
+  'perceive', 'goto', 'mine_below', 'mine_above', 'mine', 'interact_block',
+  'till_and_sow', 'sleep', 'harvest', 'attack', 'craft', 'craft_3x3', 'smelt',
+  'gather', 'make_obsidian', 'place', 'open', 'auto_craft', 'enchant', 'trade',
+  'interact_entity', 'chat', 'memory', 'set_goal', 'run_plan', 'search_wiki',
+  'run_script', 'build', 'build_blueprint', 'list_blueprints', 'pickup',
+  'defend', 'use_item', 'shoot', 'equip', 'discard', 'follow', 'goto_player',
+  'stop_follow', 'give', 'search_for_block', 'move_away', 'set_mode', 'consume',
+  'chest_view', 'chest_withdraw', 'chest_deposit', 'pause_goal', 'resume_goal',
+  'new_action', 'list_actions', 'task_complete', 'task_retry',
+]
+
+/** bot 状态短缓存（30s），避免每次 prompt 装配都打 viewer API；也避免系统提示抖动太频繁。 */
+let botStateCache = { at: 0, text: null }
+const BOT_STATE_TTL_MS = 30000
+
+/** 后台刷新 bot 状态缓存（同步 provider 只能读缓存，这里异步预取）。 */
+async function refreshBotState() {
+  try {
+    const { ok, body } = await viewerFetch('/api/game-state', {}, 5000)
+    if (ok && body && body.status !== 'not_connected') {
+      botStateCache = { at: Date.now(), text: body.scene_desc ?? JSON.stringify(body) }
+      return true
+    }
+  } catch {
+    // viewer 未启动：保留旧缓存
+  }
+  return false
+}
+
+/**
+ * 注册 prompt 占位符变量。
+ * 注意：systemPrompt.variable 的 provider 是【同步】调用（assemble 不 await），
+ * 因此 {{bot_state}} 只读缓存；缓存由 setInterval 后台刷新，首装配前最多
+ * 落后 TTL（30s）。
+ * @param {import('@deepseek-ai/cordis').Context} ctx
+ */
+function registerPromptVariables(ctx) {
+  // 立即预取一次 + 每 30s 后台刷新（插件生命周期内持续，卸载时自动清理）
+  refreshBotState()
+  const timer = setInterval(() => { refreshBotState() }, BOT_STATE_TTL_MS)
+  ctx.effect(() => clearInterval(timer))
+
+  ctx.systemPrompt.variable('bot_state', () => botStateCache.text ?? '(bot 状态加载中…)')
+  ctx.systemPrompt.variable('tool_list', () => TOOL_NAMES.join(' · '))
+  ctx.systemPrompt.variable('viewer_url', () => viewerUrl())
+}
+
+/** Cordis 插件契约：注册三个桥工具 + 占位符变量。 */
 export function apply(ctx) {
+  registerPromptVariables(ctx)
+
   ctx.tools.register(defineTool({
     name: 'game_state',
     description: '读取 live bot 的实时世界状态（位置/生命/饱食/维度/群系/附近方块与实体/背包/hotbar/装备/世界记忆/警示）。' +

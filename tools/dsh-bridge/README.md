@@ -15,6 +15,23 @@ craft-bot 预设的 viewer 桥插件（DSH 侧）。让 [DSH](https://github.com
 - `bot_tool` 复用与 agent_loop 完全相同的工具注册表（`create_mc_azalea_tools_full`），
   P100/P101/P102/P132 的派发时自动修正在 `GameTool::execute` 闭包内，桥接天然保留。
 
+## Prompt 占位符变量（{{...}} 动态注入）
+
+插件同时注册 prompt 占位符（`systemPrompt.variable`），让预设 persona 用 `{{...}}`
+引用运行时数据——**改外部数据不碰预设文件、不重启 DSH**：
+
+| 占位符 | 来源 | 说明 |
+|---|---|---|
+| `{{bot_state}}` | `GET /api/game-state`（30s 缓存后台刷新） | 当前 bot 状态快照（中文摘要） |
+| `{{tool_list}}` | 静态镜像 `ALL_TOOL_NAMES` | 53 工具清单（`·` 分隔） |
+| `{{viewer_url}}` | `DSH_CRAFT_VIEWER_URL` 或默认 | viewer 地址 |
+
+内置占位符（agent-loop 注册）：`{{model}}`、`{{cwd}}`、`{{provider}}`。
+
+> **契约约束**：`systemPrompt.variable` 的 provider 是**同步**调用（assemble 不 await），
+> 因此 `{{bot_state}}` 只读缓存、由 `setInterval` 后台刷新；变量名必须匹配
+> `[a-z][a-z0-9_]*`；persona 引用未知变量会在装配期抛错（严格插值）。
+
 ## 安装
 
 本插件作为本地包通过 profile 的 `cordis.patch.yml` 注册：
