@@ -56,24 +56,38 @@ craft-bot 预设的 viewer 桥插件（DSH 侧）。让 [DSH](https://github.com
 > client 半边（client.js 浏览器面板）不依赖 hostTools：只要包被 loader 以包名加载，
 > DSH 的 client-modules 就会独立发现 `dsh.client` 声明并注入浏览器。
 
-## Prompt 占位符变量（{{...}} 动态注入）
+## Prompt 贡献（{{...}} 变量 与 动态上下文）
 
-插件同时注册 prompt 占位符（`systemPrompt.variable`），让预设 persona 用 `{{...}}`
-引用运行时数据——**改外部数据不碰预设文件、不重启 DSH**：
+插件向 DSH 的 `systemPrompt` 注册**两类** prompt 贡献——**静态变量**（进 system 提示段，
+字节稳定，保 DeepSeek 前缀缓存命中）与**动态上下文**（每次 pre-step 装配，作为
+**user 角色快照**追加到对话末尾，新快照取代旧快照，不碎前缀缓存）：
 
-| 占位符 | 来源 | 说明 |
-|---|---|---|
-| `{{bot_state}}` | `GET /api/game-state`（30s 缓存后台刷新） | 当前 bot 状态快照（中文摘要） |
-| `{{tool_list}}` | 静态镜像 `ALL_TOOL_NAMES` | 53 工具清单（`·` 分隔） |
-| `{{viewer_url}}` | `DSH_CRAFT_VIEWER_URL` 或默认 | viewer 地址 |
+| 名称 | 注册方式 | 来源 | 说明 |
+|---|---|---|---|
+| `{{tool_list}}` | `systemPrompt.variable`（→ system 段） | 静态镜像 `ALL_TOOL_NAMES` | 53 工具清单（`·` 分隔），字节稳定 |
+| `{{viewer_url}}` | `systemPrompt.variable`（→ system 段） | `DSH_CRAFT_VIEWER_URL` 或默认 | viewer 地址，字节稳定 |
+| `bot_state` | `systemPrompt.context`（→ user 快照） | `GET /api/game-state`（30s 缓存后台刷新） | 当前 bot 状态快照（中文摘要）；内容变化时才追加，模型历史中始终只有最新一份 |
 
-内置占位符（agent-loop 注册）：`{{model}}`、`{{cwd}}`、`{{provider}}`。
+> **注意**：`bot_state` **不是** system 变量（不存在 `{{bot_state}}` 占位符），而是
+> `systemPrompt.context` 动态上下文。由 agent-loop 每次 pre-step 装配，渲染成 user
+> 角色快照（固定前缀 `Current runtime context. This snapshot supersedes earlier
+> runtime-context snapshots.`）追加到对话末尾；内容与上一份相同时**不重复追加**
+> （`RuntimeContextProjection.project()` 变更检测，`dsh-agent-loop`），因此不累积、
+> 不进 system 提示、不破坏前缀缓存。模型需要**实时/更详细**状态时主动调
+> `game_state()`（会显示为 `Tool call · game_state` 卡片，与自动注入的 user 快照不同）。
 
-> **契约约束**：`systemPrompt.variable` 的 provider 是**同步**调用（assemble 不 await），
-> 因此 `{{bot_state}}` 只读缓存、由 `setInterval` 后台刷新；变量名必须匹配
-> `[a-z][a-z0-9_]*`；persona 引用未知变量会在装配期抛错（严格插值）。
+内置变量（agent-loop 注册）：`{{model}}`、`{{cwd}}`、`{{provider}}`。
+
+> **契约约束**：`systemPrompt.variable` 与 `systemPrompt.context` 的 provider 都是
+> **同步**调用（assemble 不 await），因此 `bot_state` 只读缓存、由 `setInterval`
+> 后台刷新（首装配前最多落后 TTL 30s）；变量名必须匹配 `[a-z][a-z0-9_]*`；
+> persona 引用未知变量会在装配期抛错（严格插值）。
 
 ## 安装
+
+> **1.0 推荐方式**：直接运行仓库根 `scripts/setup.ps1`，它会自动完成本节全部
+> 步骤（注册插件、链接依赖、pnpm install、生成 craft-bot 预设、运行验证）。
+> 以下为手动安装参考（等价于 setup.ps1 的 3/4 步）。
 
 本插件作为本地包通过 profile 的 `cordis.patch.yml` 注册：
 
@@ -84,10 +98,11 @@ craft-bot 预设的 viewer 桥插件（DSH 侧）。让 [DSH](https://github.com
       name: dsh-bridge
 ```
 
-并在 `~/.dsh/profiles/web/package.json` 的 dependencies 加 link 依赖指向本目录：
+并在 `~/.dsh/profiles/web/package.json` 的 dependencies 加 link 依赖指向本目录
+（`<repo-root>` 为你的仓库克隆路径，如 `D:/Craft-Agent`）：
 
 ```json
-"dsh-bridge": "link:D:/Craft-Agent/tools/dsh-bridge"
+"dsh-bridge": "link:<repo-root>/tools/dsh-bridge"
 ```
 
 然后 `cd ~/.dsh/profiles/web && pnpm install`。
@@ -99,7 +114,7 @@ craft-bot 预设的 viewer 桥插件（DSH 侧）。让 [DSH](https://github.com
 
 ```powershell
 # 定位 DSH 的 npx 安装根（dsh CLI 所在 node_modules/@deepseek-ai）
-$npx = "C:\Users\xj\AppData\Local\npm-cache\_npx\<hash>\node_modules\@deepseek-ai"
+$npx = "<DSH 安装根>\node_modules\@deepseek-ai"
 New-Item -ItemType Junction tools\dsh-bridge\node_modules\@deepseek-ai\dsh-tools -Target "$npx\dsh-tools"
 New-Item -ItemType Junction tools\dsh-bridge\node_modules\@deepseek-ai\schemastery -Target "$npx\schemastery"
 ```

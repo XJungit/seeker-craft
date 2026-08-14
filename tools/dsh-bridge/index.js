@@ -8,12 +8,12 @@
  *   - bot_tool(name, args)       POST /api/bot_tool    执行 53 个 Minecraft 工具之一（含 P100/P101/P102/P132 自动修正）
  *   - set_goal(text)             POST /api/goal        设置 bot 的运营目标
  *
- * 同时注册 prompt 占位符变量（systemPrompt.variable），使预设 persona 能用
- * {{...}} 动态引用运行时数据，改外部数据不碰预设文件、不重启 DSH：
+ * 同时注册 prompt 贡献（systemPrompt.variable + systemPrompt.context），使预设 persona
+ * 能引用运行时数据，改外部数据不碰预设文件、不重启 DSH：
  *
- *   - {{bot_state}}   动态 bot 状态摘要（调 /api/game-state，带短缓存）
- *   - {{tool_list}}   53 工具清单（ALL_TOOL_NAMES 静态镜像）
- *   - {{viewer_url}}  viewer 地址（环境变量 DSH_CRAFT_VIEWER_URL 或默认 8080）
+ *   - {{tool_list}}   53 工具清单（ALL_TOOL_NAMES 静态镜像）——system 段变量，字节稳定
+ *   - {{viewer_url}}  viewer 地址（环境变量 DSH_CRAFT_VIEWER_URL 或默认 8080）——system 段变量
+ *   - bot_state      动态 bot 状态摘要（systemPrompt.context，user 角色快照，见 registerPromptVariables）
  *
  * viewer 地址默认 http://127.0.0.1:8080，可用环境变量 DSH_CRAFT_VIEWER_URL 覆盖。
  * 工具名是 craft-bot 预设 persona 声明的稳定契约，不要改名。
