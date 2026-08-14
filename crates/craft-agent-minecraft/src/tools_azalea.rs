@@ -9,6 +9,7 @@
 
 use crate::adapter_azalea::{ArcAzaleaAdapter, MinecraftAzaleaAdapter};
 use craft_agent::core::memory::{MemoryKind, MemoryPos, WorldMemory};
+use craft_agent::core::semantic_memory::{SemanticMemory, SemanticMemoryTool};
 use craft_agent::core::tool::{GameTool, ToolEffects, ToolResult};
 use craft_agent::core::types::{Action, MinecraftAction};
 use serde_json::Value;
@@ -27,6 +28,9 @@ pub struct AzaleaToolCtx {
     /// LLM 自定义动作库（P2-4）：供 new_action / list_actions / call_action 使用。
     /// 内部可变（save/bump_call_count），用 Mutex 保护。
     pub actions: Arc<Mutex<ActionLibrary>>,
+    /// 语义长期记忆（P97）：跨会话知识/策略/教训，经 remember 工具读写。
+    /// 与空间记忆（WorldMemory）互补：这里是无坐标的知识，按相关性检索。
+    pub semantic: Arc<Mutex<SemanticMemory>>,
     /// 任务完成停止标志：TaskCompleteTool 验证通过后置 true。
     pub should_stop: Arc<AtomicBool>,
 }
@@ -38,8 +42,15 @@ impl AzaleaToolCtx {
             memory,
             blueprints: BlueprintLibrary::new(),
             actions: Arc::new(Mutex::new(ActionLibrary::new())),
+            semantic: Arc::new(Mutex::new(SemanticMemory::new())),
             should_stop: Arc::new(AtomicBool::new(false)),
         }
+    }
+
+    /// 注入语义记忆库（通常从 `data/memory/agent.jsonl` 加载后传入）。
+    pub fn with_semantic(mut self, semantic: SemanticMemory) -> Self {
+        self.semantic = Arc::new(Mutex::new(semantic));
+        self
     }
 
     /// 注入蓝图库（通常从 `blueprints/` 目录加载后注入）。
@@ -148,6 +159,7 @@ pub fn action_for(name: &str) -> Option<&'static str> {
 pub const META_TOOL_NAMES: &[&str] = &[
     "perceive",
     "memory",
+    "remember",
     "set_goal",
     "run_plan",
     "search_wiki",
@@ -188,6 +200,7 @@ pub const ALL_TOOL_NAMES: &[&str] = &[
     "interact_entity",
     "chat",
     "memory",
+    "remember",
     "set_goal",
     "run_plan",
     "search_wiki",
@@ -476,16 +489,38 @@ pub fn create_mc_azalea_tools_with_bp(
 
 /// 带蓝图库 + LLM 自定义动作库的工厂（P2-1 + P2-4）。
 /// `blueprints` 从 `blueprints/` 目录加载，`actions` 从 `actions/` 目录加载。
+/// 语义记忆用默认空库（`SemanticMemory::new()`）；需要跨会话持久化时用
+/// [`create_mc_azalea_tools_full_with_semantic`] 注入带路径加载的实例。
 pub fn create_mc_azalea_tools_full(
     adapter: ArcAzaleaAdapter,
     memory: WorldMemory,
     blueprints: BlueprintLibrary,
     actions: ActionLibrary,
 ) -> Vec<Box<dyn GameTool>> {
+    create_mc_azalea_tools_full_with_semantic(
+        adapter,
+        memory,
+        blueprints,
+        actions,
+        SemanticMemory::new(),
+    )
+}
+
+/// 带语义记忆库的完整工厂：与 [`create_mc_azalea_tools_full`] 相同，但注入
+/// 跨会话语义记忆实例（通常 `SemanticMemory::new().with_path("data/memory/agent.jsonl")`）。
+/// DSH 模式（viewer `/api/bot_tool`）用它，让 `remember` 工具读写真实持久化记忆。
+pub fn create_mc_azalea_tools_full_with_semantic(
+    adapter: ArcAzaleaAdapter,
+    memory: WorldMemory,
+    blueprints: BlueprintLibrary,
+    actions: ActionLibrary,
+    semantic: SemanticMemory,
+) -> Vec<Box<dyn GameTool>> {
     let ctx = Arc::new(
         AzaleaToolCtx::new(adapter, memory)
             .with_blueprints(blueprints)
-            .with_actions(actions),
+            .with_actions(actions)
+            .with_semantic(semantic),
     );
     vec![
         Box::new(PerceiveTool::new(ctx.clone())),
@@ -513,6 +548,9 @@ pub fn create_mc_azalea_tools_full(
         Box::new(InteractEntityTool::new(ctx.clone())),
         Box::new(ChatTool::new(ctx.clone())),
         Box::new(MemoryTool::new(ctx.clone())),
+        Box::new(SemanticMemoryTool {
+            mem: ctx.semantic.clone(),
+        }),
         Box::new(SetGoalTool::new(ctx.clone())),
         Box::new(RunPlanTool::new(ctx.clone())),
         Box::new(SearchWikiTool::new(ctx.clone())),

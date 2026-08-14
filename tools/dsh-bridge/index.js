@@ -105,7 +105,7 @@ const TOOL_NAMES = [
   'perceive', 'goto', 'mine_below', 'mine_above', 'mine', 'interact_block',
   'till_and_sow', 'sleep', 'harvest', 'attack', 'craft', 'craft_3x3', 'smelt',
   'gather', 'make_obsidian', 'place', 'open', 'auto_craft', 'enchant', 'trade',
-  'interact_entity', 'chat', 'memory', 'set_goal', 'run_plan', 'search_wiki',
+  'interact_entity', 'chat', 'memory', 'remember', 'set_goal', 'run_plan', 'search_wiki',
   'run_script', 'build', 'build_blueprint', 'list_blueprints', 'pickup',
   'defend', 'use_item', 'shoot', 'equip', 'discard', 'follow', 'goto_player',
   'stop_follow', 'give', 'search_for_block', 'move_away', 'set_mode', 'consume',

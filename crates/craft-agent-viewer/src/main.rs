@@ -29,7 +29,7 @@ use craft_agent::core::types::WorldState;
 use craft_agent_minecraft::action_lib::ActionLibrary;
 use craft_agent_minecraft::adapter_azalea::ArcAzaleaAdapter;
 use craft_agent_minecraft::blueprint::BlueprintLibrary;
-use craft_agent_minecraft::tools_azalea::create_mc_azalea_tools_full;
+use craft_agent_minecraft::tools_azalea::create_mc_azalea_tools_full_with_semantic;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::convert::Infallible;
@@ -263,8 +263,13 @@ async fn api_bot_tool(
     let memory = adapter.world_memory();
     let blueprints = BlueprintLibrary::load_dir(Path::new("data/blueprints"));
     let actions = ActionLibrary::load_dir(Path::new("data/actions"));
+    // 语义长期记忆：跨会话持久化到 data/memory/agent.jsonl（remember 工具读写）。
+    let semantic = craft_agent::core::semantic_memory::SemanticMemory::new()
+        .with_path("data/memory/agent.jsonl");
     let mut registry = ToolRegistry::new();
-    for tool in create_mc_azalea_tools_full(adapter, memory, blueprints, actions) {
+    for tool in
+        create_mc_azalea_tools_full_with_semantic(adapter, memory, blueprints, actions, semantic)
+    {
         registry.register(tool);
     }
 

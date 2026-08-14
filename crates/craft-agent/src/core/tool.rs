@@ -213,7 +213,13 @@ fn build_index(tools: &[Box<dyn GameTool>]) -> HashMap<String, usize> {
 pub const TOOL_GROUPS: &[(&str, &[&str])] = &[
     (
         "感知",
-        &["perceive", "memory", "search_wiki", "search_for_block"],
+        &[
+            "perceive",
+            "memory",
+            "remember",
+            "search_wiki",
+            "search_for_block",
+        ],
     ),
     (
         "移动",

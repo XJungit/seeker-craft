@@ -12,7 +12,7 @@
 use crate::azalea::{AzaleaBot, BotCommand, BotEvent};
 use anyhow::{Context, Result, anyhow};
 use craft_agent::core::adapter::GameAdapter;
-use craft_agent::core::memory::WorldMemory;
+use craft_agent::core::memory::{MemoryPos, WorldMemory};
 use craft_agent::core::types::{Action, ExecResult, MinecraftAction, Screenshot, WorldState};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, atomic::AtomicBool};
@@ -315,6 +315,27 @@ impl MinecraftAzaleaAdapter {
                             } else {
                                 format!("当前动作: {}", current_action)
                             };
+                            // 邻近世界记忆注入（空间-状态长期记忆）：以当前位置为中心、
+                            // 半径 64 格渲染最近 12 条（含锚点）。无记忆时为空串（不占 token）。
+                            // in-bot 时代为【邻近世界记忆】自动注入，DSH 模式下并入 bot_state
+                            // 快照，让 LLM 每步可见附近资源点/结构/容器/传送门，能做空间规划。
+                            let memory_hint = g
+                                .memory
+                                .as_ref()
+                                .map(|m| {
+                                    let around = MemoryPos::new(
+                                        position.x.floor() as i32,
+                                        position.y.floor() as i32,
+                                        position.z.floor() as i32,
+                                    );
+                                    m.render_nearby(around, 64)
+                                })
+                                .unwrap_or_default();
+                            let memory_line = if memory_hint.is_empty() {
+                                String::new()
+                            } else {
+                                format!("记忆: {}\n", memory_hint)
+                            };
                             let scene = format!(
                                 "位置: ({:.0}, {:.0}, {:.0})\n\
                                   生命: {:.0}/20  饱食: {}/20  主手: {}\n\
@@ -330,7 +351,7 @@ impl MinecraftAzaleaAdapter {
                                   背包: [{}]\n\
                                   hotbar: [{}]\n\
                                   玩家: {}{}\n\
-                                  {}",
+                                  {}{}",
                                 position.x,
                                 position.y,
                                 position.z,
@@ -356,6 +377,7 @@ impl MinecraftAzaleaAdapter {
                                 inventory,
                                 hotbar,
                                 player_count,
+                                memory_line,
                                 stuck_hint,
                                 scene_tail
                             );
