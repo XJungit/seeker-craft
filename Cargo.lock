@@ -1338,7 +1338,6 @@ dependencies = [
  "axum",
  "craft-agent",
  "craft-agent-minecraft",
- "craft-agent-model",
  "dotenvy",
  "serde",
  "serde_json",

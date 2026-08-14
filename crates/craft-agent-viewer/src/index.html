@@ -217,7 +217,7 @@ function esc(s){return String(s??"").replace(/&/g,"&amp;").replace(/</g,"&lt;").
 function shortArgs(a){const s=typeof a=="string"?a:JSON.stringify(a);return s.length>120?s.slice(0,120)+" …":s}
 
 async function doStart(){
-  const r=await fetch("/api/start",{method:"POST"});
+  const r=await fetch("/api/connect",{method:"POST"});
   const j=await r.json();
   if(!j.ok) alert("启动失败: "+(j.error||"未知错误"));
 }

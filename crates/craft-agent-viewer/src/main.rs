@@ -8,9 +8,8 @@
 //!   --goal "收集木头做工作台" --steps 40
 //! ```
 
-mod agent_loop;
+mod controller;
 
-use agent_loop::{AgentController, AgentEvent, spawn_agent_loop};
 use axum::{
     Router,
     extract::State,
@@ -21,6 +20,7 @@ use axum::{
     },
     routing::{get, post},
 };
+use controller::{AgentController, AgentEvent};
 use craft_agent::core::memory::WorldMemory;
 use craft_agent::core::message::Message;
 use craft_agent::core::session::{SessionEntry, SessionHeader};
@@ -46,8 +46,6 @@ struct AppState {
     session_path: PathBuf,
     controller: Arc<AgentController>,
     event_tx: broadcast::Sender<AgentEvent>,
-    /// Agent 配置
-    model_config_path: String,
     /// MC 服务器地址（azalea 连接用，如 localhost:4444）
     mc_addr: String,
     /// Bot 用户名（azalea 登录用）
@@ -65,7 +63,6 @@ async fn main() -> anyhow::Result<()> {
     let mut port: u16 = 8080;
     let mut goal = "收集木头做工作台".to_string();
     let mut max_steps: u32 = 0; // 0 = 无限循环，仅手动停止才退出
-    let mut config_path = "data/config/agent.toml".to_string();
     let mut mc_addr = "localhost:4444".to_string();
     let mut username = String::new();
     let mut mode_profile: Option<String> = None;
@@ -106,12 +103,6 @@ async fn main() -> anyhow::Result<()> {
                     && let Ok(n) = v.parse()
                 {
                     max_steps = n;
-                }
-                i += if has_inline { 1 } else { 2 };
-            }
-            "--config" | "-c" => {
-                if let Some(v) = get_val() {
-                    config_path = v;
                 }
                 i += if has_inline { 1 } else { 2 };
             }
@@ -158,7 +149,6 @@ async fn main() -> anyhow::Result<()> {
         session_path: session_path.clone(),
         controller: controller.clone(),
         event_tx: event_tx.clone(),
-        model_config_path: config_path,
         mc_addr,
         username,
         last_state_cache: Mutex::new(None),
@@ -168,7 +158,6 @@ async fn main() -> anyhow::Result<()> {
         .route("/", get(index))
         .route("/api/session", get(api_session))
         .route("/api/status", get(api_status))
-        .route("/api/start", post(api_start))
         .route("/api/stop", post(api_stop))
         .route("/api/pause", post(api_pause))
         .route("/api/goal", post(api_goal))
@@ -216,37 +205,6 @@ async fn index() -> Html<&'static str> {
 
 async fn api_status(State(state): State<Arc<AppState>>) -> impl IntoResponse {
     axum::Json(state.controller.get_status())
-}
-
-async fn api_start(
-    State(state): State<Arc<AppState>>,
-    body: Option<axum::Json<serde_json::Value>>,
-) -> impl IntoResponse {
-    let _ = state.event_tx.send(AgentEvent::Log {
-        text: "[DEBUG] api_start 被调用".into(),
-    });
-    let body = body.map(|json| json.0).unwrap_or_default();
-    let goal = body
-        .get("goal")
-        .and_then(|value| value.as_str())
-        .filter(|goal| !goal.trim().is_empty())
-        .map(str::to_string);
-    let max_steps = body
-        .get("max_steps")
-        .and_then(|value| value.as_u64())
-        .and_then(|value| u32::try_from(value).ok());
-    state.controller.configure_start(goal, max_steps);
-    let result = spawn_agent_loop(
-        state.controller.clone(),
-        state.model_config_path.clone(),
-        state.event_tx.clone(),
-        state.mc_addr.clone(),
-        state.username.clone(),
-    );
-    match result {
-        Ok(()) => axum::Json(json!({"ok": true})),
-        Err(e) => axum::Json(json!({"ok": false, "error": format!("{e}")})),
-    }
 }
 
 async fn api_stop(State(state): State<Arc<AppState>>) -> impl IntoResponse {
