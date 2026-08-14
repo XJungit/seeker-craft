@@ -1993,6 +1993,15 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                     pos: azalea::Vec3::new(mx as f64, my as f64, mz as f64),
                                     radius: 2.0,
                                 });
+                                // P152：靠近分支必须给 result_tx 发中间结果——否则命令结果
+                                // 通道为空，bot_tool 报 "channel is empty"。靠近是异步的，
+                                // 下一 tick 重新派发时距离 ≤2.5m 自然触发 start_mining。
+                                if let Some(tx) = &result_tx {
+                                    let _ = tx.send(format!(
+                                        "Action output:\nmine ({mx},{my},{mz}) 目标距 {:.1}m，正在靠近（≤2.5m 后自动挖掘）。",
+                                        mine_dist
+                                    ));
+                                }
                                 state.action_mgr.clear_pending();
                                 return bot;
                             }
