@@ -739,6 +739,14 @@ pub(crate) async fn has_any_pickaxe_in_inventory(bot: &Client) -> bool {
         IK::DiamondPickaxe,
         IK::NetheritePickaxe,
     ];
+    // P156：先查主手（get_held_item 实时），避免 azalea 本地 inventory 缓存滞后
+    // （P154）导致 gather 误判"无镐"——主手明明有镐却返回 false。
+    if let Ok(st) = bot.get_held_item()
+        && !st.is_empty()
+        && pickaxes.contains(&st.kind())
+    {
+        return true;
+    }
     let Ok(inv) = bot.get_inventory() else {
         return false;
     };
@@ -1014,23 +1022,31 @@ pub(crate) async fn best_pickaxe_tier_in_inventory(bot: &Client) -> u8 {
     use azalea_registry::builtin::ItemKind as IK;
     let pickaxes = [
         IK::WoodenPickaxe,
-        IK::StonePickaxe,
         IK::GoldenPickaxe,
         IK::IronPickaxe,
+        IK::StonePickaxe,
         IK::DiamondPickaxe,
         IK::NetheritePickaxe,
     ];
+    // P156：先查主手（get_held_item 实时），避免 azalea 本地 inventory 缓存滞后
+    // （P154）导致 gather 误判"镐等级不足"。
+    let mut best = 0u8;
+    if let Ok(st) = bot.get_held_item()
+        && !st.is_empty()
+        && pickaxes.contains(&st.kind())
+    {
+        best = best.max(pickaxe_tier(st.kind()));
+    }
     let Ok(inv) = bot.get_inventory() else {
-        return 0;
+        return best;
     };
     let Some(menu) = inv.menu().ok().flatten() else {
-        return 0;
+        return best;
     };
     let Some(slots) = inv.slots() else {
-        return 0;
+        return best;
     };
     let range = menu.player_slots_range();
-    let mut best = 0u8;
     for s in range {
         if let Some(st) = slots.get(s)
             && !st.is_empty()
