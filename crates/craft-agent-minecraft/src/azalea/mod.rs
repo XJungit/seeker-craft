@@ -1750,6 +1750,12 @@ pub async fn do_discard(bot: &Client, item: &str, count: u32) -> String {
 /// 把 item 移到主手并按住右键使用。食物 32 tick（1.6s）吃完一个，这里等待 2s 兜底。
 /// 药水 32 tick 喝完。返回时物品已被服务端消耗。
 pub async fn do_consume(bot: &Client, item: &str) -> String {
+    // P146（2026-08-14 实机）：consume 前必须先停止寻路/挖掘——goto 自动挖路
+    // 残留的 Mining 组件会让 azalea 的 start_use_item 打出
+    // "Got a StartUseItemEvent for a client that was mining"（只 warn 不阻塞），
+    // 但服务端看到客户端仍在 mining 状态会拒绝进食（食物数量不减少、饥饿不恢复）。
+    // force_stop_pathfinding 会清理 Pathfinder/ExecutingPath，handler 侧随后清 Mining。
+    bot.force_stop_pathfinding();
     let kind =
         match ItemKind::from_str(&normalize_item_id(item)).or_else(|_| ItemKind::from_str(item)) {
             Ok(k) => k,
@@ -1854,9 +1860,13 @@ pub async fn do_consume(bot: &Client, item: &str) -> String {
     // ServerboundUseItem 包（= 单次右键）。旧实现循环重发 50 次，等价 50 次
     // 快速右键——服务端对食物按「按住 32 tick」管理消耗，重发不会加速反而可能
     // 干扰状态机，实机表现「数量未减少、饥饿不恢复」。
-    // 正确姿势：发一次 start_use_item()（服务端开始进食计时），轮询等待数量
-    // 减少（上限 ~2.5s 覆盖 32 tick），最后 stop_use_item() 收尾。
-    bot.start_use_item();
+    // 正确姿势：发一次 use_item_air()（强制右键空气，P146：P8 的 set_direction
+    // 朝天让 hit_result.miss=true 的假设在实机不成立——HitResultComponent 是每
+    // tick 重算的，set_direction 后 150ms 内仍指向头顶方块，start_use_item 发
+    // UseItemOn（右键方块）而非 UseItem，服务端拒绝进食。use_item_air 强制
+    // miss 路径，保证发 ServerboundUseItem），轮询等待数量减少（上限 ~2.5s
+    // 覆盖 32 tick），最后 stop_use_item() 收尾。
+    bot.use_item_air();
     while steps * step_ms < hold_total_ms {
         sleep(Duration::from_millis(step_ms)).await;
         steps += 1;
