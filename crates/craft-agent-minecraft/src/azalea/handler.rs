@@ -1970,6 +1970,29 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                     ),
                                 });
                             }
+                            // P150：mine 目标距 bot 过远时先靠近再挖——否则掉落物生成在远处
+                            // 拾取不到（实机：挖原木/泥土/dirt 掉落物丢失，实体列表无 item）。
+                            // 参考 P100 交互贴脸纪律：先 goto 到目标旁（水平+垂直均靠近），
+                            // 靠近后下一 tick 自然触发 start_mining。
+                            let mine_dist = bot
+                                .position()
+                                .ok()
+                                .map(|p| {
+                                    ((p.x - mx as f64).powi(2)
+                                        + (p.y - my as f64).powi(2)
+                                        + (p.z - mz as f64).powi(2))
+                                    .sqrt()
+                                })
+                                .unwrap_or(f64::MAX);
+                            if mine_dist > 2.5 {
+                                // 走到目标旁：用 RadiusGoal 让 pathfinder 靠近到 2m 内
+                                bot.start_goto(RadiusGoal {
+                                    pos: azalea::Vec3::new(mx as f64, my as f64, mz as f64),
+                                    radius: 2.0,
+                                });
+                                state.action_mgr.clear_pending();
+                                return bot;
+                            }
                             bot.start_mining(mine_pos);
                             // P93：mine 进度流式事件（每 20 tick 一次）
                             if bot.ticks_connected().is_multiple_of(20)
