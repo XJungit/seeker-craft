@@ -22,13 +22,19 @@ craft-bot 预设的 viewer 桥插件（DSH 侧）。让 [DSH](https://github.com
 会话）显示**——判断依据 `ctx.sessions.list.getSnapshot()` 当前会话 `agentPreset === 'craft-bot'`；
 其他预设/普通会话完全不注册 UI（不控制 bot 时显示无意义）。
 
-- **入口**：侧边栏底部按钮（`sidebar.footer.action` 插槽；插槽未声明时 DOM 注入兜底），点击开合面板。
+- **挂载方式（body-portal 全局面板）**：参照 DSH 官方插件开发规范，面板是“跨会话、固定在
+  shell 角落”的全局面板，故用 **body portal + fixed 定位**（而非塞进某个语义 slot）。`apply` 在
+  `document.body` 下挂载一个 DOM 单例 host（`[data-dsh-craft-host]`），无论 `apply` 被调用多少次、
+  模块是否被按会话重新求值，页面中**始终只存在一个**仪表盘（杜绝“开 N 个会话出现 N 个仪表盘”）。
 - **面板**：craft-bot 会话加载即**自动打开**，固定右侧停靠（"页面旁"，不遮挡对话列），iframe 嵌入
-  viewer（`http://127.0.0.1:8080`，无 X-Frame-Options 可直接嵌）实时显示状态流；用户可点 ✕ 或入口
-  按钮关闭（尊重手动关闭，本会话内不强制重开）。
-- **仅 craft-bot 显示**：`apply` 对 `agentPreset !== 'craft-bot'` 直接返回、不注册任何 UI；并通过每秒
-  `reconcile` 在**会话切换**时动态隐藏（切到非 craft-bot 立即收起、切回自动重开），跨插件激活互斥
-  （`dsh-panel-activate` 事件，与 task-board/ssh 面板互不打架）。
+  viewer（`http://127.0.0.1:8080`，无 X-Frame-Options 可直接嵌）实时显示状态流；iframe 只加载一次、
+  保留 viewer 的 SSE 连接，切换会话只显隐不重载。用户可点 ✕ 关闭，关闭后右上角出现 “🎮 Craft Bot
+  仪表盘” 启动器用于重开（尊重手动关闭，本会话内不强制重开）。
+- **仅 craft-bot 显示**：通过 `ctx.sessions.list.subscribe()` 订阅会话列表，当前会话切到/离开
+  craft-bot 时自动显隐（`agentPreset === 'craft-bot'` 才显示；其他预设/普通会话面板保持隐藏、侧边栏
+  无任何入口）。离开 craft-bot 会重置“手动关闭”标志，下次进入自动重开。
+- **多 craft-bot 会话共享同一个仪表盘**：因为 host 是 DOM 单例，无论同时打开几个 craft-bot 会话，
+  页面旁始终只有一块仪表盘（各自会话的入口按钮/启动器都操控同一面板）。
 - **同源代理**：host 端挂 `/craft/api/*` → viewer `/api/*` 转发（GET/POST 透传），
   浏览器端零跨域读取 viewer API。
 
@@ -116,4 +122,5 @@ node scripts/verify-client.mjs
 端到端（DSH 会话内）：`game_state` 感知 → `bot_tool(name, args)` 执行 → `set_goal(text)` 设目标。
 三工具出现在工具目录即挂载成功。`bot_tool` 的参数按各工具 schema 传（如 `equip` 需
 `{item, slot}`，`slot` 枚举 hand/helmet/chestplate/leggings/boots）。
-仪表盘面板：重启 DSH 后，craft-bot 会话侧边栏出现 "Craft Bot 仪表盘" 按钮，点击内嵌显示。
+仪表盘面板：重启 DSH 后，进入 craft-bot 会话即于页面右侧自动内嵌显示 viewer 仪表盘（"页面旁"）；
+切到非 craft-bot 会话自动收起，多 craft-bot 会话共享同一块面板。
