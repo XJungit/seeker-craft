@@ -23,14 +23,18 @@ for (const name of ['@deepseek-ai/cordis', '@deepseek-ai/dsh-tools', '@deepseek-
 const mod = await import(bridgePath)
 console.log('✅ dsh-bridge loaded, name =', mod.name, ', inject =', JSON.stringify(mod.inject), ', apply =', typeof mod.apply)
 
-// 3) apply 注册三个工具 + 三个占位符变量 + webServer 代理
+// 3) apply 注册三个工具 + 两个静态变量 + 一个动态上下文(bot_state) + webServer 代理
 const registered = []
 const variables = []
+const contexts = []
 const webServer = { register: (opts) => `registered:${opts.path}` }
 let effectFn = null
 const fakeCtx = {
   tools: { register: (def) => registered.push(def.name) },
-  systemPrompt: { variable: (name, provider) => { variables.push({ name, provider }) } },
+  systemPrompt: {
+    variable: (name, provider) => { variables.push({ name, provider }) },
+    context: (entry) => { contexts.push(entry) },
+  },
   webServer,
   effect: (fn) => { effectFn = fn },
 }
@@ -40,9 +44,14 @@ if (registered.join(',') !== 'game_state,bot_tool,set_goal') {
   console.error('❌ expected game_state,bot_tool,set_goal')
   process.exit(1)
 }
-console.log('✅ registered variables =', JSON.stringify(variables.map((v) => v.name)))
-if (variables.map((v) => v.name).join(',') !== 'bot_state,tool_list,viewer_url') {
-  console.error('❌ expected bot_state,tool_list,viewer_url')
+console.log('✅ registered variables (static) =', JSON.stringify(variables.map((v) => v.name)))
+if (variables.map((v) => v.name).join(',') !== 'tool_list,viewer_url') {
+  console.error('❌ expected static variables tool_list,viewer_url (bot_state 应走 context)')
+  process.exit(1)
+}
+console.log('✅ registered contexts (dynamic) =', JSON.stringify(contexts.map((c) => c.name)))
+if (contexts.map((c) => c.name).join(',') !== 'bot_state') {
+  console.error('❌ expected dynamic context bot_state')
   process.exit(1)
 }
 
@@ -53,7 +62,7 @@ if (variables.map((v) => v.name).join(',') !== 'bot_state,tool_list,viewer_url')
   const web2 = { register: (opts) => `registered:${opts.path}` }
   const ctx2 = {
     tools: { register: (def) => reg2.push(def.name) },
-    systemPrompt: { variable: (name, provider) => { vars2.push({ name, provider }) } },
+    systemPrompt: { variable: (name, provider) => { vars2.push({ name, provider }) }, context: () => {} },
     webServer: web2,
     effect: () => {},
     get: () => undefined,
@@ -71,7 +80,7 @@ if (variables.map((v) => v.name).join(',') !== 'bot_state,tool_list,viewer_url')
   const web3 = { register: (opts) => { throw new Error('不应注册代理: ' + opts.path) } }
   const ctx3 = {
     tools: { register: () => {} },
-    systemPrompt: { variable: () => {} },
+    systemPrompt: { variable: () => {}, context: () => {} },
     webServer: web3,
     effect: () => {},
     get: () => undefined,
@@ -80,7 +89,7 @@ if (variables.map((v) => v.name).join(',') !== 'bot_state,tool_list,viewer_url')
   console.log('✅ proxy:false → 不注册 webServer 代理')
 }
 
-// 4) 占位符 provider 同步返回 string（契约：assemble 不 await provider）
+// 4) 静态变量 provider 与动态上下文 text 都同步返回 string（契约：assemble 不 await）
 for (const v of variables) {
   const val = v.provider({})
   if (typeof val !== 'string') {
@@ -88,6 +97,14 @@ for (const v of variables) {
     process.exit(1)
   }
   console.log(`✅ {{${v.name}}} 同步返回 ${val.length} 字符`)
+}
+for (const c of contexts) {
+  const val = typeof c.text === 'function' ? c.text({}) : c.text
+  if (typeof val !== 'string') {
+    console.error(`❌ context ${c.name} text 返回 ${typeof val}，必须同步 string`)
+    process.exit(1)
+  }
+  console.log(`✅ context ${c.name} 同步返回 ${val.length} 字符`)
 }
 if (typeof effectFn === 'function') {
   effectFn() // 清理 timer（不泄漏）

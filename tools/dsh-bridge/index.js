@@ -132,10 +132,17 @@ async function refreshBotState() {
 }
 
 /**
- * 注册 prompt 占位符变量。
- * 注意：systemPrompt.variable 的 provider 是【同步】调用（assemble 不 await），
- * 因此 {{bot_state}} 只读缓存；缓存由 setInterval 后台刷新，首装配前最多
- * 落后 TTL（30s）。
+ * 注册 prompt 贡献，遵循「系统提示字节稳定」的 DeepSeek 前缀缓存设计：
+ *
+ *  - 【静态】tool_list / viewer_url → systemPrompt.variable（system 提示段内插值）。
+ *    两者不变，system 提示字节稳定 → 前缀缓存持续命中。
+ *  - 【动态】bot_state → systemPrompt.context（动态运行时上下文）。
+ *    agent-loop 每个 step 重新 assemble，把它渲染成 **user 角色快照**追加到对话
+ *    末尾（"Current runtime context. This snapshot supersedes earlier..."），
+ *    不进 system 提示 → 不碎前缀缓存；新快照取代旧快照，不无限累积。
+ *
+ * 注意：systemPrompt.variable 与 context 的求值都是【同步】调用（assemble 不 await），
+ * 因此 bot_state 只读缓存；缓存由 setInterval 后台刷新，首装配前最多落后 TTL（30s）。
  * @param {import('@deepseek-ai/cordis').Context} ctx
  */
 function registerPromptVariables(ctx) {
@@ -144,9 +151,16 @@ function registerPromptVariables(ctx) {
   const timer = setInterval(() => { refreshBotState() }, BOT_STATE_TTL_MS)
   ctx.effect(() => clearInterval(timer))
 
-  ctx.systemPrompt.variable('bot_state', () => botStateCache.text ?? '(bot 状态加载中…)')
+  // 静态 → system 提示段（字节稳定，前缀缓存命中）
   ctx.systemPrompt.variable('tool_list', () => TOOL_NAMES.join(' · '))
   ctx.systemPrompt.variable('viewer_url', () => viewerUrl())
+
+  // 动态 → user 上下文快照（追加到对话末尾，不碎前缀）
+  ctx.systemPrompt.context({
+    name: 'bot_state',
+    order: 1000,
+    text: () => `【当前游戏状态（自动注入，bot 侧缓存 ≤30s）】\n${botStateCache.text ?? '(bot 状态加载中…)'}\n\n如需最新状态，调用 game_state() 获取实时快照。`,
+  })
 }
 
 /** Cordis 插件契约：注册三个桥工具 + 占位符变量 + 仪表盘代理。
