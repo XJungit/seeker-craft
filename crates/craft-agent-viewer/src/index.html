@@ -115,6 +115,7 @@
   .gs-slot.has{color:var(--text);border-color:var(--accent)}
   .gs-slot .count{font-size:8px;color:var(--muted);position:absolute;bottom:1px;right:2px}
   .gs-slot .id{font-size:6px;color:var(--muted);position:absolute;top:1px;left:2px;overflow:hidden;text-overflow:ellipsis;max-width:28px;white-space:nowrap}
+  .gs-slot img.mc-ico{width:22px;height:22px;image-rendering:pixelated;image-rendering:crisp-edges;object-fit:contain;pointer-events:none}
   .gs-slot.hotbar{border-color:var(--green)}
   .gs-slot.selected{border-color:var(--accent);background:var(--panel2);box-shadow:0 0 6px var(--accent)}
   .gs-slot.empty{opacity:.4}
@@ -437,6 +438,37 @@ function invEmoji(id){
   };
   return map[base]||map[id]||"";
 }
+// ── 真实 MC 物品图标（minecraft-textures：一次加载，base64 内嵌，无跨域/404 问题）──
+// 数据源：https://cdn.jsdelivr.net/npm/minecraft-textures@26.2.1/dist/textures/json/1.21.2.json
+// 每个条目 { id:"minecraft:oak_log", readable:"Oak Log", texture:"data:image/png;base64,..." }
+const MC_TEX_JSON_URL="https://cdn.jsdelivr.net/npm/minecraft-textures@26.2.1/dist/textures/json/1.21.2.json";
+let mcTexMap=null; // {id: dataURL}，懒加载后缓存
+let mcTexLoading=null;
+function ensureMcTex(){
+  if(mcTexMap!==null)return mcTexMap;
+  if(mcTexLoading===null){
+    mcTexLoading=fetch(MC_TEX_JSON_URL).then(r=>r.ok?r.json():null).then(j=>{
+      const m={};
+      if(j&&Array.isArray(j.items)){
+        for(const it of j.items){
+          if(it&&typeof it.id==="string"&&typeof it.texture==="string"&&it.texture.startsWith("data:image")){
+            m[it.id]=it.texture;
+            // 同时存无命名空间版本，兜底匹配
+            const bare=it.id.split(":")[1];
+            if(bare&&!(bare in m))m[bare]=it.texture;
+          }
+        }
+      }
+      mcTexMap=m;
+      return m;
+    }).catch(()=>{mcTexMap={};return mcTexMap;});
+  }
+  return mcTexLoading;
+}
+function mcTexSrc(id){
+  if(!id||mcTexMap===null)return"";
+  return mcTexMap[id]||mcTexMap[id.split(":")[1]]||"";
+}
 function renderInvCell(slot,isHotbar,selectedSlot){
   const div=document.createElement("div");
   const cls=["gs-slot"];
@@ -446,8 +478,18 @@ function renderInvCell(slot,isHotbar,selectedSlot){
   else cls.push("has");
   div.className=cls.join(" ");
   if(slot.id&&slot.id!=="minecraft:air"&&!slot.id.endsWith("air")){
-    const em=invEmoji(slot.id);
-    div.innerHTML=em?`<span style="font-size:14px">${em}</span>`:`<span style="font-size:10px">${slot.id.split(":")[1]?.slice(0,4)||"?"}</span>`;
+    const base=slot.id.split(":")[1]||slot.id;
+    const dataUrl=mcTexSrc(slot.id);
+    if(dataUrl){
+      const img=document.createElement("img");
+      img.className="mc-ico";
+      img.alt=base;
+      img.src=dataUrl;
+      div.appendChild(img);
+    }else{
+      const em=invEmoji(slot.id);
+      div.innerHTML=em?`<span style="font-size:14px">${em}</span>`:`<span style="font-size:10px">${base.slice(0,4)||"?"}</span>`;
+    }
     if(slot.count>1)div.innerHTML+=`<span class="count">${slot.count}</span>`;
     div.style.borderColor=invColor(slot.id);
   }else{
@@ -459,6 +501,10 @@ function buildInvGrid(inv,selectedSlot){
   const hotbarEl=document.getElementById("gs-hotbar-grid");
   const invEl=document.getElementById("gs-inv-grid");
   hotbarEl.innerHTML="";invEl.innerHTML="";
+  // 首次渲染即触发 MC 图标表加载；加载完成后重绘一次让图标出现
+  if(mcTexMap===null){
+    ensureMcTex().then(()=>{ if(inv!==undefined)buildInvGrid(inv,selectedSlot); }).catch(()=>{});
+  }
   const hotbarSlots=inv?.filter(s=>s.slot<9)||[];
   const invSlots=inv?.filter(s=>s.slot>=9)||[];
   // 快捷栏：9格一行
