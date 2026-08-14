@@ -1,5 +1,11 @@
 # Session and Compaction
 
+> **现状说明**：本文档描述 **in-bot 循环时代**（`Session` / `CompactionConfig` /
+> P56/P58 nudge 注入）的会话持久化与上下文压缩。DSH 桥接模式（2026-08-14 起）下，
+> 会话与上下文管理由 **DSH 大脑**负责；Rust 侧仅保留 `sessions/mc_run.jsonl` 的
+> JSONL 归档（viewer `/api/session` 只读展示）。本页保留为历史设计参考，
+> 不要据此修改代码。
+
 This guide explains session persistence, context compaction, and cache optimization.
 
 ## Session

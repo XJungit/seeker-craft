@@ -7,7 +7,7 @@ Web 仪表盘 + **DSH 桥**。基于 `Axum` HTTP 服务器 + `SSE`（Server-Sent
 ## 功能
 
 - **DSH 桥**：`/api/connect`（azalea 客户端连上 MC，账号 CraftAgent）/ `/api/bot_tool`
-  （派发 53 工具之一，`GameTool::execute`）/ `/api/game-state`（实时 BotState 快照，
+  （派发 54 工具之一，`GameTool::execute`）/ `/api/game-state`（实时 BotState 快照，
   perceive 格式）/ `/api/goal`（更新运营目标）
 - **实时状态呈现**：SSE 推送 bot 状态 / 工具调用 / 事件流，浏览器可视化
 - **会话 JSONL 展示**：`/api/session` 读取 `sessions/mc_run.jsonl`（只读归档）
@@ -19,7 +19,7 @@ Web 仪表盘 + **DSH 桥**。基于 `Axum` HTTP 服务器 + `SSE`（Server-Sent
 # 用 ctl 启动（推荐，Windows 进程组独立，viewer 不随 ctl 退出被回收）
 cargo run -p craft-agent-ctl -- viewer "目标文本" 0   # steps=0 无限循环
 # 浏览器打开 http://127.0.0.1:8080
-# 随后由 autopilot 或 DSH 经 /api/connect 连接 bot；日志在 C:\Windows\TEMP\opencode\viewer_run.log(.err)
+# 随后由 autopilot 或 DSH 经 /api/connect 连接 bot；日志在 %TEMP%\opencode\viewer_run.log(.err)（可用 SEEKER_LOG_DIR 覆盖）
 ```
 
 ### 命令行参数
@@ -36,7 +36,7 @@ cargo run -p craft-agent-ctl -- viewer "目标文本" 0   # steps=0 无限循环
 ```
 DSH 大脑 ──HTTP──► viewer（Axum）
   │  /api/connect     → craft-agent-minecraft 连接 MC
-  │  /api/bot_tool    → 派发 53 工具（GameTool::execute，含 P100/P101/P102/P132 自动修正）
+  │  /api/bot_tool    → 派发 54 工具（GameTool::execute，含 P100/P101/P102/P132 自动修正）
   │  /api/game-state  → 实时 BotState 快照（perceive 格式）
   │  /api/goal        → 更新运营目标
   ▼

@@ -111,7 +111,7 @@ cargo run -p craft-agent-ctl -- status                         # verify running=
 
 ```
 game_state()                                   # perceive live state
-bot_tool(name:"craft", args:{item:"stone_pickaxe"})   # run one of the 53 tools
+bot_tool(name:"craft", args:{item:"stone_pickaxe"})   # run one of the 54 tools
 set_goal("Collect 24 iron ore and smelt into ingots") # set the ops goal
 ```
 

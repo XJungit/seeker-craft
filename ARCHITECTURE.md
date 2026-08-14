@@ -25,7 +25,7 @@ craft-agent-minecraft  ──→  azalea (vendor)  ──→  MC server (TCP)
 - [`craft-agent`](./crates/craft-agent/) — 纯逻辑库：types / GameTool / ToolRegistry /
   WorldMemory（空间记忆）/ session（JSONL 归档格式）/ task（23 任务）/ profile / skill。
   **不含** Agent 主循环或 LLM 调用。
-- [`craft-agent-minecraft`](./crates/craft-agent-minecraft/) — Minecraft 适配器与 53 工具集
+- [`craft-agent-minecraft`](./crates/craft-agent-minecraft/) — Minecraft 适配器与 54 工具集
   （`tools_azalea.rs::ALL_TOOL_NAMES`），构建于 azalea 协议层；bot 端实时能力（WorldMemory
   每 20 tick 扫描、perceive 快照）在此。
 - [`craft-agent-model`](./crates/craft-agent-model/) — LLM/VLM 客户端与配置模型（in-bot 循环时代
@@ -40,13 +40,13 @@ craft-agent-minecraft  ──→  azalea (vendor)  ──→  MC server (TCP)
 ```text
 DSH 大脑（外部 Cordis 插件，tools/dsh-bridge/）
   │  POST /api/connect          → viewer 把 azalea 客户端连上 MC（account CraftAgent）
-  │  POST /api/bot_tool {name,args}  → viewer 派发 53 工具之一（GameTool::execute）
+  │  POST /api/bot_tool {name,args}  → viewer 派发 54 工具之一（GameTool::execute）
   │  GET  /api/game-state       → viewer 实时拉 BotState 快照（perceive 格式）
   │  POST /api/goal {text}      → viewer 更新运营目标
   ▼
 craft-agent-viewer（Axum 桥）
   └── GameAdapter：capture / perceive / execute
-      └── craft-agent-minecraft 53 工具（P100/P101/P102/P132 派发时自动修正）
+      └── craft-agent-minecraft 54 工具（P100/P101/P102/P132 派发时自动修正）
       └── azalea 客户端（订阅 MC 服务端实体/方块/库存更新，维护 ECS world）
       └── handler.rs tick：bot 端反应式模式（self_preservation / self_defense 自动执行，无需 LLM）
       └── WorldMemory：每 20 tick 扫描附近方块/实体，锚点 + 结构/容器/危险记忆（TTL 30s）
@@ -95,14 +95,14 @@ cowardice / hunting / item_collecting / torch_placing / idle_staring / cheat …
   queries, 6 types (Resource/Structure/Container/Entity/Hazard/Portal/Note),
   TTL 30s dedup, 64-block radius rendered each turn.
 
-## 53 LLM Tools
+## 54 LLM Tools
 
-> 权威清单：`tools_azalea.rs::ALL_TOOL_NAMES`（53 个，与 `create_mc_azalea_tools_full` vec 一一对应）。
+> 权威清单：`tools_azalea.rs::ALL_TOOL_NAMES`（54 个，与 `create_mc_azalea_tools_full` vec 一一对应）。
 
 | Category | Tools | Side Effect |
 |---|---|---|
 | Perception | `perceive` | READ |
-| Memory | `memory` (save/anchor/query/forget) | READ/WRITE |
+| Memory | `memory` (save/anchor/query/forget) / `remember` (save/forget/list) | READ/WRITE |
 | Block Search | `search_for_block` | READ |
 | Knowledge | `search_wiki` | NETWORK |
 | Movement | `goto` / `goto_player` / `move_away` / `mine_below` / `mine_above` / `pickup` / `follow` / `stop_follow` | WRITE |

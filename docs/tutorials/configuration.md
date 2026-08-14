@@ -45,15 +45,17 @@ Key `AgentConfig` options:
 
 ## Runtime Mode
 
-The only supported runtime is **azalea-bot**. Start it via the viewer:
+The only supported runtime is **azalea-bot**. Start the viewer via `craft-agent-ctl`
+(DSH bridge mode — the bot is driven by DSH, not an in-bot loop):
 
 ```bash
-cargo run -p craft-agent-viewer -- --goal "..." --steps 40 --port 8080
+cargo run -p craft-agent-ctl -- viewer "goal text" 0   # steps=0 infinite
+cargo run -p craft-agent-ctl -- start                  # connect bot via /api/connect
 ```
 
-The bot connects to the MC server at `localhost:4444` (configurable in
-`adapter_azalea.rs`). The old `McAgentBuilder::mod_bridge` and `McAgentBuilder::real`
-modes have been removed (see `docs/adr.md` ADR-004).
+The bot connects to the MC server at `localhost:4444` (configurable via `-Mc`).
+The old `McAgentBuilder::mod_bridge` and `McAgentBuilder::real` modes have been
+removed (see `docs/adr.md` ADR-004).
 
 ## Profile (system prompt)
 
@@ -62,12 +64,15 @@ bot name. Critical constraints:
 
 - **Byte stability**: the rendered system prompt must be byte-identical across
   all turns for DeepSeek prefix cache to hit. Dynamic variables go into user
-  messages (in-bot era: `build_dynamic_instructions_msg()`; DSH era: the DSH
-  brain assembles these), not the system prompt.
-- **P56 rule**: the system prompt explicitly forbids the LLM from declaring
-  "task complete ✅" mid-progress (see `session-and-compaction.md`).
+  messages. In DSH era (2026-08-14+) the **DSH brain** owns assembly; the
+  dsh-bridge plugin feeds dynamic state as a user-context snapshot
+  (`systemPrompt.context`), keeping the system prompt byte-stable.
+- **Premature-completion governance** (P56 legacy): the in-bot nudge was removed;
+  the craft-bot preset persona (guardrail) forbids declaring "task complete ✅"
+  mid-progress.
 
 ## Sessions
 
-Always pass `--session` for long runs so the agent can resume. Session files are
-plain JSONL — greppable and diffable. See `session-and-compaction.md`.
+Viewer session JSONL (`sessions/mc_run.jsonl`) is written as an archive and shown
+via `/api/session`. In DSH era, context/session management lives in DSH.
+See `session-and-compaction.md` (historical).

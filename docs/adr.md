@@ -46,6 +46,23 @@ This directory tracks important architecture decisions.
   - Consequences: No goal decomposition engine needed. LLM plans multi-step
     synthesis. Bot tools stay simple and atomic. See `AGENTS.md` section 9-bis.
 
+- **ADR-005: DSH (DeepSeek Harness) bridge mode as the sole brain** (2026-08-14)
+  - Date: 2026-08-14
+  - Status: accepted
+  - Context: The in-bot 13-step agent loop (`run_one_turn`) duplicated what an
+    external LLM harness already provides (context assembly, system-prompt byte
+    stability, planning, tool-loop governance). Maintaining a parallel loop was
+    redundant and fragile.
+  - Decision: Remove the in-bot LLM loop entirely. DSH is the only brain; it
+    drives the bot through a viewer HTTP bridge (`/api/connect` + `/api/bot_tool`
+    + `/api/game-state` + `/api/goal`), with a DSH plugin (`tools/dsh-bridge/`)
+    exposing three tools (`game_state` / `bot_tool` / `set_goal`). Rust keeps only
+    bot-side real-time capability (54 tools + WorldMemory + perceive snapshots).
+  - Consequences: No Rust-side prompt assembly or per-turn injection. The DSH
+    bridge plugin ships in-repo; `scripts/setup.ps1` registers it + generates the
+    craft-bot preset. The 13-step loop, auto_perceive, SelfPrompter, execute_batch
+    were deleted. v1.0.0 (2026-08-15) made DSH bridge mode the only supported usage.
+
 ## Template
 
 ```text

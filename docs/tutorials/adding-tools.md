@@ -71,17 +71,12 @@ Add the tool in `create_mc_azalea_tools()` in
 tools.push(Arc::new(AzaleaMyTool::new(adapter.clone())));
 ```
 
-## Side-Effect Batching
+## Side-Effect Flags
 
-`ToolEffects` determines parallel execution grouping:
-
-| Effect | Batching |
-|---|---|
-| READ | same batch (parallel) |
-| NETWORK | same batch with READ |
-| WRITE | own batch (BARRIER splits) |
-| APPEND | own batch |
-| PROCESS | own batch |
+`ToolEffects` is a bitmask carried on each tool (READ / WRITE / APPEND / NETWORK /
+PROCESS / BARRIER). **Note**: the in-bot batch executor that consumed these flags was
+removed with the agent loop (2026-08-14) — DSH drives tools one-by-one via
+`/api/bot_tool`, so the flags are now informational/documentation only.
 
 Use `ToolEffects::read()`, `ToolEffects::write()`, `ToolEffects::network()` helpers
 or combine with `|` operator.

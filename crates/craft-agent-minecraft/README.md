@@ -13,16 +13,16 @@ Minecraft 游戏适配器与工具集（Azalea 客户端路线）。
 craft-agent-minecraft = { features = ["azalea-bot"] }
 ```
 
-## 53 个 LLM 工具
+## 54 个 LLM 工具
 
 工具注册于 `create_mc_azalea_tools`，权威清单见 `tools_azalea.rs::ALL_TOOL_NAMES`。
-按副作用分组并行执行（READ 同批、NETWORK+READ 同批、
-WRITE/APPEND/PROCESS 各自单独一批，BARRIER 切批）。
+DSH 桥接模式下由 DSH 大脑经 `/api/bot_tool` **逐工具驱动**（in-bot 时代的批处理
+执行器已随主循环移除，2026-08-14）。
 
 | 类别 | 工具 | 副作用 |
 |------|------|--------|
 | 感知 | `perceive` | READ |
-| 记忆 | `memory` (save/anchor/query/forget) | READ/WRITE |
+| 记忆 | `memory` (save/anchor/query/forget) / `remember` (save/forget/list) | READ/WRITE |
 | 方块搜索 | `search_for_block` | READ |
 | 知识 | `search_wiki` | NETWORK |
 | 移动 | `goto` / `goto_player` / `move_away` / `mine_below` / `mine_above` / `pickup` / `follow` / `stop_follow` | WRITE |
@@ -52,7 +52,7 @@ WRITE/APPEND/PROCESS 各自单独一批，BARRIER 切批）。
 | 模块 | 作用 |
 |------|------|
 | `adapter_azalea.rs` | `GameAdapter` 实现：perceive / execute / state snapshot |
-| `tools_azalea.rs` | 53 个 LLM 工具定义 |
+| `tools_azalea.rs` | 54 个 LLM 工具定义 |
 | `azalea/mod.rs` | `AzaleaBot` + connect + 动作 API + 背包三件套（1995 行，P2.2 已拆出 commands.rs / handler.rs） |
 | `azalea/commands.rs` | `BotCommand` 33 变体 + `QueuedCommand` + `parse_chat_command`（probe 驱动） |
 | `azalea/handler.rs` | `BotState` + tick 主体 handle + 两层 modes 反应系统（P2.2 拆出） |

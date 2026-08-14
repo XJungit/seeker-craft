@@ -23,6 +23,13 @@ first tagged **1.0 release** (DSH bridge mode is the only supported usage).
 - **Portable `craft-agent-ctl`** — all machine-specific paths (`VIEWER_EXE` /
   `AUTOPILOT_EXE` / `SESSION` / `WORKSPACE` / `LOG_DIR`) replaced with runtime derivation
   from `CARGO_MANIFEST_DIR` (clone anywhere; `SEEKER_LOG_DIR` overrides the log dir).
+- **P156 semantic memory (`remember` tool, 53→54 tools)** — cross-session semantic
+  long-term memory persisted to `data/memory/agent.jsonl`: `remember` tool
+  (save/forget/list, kind=tactics/strategy/insight/preference, scope-aware) +
+  `SemanticMemoryTool` wired into the DSH bridge factory
+  (`create_mc_azalea_tools_full_with_semantic`); nearby spatial WorldMemory rendered
+  into the perceive scene (`记忆: [已知世界记忆·邻近]` with resource/hazard/structure
+  entries + `__self__` anchor). Live-verified via viewer `/api/bot_tool`.
 
 ### Changed
 

@@ -7,18 +7,20 @@
 
 | 维度 | 数值 | 复现命令 |
 |---|---|---|
-| 单元/集成测试总数 | 410 全绿（2026-08-07 实测） | `cargo test --workspace` |
-| 核心 agent 测试 | 171 | `cargo test -p craft-agent --lib` |
-| MC 适配器测试（azalea-bot） | 158 | `cargo test -p craft-agent-minecraft --features azalea-bot --lib` |
+| 单元/集成测试总数 | 全绿（2026-08-15 v1.0.0 实测） | `cargo test --workspace` |
+| 核心 agent 测试 | 全绿 | `cargo test -p craft-agent --lib` |
+| MC 适配器测试（azalea-bot） | 178 全绿 | `cargo test -p craft-agent-minecraft --features azalea-bot --lib` |
 | Mock 容器决策测试 | 43 | `craft.rs::tests`（无服务器） |
 | 工具↔动作映射回归 | 1 | `regression_every_registered_tool_maps_to_action` |
-| 系统提示字节稳定性回归 | 1 | `regression_system_prompt_byte_stable_across_obs_streak` |
 | CI 门槛 | fmt + clippy `-D warnings` + 全部测试 | `.github/workflows/ci.yml` |
+
+> 系统提示字节稳定性回归测试（`regression_system_prompt_byte_stable_across_obs_streak`）
+> 已随 in-bot 主循环删除（2026-08-14，DSH 桥接模式起）；字节稳定性由 DSH 大脑负责。
 
 ## 2. Probe 工具层验证（无 LLM，秒级）
 
 工具层行为验证不依赖 LLM 回合（每回合 30-60s+），由 `azalea_probe` 驱动，
-52 个 JSON 脚本覆盖全部工具主场景 + 边界：
+63 个 JSON 脚本覆盖全部工具主场景 + 边界：
 
 ```bash
 cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot -- 4444 --script scripts/probe/smoke.json
@@ -34,7 +36,7 @@ cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot 
 | 合成 | p117_* / p118_use_item | 末影之眼链路配方、投掷 |
 | 运维 | state_check / raw_compare | 状态渲染器交叉验证 |
 
-完整清单：`scripts/probe/`（52 个）。
+完整清单：`scripts/probe/`（63 个）。
 
 ## 3. 系统提示字节稳定性（DeepSeek 前缀缓存）
 
@@ -69,7 +71,7 @@ cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot 
 | 维度 | 数值 |
 |---|---|
 | crate 数 | 6（agent / minecraft / model / viewer / autopilot / ctl） |
-| LLM 工具数 | 53（`ALL_TOOL_NAMES` 权威登记） |
+| LLM 工具数 | 54（`ALL_TOOL_NAMES` 权威登记） |
 | 结构化任务 | 23（tier1-6，机器可判定 JSON） |
 | 反应式模式 | 10（tick 级，无 LLM 延迟） |
 | WorldMemory 记忆类型 | 7（资源/结构/容器/实体/危险/传送门/笔记） |

@@ -4,11 +4,17 @@ This page maps the fastest path from zero to productive.
 
 ## Suggested Reading Order
 
-1. `getting-started.md`
+1. `getting-started.md` (v1.0 DSH bridge mode — clone/build/run)
 2. `project-structure.md`
 3. `configuration.md`
-4. `agent-loop.md`
-5. `adding-tools.md` or `adding-adapters.md` depending on your task
+4. `adding-tools.md` or `adding-adapters.md` depending on your task
+5. `agent-loop.md` only for historical context (in-bot loop, removed 2026-08-14)
+
+## Key Documents for v1.0
+
+- `../../ARCHITECTURE.md` — current architecture (DSH bridge runtime, azalea fork maintenance)
+- `../../README.md` — overview, 53-tool table, 6-stage path
+- `../../tools/dsh-bridge/README.md` — the DSH bridge plugin (game_state / bot_tool / set_goal)
 
 ## Crate-Level Docs
 

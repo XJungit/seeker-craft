@@ -8,7 +8,7 @@ craft-bot 预设的 viewer 桥插件（DSH 侧）。让 [DSH](https://github.com
 | 工具 | 端点 | 说明 |
 |---|---|---|
 | `game_state()` | `GET /api/game-state` | 读取实时世界状态（scene_desc 中文摘要 + 结构化字段） |
-| `bot_tool(name, args)` | `POST /api/bot_tool` | 执行 53 个 Minecraft 工具之一（含自动修正） |
+| `bot_tool(name, args)` | `POST /api/bot_tool` | 执行 54 个 Minecraft 工具之一（含自动修正） |
 | `set_goal(text)` | `POST /api/goal` | 设置 bot 运营目标 |
 
 - viewer 地址默认 `http://127.0.0.1:8080`，可用环境变量 `DSH_CRAFT_VIEWER_URL` 覆盖。
@@ -64,7 +64,7 @@ craft-bot 预设的 viewer 桥插件（DSH 侧）。让 [DSH](https://github.com
 
 | 名称 | 注册方式 | 来源 | 说明 |
 |---|---|---|---|
-| `{{tool_list}}` | `systemPrompt.variable`（→ system 段） | 静态镜像 `ALL_TOOL_NAMES` | 53 工具清单（`·` 分隔），字节稳定 |
+| `{{tool_list}}` | `systemPrompt.variable`（→ system 段） | 静态镜像 `ALL_TOOL_NAMES` | 54 工具清单（`·` 分隔），字节稳定 |
 | `{{viewer_url}}` | `systemPrompt.variable`（→ system 段） | `DSH_CRAFT_VIEWER_URL` 或默认 | viewer 地址，字节稳定 |
 | `bot_state` | `systemPrompt.context`（→ user 快照） | `GET /api/game-state`（30s 缓存后台刷新） | 当前 bot 状态快照（中文摘要）；内容变化时才追加，模型历史中始终只有最新一份 |
 
@@ -133,6 +133,7 @@ New-Item -ItemType Junction tools\dsh-bridge\node_modules\@deepseek-ai\schemaste
 node scripts/verify-bridge.mjs
 
 # 2) DSH 模块图内加载（模拟 DSH loader 的 harness-base 解析，无需 DSH 重启）
+#    自动探测 DSH node_modules；找不到时用 DSH_NPX_ROOT 显式指定
 node scripts/verify-in-harness.mjs
 
 # 3) 仪表盘代理 /craft/api/* 单元验证（mock viewer，测 GET/POST/404/502）

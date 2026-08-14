@@ -1,5 +1,9 @@
 # Craft-Agent 项目计划
 
+> **现状说明（2026-08-15）**：本文是 2026-08-03 的历史计划快照（in-bot 主循环时代，
+> 44 工具）。当前已演进：**53 工具**、DSH 桥接模式为唯一大脑（2026-08-14 起，in-bot 13 步
+> 循环已移除）、v1.0.0 发布。最新架构见 [ARCHITECTURE.md](./ARCHITECTURE.md)；本页保留为计划史实。
+>
 > 当前路线：**azalea-bot**（Rust 全栈客户端 bot，直连 MC 服务器，原生支持 MC 26.2）。
 > 旧 Java Mod 路线（GoalEngine 在 Java 侧自动分解目标）已废弃——见 [docs/adr.md](./docs/adr.md) ADR-004。
 > 当前架构：LLM 通过 44 个工具直接控制 bot，bot 工具只做原子动作，做不了的返回 Err 让 LLM 决策（Mindcraft 哲学）。

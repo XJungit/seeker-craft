@@ -21,7 +21,7 @@
 | Trait | 职责 |
 |---|---|
 | `GameAdapter` | 游戏适配器：`capture()` / `perceive()` / `execute()`（viewer 桥实现） |
-| `GameTool` | 工具定义：name / description / parameters / effects / execute（53 工具在 craft-agent-minecraft 实现） |
+| `GameTool` | 工具定义：name / description / parameters / effects / execute（54 工具在 craft-agent-minecraft 实现） |
 
 > `LlmProvider` / `Agent::run_one_turn` / `build_dynamic_instructions_msg` /
 > `regression_system_prompt_byte_stable_across_obs_streak` 已随 in-bot 循环删除；

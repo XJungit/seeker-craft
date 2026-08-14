@@ -18,7 +18,7 @@ This guide explains the main directories and crates in SeekerCraft (Craft-Agent)
 
 - `craft-agent` — generic game-agent logic library: types, GameTool, ToolRegistry, WorldMemory,
   session archive format, task system, profiles, skills. No I/O; shared by viewer and adapters.
-- `craft-agent-minecraft` — Minecraft adapter (azalea protocol): the bot, 53 LLM tools,
+- `craft-agent-minecraft` — Minecraft adapter (azalea protocol): the bot, 54 LLM tools,
   azalea domain modules (`commands.rs` / `handler.rs` / `mod.rs`), WorldMemory scanner.
 - `craft-agent-model` — LLM/VLM clients & config (in-bot era, kept for compatibility; DSH provides the LLM now).
 - `craft-agent-viewer` — Axum + SSE web dashboard + DSH bridge endpoints

@@ -16,7 +16,7 @@ Implement `GameAdapter` with:
 The only supported runtime is **azalea-bot**:
 
 - Adapter: `MinecraftAzaleaAdapter` in `crates/craft-agent-minecraft/src/adapter_azalea.rs`
-- Tools: 53 LLM tools registered in `create_mc_azalea_tools()` in `tools_azalea.rs`
+- Tools: 54 LLM tools registered in `create_mc_azalea_tools()` in `tools_azalea.rs`
 - Bot runtime: `AzaleaBot` in `crates/craft-agent-minecraft/src/azalea/mod.rs`
 
 The old `mod-bridge` (Fabric mod TCP bridge) and `real` (VLM + enigo) routes have
@@ -44,8 +44,10 @@ implementation. The azalea-bot route is the canonical example of:
 
 ## Key Patterns from the Azalea Adapter
 
-- **Two-layer modes**: Agent layer injects `[MODE: ...]` prompts; Handler layer
-  directly executes emergency actions without LLM involvement.
+- **Reactive modes (Handler layer)**: emergency reactions (fire escape, auto-attack)
+  run directly in the tick handler without LLM involvement. The Agent-layer
+  `[MODE: ...]` prompt injection was removed with the in-bot loop (2026-08-14);
+  DSH now switches posture via the `set_mode` tool.
 - **WorldMemory**: spatial memory keyed by `MemoryPos`, chunk-indexed for O(1)
   nearby queries, rendered as a 64-block radius each turn.
 - **Mindcraft philosophy**: tools are atomic; the LLM plans multi-step tasks.
