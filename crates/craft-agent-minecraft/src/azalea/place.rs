@@ -278,10 +278,60 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
     // 即「右键方块顶面」），服务端会把新方块放到该方块上方 = pos。
     // 前提：pos.down(1) 必须是实心方块；否则放不上。
     let below = placement_pos.down(1);
-    let below_solid = is_block_solid(bot, below).await;
+    let mut below_solid = is_block_solid(bot, below).await;
+    if !below_solid {
+        // P163（2026-08-15）：自动铺 cobblestone 支撑。
+        // 根因：搭传送门/建筑时，LLM 给的目标格下方常是空气（洞穴/悬空），
+        // place 直接报错"下方不实心"——但 cobblestone 充足时完全可以自动铺底座。
+        // 这是"搭传送门最基本功能"的关键：place 应该自主解决下方空洞，
+        // 而不是让 LLM 反复试坐标。
+        // 实现：从 below 向下找最近的实心方块；若背包有 cobblestone，则把
+        // below 到实心面之间的空洞全部用 cobblestone 填满（柱子支撑），
+        // 然后放置目标方块。最多填 5 格深（避免掉进深渊）。
+        let mut fill_depth = 0;
+        let mut cursor = below;
+        while fill_depth < 5 && !is_block_solid(bot, cursor).await {
+            cursor = cursor.down(1);
+            fill_depth += 1;
+        }
+        if fill_depth < 5 {
+            // 找到了实心面（cursor 是实心，cursor.up(1)..=below 是空洞）
+            let has_cobble = {
+                let cobble_kind = azalea_registry::builtin::ItemKind::Cobblestone;
+                bot.get_inventory()
+                    .ok()
+                    .is_some_and(|inv| count_item_in_inventory(&inv, cobble_kind) > 0)
+            };
+            if has_cobble {
+                // 从下往上填 cobblestone 到 below（最深层在 cursor.down(1)）
+                let mut filled = 0u32;
+                let mut p = cursor.down(1);
+                while p.y <= below.y && filled < 8 {
+                    if is_block_air(bot, p).await {
+                        if place_block_direct(bot, "cobblestone", p).await {
+                            filled += 1;
+                        } else {
+                            break;
+                        }
+                    }
+                    p = p.up(1);
+                }
+                if filled > 0 {
+                    sleep(Duration::from_millis(200)).await;
+                    below_solid = is_block_solid(bot, below).await;
+                    if below_solid {
+                        eprintln!(
+                            "[place] P163：下方空洞，已自动铺 {filled} 格 cobblestone 支撑到 ({},{},{})，继续放置 {item}",
+                            below.x, below.y, below.z
+                        );
+                    }
+                }
+            }
+        }
+    }
     if !below_solid {
         return Err(format!(
-            "放置 {item} 于 ({},{},{}) 失败：下方 ({},{},{}) 不是实心方块。\
+            "放置 {item} 于 ({},{},{}) 失败：下方 ({},{},{}) 不是实心方块（已尝试自动铺 cobblestone 支撑但仍失败，可能背包无 cobblestone 或填充被阻）。\
              block_interact 只能右键实心方块的顶面来放置新方块。\
              建议：选一个下方有实心方块的位置 place，或先 place 一个 dirt/stone 做底座。",
             placement_pos.x, placement_pos.y, placement_pos.z, below.x, below.y, below.z
@@ -444,6 +494,88 @@ async fn is_block_air(bot: &Client, pos: BlockPos) -> bool {
     let world = world.read();
     let state = world.get_block_state(pos).unwrap_or_default();
     state.is_air()
+}
+
+/// P163：统计背包中指定物品的总数（含 hotbar 与主背包）。
+fn count_item_in_inventory(inv: &ContainerHandleRef, kind: ItemKind) -> u32 {
+    let Some(slots) = inv.slots() else {
+        return 0;
+    };
+    let mut total = 0u32;
+    for stack in slots {
+        if !stack.is_empty() && stack.kind() == kind {
+            total += stack.count().max(0) as u32;
+        }
+    }
+    total
+}
+
+/// P163：直接放置一个方块到目标格（block_interact 右键下方顶面）。
+/// 要求目标格是空气、下方实心、bot 在 reach 内。返回是否成功。
+async fn place_block_direct(bot: &Client, item: &str, pos: BlockPos) -> bool {
+    let Some(kind) = item_to_block_kind(item) else {
+        return false;
+    };
+    // 装备物品到主手（复用 do_place 的装备逻辑：hotbar 有则选，无则 shift_click）
+    let item_kind = ItemKind::from_str(&normalize_item(item)).ok();
+    if let Some(ik) = item_kind {
+        if equip_item_for_place(bot, ik).await.is_err() {
+            return false;
+        }
+    } else {
+        return false;
+    }
+    let below = pos.down(1);
+    if !is_block_solid(bot, below).await {
+        return false;
+    }
+    // 靠近到 reach 内
+    walk_to_reach_for_place(bot, pos).await;
+    let below_center = azalea::Vec3::new(
+        below.x as f64 + 0.5,
+        below.y as f64 + 0.5,
+        below.z as f64 + 0.5,
+    );
+    bot.look_at(below_center);
+    sleep(Duration::from_millis(120)).await;
+    bot.block_interact(below);
+    sleep(Duration::from_millis(300)).await;
+    // 验证（直接作为函数返回值）
+    match bot.world() {
+        Ok(w) => {
+            let w = w.read();
+            w.get_block_state(pos)
+                .map(|s| {
+                    let bk: BlockKind = s.into();
+                    bk == kind
+                })
+                .unwrap_or(false)
+        }
+        Err(_) => false,
+    }
+}
+
+/// P163：装备物品到主手（hotbar 有则选中，无则从主背包 shift_click）。
+async fn equip_item_for_place(bot: &Client, kind: ItemKind) -> Result<(), String> {
+    let inv = bot
+        .get_inventory()
+        .map_err(|e| format!("获取背包失败: {e:?}"))?;
+    if let Some(s) = find_hotbar_slot(&inv, kind) {
+        bot.set_selected_hotbar_slot(s);
+    } else {
+        let main_slot = find_item_slot_in_main_inventory(&inv, kind)
+            .ok_or_else(|| "背包未持有该物品".to_string())?;
+        inv.shift_click(main_slot);
+        sleep(Duration::from_millis(200)).await;
+        drop(inv);
+        let inv2 = bot
+            .get_inventory()
+            .map_err(|e| format!("获取背包失败: {e:?}"))?;
+        let s = find_hotbar_slot(&inv2, kind)
+            .ok_or_else(|| "shift_click 后物品仍不在 hotbar".to_string())?;
+        bot.set_selected_hotbar_slot(s);
+    }
+    Ok(())
 }
 
 /// 读取 pos 处的 BlockKind（空气或读取失败返回 None）。
