@@ -90,10 +90,7 @@ pub use tools_interact::{
     UseItemTool,
 };
 pub use tools_inventory::{ConsumeTool, DiscardTool, EquipTool};
-pub use tools_meta::{
-    ChatTool, ListActionsTool, NewActionTool, PauseGoalTool, ResumeGoalTool, RunPlanTool,
-    RunScriptTool, SetGoalTool, TaskCompleteTool, TaskRetryTool,
-};
+pub use tools_meta::{ChatTool, ListActionsTool, NewActionTool, RunPlanTool, RunScriptTool};
 #[cfg(test)]
 pub(crate) use tools_meta::{lint_action_script, lint_script};
 pub use tools_mining::{MakeObsidianTool, MineTool};
@@ -160,17 +157,12 @@ pub const META_TOOL_NAMES: &[&str] = &[
     "perceive",
     "memory",
     "remember",
-    "set_goal",
     "run_plan",
     "search_wiki",
     "run_script",
     "build",
     "build_blueprint",
     "list_blueprints",
-    "task_complete",
-    "task_retry",
-    "pause_goal",
-    "resume_goal",
     "new_action",
     "list_actions",
 ];
@@ -201,7 +193,6 @@ pub const ALL_TOOL_NAMES: &[&str] = &[
     "chat",
     "memory",
     "remember",
-    "set_goal",
     "run_plan",
     "search_wiki",
     "run_script",
@@ -225,12 +216,8 @@ pub const ALL_TOOL_NAMES: &[&str] = &[
     "chest_view",
     "chest_withdraw",
     "chest_deposit",
-    "pause_goal",
-    "resume_goal",
     "new_action",
     "list_actions",
-    "task_complete",
-    "task_retry",
 ];
 
 /// MinecraftAction 全部变体名（core/types.rs，新增变体时同步更新；映射表合法性校验用）。
@@ -443,9 +430,6 @@ fn parse_step(action: &str, step: &serde_json::Value) -> anyhow::Result<Minecraf
                 .and_then(|v| v.as_bool())
                 .unwrap_or(true),
         }),
-        "set_goal" => Ok(MinecraftAction::Chat {
-            content: format!("[set_goal] {}", str("goal").unwrap_or_default()),
-        }),
         // perceive 在 plan 里不执行实际动作，只返回提示（plan 是动作序列，perceive 由
         // agent 主循环的 auto_perceive 处理）。
         "perceive" | "look" | "look_at" => Err(anyhow::anyhow!(
@@ -551,7 +535,6 @@ pub fn create_mc_azalea_tools_full_with_semantic(
         Box::new(SemanticMemoryTool {
             mem: ctx.semantic.clone(),
         }),
-        Box::new(SetGoalTool::new(ctx.clone())),
         Box::new(RunPlanTool::new(ctx.clone())),
         Box::new(SearchWikiTool::new(ctx.clone())),
         Box::new(RunScriptTool::new(ctx.clone())),
@@ -573,14 +556,9 @@ pub fn create_mc_azalea_tools_full_with_semantic(
         Box::new(ChestViewTool::new(ctx.clone())),
         Box::new(ChestWithdrawTool::new(ctx.clone())),
         Box::new(ChestDepositTool::new(ctx.clone())),
-        Box::new(PauseGoalTool::new(ctx.clone())),
-        Box::new(ResumeGoalTool::new(ctx.clone())),
         // P2-4: LLM 代码生成（newAction 等价物）
         Box::new(NewActionTool::new(ctx.clone())),
-        Box::new(ListActionsTool::new(ctx.clone())),
-        // 阶段完成工具：记录里程碑，但不终止长期生存目标。
-        Box::new(TaskCompleteTool::new(ctx)),
-        Box::new(TaskRetryTool),
+        Box::new(ListActionsTool::new(ctx)),
     ]
 }
 

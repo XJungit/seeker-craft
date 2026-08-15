@@ -319,13 +319,13 @@ impl Default for WorldInfoLib {
 /// azalea 路线下 offset_x/offset_y 无意义（用世界坐标 goto），已从模板移除。
 ///
 /// **重要**：模板里的工具名必须与 `tools_azalea.rs::create_mc_azalea_tools_full` 注册的真实
-/// 工具名 100% 一致——否则 LLM 抄示例时就会调到不存在的工具。当前真实工具（44 个）：
+/// 工具名 100% 一致——否则 LLM 抄示例时就会调到不存在的工具。当前真实工具（49 个）：
 /// perceive / goto / mine / mine_below / mine_above / make_obsidian / interact_block / attack /
 /// defend / craft / craft_3x3 / smelt / gather / place / open / pickup / auto_craft / enchant /
-/// trade / interact_entity / chat / memory / set_goal / pause_goal / resume_goal / run_plan /
-/// search_wiki / run_script / build / build_blueprint / list_blueprints / new_action / list_actions /
-/// equip / discard / consume / chest_view / chest_withdraw / chest_deposit / follow / stop_follow /
-/// give / task_complete / task_retry。
+/// trade / interact_entity / chat / memory / remember / run_plan / search_wiki / run_script /
+/// build / build_blueprint / list_blueprints / new_action / list_actions / equip / discard /
+/// consume / chest_view / chest_withdraw / chest_deposit / follow / goto_player / stop_follow /
+/// give / search_for_block / move_away / set_mode / use_item / shoot / till_and_sow / harvest / sleep。
 pub fn default_mc_world_info() -> WorldInfoLib {
     let mut lib = WorldInfoLib::new();
     // 木材：dark_oak_log / oak_log / birch_log 等原木都用 gather

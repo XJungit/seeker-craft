@@ -171,11 +171,60 @@ pub async fn do_chest_withdraw(
         if stack_count == 0 {
             continue;
         }
-        // shift_click 该容器槽位 → 服务端移动到玩家背包
-        inv.shift_click(s);
-        sleep(Duration::from_millis(80)).await;
-        taken += stack_count;
-        remaining = remaining.saturating_sub(stack_count);
+        // P187 修复：count 精确取值。旧实现 shift_click 整槽移动，count 参数被忽略
+        // （请求 5 个也整槽 64 个全移）。且背包满时 shift_click 静默失败返回 +0。
+        // 现在：
+        // - count==0（全取）或 剩余 >= 堆叠 → shift_click 整槽（快）
+        // - 剩余 < 堆叠 → left_click 拿起整堆 → 背包空槽 right_click N 次放 N 个
+        //   → left_click 放回剩余到原槽（azalea 无 drag/split click，right_click 每格放 1 个）
+        let to_take = if count == 0 {
+            stack_count
+        } else {
+            remaining.min(stack_count)
+        };
+        if to_take == stack_count {
+            // 整槽移动
+            inv.shift_click(s);
+            sleep(Duration::from_millis(80)).await;
+            taken += stack_count;
+            remaining = remaining.saturating_sub(stack_count);
+        } else {
+            // 精确分拆：拿起整堆 → 分 to_take 个到背包空槽 → 放回剩余
+            // 找玩家背包空槽（用现有 inv 的 menu 快照）
+            let empty_slot = inv.menu().ok().flatten().and_then(|m| {
+                let pr = m.player_slots_range();
+                let slots = inv.slots();
+                slots.and_then(|sl| {
+                    pr.into_iter()
+                        .find(|&i| sl.get(i).map(|st| st.is_empty()).unwrap_or(false))
+                })
+            });
+            match empty_slot {
+                Some(dst) => {
+                    inv.left_click(s);
+                    sleep(Duration::from_millis(80)).await;
+                    for _ in 0..to_take {
+                        inv.right_click(dst);
+                        sleep(Duration::from_millis(50)).await;
+                    }
+                    // 放回剩余（可能已空——left_click 空光标是安全 no-op）
+                    inv.left_click(s);
+                    sleep(Duration::from_millis(80)).await;
+                    taken += to_take;
+                    remaining = remaining.saturating_sub(to_take);
+                }
+                None => {
+                    // 背包满：shift_click 会静默失败，明确报错
+                    if let Ok(inv) = bot.get_inventory() {
+                        inv.close();
+                    }
+                    return Err(format!(
+                        "背包已满，无法从容器取出 {item}（需要至少 1 个空位）。\
+                         建议先 discard 垃圾物品或 chest_deposit 存入其他物品腾出空位后再重试。"
+                    ));
+                }
+            }
+        }
     }
     // 等同步并统计实际拿到多少
     sleep(Duration::from_millis(150)).await;

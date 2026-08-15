@@ -267,15 +267,10 @@ pub const TOOL_GROUPS: &[(&str, &[&str])] = &[
         "元操作",
         &[
             "chat",
-            "set_goal",
             "run_plan",
             "run_script",
             "new_action",
             "list_actions",
-            "pause_goal",
-            "resume_goal",
-            "task_complete",
-            "task_retry",
         ],
     ),
 ];

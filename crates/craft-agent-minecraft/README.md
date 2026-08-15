@@ -13,7 +13,7 @@ Minecraft 游戏适配器与工具集（Azalea 客户端路线）。
 craft-agent-minecraft = { features = ["azalea-bot"] }
 ```
 
-## 54 个 LLM 工具
+## 49 个 LLM 工具
 
 工具注册于 `create_mc_azalea_tools`，权威清单见 `tools_azalea.rs::ALL_TOOL_NAMES`。
 DSH 桥接模式下由 DSH 大脑经 `/api/bot_tool` **逐工具驱动**（in-bot 时代的批处理
@@ -52,7 +52,7 @@ DSH 桥接模式下由 DSH 大脑经 `/api/bot_tool` **逐工具驱动**（in-bo
 | 模块 | 作用 |
 |------|------|
 | `adapter_azalea.rs` | `GameAdapter` 实现：perceive / execute / state snapshot |
-| `tools_azalea.rs` | 54 个 LLM 工具定义 |
+| `tools_azalea.rs` | 49 个 LLM 工具定义 |
 | `azalea/mod.rs` | `AzaleaBot` + connect + 动作 API + 背包三件套（1995 行，P2.2 已拆出 commands.rs / handler.rs） |
 | `azalea/commands.rs` | `BotCommand` 33 变体 + `QueuedCommand` + `parse_chat_command`（probe 驱动） |
 | `azalea/handler.rs` | `BotState` + tick 主体 handle + 两层 modes 反应系统（P2.2 拆出） |

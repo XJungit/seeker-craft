@@ -17,7 +17,7 @@
 | **Core question** | Can an LLM autonomously survive, craft, and defeat the Ender Dragon from nothing? |
 | **Runtime** | Pure Rust client via [Azalea](https://github.com/azalea-rs/azalea) (MC 26.2), no server mods |
 | **Brain** | Any OpenAI-compatible LLM (DeepSeek cache-optimized); DSH (DeepSeek Harness) bridge mode as of 2026-08-14 |
-| **Scale** | 5 crates, 54 LLM tools, 23 structured tasks, 10 reactive modes, spatial memory |
+| **Scale** | 5 crates, 49 LLM Tools, 23 structured tasks, 10 reactive modes, spatial memory |
 | **Dev loop** | Autonomous: gap analysis → fix → probe verify → commit (workflow notes kept locally, not shipped) |
 
 > **Project nature.** This project is produced through AI-assisted development
@@ -31,7 +31,7 @@
 ## Highlights
 
 - **Real protocol client** — joins as a vanilla player via the Azalea Rust client (MC 26.2), built-in pathfinding; no mods, no screenshots.
-- **54 typed LLM tools** — perceive, goto, mine, craft (2x2/3x3/smelt/enchant/brew), place, build, containers, trading, combat, meta-tools.
+- **49 typed LLM tools** — perceive, goto, mine, craft (2x2/3x3/smelt/enchant/brew), place, build, containers, trading, combat, meta-tools.
 - **10 reactive modes** — self-defense, hunting, auto-pickup, torch-placing, unstuck, elbow-room, etc., running tick-level without LLM latency (bot-side; LLM posture switched via `set_mode`).
 - **Structured task system** — 23 tiered tasks (wood → stone → iron → diamond → netherite → ender dragon) with machine-checkable completion conditions.
 - **Spatial WorldMemory** — chunk-indexed memories (resources, structures, containers, hazards, portals) with TTL forgetting and named anchors.
@@ -56,7 +56,7 @@ seeker-craft/
 ├── Cargo.toml                     # workspace root (nightly-2026-07-21)
 ├── crates/
 │   ├── craft-agent/               # pure logic lib: types/GameTool/ToolRegistry/WorldMemory/session/task/profile/skill
-│   ├── craft-agent-minecraft/     # Azalea adapter: bot + 54 tools (craft/smelt/enchant/brew/combat/farm)
+│   ├── craft-agent-minecraft/     # Azalea adapter: bot + 49 tools (craft/smelt/enchant/brew/combat/farm)
 │   ├── craft-agent-viewer/        # web dashboard (Axum + SSE) + DSH bridge (connect/bot_tool/game-state/goal)
 │   ├── craft-agent-autopilot/     # ops supervisor (10s polling: viewer+connect, stall steering, crash recovery)
 │   └── craft-agent-ctl/           # ops console
@@ -87,11 +87,11 @@ seeker-craft/
 ```
 DSH (DeepSeek Harness) brain ──HTTP──► craft-agent-viewer bridge
   │  /api/connect    → azalea client joins MC (account CraftAgent)
-  │  /api/bot_tool   → dispatch one of 54 tools (GameTool::execute)
+  │  /api/bot_tool   → dispatch one of 49 tools (GameTool::execute)
   │  /api/game-state → real-time BotState snapshot (perceive format)
   │  /api/goal       → update ops goal
   ▼
-craft-agent-minecraft (54 tools + WorldMemory per-20-tick scan + handler.rs reactive modes)
+craft-agent-minecraft (49 tools + WorldMemory per-20-tick scan + handler.rs reactive modes)
   ▼
 azalea (vendor) ──► MC server (TCP)
 ```
@@ -139,7 +139,7 @@ All 23 tasks (6 tiers) ship as machine-checkable JSON in [`data/tasks/`](data/ta
 
 **Verification discipline:** every tool-layer behavior is probe-verified against the live server (see `scripts/probe/*.json`) before push; Y-hint correctness was probe-verified for diamond (out-of-range hint), emerald (biome hint), and iron/coal (no false positives in-range). Full milestone table: [`docs/benchmarks.md`](docs/benchmarks.md).
 
-## 54 LLM tools
+## 49 LLM Tools
 
 | Category | Tools |
 |---|---|
@@ -243,11 +243,11 @@ cargo run -p craft-agent-ctl -- status                         # verify running=
 
 ```
 game_state()                    # perceive: position/health/hunger/inventory/nearby/memory
-bot_tool(name:"mine", args:{x:.., y:.., z:..})   # execute one of the 54 tools
+bot_tool(name:"mine", args:{x:.., y:.., z:..})   # execute one of the 49 tools
 set_goal("Collect 24 iron ore and smelt into ingots")           # set the ops goal
 ```
 
-> Tool names are a stable contract (`tools_azalea.rs::ALL_TOOL_NAMES`, 54 total).
+> Tool names are a stable contract (`tools_azalea.rs::ALL_TOOL_NAMES`, 49 total).
 > Auto-corrections (mine-on-air → nearest solid; interaction → auto-approach ≤2.5m)
 > are built in — pass the intended target directly.
 

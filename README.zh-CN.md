@@ -18,7 +18,7 @@
 | **核心问题** | LLM 能否从一无所有开始自主生存、制造并击败末影龙？ |
 | **运行时** | 纯 Rust 客户端，基于 [Azalea](https://github.com/azalea-rs/azalea)（MC 26.2），无需服务端 mod |
 | **大脑** | 任意 OpenAI 兼容 LLM（DeepSeek 前缀缓存优化）；2026-08-14 起为 DSH（DeepSeek Harness）桥接模式 |
-| **规模** | 5 个 crate、54 个 LLM 工具、23 个结构化任务、10 个反应式模式、空间记忆 |
+| **规模** | 5 个 crate、49 个 LLM 工具、23 个结构化任务、10 个反应式模式、空间记忆 |
 | **开发循环** | 自主：差距分析 → 修复 → probe 验证 → 提交（工作流笔记仅存本地，不随仓库发布） |
 
 > **项目性质声明。** 本项目完全由 AI 辅助编程（vibe coding）生成，属个人实验项目，
@@ -33,7 +33,7 @@
 ## 亮点
 
 - **真实协议客户端** — 通过 Azalea Rust 客户端（MC 26.2）以普通玩家身份连接，内置寻路；无 mod、无截图。
-- **54 个类型化 LLM 工具** — 感知、移动、挖矿、合成（2x2/3x3/熔炼/附魔/酿造）、放置、建造、容器、交易、战斗及元工具。
+- **49 个类型化 LLM 工具** — 感知、移动、挖矿、合成（2x2/3x3/熔炼/附魔/酿造）、放置、建造、容器、交易、战斗及元工具。
 - **10 个反应式模式** — 自卫、狩猎、自动拾取、插火把、脱困、清理拥挤空间等，tick 级运行，不受 LLM 延迟影响（bot 端；LLM 姿态经 `set_mode` 切换）。
 - **结构化任务系统** — 23 个分层任务（木头 → 石头 → 铁 → 钻石 → 下界合金 → 末影龙），带机器可校验的完成条件。
 - **空间 WorldMemory** — 按区块索引的记忆（资源/建筑/容器/危险/传送门），带 TTL 遗忘与命名锚点。
@@ -58,7 +58,7 @@ seeker-craft/
 ├── Cargo.toml                     # workspace 根（nightly-2026-07-21）
 ├── crates/
 │   ├── craft-agent/               # 纯逻辑库：types/GameTool/ToolRegistry/WorldMemory/session/task/profile/skill
-│   ├── craft-agent-minecraft/     # Azalea 适配器：bot + 54 个工具
+│   ├── craft-agent-minecraft/     # Azalea 适配器：bot + 49 个工具
 │   ├── craft-agent-viewer/        # Web 仪表盘（Axum + SSE）+ DSH 桥（connect/bot_tool/game-state/goal）
 │   ├── craft-agent-autopilot/     # 运维监督器（10s 轮询：viewer+连接、停滞 steering、崩溃恢复）
 │   └── craft-agent-ctl/           # 运维控制台
@@ -88,11 +88,11 @@ seeker-craft/
 ```
 DSH（DeepSeek Harness）大脑 ──HTTP──► craft-agent-viewer 桥
   │  /api/connect    → azalea 客户端加入 MC（账号 CraftAgent）
-  │  /api/bot_tool   → 派发 54 工具之一（GameTool::execute）
+  │  /api/bot_tool   → 派发 49 工具之一（GameTool::execute）
   │  /api/game-state → 实时 BotState 快照（perceive 格式）
   │  /api/goal       → 更新运营目标
   ▼
-craft-agent-minecraft（54 工具 + WorldMemory 每 20 tick 扫描 + handler.rs 反应式模式）
+craft-agent-minecraft（49 工具 + WorldMemory 每 20 tick 扫描 + handler.rs 反应式模式）
   ▼
 azalea (vendor) ──► MC server (TCP)
 ```
@@ -139,7 +139,7 @@ azalea (vendor) ──► MC server (TCP)
 
 **验证纪律：** 所有工具层行为推送前均经 probe 实机验证（见 `scripts/probe/*.json`）；Y 提示正确性已 probe 验证——钻石（越界提示）、绿宝石（群系提示）、铁/煤（范围内不误报）。完整里程碑表见 [`docs/benchmarks.md`](docs/benchmarks.md)。
 
-## 54 个 LLM 工具
+## 49 个 LLM 工具
 
 | 类别 | 工具 |
 |---|---|
@@ -240,11 +240,11 @@ cargo run -p craft-agent-ctl -- status               # 验证 running=true
 
 ```
 game_state()                    # 感知：位置/生命/饱食/背包/附近/记忆
-bot_tool(name:"mine", args:{x:.., y:.., z:..})   # 执行 54 个工具之一
+bot_tool(name:"mine", args:{x:.., y:.., z:..})   # 执行 49 个工具之一
 set_goal("收集 24 个铁矿并熔炼成铁锭")           # 设置运营目标
 ```
 
-> 工具名是稳定契约（`tools_azalea.rs::ALL_TOOL_NAMES`，54 个）。自动修正
+> 工具名是稳定契约（`tools_azalea.rs::ALL_TOOL_NAMES`，49 个）。自动修正
 > （挖空气→最近实心、交互→自动靠近≤2.5m）已内置，直接传意图目标即可。
 
 ### 6. 停止

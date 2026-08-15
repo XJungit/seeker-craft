@@ -275,8 +275,11 @@ pub fn timeout_ticks(cmd: &BotCommand) -> u64 {
         BotCommand::StopFollow => 20,
         // P116：模式开关即时生效。
         BotCommand::SetMode { .. } => 20,
-        // P118：右键使用/投掷物品即时生效。
-        BotCommand::UseItem { .. } => 20,
+        // P118：右键使用/投掷物品。P186 修复：20 tick(1s) 太短——do_equip（含
+        // hotbar 满腾槽）+ set_direction + hit_result 检查 + start_use_item + 等消耗
+        // 确认（最多 1.5s）合计可达 3-5s，2s 超时导致工具返回超时但命令仍在后台
+        // 执行（可能残留已装备未恢复的方向/物品状态）。提升到 120 tick(6s)。
+        BotCommand::UseItem { .. } => 120,
         // P119：拉弓射箭（装备+瞄准+拉弦 1s+放箭）。
         BotCommand::Shoot { .. } => 60,
         BotCommand::Give { .. } => 400,
