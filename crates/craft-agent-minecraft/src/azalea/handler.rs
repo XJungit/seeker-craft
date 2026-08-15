@@ -4091,10 +4091,35 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                         drop(world);
                                         match water {
                                             Some((wx, wy2, wz2)) => {
-                                                bot.block_interact(BlockPos::new(wx, wy2, wz2));
-                                                // 装水后下一 tick 再检查手持，进入岩浆逻辑
-                                                *state.make_obsidian.lock().unwrap() =
-                                                    Some((remaining, 0, None));
+                                                // P176：装水不能用 block_interact（force_block）——
+                                                // P161 教训：液体方块用 force_block 右键被服务端静默
+                                                // 拒收。改用"面向水源 + start_use_item"（真实 hit_result
+                                                // 交互），与 P161 命令一致。tick handler 不能 await，
+                                                // 分两步：phase 0 先 set_direction 面向水源（记录目标），
+                                                // phase 10 下一 tick start_use_item 装水（P118 保证方向
+                                                // 已生效），phase 11 验证 water_bucket。
+                                                if let Ok(p) = bot.position() {
+                                                    let dx = wx as f64 + 0.5 - p.x;
+                                                    let dy = wy2 as f64 + 0.5 - p.y;
+                                                    let dz = wz2 as f64 + 0.5 - p.z;
+                                                    let dist = (dx * dx + dy * dy + dz * dz)
+                                                        .sqrt()
+                                                        .max(0.001);
+                                                    let yaw = (dz.atan2(dx).to_degrees() + 90.0)
+                                                        .rem_euclid(360.0)
+                                                        as f32;
+                                                    let pitch = (-dy / dist)
+                                                        .asin()
+                                                        .to_degrees()
+                                                        .clamp(-89.0, 89.0)
+                                                        as f32;
+                                                    let _ = bot.set_direction(yaw, pitch);
+                                                    *state.make_obsidian.lock().unwrap() =
+                                                        Some((remaining, 10, None));
+                                                } else {
+                                                    *state.make_obsidian.lock().unwrap() =
+                                                        Some((remaining, 0, None));
+                                                }
                                             }
                                             None => {
                                                 let _ = state.evt_tx.send(BotEvent::Chat {
@@ -4165,6 +4190,29 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                             *state.make_obsidian.lock().unwrap() = None;
                                         }
                                     }
+                                }
+                            }
+                            // P176：phase 10 = 上一 tick 已 set_direction 面向水源，
+                            // 本 tick start_use_item 装水（P118 方向已生效）。
+                            10 => {
+                                bot.start_use_item();
+                                *state.make_obsidian.lock().unwrap() = Some((remaining, 11, None));
+                            }
+                            // P176：phase 11 = 装水后验证手持 water_bucket。
+                            // 服务端同步可能滞后几 tick，重试几次；成功进岩浆逻辑（回 phase 0
+                            // 会检测到 water_bucket 直接找岩浆），失败重试装水。
+                            11 => {
+                                let held = bot
+                                    .get_held_item()
+                                    .map(|s| s.kind().to_string())
+                                    .unwrap_or_default();
+                                if held.contains("water_bucket") {
+                                    *state.make_obsidian.lock().unwrap() =
+                                        Some((remaining, 0, None));
+                                } else if t.is_multiple_of(8) {
+                                    // 装水未生效：重新面向水源再装（回 phase 0 重新扫描/装备）
+                                    *state.make_obsidian.lock().unwrap() =
+                                        Some((remaining, 0, None));
                                 }
                             }
                             1 => {
