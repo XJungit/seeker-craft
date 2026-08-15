@@ -113,6 +113,54 @@ const TOOL_NAMES = [
   'new_action', 'list_actions', 'task_complete', 'task_retry',
 ]
 
+/**
+ * 对 scene_desc 做排序稳定化（消除 HashMap 枚举抖动，减少无效追加快照）。
+ *
+ * 背景：viewer 的 scene_desc 中「附近 / 特殊方块 / 实体 / 背包 / hotbar / 资源」
+ * 等枚举（`[a:1, b:2, ...]`）由 HashMap/集合重建，**顺序不稳定**——即使 bot
+ * 实质状态没变，两次重建的枚举顺序也可能不同，导致 `RuntimeContextProjection`
+ * 误判「内容变了」→ 追加快照 → 上下文无谓膨胀（P158 实测：bot 挂机时背包/附近
+ * 排序抖动触发追加）。
+ *
+ * 修复：对这些枚举的内部条目**按字符串排序**，使 bot 挂机时文本字节稳定；
+ * bot 实质变化（位置/耐久/数量）时仍不同 → 正常追加。缓存命中不受影响
+ * （bot_state 走 user 快照，system 稳定）。
+ *
+ * @param {string} desc scene_desc 原文
+ * @returns {string} 排序稳定化后的文本
+ */
+function normalizeSceneDesc(desc) {
+  if (typeof desc !== 'string' || desc.length === 0) return desc
+  // 1) `资源: 木材:0 石头:1070 矿石:4` —— 空格分隔的 key:value 字段，顺序会抖 → 排序
+  desc = desc.replace(/^资源: (.+)$/gm, (whole, fields) => {
+    const parts = fields.trim().split(/\s+/).sort()
+    return `资源: ${parts.join(' ')}`
+  })
+  // 2) `字段: [条目1, 条目2, ...]` 的枚举行（附近/特殊方块/实体/背包/hotbar）
+  return desc.replace(/^([^:\n]+): \[([^\]]*)\]$/gm, (whole, field, inner) => {
+    if (!inner || inner.trim() === '') return whole
+    // 按「顶层逗号」分割：实体/记忆条目内部含坐标逗号（如 item:1@5m@(-481, 84, -170)），
+    // 简单 split(',') 会把坐标拆乱。这里逐字符扫描，只在括号深度为 0 处的逗号分割。
+    const items = []
+    let depth = 0
+    let buf = ''
+    for (const ch of inner) {
+      if (ch === '(' || ch === '[') depth++
+      else if (ch === ')' || ch === ']') depth--
+      if (ch === ',' && depth === 0) {
+        items.push(buf.trim())
+        buf = ''
+      } else {
+        buf += ch
+      }
+    }
+    if (buf.trim()) items.push(buf.trim())
+    // 去重 + 排序（稳定，消除 HashMap 抖动）
+    const uniq = [...new Set(items)].sort()
+    return `${field}: [${uniq.join(', ')}]`
+  })
+}
+
 /** bot 状态短缓存（30s），避免每次 prompt 装配都打 viewer API；也避免系统提示抖动太频繁。 */
 let botStateCache = { at: 0, text: null }
 const BOT_STATE_TTL_MS = 30000
@@ -170,10 +218,14 @@ function registerPromptVariables(ctx) {
       if (Date.now() - botStateCache.at > BOT_STATE_TTL_MS) {
         refreshBotState().catch(() => { /* 惰性刷新失败静默：下轮再试，不崩 DSH */ })
       }
-      return `【当前游戏状态（自动注入，bot 侧缓存 ≤30s）】\n${cached}\n\n如需最新状态，调用 game_state() 获取实时快照。`
+      const normalized = cached === '(bot 状态加载中…)' ? cached : normalizeSceneDesc(cached)
+      return `【当前游戏状态（自动注入，bot 侧缓存 ≤30s）】\n${normalized}\n\n如需最新状态，调用 game_state() 获取实时快照。`
     },
   })
 }
+
+// 导出供验证脚本测试（Cordis 只认 name/apply/inject/Config 等，额外导出不影响契约）
+export { normalizeSceneDesc }
 
 /** Cordis 插件契约：注册三个桥工具 + 占位符变量 + 仪表盘代理。
  * @param {import('@deepseek-ai/cordis').Context} ctx
