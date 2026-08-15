@@ -297,6 +297,17 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
             cursor = cursor.down(1);
             fill_depth += 1;
         }
+        eprintln!(
+            "[place] P163 debug: below=({},{},{}) fill_depth={} cursor=({},{},{}) cursor_solid={}",
+            below.x,
+            below.y,
+            below.z,
+            fill_depth,
+            cursor.x,
+            cursor.y,
+            cursor.z,
+            is_block_solid(bot, cursor).await
+        );
         if fill_depth < 5 {
             // 找到了实心面（cursor 是实心，cursor.up(1)..=below 是空洞）
             let has_cobble = {
@@ -305,6 +316,7 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
                     .ok()
                     .is_some_and(|inv| count_item_in_inventory(&inv, cobble_kind) > 0)
             };
+            eprintln!("[place] P163 debug: has_cobble={has_cobble}");
             if has_cobble {
                 // 从下往上填 cobblestone 到 below（最深层空洞在 cursor.up(1)，
                 // 因为 cursor 是最深的实心方块，cursor.up(1) 是它上方的第一个空气格）。
@@ -314,9 +326,21 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
                 let mut p = cursor.up(1);
                 while p.y <= below.y && filled < 8 {
                     if is_block_air(bot, p).await {
+                        eprintln!(
+                            "[place] P163 debug: 填 p=({},{},{}) air={}",
+                            p.x,
+                            p.y,
+                            p.z,
+                            is_block_air(bot, p).await
+                        );
                         if place_block_direct(bot, "cobblestone", p).await {
                             filled += 1;
+                            eprintln!("[place] P163 debug: 填成功 filled={filled}");
                         } else {
+                            eprintln!(
+                                "[place] P163 debug: 填失败 break at p=({},{},{})",
+                                p.x, p.y, p.z
+                            );
                             break;
                         }
                     }
@@ -550,19 +574,8 @@ async fn place_block_direct(bot: &Client, item: &str, pos: BlockPos) -> bool {
     sleep(Duration::from_millis(120)).await;
     bot.block_interact(below);
     sleep(Duration::from_millis(300)).await;
-    // 验证（直接作为函数返回值）
-    match bot.world() {
-        Ok(w) => {
-            let w = w.read();
-            w.get_block_state(pos)
-                .map(|s| {
-                    let bk: BlockKind = s.into();
-                    bk == kind
-                })
-                .unwrap_or(false)
-        }
-        Err(_) => false,
-    }
+    // 验证：轮询最多 2.5s（本地 world 缓存滞后，单次查询常误判失败）
+    verify_block_placed(bot, pos, Some(kind)).await
 }
 
 /// P163d：确保指定物品在 hotbar（供 place_block_direct 铺支撑用）。
