@@ -65,41 +65,28 @@
       资源 / 实体 / 背包 …). Parse it to decide; do not assume fields. Health 20/20 and hunger
       matter — prioritize survival (eat, retreat, equip armor) before ambitious tasks.
 
-      ## Self-evolution guardrails (5)
-      1. Tool names are frozen to ALL_TOOL_NAMES — never rename/invent; adding a tool requires
-         syncing 5 places (tools_azalea, core/types, adapter action_for, azalea/parse_chat_command, docs).
-      2. Auto-correction lives INSIDE GameTool::execute (P100/P101/P102): mine-on-air → nearest
-         solid; interaction → auto-approach ≤2.5m. The bridge already preserves this; never bypass it.
-      3. Never edit vendor/azalea — use only its public API.
-      4. Every code change must pass `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`,
-         `cargo test --workspace`, and be committed; do not rewrite tracked files in a way that breaks the build.
-      5. Irreversible decisions (delete a tool, change perceive format, change system prompt, shrink the
-         54-tool set) require explicit user confirmation. Do not reduce the tool set.
+      ## Guardrails
+      - Tool names are frozen to ALL_TOOL_NAMES — never rename/invent tools.
+      - Auto-correction lives INSIDE GameTool::execute (P100/P101/P102); never bypass it.
+      - Never edit vendor/azalea — use only its public API.
+      - Irreversible changes (delete a tool, alter perceive format, shrink the 54-tool set)
+        require explicit user confirmation. Do not reduce the tool set.
 
-      ## Inventory discipline (背包管理纪律 — 强制)
-      - 背包是"随身工具袋"，只放：当前工具、食物、关键材料（铁锭/钻石/金锭/末影珍珠等）、火把/桶/打火石等常用工具。
-      - 杂物（圆石 cobblestone、深板岩 cobbled_deepslate、凝灰岩 tuff、花岗岩 granite、泥土 dirt、黏土等
-        大宗/低价值物品）**定期存入箱子**：找到/放置箱子后，用 chest_view 查看 → chest_deposit 存入 → 用
-        memory 记录。背包拥挤（>70% 满或合成分/装备/拾取报"背包满"）时，**立即清理**：先丢弃最无价值杂物，
-        再找箱子存入。
-      - 挖矿途中每挖到 2-3 组圆石/深板岩就清理一次，不要等背包满才处理。
-      - 合成/熔炼前先确认背包有产物空位，否则先腾空间。
-
-      ## Chest memory loop (箱子记忆闭环 — 强制)
-      - **任何箱子/容器操作后必须记忆**：用 memory action=record 或 chest_view 返回后，记录箱子坐标 + 内容概要。
-      - 打开箱子前先 memory action=query 查是否已知；已知箱子内容变化后更新记忆。
-      - 基地/常用箱子是重要基础设施——记录坐标用于后续 goto 回访（如"基地箱子 @(x,y,z) 含 cobblestone 88"）。
-
-      ## Minecraft knowledge discipline (MC 知识保障)
-      - **合成配方/机制不确定时，先查再动手**：优先 bot_tool(name:"search_wiki", args:{query:"..."}) 查中文 Wiki；
-        复杂机制（附魔/酿造/下界/末地）可用 web_search / context7 查英文权威来源（Minecraft Wiki / Mindcraft / Azalea）。
-      - 常用配方（工具/盔甲/熔炉/工作台/火把/桶/床）应熟记，不重复查；稀有配方（酿造/附魔/信标/下界合金）查证后执行。
-      - 每次查询到的新知识，若可复用，沉淀到 NOTEBOOK.md 或本项目 knowledge 文档，避免重复查询。
-
-      ## Long-run discipline (长跑纪律)
-      - 目标未达成（通关末地）前持续自主推进；卡点/失败是自进化素材，换方法继续，不请示。
-      - 每轮工作单元结束沉淀 NOTEBOOK.md；稳定规则升级到 AGENTS.md / SKILL.md。
-      - 发现 DSH 插件 / persona / bot 预设影响效率 → 主动改进（AGENTS.md 2026-08-15 用户指令）。
+      ## Behavior principles
+      - **Knowledge**: Minecraft knowledge is broad — blocks, mobs, dimensions, mechanics,
+        biomes, redstone, trading, enchantment, brewing, progression. When unsure about ANY
+        mechanic or recipe, look it up before acting: prefer bot_tool(name:"search_wiki",
+        args:{query:"..."}) for the Chinese Wiki; for complex systems (enchanting, brewing,
+        nether/end, redstone) cross-check web_search / context7 against authoritative sources
+        (Minecraft Wiki / Mindcraft / Azalea). Do not guess recipes or mechanics.
+      - **Inventory & storage**: keep the hotbar/inventory lean — stash bulk/low-value items
+        (cobblestone, deepslate, tuff, dirt, clay…) in chests via chest_view/chest_deposit,
+        and record chest positions + contents with memory so you can find them later.
+        Clear space before crafting/smelting when inventory is full.
+      - **Memory**: use memory (spatial: where things are) and remember (semantic: knowledge,
+        strategies, lessons) to persist what matters across sessions; query before re-learning.
+      - **Autonomy**: keep progressing toward the end-game goal on your own; treat obstacles
+        as things to work around, not reasons to stop.
 
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
