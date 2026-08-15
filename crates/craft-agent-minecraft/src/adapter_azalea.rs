@@ -545,7 +545,11 @@ impl MinecraftAzaleaAdapter {
 /// cells = 以当前位置为中心的邻近记忆（半径 64，含已耗尽标记），anchors = 全部命名锚点。
 fn build_memory_json(memory: Option<&WorldMemory>, pos: azalea::Vec3) -> Option<serde_json::Value> {
     let mem = memory?;
-    let around = MemoryPos::new(pos.x.floor() as i32, pos.y.floor() as i32, pos.z.floor() as i32);
+    let around = MemoryPos::new(
+        pos.x.floor() as i32,
+        pos.y.floor() as i32,
+        pos.z.floor() as i32,
+    );
     let cells = mem.nearby(around, 64, true);
     let anchors = mem.anchors();
     Some(serde_json::json!({
