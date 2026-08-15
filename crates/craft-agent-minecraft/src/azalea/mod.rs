@@ -1249,6 +1249,14 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
                     };
                     inv.shift_click(src);
                     sleep(Duration::from_millis(200)).await;
+                    // P178 诊断：确认 shift_click 后 bucket 位置
+                    if let Ok(invc0) = bot.get_inventory() {
+                        eprintln!(
+                            "[P178] shift_click({src}) 后 hotbar 持有 {}: {:?}",
+                            kind.to_str(),
+                            find_hotbar_slot_for(&invc0, kind)
+                        );
+                    }
                     // P174：shift_click 可能失败（服务端 QuickMove 拒绝/缓存滞后），
                     // 若 hotbar 仍无 kind，用 left_click 手动拿起 src 放到空 hotbar 槽。
                     // 根因（实机 bucket 装备失败）：bucket 在 slot36 主背包，shift_click
@@ -1263,11 +1271,23 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
                             .find(|&s| slots.get(s).map(|st| st.is_empty()).unwrap_or(false))
                         && let Some(s) = find_item_slots(&invc, kind).into_iter().next()
                     {
+                        eprintln!(
+                            "[P178] left_click 手动移动: src={s} -> hotbar={empty_hb} (kind={})",
+                            kind.to_str()
+                        );
                         invc.left_click(s);
                         sleep(Duration::from_millis(150)).await;
                         invc.left_click(empty_hb);
                         sleep(Duration::from_millis(200)).await;
                         moved_ok = true;
+                    } else if let Ok(invc) = bot.get_inventory() {
+                        eprintln!(
+                            "[P178] left_click 兜底未执行: hotbar有={} menu={} slots={} srcs={:?}",
+                            find_hotbar_slot_for(&invc, kind).is_some(),
+                            invc.menu().ok().flatten().is_some(),
+                            invc.slots().is_some(),
+                            find_item_slots(&invc, kind)
+                        );
                     }
                     // 重新读 backpack 拿到新 hotbar 槽
                     drop(inv);
