@@ -559,6 +559,12 @@ async fn place_block_direct(bot: &Client, item: &str, pos: BlockPos) -> bool {
     if !ensure_item_in_hotbar(bot, item_kind).await {
         return false;
     }
+    // P163h：与 do_place 主流程一致——装备后 wait_for_held_item 确认主手，
+    // 否则 set_selected_hotbar_slot 的同步链路（本地 ECS → 发包 → 服务端切槽）
+    // 未完成时 block_interact，服务端认为 bot 空手 → 放置失败。
+    if !crate::azalea::wait_for_held_item(bot, item_kind, 1500).await {
+        return false;
+    }
     let below = pos.down(1);
     if !is_block_solid(bot, below).await {
         return false;
