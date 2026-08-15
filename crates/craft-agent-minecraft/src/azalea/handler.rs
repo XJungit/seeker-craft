@@ -2322,19 +2322,16 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                     let need_bucket = !held_kind.is_some_and(|k| {
                                         k == azalea_registry::builtin::ItemKind::Bucket
                                     });
-                                    if need_bucket {
-                                        if let Ok(inv) = bot.get_inventory() {
-                                            if let Some(h) = find_hotbar_slot_for(
-                                                &inv,
-                                                azalea_registry::builtin::ItemKind::Bucket,
-                                            ) {
-                                                bot.set_selected_hotbar_slot(h);
-                                                tokio::time::sleep(
-                                                    std::time::Duration::from_millis(150),
-                                                )
-                                                .await;
-                                            }
-                                        }
+                                    if need_bucket
+                                        && let Ok(inv) = bot.get_inventory()
+                                        && let Some(h) = find_hotbar_slot_for(
+                                            &inv,
+                                            azalea_registry::builtin::ItemKind::Bucket,
+                                        )
+                                    {
+                                        bot.set_selected_hotbar_slot(h);
+                                        tokio::time::sleep(std::time::Duration::from_millis(150))
+                                            .await;
                                     }
                                     let dx = x as f64 + 0.5 - p.x;
                                     let dy = y as f64 + 0.5 - p.y;
