@@ -1117,13 +1117,24 @@ pub async fn pickup_nearby_items(bot: &Client) -> Result<String, String> {
             sleep(Duration::from_millis(600)).await;
             continue;
         }
-        let target = BlockPos::new(x.floor() as i32, y.floor() as i32, z.floor() as i32);
-        bot.start_goto(BlockPosGoal(target));
-        sleep(Duration::from_millis(1500)).await;
-        moved_to += 1;
-        if moved_to >= 3 {
-            break;
+        // P168：>2m 掉落物用 RadiusGoal 靠近（2m 内即可），避免 BlockPosGoal 精确对准
+        // 在复杂地形（Y 差大/洞穴）让 pathfinder 漂移（实机：pickup 6m 外 obsidian 时
+        // bot 从 (-490,93) 漂到 (-486,88)）。靠近到吸取半径内后，物理引擎自动吸起。
+        if dist <= 12.0 {
+            bot.start_goto(azalea::pathfinder::goals::RadiusGoal {
+                pos: azalea::Vec3::new(*x, *y, *z),
+                radius: 2.0,
+            });
+            sleep(Duration::from_millis(1200)).await;
+            moved_to += 1;
+            if moved_to >= 3 {
+                break;
+            }
+            continue;
         }
+        // 掉落物在 12m 外：不盲目 goto（会漂移），跳过等下一轮 pickup
+        sleep(Duration::from_millis(200)).await;
+        continue;
     }
 
     // 再原地转 4 个方向收尾，捡起贴身残留（每方向 600ms，共 ~2.4s）
