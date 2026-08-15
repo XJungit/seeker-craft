@@ -306,9 +306,12 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
                     .is_some_and(|inv| count_item_in_inventory(&inv, cobble_kind) > 0)
             };
             if has_cobble {
-                // 从下往上填 cobblestone 到 below（最深层在 cursor.down(1)）
+                // 从下往上填 cobblestone 到 below（最深层空洞在 cursor.up(1)，
+                // 因为 cursor 是最深的实心方块，cursor.up(1) 是它上方的第一个空气格）。
+                // P163e 修复：原代码用 cursor.down(1)（实心下方，更深的空气）导致
+                // 从错误位置开始填、且中间格 below 不实心 → place_block_direct 失败。
                 let mut filled = 0u32;
-                let mut p = cursor.down(1);
+                let mut p = cursor.up(1);
                 while p.y <= below.y && filled < 8 {
                     if is_block_air(bot, p).await {
                         if place_block_direct(bot, "cobblestone", p).await {
