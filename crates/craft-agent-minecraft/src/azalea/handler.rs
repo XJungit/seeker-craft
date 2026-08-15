@@ -2539,7 +2539,32 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                     let _ = bot.set_direction(yaw, pitch);
                                     // 等方向生效（P118：set_direction 后 150ms 内 raycast 仍用旧朝向）
                                     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                                    // P180 诊断：start_use_item 前记录 held 与方向
+                                    eprintln!(
+                                        "[P180] 装水前 held={:?} yaw={yaw} pitch={pitch} target=({x},{y},{z})",
+                                        bot.get_held_item()
+                                            .ok()
+                                            .filter(|s| !s.is_empty())
+                                            .map(|s| s.kind().to_string())
+                                            .unwrap_or_else(|| "empty".into())
+                                    );
                                     bot.start_use_item();
+                                    // P180：start_use_item 后短暂等待，装水应即时把 bucket→water_bucket。
+                                    // 用轮询确认装水是否生效（服务端同步延迟），给交互结果反馈。
+                                    let mut filled = false;
+                                    for _ in 0..10 {
+                                        tokio::time::sleep(std::time::Duration::from_millis(100))
+                                            .await;
+                                        if let Ok(st) = bot.get_held_item()
+                                            && !st.is_empty()
+                                            && st.kind()
+                                                == azalea_registry::builtin::ItemKind::WaterBucket
+                                        {
+                                            filled = true;
+                                            break;
+                                        }
+                                    }
+                                    eprintln!("[P180] 装水后 filled={filled}");
                                 } else {
                                     bot.block_interact(BlockPos::new(x, y, z));
                                 }
