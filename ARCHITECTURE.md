@@ -197,8 +197,8 @@ cargo test -p craft-agent-model --lib        # 模型测试
 - Mock container integration tests (`craft.rs::tests`) validate `do_smelt` and
   `do_craft_3x3` state machines without needing a Minecraft server.
 - 运维脚本见 `craft-agent-ctl`（`status`/`stop`/`build`/`viewer`/`goal`/`session`/`tail`）；
-  原 `auto_diag.ps1` / `verify_build.ps1` / `scan_run.ps1` 为 legacy PowerShell 诊断流程，
-  现由 ctl + autopilot 取代。
+  原 `auto_diag.ps1` / `verify_build.ps1` / `scan_run.ps1` 等 legacy PowerShell 诊断流程
+  已随 1.0 清理删除，由 ctl + autopilot 取代。
 
 See [`docs/mindcraft-gap.md`](./docs/mindcraft-gap.md) for the automation workflow records.
 See [`docs/tutorials/`](./docs/tutorials/) for developer guides.
