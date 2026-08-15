@@ -115,7 +115,7 @@ azalea (vendor) ──► MC server (TCP)
 
 All 23 tasks (6 tiers) ship as machine-checkable JSON in [`data/tasks/`](data/tasks/).
 
-## Current Progress (2026-08-15 · v1.0.0)
+## Current Progress (2026-08-15 · v1.1.0)
 
 **Verified end-to-end (live server, no mods):**
 
@@ -123,8 +123,8 @@ All 23 tasks (6 tiers) ship as machine-checkable JSON in [`data/tasks/`](data/ta
 |---|---|---|
 | Tier 1–2: wood → stone → iron pickaxe chain | ✅ live | bot autonomously gathered wood, crafted planks/sticks/pickaxes, and crafted an iron pickaxe via a nearby crafting table |
 | Tier 3: survival gear | ✅ live | full iron armor equipped + diamond sword + shield; HP/hunger fully recovered |
-| Tier 4: diamond age | 🔄 in progress | bot followed the Y-layer hint (mine_below to Y≤16), descended to the diamond layer (Y=-59), and located diamond_ore blocks with `search_for_block` |
-| Tier 5: nether & magic | ⬜ next | nether portal / enchanting / brewing not yet end-to-end verified |
+| Tier 4: diamond age | ✅ live | bot followed the Y-layer hint (mine_below to Y≤16), descended to the diamond layer (Y=-59), located and mined diamond_ore with `search_for_block`; full diamond armor equipped |
+| Tier 5: nether & magic | 🔄 in progress | nether portal / enchanting / brewing being worked end-to-end |
 | Tier 6: finale | ⬜ pending | netherite / shulker / elytra / ender dragon |
 
 **Milestones recently shipped (v1.0.0 release baseline):**
