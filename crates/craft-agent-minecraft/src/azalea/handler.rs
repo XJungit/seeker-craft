@@ -2272,7 +2272,44 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                         }
                         BotCommand::BlockInteract { x, y, z } => {
                             *state.mining_below.lock().unwrap() = false;
-                            bot.block_interact(BlockPos::new(x, y, z));
+                            // P161：水源/岩浆等液体方块用 force_block 右键会被服务端静默拒收
+                            // （force_block 构造的 BlockHitResult 方向固定 Up，服务端不识别为
+                            // "点击液体"）。改用"面向目标 + start_use_item"（真实 hit_result 交互）：
+                            // 手持 bucket 面向水源右键 → 装水；面向岩浆 → 装岩浆。
+                            let target_is_liquid = bot
+                                .world()
+                                .ok()
+                                .and_then(|w| {
+                                    let w = w.read();
+                                    w.get_block_state(BlockPos::new(x, y, z))
+                                })
+                                .map(|bs| {
+                                    let k: azalea_registry::builtin::BlockKind = bs.into();
+                                    k == azalea_registry::builtin::BlockKind::Water
+                                        || k == azalea_registry::builtin::BlockKind::Lava
+                                        || k == azalea_registry::builtin::BlockKind::PowderSnow
+                                })
+                                .unwrap_or(false);
+                            if target_is_liquid {
+                                if let Ok(p) = bot.position() {
+                                    let dx = x as f64 + 0.5 - p.x;
+                                    let dy = y as f64 + 0.5 - p.y;
+                                    let dz = z as f64 + 0.5 - p.z;
+                                    let dist = (dx * dx + dy * dy + dz * dz).sqrt().max(0.001);
+                                    let yaw =
+                                        (dz.atan2(dx).to_degrees() + 90.0).rem_euclid(360.0) as f32;
+                                    let pitch =
+                                        (-dy / dist).asin().to_degrees().clamp(-89.0, 89.0) as f32;
+                                    let _ = bot.set_direction(yaw, pitch);
+                                    // 等方向生效（P118：set_direction 后 150ms 内 raycast 仍用旧朝向）
+                                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                                    bot.start_use_item();
+                                } else {
+                                    bot.block_interact(BlockPos::new(x, y, z));
+                                }
+                            } else {
+                                bot.block_interact(BlockPos::new(x, y, z));
+                            }
                             if let Some(tx) = &result_tx {
                                 let _ = tx.send(format!("已交互 ({},{},{})", x, y, z));
                             }
