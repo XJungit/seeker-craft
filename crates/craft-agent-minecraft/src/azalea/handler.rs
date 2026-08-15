@@ -2443,51 +2443,89 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                     let need_bucket = !held_kind.is_some_and(|k| {
                                         k == azalea_registry::builtin::ItemKind::Bucket
                                     });
-                                    if need_bucket
-                                        && let Ok(inv) = bot.get_inventory()
-                                        && let Some(h) = find_hotbar_slot_for(
-                                            &inv,
-                                            azalea_registry::builtin::ItemKind::Bucket,
-                                        )
-                                    {
-                                        bot.set_selected_hotbar_slot(h);
-                                        tokio::time::sleep(std::time::Duration::from_millis(150))
-                                            .await;
-                                    } else if need_bucket
-                                        && let Ok(inv2) = bot.get_inventory()
-                                        && let Some(src) = find_item_slots(
-                                            &inv2,
-                                            azalea_registry::builtin::ItemKind::Bucket,
-                                        )
-                                        .into_iter()
-                                        .next()
-                                        && let Some(menu) = inv2.menu().ok().flatten()
-                                    {
-                                        // P171：bucket 在主背包（不在 hotbar）时，shift_click 到
-                                        // 空 hotbar 槽再选中。根因（实机装水失败）：bucket 在 slot36
-                                        // 主背包，find_hotbar_slot_for 返回 None，start_use_item 手持
-                                        // 非 bucket 装水失败。修复：从主背包 shift_click 到 hotbar。
-                                        let mut hotbar_range = menu.hotbar_slots_range();
-                                        let target_hb = hotbar_range.find(|&s| {
-                                            inv2.slots()
-                                                .map(|sl| {
-                                                    sl.get(s)
-                                                        .map(|st| st.is_empty())
-                                                        .unwrap_or(false)
-                                                })
-                                                .unwrap_or(false)
-                                        });
-                                        if let Some(hb) = target_hb {
-                                            inv2.shift_click(src);
+                                    if need_bucket {
+                                        // P173：缓存可能滞后（inv.slots() 显示 bucket 在 slot36，
+                                        // 但实际 bucket 可能在 hotbar——perceive 视图不一致）。
+                                        // 先遍历 hotbar 所有槽位 set_selected_hotbar_slot + 检查
+                                        // get_held_item（实际主手，不依赖缓存），找到 bucket 实际槽。
+                                        let mut found = false;
+                                        if let Some(menu) = bot
+                                            .get_inventory()
+                                            .ok()
+                                            .and_then(|i| i.menu().ok().flatten())
+                                        {
+                                            let hotbar_range = menu.hotbar_slots_range();
+                                            let hotbar_start = *hotbar_range.start();
+                                            for s in hotbar_range {
+                                                let idx = (s - hotbar_start) as u8;
+                                                bot.set_selected_hotbar_slot(idx);
+                                                tokio::time::sleep(
+                                                    std::time::Duration::from_millis(60),
+                                                )
+                                                .await;
+                                                let held = bot
+                                                    .get_held_item()
+                                                    .ok()
+                                                    .filter(|st| !st.is_empty())
+                                                    .map(|st| st.kind());
+                                                if held
+                                                    == Some(
+                                                        azalea_registry::builtin::ItemKind::Bucket,
+                                                    )
+                                                {
+                                                    found = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                        if !found
+                                            && let Ok(inv) = bot.get_inventory()
+                                            && let Some(h) = find_hotbar_slot_for(
+                                                &inv,
+                                                azalea_registry::builtin::ItemKind::Bucket,
+                                            )
+                                        {
+                                            bot.set_selected_hotbar_slot(h);
                                             tokio::time::sleep(std::time::Duration::from_millis(
                                                 150,
                                             ))
                                             .await;
-                                            bot.set_selected_hotbar_slot(hb as u8);
-                                            tokio::time::sleep(std::time::Duration::from_millis(
-                                                150,
-                                            ))
-                                            .await;
+                                        } else if !found
+                                            && let Ok(inv2) = bot.get_inventory()
+                                            && let Some(src) = find_item_slots(
+                                                &inv2,
+                                                azalea_registry::builtin::ItemKind::Bucket,
+                                            )
+                                            .into_iter()
+                                            .next()
+                                            && let Some(menu) = inv2.menu().ok().flatten()
+                                        {
+                                            // P171：bucket 在主背包（不在 hotbar）时，shift_click 到
+                                            // 空 hotbar 槽再选中。根因（实机装水失败）：bucket 在 slot36
+                                            // 主背包，find_hotbar_slot_for 返回 None，start_use_item 手持
+                                            // 非 bucket 装水失败。修复：从主背包 shift_click 到 hotbar。
+                                            let mut hotbar_range = menu.hotbar_slots_range();
+                                            let target_hb = hotbar_range.find(|&s| {
+                                                inv2.slots()
+                                                    .map(|sl| {
+                                                        sl.get(s)
+                                                            .map(|st| st.is_empty())
+                                                            .unwrap_or(false)
+                                                    })
+                                                    .unwrap_or(false)
+                                            });
+                                            if let Some(hb) = target_hb {
+                                                inv2.shift_click(src);
+                                                tokio::time::sleep(
+                                                    std::time::Duration::from_millis(150),
+                                                )
+                                                .await;
+                                                bot.set_selected_hotbar_slot(hb as u8);
+                                                tokio::time::sleep(
+                                                    std::time::Duration::from_millis(150),
+                                                )
+                                                .await;
+                                            }
                                         }
                                     }
                                     let dx = x as f64 + 0.5 - p.x;
