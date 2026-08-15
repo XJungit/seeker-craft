@@ -436,6 +436,10 @@ pub struct BotState {
     /// 找到即改挖软土柱（徒手 ~0.25s/格，比硬方块 8s/格快 32 倍），
     /// 避免死磕硬天花板。Some((x, y, z)) = 软土柱脚坐标。命令结束重置。
     pub mining_above_soft_column: Arc<Mutex<Option<BlockPos>>>,
+    /// P160：make_obsidian 状态机启动 tick。防止状态机在"装水失败/找不到岩浆"
+    /// 时无限重试（每 tick block_interact + pathfinder，拖死 viewer API）。
+    /// 启动时记录 ticks_connected，状态机推进处检查 >600 tick（30s）强制失败。
+    pub make_obsidian_start_tick: Arc<Mutex<Option<u64>>>,
 }
 
 impl Default for BotState {
@@ -469,6 +473,7 @@ impl Default for BotState {
             mine_approach_watchdog: Arc::new(Mutex::new(None)),
             mining_above_no_pick_warned: Arc::new(Mutex::new(false)),
             mining_above_soft_column: Arc::new(Mutex::new(None)),
+            make_obsidian_start_tick: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -2143,6 +2148,10 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             // 注意：tick handler 内严禁 await（会冻结整个事件循环导致 120s 超时）。
                             // 装备 bucket / 装水 / 找岩浆全部在状态机内每 tick 同步推进，不做任何 .await。
                             *state.make_obsidian.lock().unwrap() = Some((count.max(1), 0, None));
+                            // P160：记录启动 tick，状态机推进处检查 >600 tick（30s）强制失败，
+                            // 防止"装水失败/找不到岩浆"无限重试拖死 viewer。
+                            *state.make_obsidian_start_tick.lock().unwrap() =
+                                Some(bot.ticks_connected());
                             // 立即回报"已开始"，让工具层不阻塞等待（真正的完成由状态机结束帧回报）。
                             if let Some(tx) = &result_tx {
                                 let _ = tx.send(format!(
@@ -3711,127 +3720,139 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                 //  完成 remaining==0 或找不到岩浆/没水 → 结束并发结果。
                 if let Some((remaining, phase, ob_pos)) = *state.make_obsidian.lock().unwrap() {
                     let t = bot.ticks_connected();
-                    match phase {
-                        0 => {
-                            // P67c 同步装备水桶：tick handler 内严禁 await，这里用
-                            // set_selected_hotbar_slot 同步把 bucket 切到主手（不等待服务端轮询）。
-                            // 若 bucket 不在 hotbar，则同步 shift_click 到空 hotbar 槽。
-                            if bot
-                                .get_held_item()
-                                .map(|s| {
-                                    let k: azalea_registry::builtin::ItemKind = s.kind();
-                                    k != azalea_registry::builtin::ItemKind::Bucket
-                                        && k != azalea_registry::builtin::ItemKind::WaterBucket
-                                })
-                                .unwrap_or(true)
-                                && let Ok(inv) = bot.get_inventory()
-                            {
-                                if let Some(h) = find_hotbar_slot_for(
-                                    &inv,
-                                    azalea_registry::builtin::ItemKind::Bucket,
-                                ) {
-                                    bot.set_selected_hotbar_slot(h);
-                                } else if let Some(srcs) = Some(find_item_slots(
-                                    &inv,
-                                    azalea_registry::builtin::ItemKind::Bucket,
-                                )) && !srcs.is_empty()
+                    // P160：状态机超时护栏——启动后 >600 tick（30s）仍未完成（典型：
+                    // 装水失败循环 / 找不到岩浆反复重试 / pathfinder 卡死），强制失败，
+                    // 避免无限重试拖死 viewer API（每 tick block_interact+pathfinder）。
+                    let start_tick = *state.make_obsidian_start_tick.lock().unwrap();
+                    if start_tick.is_some_and(|s| t.saturating_sub(s) > 600) {
+                        *state.make_obsidian_start_tick.lock().unwrap() = None;
+                        *state.make_obsidian.lock().unwrap() = None;
+                        let _ = state.evt_tx.send(BotEvent::Chat {
+                            content: "Action output:\nmake_obsidian 超时（30s 未完成）：装水失败或附近无岩浆源。请确认手持 bucket 已装备、且 goto 到水源+岩浆源都在 16m/12m 内再重试。".to_string(),
+                        });
+                        // 跳出本轮（状态机已清空）
+                    } else {
+                        match phase {
+                            0 => {
+                                // P67c 同步装备水桶：tick handler 内严禁 await，这里用
+                                // set_selected_hotbar_slot 同步把 bucket 切到主手（不等待服务端轮询）。
+                                // 若 bucket 不在 hotbar，则同步 shift_click 到空 hotbar 槽。
+                                if bot
+                                    .get_held_item()
+                                    .map(|s| {
+                                        let k: azalea_registry::builtin::ItemKind = s.kind();
+                                        k != azalea_registry::builtin::ItemKind::Bucket
+                                            && k != azalea_registry::builtin::ItemKind::WaterBucket
+                                    })
+                                    .unwrap_or(true)
+                                    && let Ok(inv) = bot.get_inventory()
                                 {
-                                    let menu = inv.menu().ok().flatten();
-                                    if let Some(menu) = menu {
-                                        let hotbar_range = menu.hotbar_slots_range();
-                                        if let Some(slots) = inv.slots() {
-                                            let mut placed = false;
-                                            for hb in hotbar_range {
-                                                if slots
-                                                    .get(hb)
-                                                    .map(|s| s.is_empty())
-                                                    .unwrap_or(false)
-                                                {
-                                                    inv.left_click(*srcs.first().unwrap());
-                                                    inv.left_click(hb);
-                                                    placed = true;
-                                                    break;
+                                    if let Some(h) = find_hotbar_slot_for(
+                                        &inv,
+                                        azalea_registry::builtin::ItemKind::Bucket,
+                                    ) {
+                                        bot.set_selected_hotbar_slot(h);
+                                    } else if let Some(srcs) = Some(find_item_slots(
+                                        &inv,
+                                        azalea_registry::builtin::ItemKind::Bucket,
+                                    )) && !srcs.is_empty()
+                                    {
+                                        let menu = inv.menu().ok().flatten();
+                                        if let Some(menu) = menu {
+                                            let hotbar_range = menu.hotbar_slots_range();
+                                            if let Some(slots) = inv.slots() {
+                                                let mut placed = false;
+                                                for hb in hotbar_range {
+                                                    if slots
+                                                        .get(hb)
+                                                        .map(|s| s.is_empty())
+                                                        .unwrap_or(false)
+                                                    {
+                                                        inv.left_click(*srcs.first().unwrap());
+                                                        inv.left_click(hb);
+                                                        placed = true;
+                                                        break;
+                                                    }
                                                 }
+                                                let _ = placed;
                                             }
-                                            let _ = placed;
                                         }
                                     }
                                 }
-                            }
-                            // 检查手持 water_bucket；没有则自动找水源装水（已装备 bucket）。
-                            let held = bot
-                                .get_held_item()
-                                .map(|s| s.kind().to_string())
-                                .unwrap_or_default();
-                            if !held.contains("water_bucket") {
-                                // 自动装水：扫描半径 16 内水源，对水块 block_interact（持 bucket 右键水→装水）
-                                if let (Ok(p), Ok(world)) = (bot.position(), bot.world()) {
-                                    let wp = p.x.floor() as i32;
-                                    let wy = p.y.floor() as i32;
-                                    let wz = p.z.floor() as i32;
-                                    let world = world.read();
-                                    let mut water: Option<(i32, i32, i32)> = None;
-                                    'wscan: for r in 1..=16i32 {
-                                        for dx in -r..=r {
-                                            for dy in -3..=4i32 {
-                                                for dz in -r..=r {
-                                                    let wx = wp + dx;
-                                                    let wy2 = wy + dy;
-                                                    let wz2 = wz + dz;
-                                                    if let Some(bs) = world.get_block_state(
-                                                        BlockPos::new(wx, wy2, wz2),
-                                                    ) {
-                                                        let kind: azalea_registry::builtin::BlockKind =
+                                // 检查手持 water_bucket；没有则自动找水源装水（已装备 bucket）。
+                                let held = bot
+                                    .get_held_item()
+                                    .map(|s| s.kind().to_string())
+                                    .unwrap_or_default();
+                                if !held.contains("water_bucket") {
+                                    // 自动装水：扫描半径 16 内水源，对水块 block_interact（持 bucket 右键水→装水）
+                                    if let (Ok(p), Ok(world)) = (bot.position(), bot.world()) {
+                                        let wp = p.x.floor() as i32;
+                                        let wy = p.y.floor() as i32;
+                                        let wz = p.z.floor() as i32;
+                                        let world = world.read();
+                                        let mut water: Option<(i32, i32, i32)> = None;
+                                        'wscan: for r in 1..=16i32 {
+                                            for dx in -r..=r {
+                                                for dy in -3..=4i32 {
+                                                    for dz in -r..=r {
+                                                        let wx = wp + dx;
+                                                        let wy2 = wy + dy;
+                                                        let wz2 = wz + dz;
+                                                        if let Some(bs) = world.get_block_state(
+                                                            BlockPos::new(wx, wy2, wz2),
+                                                        ) {
+                                                            let kind: azalea_registry::builtin::BlockKind =
                                                             bs.into();
-                                                        if kind
+                                                            if kind
                                                             == azalea_registry::builtin::BlockKind::Water
                                                         {
                                                             water = Some((wx, wy2, wz2));
                                                             break 'wscan;
                                                         }
+                                                        }
                                                     }
                                                 }
                                             }
                                         }
-                                    }
-                                    drop(world);
-                                    match water {
-                                        Some((wx, wy2, wz2)) => {
-                                            bot.block_interact(BlockPos::new(wx, wy2, wz2));
-                                            // 装水后下一 tick 再检查手持，进入岩浆逻辑
-                                            *state.make_obsidian.lock().unwrap() =
-                                                Some((remaining, 0, None));
-                                        }
-                                        None => {
-                                            let _ = state.evt_tx.send(BotEvent::Chat {
+                                        drop(world);
+                                        match water {
+                                            Some((wx, wy2, wz2)) => {
+                                                bot.block_interact(BlockPos::new(wx, wy2, wz2));
+                                                // 装水后下一 tick 再检查手持，进入岩浆逻辑
+                                                *state.make_obsidian.lock().unwrap() =
+                                                    Some((remaining, 0, None));
+                                            }
+                                            None => {
+                                                let _ = state.evt_tx.send(BotEvent::Chat {
                                                 content: "Action output:\nmake_obsidian 失败：附近（半径16）未找到水源。请先 goto 到河流/湖泊附近再调用。".to_string(),
                                             });
-                                            *state.make_obsidian.lock().unwrap() = None;
+                                                *state.make_obsidian.lock().unwrap() = None;
+                                            }
                                         }
+                                    } else {
+                                        *state.make_obsidian.lock().unwrap() = None;
                                     }
-                                } else {
-                                    *state.make_obsidian.lock().unwrap() = None;
-                                }
-                            } else if let (Ok(p), Ok(world)) = (bot.position(), bot.world()) {
-                                let wp = p.x.floor() as i32;
-                                let wy = p.y.floor() as i32;
-                                let wz = p.z.floor() as i32;
-                                let world = world.read();
-                                // 扫描半径 12 内岩浆方块（Lava）；视作岩浆源处理。
-                                let mut found: Option<(i32, i32, i32)> = None;
-                                'scan: for r in 1..=12i32 {
-                                    for dx in -r..=r {
-                                        for dy in -2..=4i32 {
-                                            for dz in -r..=r {
-                                                let lx = wp + dx;
-                                                let ly = wy + dy;
-                                                let lz = wz + dz;
-                                                if let Some(bs) =
-                                                    world.get_block_state(BlockPos::new(lx, ly, lz))
-                                                {
-                                                    let kind: azalea_registry::builtin::BlockKind =
+                                } else if let (Ok(p), Ok(world)) = (bot.position(), bot.world()) {
+                                    let wp = p.x.floor() as i32;
+                                    let wy = p.y.floor() as i32;
+                                    let wz = p.z.floor() as i32;
+                                    let world = world.read();
+                                    // 扫描半径 12 内岩浆方块（Lava）；视作岩浆源处理。
+                                    let mut found: Option<(i32, i32, i32)> = None;
+                                    'scan: for r in 1..=12i32 {
+                                        for dx in -r..=r {
+                                            for dy in -2..=4i32 {
+                                                for dz in -r..=r {
+                                                    let lx = wp + dx;
+                                                    let ly = wy + dy;
+                                                    let lz = wz + dz;
+                                                    if let Some(bs) = world
+                                                        .get_block_state(BlockPos::new(lx, ly, lz))
+                                                    {
+                                                        let kind: azalea_registry::builtin::BlockKind =
                                                         bs.into();
-                                                    if kind
+                                                        if kind
                                                         == azalea_registry::builtin::BlockKind::Lava
                                                     {
                                                         // 找岩浆旁的空气邻居放水
@@ -3851,93 +3872,96 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                                             }
                                                         }
                                                     }
+                                                    }
                                                 }
                                             }
                                         }
                                     }
-                                }
-                                drop(world);
-                                match found {
-                                    Some((nx, ny, nz)) => {
-                                        // 右键该空气块放水→黑曜石（需手持 water_bucket，由 LLM 保证）
-                                        bot.block_interact(BlockPos::new(nx, ny, nz));
-                                        *state.make_obsidian.lock().unwrap() =
-                                            Some((remaining, 1, Some((nx, ny, nz))));
-                                    }
-                                    None => {
-                                        let _ = state.evt_tx.send(BotEvent::Chat {
+                                    drop(world);
+                                    match found {
+                                        Some((nx, ny, nz)) => {
+                                            // 右键该空气块放水→黑曜石（需手持 water_bucket，由 LLM 保证）
+                                            bot.block_interact(BlockPos::new(nx, ny, nz));
+                                            *state.make_obsidian.lock().unwrap() =
+                                                Some((remaining, 1, Some((nx, ny, nz))));
+                                        }
+                                        None => {
+                                            let _ = state.evt_tx.send(BotEvent::Chat {
                                             content: "Action output:\nmake_obsidian 失败：附近（半径12）未找到岩浆源。请先 goto 到岩浆湖附近再调用。".to_string(),
                                         });
-                                        *state.make_obsidian.lock().unwrap() = None;
-                                    }
-                                }
-                            }
-                        }
-                        1 => {
-                            // 等 ~80 tick(4s) 让水与岩浆反应生成黑曜石。
-                            // 用 ob_pos 记录起始 tick 比较麻烦，这里简单用 ticks%80==0 推进到挖阶段。
-                            if t.is_multiple_of(80) || ob_pos.is_none() {
-                                if let Some((_nx, _ny, _nz)) = ob_pos {
-                                    *state.make_obsidian.lock().unwrap() =
-                                        Some((remaining, 2, ob_pos));
-                                } else {
-                                    *state.make_obsidian.lock().unwrap() =
-                                        Some((remaining, 0, None));
-                                }
-                            }
-                        }
-                        2 => {
-                            if let Some((nx, ny, nz)) = ob_pos {
-                                // 黑曜石生成在岩浆源处（邻居的反方向）。尝试挖 (nx, ny-1, nz) 及 ob_pos 自身。
-                                let targets = [(nx, ny - 1, nz), (nx, ny, nz)];
-                                let mut mined = false;
-                                if let Ok(world) = bot.world() {
-                                    let world = world.read();
-                                    for (tx, ty, tz) in targets {
-                                        if let Some(bs) =
-                                            world.get_block_state(BlockPos::new(tx, ty, tz))
-                                        {
-                                            let kind: azalea_registry::builtin::BlockKind =
-                                                bs.into();
-                                            if kind == azalea_registry::builtin::BlockKind::Obsidian
-                                            {
-                                                bot.start_mining(BlockPos::new(tx, ty, tz));
-                                                mined = true;
-                                                break;
-                                            }
+                                            *state.make_obsidian.lock().unwrap() = None;
                                         }
                                     }
                                 }
-                                if mined {
-                                    let _ = state.evt_tx.send(BotEvent::Chat {
-                                        content: format!(
-                                            "[造黑曜石] 已挖下 1 块黑曜石，剩余 {}",
-                                            remaining.saturating_sub(1)
-                                        ),
-                                    });
-                                    let left = remaining.saturating_sub(1);
-                                    if left == 0 {
-                                        let _ = state.evt_tx.send(BotEvent::Chat {
-                                            content: "Action output:\nmake_obsidian 完成：已收集所需黑曜石。可用于搭建下界传送门框架。".to_string(),
-                                        });
-                                        *state.make_obsidian.lock().unwrap() = None;
+                            }
+                            1 => {
+                                // 等 ~80 tick(4s) 让水与岩浆反应生成黑曜石。
+                                // 用 ob_pos 记录起始 tick 比较麻烦，这里简单用 ticks%80==0 推进到挖阶段。
+                                if t.is_multiple_of(80) || ob_pos.is_none() {
+                                    if let Some((_nx, _ny, _nz)) = ob_pos {
+                                        *state.make_obsidian.lock().unwrap() =
+                                            Some((remaining, 2, ob_pos));
                                     } else {
                                         *state.make_obsidian.lock().unwrap() =
-                                            Some((left, 0, None));
+                                            Some((remaining, 0, None));
+                                    }
+                                }
+                            }
+                            2 => {
+                                if let Some((nx, ny, nz)) = ob_pos {
+                                    // 黑曜石生成在岩浆源处（邻居的反方向）。尝试挖 (nx, ny-1, nz) 及 ob_pos 自身。
+                                    let targets = [(nx, ny - 1, nz), (nx, ny, nz)];
+                                    let mut mined = false;
+                                    if let Ok(world) = bot.world() {
+                                        let world = world.read();
+                                        for (tx, ty, tz) in targets {
+                                            if let Some(bs) =
+                                                world.get_block_state(BlockPos::new(tx, ty, tz))
+                                            {
+                                                let kind: azalea_registry::builtin::BlockKind =
+                                                    bs.into();
+                                                if kind
+                                                    == azalea_registry::builtin::BlockKind::Obsidian
+                                                {
+                                                    bot.start_mining(BlockPos::new(tx, ty, tz));
+                                                    mined = true;
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if mined {
+                                        let _ = state.evt_tx.send(BotEvent::Chat {
+                                            content: format!(
+                                                "[造黑曜石] 已挖下 1 块黑曜石，剩余 {}",
+                                                remaining.saturating_sub(1)
+                                            ),
+                                        });
+                                        let left = remaining.saturating_sub(1);
+                                        if left == 0 {
+                                            let _ = state.evt_tx.send(BotEvent::Chat {
+                                            content: "Action output:\nmake_obsidian 完成：已收集所需黑曜石。可用于搭建下界传送门框架。".to_string(),
+                                        });
+                                            *state.make_obsidian.lock().unwrap() = None;
+                                        } else {
+                                            *state.make_obsidian.lock().unwrap() =
+                                                Some((left, 0, None));
+                                        }
+                                    } else {
+                                        // 没生成黑曜石（可能水没流到岩浆），重试
+                                        *state.make_obsidian.lock().unwrap() =
+                                            Some((remaining, 0, None));
                                     }
                                 } else {
-                                    // 没生成黑曜石（可能水没流到岩浆），重试
                                     *state.make_obsidian.lock().unwrap() =
                                         Some((remaining, 0, None));
                                 }
-                            } else {
-                                *state.make_obsidian.lock().unwrap() = Some((remaining, 0, None));
+                            }
+                            _ => {
+                                *state.make_obsidian.lock().unwrap() = None;
                             }
                         }
-                        _ => {
-                            *state.make_obsidian.lock().unwrap() = None;
-                        }
-                    }
+                    } // P160 else 闭合（超时未触发时的正常推进）
                 }
                 // P60c: 地下强制楼梯脱困（无条件运行，不依赖 LLM 是否调用 mine_above）。
                 // 当 bot 在地下 (Y<62) 且头顶是空气（处于 2 格高空气袋），持续挖掉头顶上方

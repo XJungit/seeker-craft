@@ -199,6 +199,7 @@ impl AzaleaBot {
             no_move_ticks: Arc::new(Mutex::new(0)),
             last_seen_pos: Arc::new(Mutex::new((0, 0, 0))),
             make_obsidian: Arc::new(Mutex::new(None)),
+            make_obsidian_start_tick: Arc::new(Mutex::new(None)),
             cancel_flag: cancel_flag.clone(),
             last_mine_eff: Arc::new(Mutex::new(None)),
             mode_switches: Arc::new(Mutex::new(std::collections::HashSet::new())),
