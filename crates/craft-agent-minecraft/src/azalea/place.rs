@@ -99,13 +99,17 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
     // pillar-up 的合法操作（MC 允许在玩家头顶上方 1 格放方块，玩家站上去上升），
     // 原实现把 head 格也排除导致 pillar-up 永远失败（本会话实测 place 头顶反复被
     // 自动重定位到旁边地面）。foot 格（自己脚下）仍排除：放自己脚下会把自己卡进方块。
+    // P159b（2026-08-15）：**head 格 (y+1) 也必须排除**——MC 服务端拒绝在玩家碰撞箱
+    // （foot~foot+1.8，即 y 与 y+1 两格）内放置方块。原 P159 只排 foot 导致 bot 站在
+    // 目标位置正下方时 place 被服务端静默拒绝（P5 自动重定位乱放），搭传送门/建筑框架
+    // 永远无法精确成形。真正的 pillar-up 是放 y+2（头顶上方，玩家跳上去），不受影响。
     let bot_pos = bot.position().ok();
     let pos_blocked_by_bot = if let Some(bp) = bot_pos {
         let bx = bp.x.floor() as i32;
         let by = bp.y.floor() as i32;
         let bz = bp.z.floor() as i32;
-        // bot 占据 foot (bx,by,bz)；head 格 (bx,by+1,bz) 允许放置（pillar-up 需要）
-        pos.x == bx && pos.z == bz && pos.y == by
+        // bot 碰撞箱占据 foot (bx,by,bz) 与 head (bx,by+1,bz)；y+2 及以上允许（pillar-up）
+        pos.x == bx && pos.z == bz && (pos.y == by || pos.y == by + 1)
     } else {
         false
     };
@@ -696,8 +700,8 @@ fn find_valid_placement_nearby_radius(
                     continue;
                 }
                 let pos = BlockPos::new(origin.x + dx, y, origin.z + dz);
-                // 排除 bot 自身占据的 foot 格；head 格不再排除（P159：pillar-up 需要）
-                if pos.x == bot_x && pos.z == bot_z && pos.y == bot_y {
+                // 排除 bot 自身占据的 foot+head 格（碰撞箱在 y~y+1.8，两格都不能放）
+                if pos.x == bot_x && pos.z == bot_z && (pos.y == bot_y || pos.y == bot_y + 1) {
                     continue;
                 }
                 let is_air = world
@@ -764,9 +768,8 @@ fn find_valid_placement_nearby(bot: &Client, origin: BlockPos) -> Option<BlockPo
                     continue; // 跳过 origin 本身（已知无效）
                 }
                 let pos = BlockPos::new(origin.x + dx, y, origin.z + dz);
-                // 排除 bot 自身占据的 foot 格（防止放自己脚下把自己卡进方块）；
-                // head 格不再排除（P159：pillar-up 需要在头顶放方块上升）。
-                if pos.x == bot_x && pos.z == bot_z && pos.y == bot_y {
+                // 排除 bot 自身占据的 foot+head 格（碰撞箱在 y~y+1.8，两格都不能放）
+                if pos.x == bot_x && pos.z == bot_z && (pos.y == bot_y || pos.y == bot_y + 1) {
                     continue;
                 }
                 let is_air = world
