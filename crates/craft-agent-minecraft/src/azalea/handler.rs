@@ -3975,6 +3975,12 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                     .unwrap()
                                     .map(|t0| bot.ticks_connected().saturating_sub(t0))
                                     .unwrap_or(u64::MAX);
+                                // P181b 诊断：确认冷却状态与是否尝试上升
+                                eprintln!(
+                                    "[P181b] P60b since_fail={since_fail} calc={} exec={} t={t}",
+                                    bot.is_calculating_path(),
+                                    bot.is_executing_path()
+                                );
                                 if since_fail > 100
                                     && !bot.is_calculating_path()
                                     && !bot.is_executing_path()
@@ -4011,6 +4017,14 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                         .unwrap()
                         .map(|t0| bot.ticks_connected().saturating_sub(t0))
                         .unwrap_or(u64::MAX);
+                    // P181b 诊断
+                    if t.is_multiple_of(40) {
+                        eprintln!(
+                            "[P181b] P60main since_up={since_up} calc={} exec={} t={t}",
+                            bot.is_calculating_path(),
+                            bot.is_executing_path()
+                        );
+                    }
                     if !bot.is_calculating_path()
                         && !bot.is_executing_path()
                         && t.is_multiple_of(40)
