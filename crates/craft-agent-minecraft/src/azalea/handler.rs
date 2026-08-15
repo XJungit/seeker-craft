@@ -453,6 +453,9 @@ pub struct BotState {
     /// 设置，P60c 地下脱困检测到该标志时跳过上升，避免装水/装岩浆被脱困打断。
     /// (起始 tick, 截止 tick)：截止前 P60c 不触发。
     pub interact_hold_until: Arc<Mutex<Option<u64>>>,
+    /// P172：P60c 强制上升失败冷却 tick。YGoal 上升 pathfinder empty path 时记录，
+    /// 之后 100 tick 内跳过上升（开阔洞穴无需上升），防止无限循环干扰其他命令。
+    pub escape_up_cooldown: Arc<Mutex<Option<u64>>>,
 }
 
 impl Default for BotState {
@@ -489,6 +492,7 @@ impl Default for BotState {
             mining_above_soft_column: Arc::new(Mutex::new(None)),
             make_obsidian_start_tick: Arc::new(Mutex::new(None)),
             interact_hold_until: Arc::new(Mutex::new(None)),
+            escape_up_cooldown: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -4227,18 +4231,26 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             if above_is_solid && !bot.is_mining() {
                                 bot.start_mining(above_head);
                             } else if !above_is_solid {
-                                // 头顶上方已空：强制上升。P106：同 P60b，用 YGoal 而非
-                                // BlockPosGoal(y+1)（目标格是空气，pathfinder empty path）。
-                                use azalea::pathfinder::PathfinderOpts;
-                                use std::time::Duration;
-                                let opts = PathfinderOpts::new()
-                                    .allow_mining(true)
-                                    .min_timeout(Duration::from_secs(1))
-                                    .max_timeout(Duration::from_secs(10));
-                                bot.start_goto_with_opts(
-                                    YGoal::from(BlockPos::new(cx, y + 2, cz)),
-                                    opts,
-                                );
+                                // 头顶上方已空（开阔）：不需要强制上升——P60c 原始逻辑在此
+                                // 用 YGoal 强制上升，但黑曜石区等开阔洞穴（Y=40）也满足
+                                // y<62+head_air+above 空，P60c 每 tick 尝试 YGoal 45 上升，
+                                // pathfinder 反复 empty path（上方复杂），无限循环干扰其他
+                                // 命令（实机：interact 装水时手持被切回镐，P171 装水失败）。
+                                // 修复：开阔处不上升（本来就没被困）；仅头顶有实心（被堵）
+                                // 时挖开上方，这是 P60c 真正要解决的"被困"场景。
+                                // 但保留一个轻量看门狗：若 bot 持续 100 tick 完全没动（被
+                                // 方块卡死且挖不掉），记录 cooldown 让后续 tick 不再尝试，
+                                // 避免 pathfinder 空转。
+                                let since_fail = state
+                                    .escape_up_cooldown
+                                    .lock()
+                                    .unwrap()
+                                    .map(|t| bot.ticks_connected().saturating_sub(t))
+                                    .unwrap_or(u64::MAX);
+                                if since_fail > 100 {
+                                    *state.escape_up_cooldown.lock().unwrap() =
+                                        Some(bot.ticks_connected());
+                                }
                             }
                         }
                         // 看门狗：完全卡死（头顶是实心、无法 ascent）时退回 mining_above 模式。
