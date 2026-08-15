@@ -9,6 +9,8 @@ import os from 'node:os'
 
 // 自动探测 DSH 的 node_modules 根（@deepseek-ai/dsh 所在目录）。
 // 候选来源：环境变量 > npm 全局根 > pnpm 全局根。找不到则给出可读错误。
+// 注意：DSH 依赖（schemastery/dsh-tools/cordis）位于其自身 node_modules 下的
+// scoped 路径（@deepseek-ai/schemastery 等），探测时同时接受 scoped 与非 scoped。
 function detectDshNpxRoot() {
   if (process.env.DSH_NPX_ROOT) return process.env.DSH_NPX_ROOT
   const candidates = []
@@ -18,8 +20,16 @@ function detectDshNpxRoot() {
   } catch {}
   const pnpmGlobal = path.join(os.homedir(), 'AppData', 'Local', 'pnpm', 'global', '5', 'node_modules', '@deepseek-ai', 'dsh', 'node_modules')
   candidates.push(pnpmGlobal)
+  // 依赖探测键：既接受非 scoped（schemastery）也接受 scoped（@deepseek-ai/schemastery）。
+  // DSH 的依赖实际装在 @deepseek-ai/dsh/node_modules/@deepseek-ai/ 下（scoped）。
   for (const c of candidates) {
-    if (existsSync(path.join(c, 'schemastery'))) return c
+    if (
+      existsSync(path.join(c, 'schemastery')) ||
+      existsSync(path.join(c, '@deepseek-ai', 'schemastery')) ||
+      existsSync(path.join(c, '@deepseek-ai', 'dsh-tools'))
+    ) {
+      return c
+    }
   }
   console.error(`❌ 未定位 DSH node_modules（@deepseek-ai/dsh）。请先安装 DeepSeek Harness，或设置 DSH_NPX_ROOT 指向其 node_modules。\n   已尝试: ${candidates.join(' | ')}`)
   process.exit(1)

@@ -8,12 +8,12 @@ craft-bot 预设的 viewer 桥插件（DSH 侧）。让 [DSH](https://github.com
 | 工具 | 端点 | 说明 |
 |---|---|---|
 | `game_state()` | `GET /api/game-state` | 读取实时世界状态（scene_desc 中文摘要 + 结构化字段） |
-| `bot_tool(name, args)` | `POST /api/bot_tool` | 执行 54 个 Minecraft 工具之一（含自动修正） |
+| `bot_tool(name, args)` | `POST /api/bot_tool` | 执行 49 个 Minecraft 工具之一（含自动修正） |
 | `set_goal(text)` | `POST /api/goal` | 设置 bot 运营目标 |
 
 - viewer 地址默认 `http://127.0.0.1:8080`，可用环境变量 `DSH_CRAFT_VIEWER_URL` 覆盖。
 - `bot_tool` 复用与 agent_loop 完全相同的工具注册表（`create_mc_azalea_tools_full_with_semantic`，
-  含 54 工具 + `remember` 语义记忆），
+  含 49 工具 + `remember` 语义记忆），
   P100/P101/P102/P132 的派发时自动修正在 `GameTool::execute` 闭包内，桥接天然保留。
 
 ## 内嵌仪表盘（client 半边）
@@ -57,6 +57,13 @@ craft-bot 预设的 viewer 桥插件（DSH 侧）。让 [DSH](https://github.com
 > client 半边（client.js 浏览器面板）不依赖 hostTools：只要包被 loader 以包名加载，
 > DSH 的 client-modules 就会独立发现 `dsh.client` 声明并注入浏览器。
 
+> **client inject 最小声明（维护注意）**：`package.json` 的 `dsh.client.inject` 必须与
+> `client.js` 的 `exports.inject` **一致且最小**——只声明实际注入的 Service 短名。
+> 当前两者都是 `["sessions"]`（client 只订阅 `ctx.sessions.list` 判断 craft-bot 预设）。
+> 不要加未使用的注入名：DSH client-modules 的 boot 会为 manifest 每个 inject 建 fiber
+> 注入等待，未解析的 Service 名会导致 `pending (waiting for service...)` 乃至 boot
+> fail-loud（`assertEntriesActive`）。`slots`/`locale` 等 UI 包不注册短名 Service，不要列入。
+
 ## Prompt 贡献（{{...}} 变量 与 动态上下文）
 
 插件向 DSH 的 `systemPrompt` 注册**两类** prompt 贡献——**静态变量**（进 system 提示段，
@@ -65,7 +72,7 @@ craft-bot 预设的 viewer 桥插件（DSH 侧）。让 [DSH](https://github.com
 
 | 名称 | 注册方式 | 来源 | 说明 |
 |---|---|---|---|
-| `{{tool_list}}` | `systemPrompt.variable`（→ system 段） | 静态镜像 `ALL_TOOL_NAMES` | 54 工具清单（`·` 分隔），字节稳定 |
+| `{{tool_list}}` | `systemPrompt.variable`（→ system 段） | 静态镜像 `ALL_TOOL_NAMES` | 49 工具清单（`·` 分隔），字节稳定 |
 | `{{viewer_url}}` | `systemPrompt.variable`（→ system 段） | `DSH_CRAFT_VIEWER_URL` 或默认 | viewer 地址，字节稳定 |
 | `bot_state` | `systemPrompt.context`（→ user 快照） | `GET /api/game-state`（30s 缓存后台刷新） | 当前 bot 状态快照（中文摘要）；内容变化时才追加，模型历史中始终只有最新一份 |
 
@@ -142,7 +149,15 @@ node scripts/verify-proxy.mjs
 
 # 4) client 半边 agentPreset 判断（craft-bot 注册 / code 不注册）
 node scripts/verify-client.mjs
+
+# 5) 纯工具清单比对（零依赖、任何环境可跑；index.js::TOOL_NAMES == rust ALL_TOOL_NAMES）
+node scripts/verify-tool-names.mjs
 ```
+
+> `verify-in-harness.mjs`（第 2 步）依赖 DSH node_modules，自动探测 npm/pnpm 全局根下的
+> `@deepseek-ai/dsh/node_modules`（接受 scoped 路径 `@deepseek-ai/schemastery`/`dsh-tools`）；
+> 探测失败时用 `DSH_NPX_ROOT` 显式指定。若只想快速确认工具清单同步，用第 5 步的
+> `verify-tool-names.mjs`（无需 DSH）。
 
 端到端（DSH 会话内）：`game_state` 感知 → `bot_tool(name, args)` 执行 → `set_goal(text)` 设目标。
 三工具出现在工具目录即挂载成功。`bot_tool` 的参数按各工具 schema 传（如 `equip` 需
