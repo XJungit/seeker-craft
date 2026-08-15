@@ -4001,10 +4001,21 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                     // An active goal with no calculation or execution can be
                     // permanent no-path retry. Reset it periodically instead of
                     // letting it suppress every future ascent attempt.
+                    // P181：这个 40-tick 兜底也会在开阔洞穴（黑曜石区 Y=40）反复
+                    // YGoal(y+5)=45 上升，pathfinder empty path 空转（实机日志疯狂
+                    // YGoal 45）。复用 escape_up_cooldown：100 tick 内已尝试过上升
+                    // 则跳过，避免与 P60b 一起空转抢占 pathfinder。
+                    let since_up = state
+                        .escape_up_cooldown
+                        .lock()
+                        .unwrap()
+                        .map(|t0| bot.ticks_connected().saturating_sub(t0))
+                        .unwrap_or(u64::MAX);
                     if !bot.is_calculating_path()
                         && !bot.is_executing_path()
                         && t.is_multiple_of(40)
                         && state.mining_above_soft_column.lock().unwrap().is_none()
+                        && since_up > 100
                     {
                         use azalea::pathfinder::PathfinderOpts;
                         use std::time::Duration;
@@ -4026,6 +4037,8 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             .min_timeout(Duration::from_secs(2))
                             .max_timeout(Duration::from_secs(30));
                         bot.start_goto_with_opts(YGoal::from(target), opts);
+                        // P181：记录上升尝试 tick，冷却 100 tick 内不再尝试
+                        *state.escape_up_cooldown.lock().unwrap() = Some(bot.ticks_connected());
                     }
                 }
                 // P67：make_obsidian 状态机。每 tick 推进：
