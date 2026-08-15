@@ -2121,6 +2121,23 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                     .sqrt()
                                 })
                                 .unwrap_or(f64::MAX);
+                            // P167：mine 目标距 bot 过远（>40m）或 Y 差过大（>12）时，
+                            // pathfinder 全图寻路会严重漂移（实机：mine 距 3m 的目标被拉到
+                            // 9-24m 外，Y 从 93 漂到 85）——盲目 goto 反而更远。
+                            // 直接报错提示，让 LLM 用 /tp 或 goto 分小段接近。
+                            let now_pos_y = bot.position().ok().map(|p| p.y).unwrap_or(my as f64);
+                            if mine_dist > 40.0 || (now_pos_y - my as f64).abs() > 12.0 {
+                                *state.mine_approach_watchdog.lock().unwrap() = None;
+                                if let Some(tx) = &result_tx {
+                                    let _ = tx.send(format!(
+                                        "Action output:\nmine ({mx},{my},{mz}) 距 bot {:.0}m（Y 差 {:.0}），过远——pathfinder 全图寻路会漂移。\
+                                        建议：1) 先 /tp 到目标附近（确认可站立）再 mine 2) 或分小段 goto 接近。",
+                                        mine_dist, (now_pos_y - my as f64).abs()
+                                    ));
+                                }
+                                state.action_mgr.clear_pending();
+                                return bot;
+                            }
                             if mine_dist > 2.5 {
                                 // P155：mine 靠近看门狗——pathfinder 找不到路径时
                                 // start_goto(RadiusGoal) 永不到达，靠近分支无限循环。
