@@ -84,6 +84,10 @@ pub struct WorldState {
     pub held_item: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected_slot: Option<usize>,
+    /// 世界记忆（邻近记忆 + 锚点），供前端"世界记忆库"面板可视化。
+    /// 结构：`{ "cells": [...], "anchors": [...] }`，缺省不序列化。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub memory: Option<serde_json::Value>,
 }
 
 /// 移动方向（WASD 映射）

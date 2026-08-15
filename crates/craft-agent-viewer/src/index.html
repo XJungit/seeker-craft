@@ -310,6 +310,32 @@ function renderMemory(d){
   list.innerHTML=html;
 }
 
+// 世界记忆库面板：直接接收 st.memory（{cells:[...], anchors:[...]}）渲染
+function renderMemoryPanel(mem){
+  const cells=Array.isArray(mem.cells)?mem.cells:[];
+  const anchors=Array.isArray(mem.anchors)?mem.anchors:[];
+  document.getElementById("memCells").textContent=cells.length;
+  document.getElementById("memAnchors").textContent=anchors.length;
+  const list=document.getElementById("memList");
+  if(!cells.length && !anchors.length){
+    list.innerHTML='<div class="empty" style="color:var(--muted);text-align:center;margin-top:10px">暂无记忆</div>';
+    return;
+  }
+  let html="";
+  for(const a of anchors){
+    const p=a.pos?`(${a.pos.x},${a.pos.y},${a.pos.z})`:"";
+    html+=`<div class="mem-item anchor"><span class="mk Note">锚</span><span>${esc(a.name)}</span><span class="pos">${esc(a.label||"")}</span><span class="anc">${p}</span></div>`;
+  }
+  for(const c of cells){
+    const kc=MEM_KIND_CLASS[c.kind]||"Note";
+    const kl=MEM_KIND_LABEL[c.kind]||c.kind;
+    const p=`(${c.pos.x},${c.pos.y},${c.pos.z})`;
+    const dep=c.depleted?'<span class="dep">已耗尽</span>':"";
+    html+=`<div class="mem-item"><span class="mk ${kc}">${kl}</span><span>${esc(c.label||c.item||"")}</span><span class="pos">${p}</span>${dep}</div>`;
+  }
+  list.innerHTML=html;
+}
+
 let lastEventCount = 0;
 function render(data){
   document.getElementById("stTools").textContent=data.tool_total??0;
@@ -615,6 +641,10 @@ async function pollGameState(){
     if(st.scene_desc){
       const pt=document.getElementById("perceiveText");
       if(pt)pt.textContent=st.scene_desc;
+    }
+    // 世界记忆库：直接用 st.memory（{cells,anchors}）实时刷新
+    if(st.memory&&typeof st.memory==="object"){
+      renderMemoryPanel(st.memory);
     }
     // 背包
     if(st.inventory){

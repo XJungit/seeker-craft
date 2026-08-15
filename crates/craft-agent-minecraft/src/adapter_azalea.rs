@@ -417,6 +417,7 @@ impl MinecraftAzaleaAdapter {
                                 selected_slot: game_state["selected_slot"]
                                     .as_u64()
                                     .map(|v| v as usize),
+                                memory: build_memory_json(g.memory.as_ref(), position),
                             });
                         }
                     } else {
@@ -462,6 +463,7 @@ impl MinecraftAzaleaAdapter {
                 inventory: None,
                 held_item: None,
                 selected_slot: None,
+                memory: None,
             })
         }
     }
@@ -537,6 +539,19 @@ impl MinecraftAzaleaAdapter {
         let timeout_ms = (ticks * 50 * 2).clamp(1_000, 120_000);
         self.exec_mc_sync(mc, timeout_ms)
     }
+}
+
+/// 构建前端"世界记忆库"面板用的记忆 JSON：`{ "cells": [...], "anchors": [...] }`。
+/// cells = 以当前位置为中心的邻近记忆（半径 64，含已耗尽标记），anchors = 全部命名锚点。
+fn build_memory_json(memory: Option<&WorldMemory>, pos: azalea::Vec3) -> Option<serde_json::Value> {
+    let mem = memory?;
+    let around = MemoryPos::new(pos.x.floor() as i32, pos.y.floor() as i32, pos.z.floor() as i32);
+    let cells = mem.nearby(around, 64, true);
+    let anchors = mem.anchors();
+    Some(serde_json::json!({
+        "cells": cells,
+        "anchors": anchors,
+    }))
 }
 
 /// 检测 handler 回传的消息是否表示失败。
