@@ -8,7 +8,7 @@
 [![Docs](https://img.shields.io/github/actions/workflow/status/XJungit/seeker-craft/deploy-docs.yml?label=docs&logo=github)](https://github.com/XJungit/seeker-craft/actions/workflows/deploy-docs.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust: nightly-2026-07-21](https://img.shields.io/badge/rust-nightly--2026--07--21-orange.svg)](rust-toolchain.toml)
-[![Release: v1.1.0](https://img.shields.io/badge/release-v1.1.0-blue.svg)](https://github.com/XJungit/seeker-craft/releases)
+[![Release: v1.2.0](https://img.shields.io/badge/release-v1.2.0-blue.svg)](https://github.com/XJungit/seeker-craft/releases)
 
 **An LLM-driven Minecraft bot that beats the Ender Dragon. Rust + Azalea protocol client, no mods, no screenshots — a real protocol-level player that observes, plans, and executes through typed tools.**
 
@@ -115,7 +115,7 @@ azalea (vendor) ──► MC server (TCP)
 
 All 23 tasks (6 tiers) ship as machine-checkable JSON in [`data/tasks/`](data/tasks/).
 
-## Current Progress (2026-08-15 · v1.1.0)
+## Current Progress (2026-08-15 · v1.2.0)
 
 **Verified end-to-end (live server, no mods):**
 

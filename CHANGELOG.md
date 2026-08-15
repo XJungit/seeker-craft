@@ -7,6 +7,64 @@ with [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The project is
 currently in active development as a single-maintainer project; `v1.0.0` is the
 first tagged **1.0 release** (DSH bridge mode is the only supported usage).
 
+## [1.2.0] - 2026-08-15
+
+### Added
+
+- **Structured `armor` field in `WorldState`** (P188) — `/api/game-state` now exposes
+  `armor: [helmet, chestplate, leggings, boots]` (order matches Player menu slots 5–8,
+  `"无"` when empty). Previously armor was only embedded in the `scene_desc` text, so
+  API consumers reading `armor.*` got an empty value and could misread the bot as
+  having lost its gear. Live-verified: `armor=[diamond_helmet, diamond_chestplate,
+  diamond_leggings, diamond_boots]`.
+- **Viewer dashboard enrichments** — embedded dashboard now live-refreshes the LLM
+  perception, shows the world-memory library (Rust-side `WorldState.memory`), an armor
+  area (slots 5–8), and portal/kill-count stats; no-data fields (light/weather/time)
+  show `-` instead of misleading zeros.
+- **dsh-bridge `bot_state` byte-stability** — scene-desc enumeration entries are
+  string-sorted (`normalizeSceneDesc`) so an idle bot produces byte-identical text and
+  no longer triggers spurious context snapshots (P158).
+- **craft-bot preset persona overhaul** — dual-role (MC player + self-evolving
+  maintainer), principle-based instead of manual-style, plus backpack/chest-memory/MC
+  knowledge/long-run discipline sections.
+
+### Changed
+
+- **Tool set 54 → 49** — removed 5 dead goal/task shell tools
+  (`set_goal` / `pause_goal` / `resume_goal` / `task_complete` / `task_retry`), P3
+  in-bot agent-loop remnants with no consumer. Synced all 6 contract points
+  (`ALL_TOOL_NAMES`, `META_TOOL_NAMES`, registration, `parse_step`, dsh-bridge
+  `TOOL_NAMES` mirror, docs bilingual/ARCHITECTURE/benchmarks/preset). Verified by
+  `verify-in-harness.mjs` (49 rust == bridge).
+- **`use_item` timeout 1s → 6s** — the handler flow (do_equip incl. hotbar eviction +
+  set_direction + hit_result + start_use_item + consume verify) totals 3–5s; the old
+  2s derived timeout fired mid-flight, leaving the command running in the background
+  with stale state. Live-verified with flint_and_steel (no more "命令超时").
+- **`chest_withdraw` precise count + explicit full-inventory error** — old code
+  shift-clicked the whole stack (count ignored; requesting 5 pulled 64) and silently
+  returned +0 when the inventory was full. Now splits stacks via left_click +
+  right_click when `count < stack`, and returns an explicit "背包已满" error instead
+  of a silent no-op. Live-verified: `count=5 → actual +5`.
+
+### Fixed
+
+- **Interact/escape/obsidian chain (P156–P188)** — bucket water interactions now use
+  face-toward + `start_use_item` (P161) / `block_interact` water-source force_block
+  (P182), auto-equip the empty bucket before liquid interactions (P161b/P171/P173),
+  pause P60 escape during interactions (P161d), and make_obsidian got a state-machine
+  timeout guard (P160). Escape logic gained cooldowns (P177/P181/P181b), open-cave
+  no-forced-rise (P172), and pickaxe preservation during auto-equip (P174/P175).
+- **Place/pillar support (P159–P164)** — place can target head-level (P159), auto-lays
+  cobblestone support when the target has a void below (P163 series), re-equips the
+  original item after fill placement (P170), and excludes the bot's own collision
+  cells (P159b).
+- **Pickup/goto/pathfinder (P162–P169)** — goto timeout 30→400 ticks with in-flight
+  stuck detection (P162), pickup uses RadiusGoal for far items and skips >4 Y-gap
+  drops (P166/P168/P169), mine rejects far/high targets (P167).
+- **Viewer/preset/doc sync** — hotbar/slot mapping corrected to real MC client layout,
+  world-memory line-wrapping, `53→54` (then `54→49`) doc counts, obsolete scripts
+  removed, azalea fork synced upstream.
+
 ## [1.1.0] - 2026-08-15
 
 ### Added
