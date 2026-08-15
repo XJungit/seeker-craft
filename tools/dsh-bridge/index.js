@@ -117,7 +117,9 @@ const TOOL_NAMES = [
 let botStateCache = { at: 0, text: null }
 const BOT_STATE_TTL_MS = 30000
 
-/** 后台刷新 bot 状态缓存（同步 provider 只能读缓存，这里异步预取）。 */
+/** 后台刷新 bot 状态缓存（同步 provider 只能读缓存，这里异步预取）。
+ *  绝不 rethrow：任何失败（viewer 不可达/超时/未连接）都静默保留旧缓存，
+ *  由调用方（setInterval 或 context 惰性刷新）的 .catch 兜底，防止 unhandled rejection。 */
 async function refreshBotState() {
   try {
     const { ok, body } = await viewerFetch('/api/game-state', {}, 5000)
@@ -126,7 +128,7 @@ async function refreshBotState() {
       return true
     }
   } catch {
-    // viewer 未启动：保留旧缓存
+    // viewer 未启动/超时：保留旧缓存，等待下次刷新
   }
   return false
 }
@@ -156,10 +158,20 @@ function registerPromptVariables(ctx) {
   ctx.systemPrompt.variable('viewer_url', () => viewerUrl())
 
   // 动态 → user 上下文快照（追加到对话末尾，不碎前缀）
+  // 惰性刷新：context provider 是同步的（DSH 契约：assemble 不 await），所以只读缓存；
+  // 但缓存可能因 timer 生命周期失效而陈旧（cordis _unload 会清 setInterval）。
+  // 因此每次求值时检查 TTL，过期则 fire-and-forget 异步刷新（.catch 兜底，绝不 unhandled rejection）。
+  // setInterval 保留为主动刷新（双保险：timer 活着 30s 主动刷，死了由惰性刷新兜底）。
   ctx.systemPrompt.context({
     name: 'bot_state',
     order: 1000,
-    text: () => `【当前游戏状态（自动注入，bot 侧缓存 ≤30s）】\n${botStateCache.text ?? '(bot 状态加载中…)'}\n\n如需最新状态，调用 game_state() 获取实时快照。`,
+    text: () => {
+      const cached = botStateCache.text ?? '(bot 状态加载中…)'
+      if (Date.now() - botStateCache.at > BOT_STATE_TTL_MS) {
+        refreshBotState().catch(() => { /* 惰性刷新失败静默：下轮再试，不崩 DSH */ })
+      }
+      return `【当前游戏状态（自动注入，bot 侧缓存 ≤30s）】\n${cached}\n\n如需最新状态，调用 game_state() 获取实时快照。`
+    },
   })
 }
 
