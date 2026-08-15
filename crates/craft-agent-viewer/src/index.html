@@ -584,12 +584,11 @@ async function pollGameState(){
     document.getElementById("gs-dim").textContent=st.dimension?(st.dimension.includes(":")?st.dimension.split(":").pop()?.replace(/[\]\)]/g,""):st.dimension):"-";
     document.getElementById("gs-biome").textContent=st.biome?.split(".").pop()||"-";
     document.getElementById("gs-gm").textContent=st.gamemode||"-";
-    // 环境
-    const sl=st.sky_light??0,bl=st.block_light??0;
-    document.getElementById("gs-light").textContent="天"+sl+"/方"+bl;
-    const rain=st.raining?"🌧":"☀";
-    const thunder=st.thundering?"⚡":"";
-    document.getElementById("gs-weather").textContent=rain+thunder||"-";
+    // 环境（后端当前未采集光照/天气/时间 → 有值才显示，无值显示 "-"，避免误导性的 0/☀）
+    const sl=st.sky_light,bl=st.block_light;
+    document.getElementById("gs-light").textContent=(sl!=null&&bl!=null)?`天${sl}/方${bl}`:"-";
+    const hasRain=typeof st.raining==="boolean",hasThunder=typeof st.thundering==="boolean";
+    document.getElementById("gs-weather").textContent=(hasRain||hasThunder)?((st.raining?"🌧":"☀")+(st.thundering?"⚡":"")):"-";
     document.getElementById("gs-time").textContent=st.time!=null?Math.floor(st.time/24000)+"d":"-";
     // 效果
     const effEl=document.getElementById("gs-effects");
