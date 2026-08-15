@@ -2553,6 +2553,19 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                             .map(|s| s.kind().to_string())
                                             .unwrap_or_else(|| "empty".into())
                                     );
+                                    // P183：诊断水源方块完整 BlockState——确认是水源块(level=0)
+                                    // 还是流动水(level=1..7)。只有水源块能用桶装。
+                                    if let Ok(w) = bot.world() {
+                                        let w = w.read();
+                                        if let Some(bs) = w.get_block_state(BlockPos::new(x, y, z))
+                                        {
+                                            eprintln!("[P183] 水源 BlockState: {:?}", bs);
+                                        } else {
+                                            eprintln!(
+                                                "[P183] 水源 ({x},{y},{z}) BlockState 读取失败"
+                                            );
+                                        }
+                                    }
                                     // 先试 block_interact（force_block 指定水源）
                                     bot.block_interact(BlockPos::new(x, y, z));
                                     // 再补一次 start_use_item（面向水源的真实交互兜底）
@@ -3988,7 +4001,13 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                     bot.is_calculating_path(),
                                     bot.is_executing_path()
                                 );
+                                // P184：make_obsidian 状态机激活时完全跳过 P60b 上升——
+                                // 状态机装水/放水依赖 pathfinder 空闲 + 视线稳定，
+                                // P60b 的 YGoal 上升会抢占 pathfinder 反复 empty path 空转，
+                                // 阻塞状态机推进（实机：装水时 calc=true 持续 600+ tick）。
+                                let obsidian_active = state.make_obsidian.lock().unwrap().is_some();
                                 if since_fail > 100
+                                    && !obsidian_active
                                     && !bot.is_calculating_path()
                                     && !bot.is_executing_path()
                                 {
@@ -4036,6 +4055,8 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                         && !bot.is_executing_path()
                         && t.is_multiple_of(40)
                         && state.mining_above_soft_column.lock().unwrap().is_none()
+                        // P184：make_obsidian 状态机激活时跳过 P60main 上升（同上，避免抢占 pathfinder）
+                        && state.make_obsidian.lock().unwrap().is_none()
                         && since_up > 100
                     {
                         use azalea::pathfinder::PathfinderOpts;
@@ -4082,8 +4103,20 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                         });
                         // 跳出本轮（状态机已清空）
                     } else {
+                        // P188：状态机激活的每个 tick 无条件清除 pathfinder——
+                        // P60b/P60main 可能在激活前已启动 YGoal 计算（calc=true 持续数百
+                        // tick），P184/P186 只跳过"新启动"，旧计算仍在 pathfinder 上排队，
+                        // 阻塞 start_use_item/block_interact 的发出。无条件 force_stop
+                        // 确保每 tick pathfinder 空闲，状态机操作不被阻塞。
+                        bot.force_stop_pathfinding();
                         match phase {
                             0 => {
+                                // P186：状态机激活时清除残留 goto/pathfinder，避免阻塞装水
+                                // （实机：P60main 残留 exec=true 的 goto 一直占用 pathfinder，
+                                // 状态机的 set_direction/start_use_item 被跳过）。
+                                if bot.is_executing_path() || bot.is_calculating_path() {
+                                    bot.force_stop_pathfinding();
+                                }
                                 // P67c 同步装备水桶：tick handler 内严禁 await，这里用
                                 // set_selected_hotbar_slot 同步把 bucket 切到主手（不等待服务端轮询）。
                                 // 若 bucket 不在 hotbar，则同步 shift_click 到空 hotbar 槽。
@@ -4272,6 +4305,11 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                             // P176：phase 10 = 上一 tick 已 set_direction 面向水源，
                             // 本 tick start_use_item 装水（P118 方向已生效）。
                             10 => {
+                                // P187：装水前无条件清除 pathfinder——P60b/P60main 可能已在
+                                // pathfinder 上启动 YGoal 计算（calc=true），即使 P184 跳过
+                                // 新启动，旧计算仍在占用，start_use_item 被 tick 排队阻塞。
+                                // force_stop_pathfinding 立即取消，确保本 tick 装水发出。
+                                bot.force_stop_pathfinding();
                                 bot.start_use_item();
                                 *state.make_obsidian.lock().unwrap() = Some((remaining, 11, None));
                             }
@@ -4374,7 +4412,10 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                         .lock()
                         .unwrap()
                         .is_some_and(|until| bot.ticks_connected() < until);
-                    if y < 62 && !interact_holding {
+                    // P186：make_obsidian 激活时跳过 P60c 上升——状态机装水/放水依赖
+                    // 稳定的站立位置 + pathfinder 空闲，P60c 的强制上升会打断。
+                    let obsidian_active = state.make_obsidian.lock().unwrap().is_some();
+                    if y < 62 && !interact_holding && !obsidian_active {
                         let cx = p.x.floor() as i32;
                         let cz = p.z.floor() as i32;
                         let head_air = bot

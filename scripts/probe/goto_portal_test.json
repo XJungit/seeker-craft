@@ -1,0 +1,13 @@
+{
+  "between_delay_ms": 1000,
+  "timeout_ms": 90000,
+  "steps": [
+    { "cmd": "state" },
+    { "cmd": "goto -503 89 -169" },
+    { "wait_ms": 8000 },
+    { "state": true },
+    { "cmd": "goto -502 93 -168" },
+    { "wait_ms": 8000 },
+    { "state": true }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "between_delay_ms": 800,
+  "timeout_ms": 90000,
+  "steps": [
+    { "cmd": "state" },
+    { "cmd": "place cobblestone -497 90 -166" },
+    { "wait_ms": 1500 },
+    { "state": true },
+    { "cmd": "goto -497 91 -166" },
+    { "wait_ms": 2500 },
+    { "state": true }
+  ]
+}

@@ -1,0 +1,15 @@
+{
+  "between_delay_ms": 1000,
+  "timeout_ms": 90000,
+  "steps": [
+    { "cmd": "state" },
+    { "cmd": "chestview -500 85 -167" },
+    { "wait_ms": 1500 },
+    { "cmd": "chestwithdraw -500 85 -167 bucket 1" },
+    { "wait_ms": 1500 },
+    { "state": true },
+    { "cmd": "equip bucket" },
+    { "wait_ms": 1200 },
+    { "state": true }
+  ]
+}

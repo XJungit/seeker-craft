@@ -1,0 +1,14 @@
+{
+  "between_delay_ms": 800,
+  "timeout_ms": 90000,
+  "steps": [
+    { "cmd": "state" },
+    { "cmd": "interactblock -569 40 -132" },
+    { "wait_ms": 1500 },
+    { "state": true },
+    { "raw": true },
+    { "cmd": "interactblock -566 40 -129" },
+    { "wait_ms": 1500 },
+    { "state": true }
+  ]
+}
