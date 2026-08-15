@@ -1208,6 +1208,26 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
                     };
                     inv.shift_click(src);
                     sleep(Duration::from_millis(200)).await;
+                    // P174：shift_click 可能失败（服务端 QuickMove 拒绝/缓存滞后），
+                    // 若 hotbar 仍无 kind，用 left_click 手动拿起 src 放到空 hotbar 槽。
+                    // 根因（实机 bucket 装备失败）：bucket 在 slot36 主背包，shift_click
+                    // 移动失败，equip 误报成功但主手不变，装水/造黑曜石全部失败。
+                    let mut moved_ok = false;
+                    if let Ok(invc) = bot.get_inventory()
+                        && find_hotbar_slot_for(&invc, kind).is_none()
+                        && let Some(menu) = invc.menu().ok().flatten()
+                        && let Some(slots) = invc.slots()
+                        && let Some(empty_hb) = menu
+                            .hotbar_slots_range()
+                            .find(|&s| slots.get(s).map(|st| st.is_empty()).unwrap_or(false))
+                        && let Some(s) = find_item_slots(&invc, kind).into_iter().next()
+                    {
+                        invc.left_click(s);
+                        sleep(Duration::from_millis(150)).await;
+                        invc.left_click(empty_hb);
+                        sleep(Duration::from_millis(200)).await;
+                        moved_ok = true;
+                    }
                     // 重新读 backpack 拿到新 hotbar 槽
                     drop(inv);
                     let inv2 = match bot.get_inventory() {
@@ -1220,10 +1240,16 @@ pub async fn do_equip(bot: &Client, item: &str, slot: &str) -> String {
                         // P5 修复：验证主手实际持有物
                         return match verify_held_item(bot, kind).await {
                             true => {
-                                format!("已装备 {item} 到主手（从槽 {src} 移到 hotbar 槽 {h}）")
+                                if moved_ok {
+                                    format!(
+                                        "已装备 {item} 到主手（left_click 手动移动，hotbar 槽 {h}）"
+                                    )
+                                } else {
+                                    format!("已装备 {item} 到主手（从槽 {src} 移到 hotbar 槽 {h}）")
+                                }
                             }
                             false => format!(
-                                "装备 {item} 失败：shift_click 后主手仍未持有 {item}\
+                                "装备 {item} 失败：移动后主手仍未持有 {item}\
                                  （可能 hotbar 满，或服务端拒绝移动）"
                             ),
                         };
