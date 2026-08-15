@@ -61,6 +61,7 @@ async fn main() {
                 inventory,
                 hotbar: _,
                 armor: _,
+                armor_list: _,
                 player_count,
                 yaw,
                 pitch,

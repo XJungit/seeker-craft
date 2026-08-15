@@ -87,6 +87,9 @@ pub enum BotEvent {
         hotbar: String,
         /// 已穿戴盔甲摘要：`头盔: iron_helmet, 胸甲: 无, 护腿: 无, 靴子: 无`（P56 新增）
         armor: String,
+        /// 已穿戴盔甲结构化列表：[头盔, 胸甲, 护腿, 靴子]，未穿为 "无"。
+        /// 与 `armor` 文本摘要同源（P188 新增，供 WorldState.armor 结构化字段）。
+        armor_list: Vec<String>,
         player_count: usize,
         /// 朝向（yaw 度数，0=+Z 南，-90=+X 东，90=-X 西，±180=-Z 北）。
         yaw: f64,

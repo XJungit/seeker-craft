@@ -4477,7 +4477,7 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                     // 全量背包：列出所有非空格，**按物品 ID 聚合后输出**（旧版每个槽位单独
                     // 输出，导致 `dirt:46, dirt:64, leaflitter:64, leaflitter:26` 这种重复条目，
                     // LLM 困惑且浪费 token）。聚合后输出 `dirt:110, leaflitter:90`。
-                    let (inventory, armor_str, hotbar_str) = match bot.get_inventory() {
+                    let (inventory, armor_str, hotbar_str, armor_list) = match bot.get_inventory() {
                         Ok(inv) => match inv.slots() {
                             Some(slots) => {
                                 // P56：Player 菜单槽位布局（azalea declare_menus!）：
@@ -4554,18 +4554,36 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                     display(&armor[2]),
                                     display(&armor[3])
                                 );
-                                (inv_str, armor_summary, hotbar_str)
+                                let armor_vec: Vec<String> = armor
+                                    .iter()
+                                    .map(|s| {
+                                        if s.is_empty() {
+                                            "无".to_string()
+                                        } else {
+                                            s.clone()
+                                        }
+                                    })
+                                    .collect();
+                                (inv_str, armor_summary, hotbar_str, armor_vec)
                             }
                             None => (
                                 "slots=None".to_string(),
                                 "头盔: 无, 胸甲: 无, 护腿: 无, 靴子: 无".to_string(),
                                 "空".to_string(),
+                                vec!["无", "无", "无", "无"]
+                                    .into_iter()
+                                    .map(|s| s.to_string())
+                                    .collect(),
                             ),
                         },
                         Err(_) => (
                             "获取失败".to_string(),
                             "头盔: 无, 胸甲: 无, 护腿: 无, 靴子: 无".to_string(),
                             "空".to_string(),
+                            vec!["无", "无", "无", "无"]
+                                .into_iter()
+                                .map(|s| s.to_string())
+                                .collect(),
                         ),
                     };
                     let player_count = bot.nearby_players().map(|pp| pp.len()).unwrap_or(0);
@@ -4957,6 +4975,7 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                         inventory,
                         hotbar: hotbar_str,
                         armor: armor_str,
+                        armor_list,
                         player_count,
                         yaw,
                         pitch,

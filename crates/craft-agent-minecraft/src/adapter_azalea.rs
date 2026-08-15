@@ -178,6 +178,7 @@ impl MinecraftAzaleaAdapter {
                             inventory,
                             hotbar,
                             armor,
+                            armor_list,
                             player_count,
                             yaw,
                             pitch,
@@ -414,6 +415,7 @@ impl MinecraftAzaleaAdapter {
                                 }),
                                 inventory: game_state["inventory"].as_array().cloned(),
                                 held_item: Some(held_item),
+                                armor: Some(armor_list),
                                 selected_slot: game_state["selected_slot"]
                                     .as_u64()
                                     .map(|v| v as usize),
@@ -462,6 +464,7 @@ impl MinecraftAzaleaAdapter {
                 kill_counts: None,
                 inventory: None,
                 held_item: None,
+                armor: None,
                 selected_slot: None,
                 memory: None,
             })

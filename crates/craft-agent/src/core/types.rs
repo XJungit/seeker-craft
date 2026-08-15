@@ -82,6 +82,11 @@ pub struct WorldState {
     pub inventory: Option<Vec<serde_json::Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub held_item: Option<String>,
+    /// 已穿戴盔甲（顺序：头盔/胸甲/护腿/靴子，未穿为 "无" 或空串）。
+    /// 结构化字段——`scene_desc` 里也有文本摘要，但 API 消费者应读此字段，
+    /// 避免解析文本误判"装备丢失"。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub armor: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub selected_slot: Option<usize>,
     /// 世界记忆（邻近记忆 + 锚点），供前端"世界记忆库"面板可视化。
