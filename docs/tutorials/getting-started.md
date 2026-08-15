@@ -13,7 +13,7 @@ DSH (DeepSeek Harness)  ←  the LLM brain (you install this yourself)
    ▼
 craft-agent-viewer  ←  HTTP bridge (Rust, part of this repo)
    ▼
-craft-agent-minecraft  ←  53 typed tools (Rust, part of this repo)
+craft-agent-minecraft  ←  54 typed tools (Rust, part of this repo)
    ▼
 azalea (fork, vendored)  ←  Minecraft protocol client
    ▼

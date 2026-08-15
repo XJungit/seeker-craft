@@ -5,7 +5,7 @@ This guide explains the main directories and crates in SeekerCraft (Craft-Agent)
 ## Top Level
 
 - `Cargo.toml` — workspace root (nightly-2026-07-21, resolver 3).
-- `crates/` — Rust workspace members (6 crates).
+- `crates/` — Rust workspace members (5 crates).
 - `data/` — runtime data: tasks, profiles, blueprints, actions, DSH preset template, config template.
 - `docs/` — architecture, tutorials, ADRs, design archives.
 - `scripts/` — one-shot setup/start/stop scripts + probe JSON test scripts + CI helpers.
@@ -20,7 +20,6 @@ This guide explains the main directories and crates in SeekerCraft (Craft-Agent)
   session archive format, task system, profiles, skills. No I/O; shared by viewer and adapters.
 - `craft-agent-minecraft` — Minecraft adapter (azalea protocol): the bot, 54 LLM tools,
   azalea domain modules (`commands.rs` / `handler.rs` / `mod.rs`), WorldMemory scanner.
-- `craft-agent-model` — LLM/VLM clients & config (in-bot era, kept for compatibility; DSH provides the LLM now).
 - `craft-agent-viewer` — Axum + SSE web dashboard + DSH bridge endpoints
   (`/api/connect`, `/api/bot_tool`, `/api/game-state`, `/api/goal`).
 - `craft-agent-autopilot` — ops supervisor (10s polling): brings up viewer + connects bot,
@@ -30,7 +29,8 @@ This guide explains the main directories and crates in SeekerCraft (Craft-Agent)
 
 ## Data
 
-- `data/config/agent.example.toml` — LLM backend template (copy to `data/config/agent.toml`, gitignored).
+- `data/config/agent.example.toml` — legacy LLM backend template from the in-bot era
+  (kept for reference; not used in DSH mode — the LLM comes from DSH).
 - `data/tasks/` — 23 structured task JSONs (tier 1-6), machine-checkable completion conditions.
 - `data/profiles/` — prompt templates (`_default.json` + per-provider overrides).
 - `data/blueprints/` — build blueprints (JSON).

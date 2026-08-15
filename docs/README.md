@@ -30,9 +30,9 @@ Start with `tutorials/INDEX.md` for the full guide map.
 
 - `../crates/craft-agent/README.md` — core logic library API
 - `../crates/craft-agent-minecraft/README.md` — Minecraft adapter
-- `../crates/craft-agent-model/README.md` — LLM/VLM clients
 - `../crates/craft-agent-viewer/README.md` — viewer / bridge
 
 ## Design Archive
 
 - `design/README.md` — historical design docs (may be outdated)
+- `legacy/` — superseded designs & historical snapshots (kept for reference; not actionable)

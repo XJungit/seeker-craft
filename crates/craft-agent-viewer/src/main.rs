@@ -233,7 +233,7 @@ async fn api_goal(
 
 // ── 桥接：DSH/Cordis 经 HTTP 驱动 bot ───────────────────────────────────────
 //
-// 复用与 agent_loop 完全相同的工具注册表（create_mc_azalea_tools_full），从而保留
+// 复用与 agent_loop 完全相同的工具注册表（create_mc_azalea_tools_full_with_semantic），从而保留
 // P100/P101/P102/P132 的派发时自动修正（这些逻辑在 GameTool::execute 闭包里，
 // parse_step→execute_shared 路径会绕过）。每调用重建注册表以复用 adapter 内最新的
 // WorldMemory 锚点（缓存注册表会让记忆陈旧，破坏 goto 锚点修正）。

@@ -28,8 +28,6 @@ craft-agent-minecraft  ──→  azalea (vendor)  ──→  MC server (TCP)
 - [`craft-agent-minecraft`](./crates/craft-agent-minecraft/) — Minecraft 适配器与 54 工具集
   （`tools_azalea.rs::ALL_TOOL_NAMES`），构建于 azalea 协议层；bot 端实时能力（WorldMemory
   每 20 tick 扫描、perceive 快照）在此。
-- [`craft-agent-model`](./crates/craft-agent-model/) — LLM/VLM 客户端与配置模型（in-bot 循环时代
-  使用；DSH 模式下由 DSH 大脑自带 LLM 客户端，此 crate 为兼容保留）。
 - [`craft-agent-viewer`](./crates/craft-agent-viewer/) — Axum + SSE Web 仪表盘 + DSH 桥
   （连接 bot / 驱动工具 / 状态呈现）。无 LLM 逻辑。
 
@@ -97,7 +95,8 @@ cowardice / hunting / item_collecting / torch_placing / idle_staring / cheat …
 
 ## 54 LLM Tools
 
-> 权威清单：`tools_azalea.rs::ALL_TOOL_NAMES`（54 个，与 `create_mc_azalea_tools_full` vec 一一对应）。
+> 权威清单：`tools_azalea.rs::ALL_TOOL_NAMES`（54 个，与 `create_mc_azalea_tools_full`
+> （及其语义记忆扩展 `create_mc_azalea_tools_full_with_semantic`）vec 一一对应）。
 
 | Category | Tools | Side Effect |
 |---|---|---|
@@ -188,7 +187,6 @@ instead of real `tool_calls` JSON.
 cargo test --workspace --no-fail-fast        # 全量测试（当前约 318，随测试增长）
 cargo test -p craft-agent --lib              # 核心逻辑测试
 cargo test -p craft-agent-minecraft --features azalea-bot --lib  # 适配器测试（需 azalea-bot feature）
-cargo test -p craft-agent-model --lib        # 模型测试
 ```
 
 - All `regression_*` tests guard against reverting to old bugs (e.g.

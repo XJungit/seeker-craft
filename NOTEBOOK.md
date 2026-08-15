@@ -39,7 +39,7 @@ DSH 成为唯一大脑后，需要把 bot 感知状态注入模型，同时保�
 
 ### 结论
 - **动态感知** → `systemPrompt.context`（append+去重+supersedes）✅ 已实现（提交 84380e7）
-- **静态内容**（53 工具 tool_list / viewer_url / 模式 / 护栏）→ 留在 system 提示段 ✅
+- **静态内容**（54 工具 tool_list / viewer_url / 模式 / 护栏）→ 留在 system 提示段 ✅
 - **token 控制** → toolResultPruner（剪大工具结果，默认 8192 字符阈值）
   + compaction（超阈值自动折叠历史）——craft-bot 预设已配好 ✅
 - **放弃**路线 A（每步 surface replace 替换感知）：replace 机制可行但需完全对齐

@@ -739,7 +739,7 @@ earest_soft_column(bot, x, y, z, radius=4)：无镐且头顶硬方块时，扫�
 
 - **背景**：用户指出版本号规范写法是 **26.2**（非 1.26.2，MC 2026 年版本体系），并要求
   全面排查所有因 MC 版本差异而写死的内容（不止钻石层）。
-- **版本号纠错**：`docs/mindcraft-gap.md` P97b 段、`docs/design/refactor-numen-philosophy-baritone-base.md`
+- **版本号纠错**：`docs/mindcraft-gap.md` P97b 段、`docs/legacy/refactor-numen-philosophy-baritone-base.md`
   5 处 "1.26.2" → "26.2"（历史记录中把 26.2 误写成别名 1.26.2）。
 - **矿石 Y 层核查**（对照 minecraft.wiki + minecraftmaps 26.2 ore distribution，26.1/26.2
   保持 1.18+ 布局）：发现 3 处旧数据写死在 `typical_y_range`（smart_actions.rs）：

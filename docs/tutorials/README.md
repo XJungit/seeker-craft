@@ -12,18 +12,17 @@ This directory contains hands-on guides for working on SeekerCraft (Craft-Agent)
 
 1. `getting-started.md` — clone, build, run, drive from DSH.
 2. `project-structure.md` — repo layout.
-3. `configuration.md` — runtime configuration.
-4. `agent-loop.md` — **historical** in-bot 13-step loop (removed 2026-08-14); kept for reference.
+3. `agent-loop.md` — **historical** in-bot 13-step loop (removed 2026-08-14); kept for reference.
 
 ## Extending
 
-5. `adding-tools.md` — add a new Minecraft tool.
-6. `adding-adapters.md` — add or swap a game adapter.
-7. `session-and-compaction.md` — session persistence & cache design.
+4. `adding-tools.md` — add a new Minecraft tool.
+5. `adding-adapters.md` — add or swap a game adapter.
+6. `session-and-compaction.md` — session persistence & cache design.
 
 ## Operations
 
-8. `troubleshooting.md` — runtime problems and fixes.
+7. `troubleshooting.md` — runtime problems and fixes.
 
 ## Crate-level Docs
 
@@ -31,7 +30,6 @@ This directory contains hands-on guides for working on SeekerCraft (Craft-Agent)
 |---|---|
 | `craft-agent` | [`../../crates/craft-agent/README.md`](../../crates/craft-agent/README.md) |
 | `craft-agent-minecraft` | [`../../crates/craft-agent-minecraft/README.md`](../../crates/craft-agent-minecraft/README.md) |
-| `craft-agent-model` | [`../../crates/craft-agent-model/README.md`](../../crates/craft-agent-model/README.md) |
 | `craft-agent-viewer` | [`../../crates/craft-agent-viewer/README.md`](../../crates/craft-agent-viewer/README.md) |
 
 ## Quick Start

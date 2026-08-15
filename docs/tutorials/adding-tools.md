@@ -62,14 +62,28 @@ impl GameTool for AzaleaMyTool {
 }
 ```
 
-## Register
+## Register (6-point sync contract)
 
-Add the tool in `create_mc_azalea_tools()` in
-`crates/craft-agent-minecraft/src/tools_azalea.rs`.
+Tool names are a **stable LLM contract** — adding a tool requires syncing all of these
+(see AGENTS.md「新增能力纪律」; the `regression_every_registered_tool_maps_to_action`
+test + `verify-in-harness.mjs` fail if you miss a spot):
 
-```rust
-tools.push(Arc::new(AzaleaMyTool::new(adapter.clone())));
-```
+1. **`tools_azalea.rs`** — register the `GameTool` in `create_mc_azalea_tools()` **and**
+   add its name to `ALL_TOOL_NAMES`:
+   ```rust
+   tools.push(Arc::new(AzaleaMyTool::new(adapter.clone())));
+   // + ALL_TOOL_NAMES: ..., "my_tool",
+   ```
+2. **`core/types.rs::MinecraftAction`** — add a variant for the new tool
+   (unless it is pure-logic, in which case list it in `META_TOOL_NAMES` instead).
+3. **`adapter_azalea.rs`** — map the action in `action_for()` (or the execute match).
+4. **`azalea/commands.rs::parse_chat_command`** — add the probe command so
+   `scripts/probe/*.json` can drive it (probe mode).
+5. **Docs** — README bilingual tool table, AGENTS.md tool table, ARCHITECTURE.md,
+   crate READMEs, and every place that counts tools (authoritative = `ALL_TOOL_NAMES`).
+6. **`tools/dsh-bridge/index.js::TOOL_NAMES`** — the DSH bridge static mirror.
+   Guard: `node tools/dsh-bridge/scripts/verify-in-harness.mjs` compares
+   Rust `ALL_TOOL_NAMES` == bridge `TOOL_NAMES`.
 
 ## Side-Effect Flags
 

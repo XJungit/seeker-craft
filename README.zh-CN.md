@@ -18,7 +18,7 @@
 | **核心问题** | LLM 能否从一无所有开始自主生存、制造并击败末影龙？ |
 | **运行时** | 纯 Rust 客户端，基于 [Azalea](https://github.com/azalea-rs/azalea)（MC 26.2），无需服务端 mod |
 | **大脑** | 任意 OpenAI 兼容 LLM（DeepSeek 前缀缓存优化）；2026-08-14 起为 DSH（DeepSeek Harness）桥接模式 |
-| **规模** | 6 个 crate、54 个 LLM 工具、23 个结构化任务、10 个反应式模式、空间记忆 |
+| **规模** | 5 个 crate、54 个 LLM 工具、23 个结构化任务、10 个反应式模式、空间记忆 |
 | **开发循环** | 自主：差距分析 → 修复 → probe 验证 → 提交（工作流笔记仅存本地，不随仓库发布） |
 
 > **项目性质声明。** 本项目完全由 AI 辅助编程（vibe coding）生成，属个人实验项目，
@@ -54,7 +54,7 @@ seeker-craft/
 │   ├── craft-agent-autopilot/     # 运维监督器（10s 轮询：viewer+连接、停滞 steering、崩溃恢复）
 │   └── craft-agent-ctl/           # 运维控制台
 ├── data/
-│   ├── config/agent.example.toml  # LLM 后端配置模板（复制为 agent.toml）
+│   ├── config/agent.example.toml  # in-bot 时代遗留 LLM 模板（DSH 模式不使用）
 │   ├── tasks/                     # 23 个任务 JSON（tier 1-6）
 │   ├── profiles/                  # 3 层提示词模板
 │   ├── blueprints/                # 建造蓝图

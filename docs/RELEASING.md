@@ -6,6 +6,7 @@ This document describes how to prepare a release of SeekerCraft (Craft-Agent).
 
 We use semver-like tags:
 - `v1.0.0` — first stable 1.0 release (2026-08-15; DSH bridge mode is the only supported usage)
+- `v1.1.0` — P156 semantic memory (`remember` tool, 54 tools) (2026-08-15)
 - Later `v1.x.y` / `v2.x.y` milestones
 - Breaking changes documented in [`../CHANGELOG.md`](../CHANGELOG.md) (Keep a Changelog format)
 
@@ -39,7 +40,6 @@ We use semver-like tags:
 3. Verify CI on GitHub Actions (fmt+clippy / test / coverage / audit / docs).
 4. Crate publishing (if applicable):
    ```bash
-   cargo publish -p craft-agent-model
    cargo publish -p craft-agent
    cargo publish -p craft-agent-minecraft
    cargo publish -p craft-agent-viewer

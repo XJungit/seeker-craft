@@ -28,8 +28,8 @@ pi：`Tool` trait（name/label/description/parameters JSON Schema/async execute/
 内置仅 8 工具（read/bash/edit/write/grep/find/ls/hashline_edit），`ToolRegistry` = Vec 线性查找。
 `ToolEffects` 位标志（READ/WRITE/APPEND/NETWORK/PROCESS），`parallel_safe()` 判定并发安全。
 
-我们：44 工具（GameTool trait + ToolRegistry + MinecraftAction 枚举），
-`plan_tool_effect_batches` 同源实现。**已借鉴，无差距。**
+我们：54 工具（GameTool trait + ToolRegistry + MinecraftAction 枚举，2026-08-02 当时为 44，
+后经 P 系列扩展至 54），`plan_tool_effect_batches` 同源实现。**已借鉴，无差距。**
 
 ### 2.2 主循环（agent.rs）
 

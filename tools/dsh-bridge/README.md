@@ -12,7 +12,8 @@ craft-bot 预设的 viewer 桥插件（DSH 侧）。让 [DSH](https://github.com
 | `set_goal(text)` | `POST /api/goal` | 设置 bot 运营目标 |
 
 - viewer 地址默认 `http://127.0.0.1:8080`，可用环境变量 `DSH_CRAFT_VIEWER_URL` 覆盖。
-- `bot_tool` 复用与 agent_loop 完全相同的工具注册表（`create_mc_azalea_tools_full`），
+- `bot_tool` 复用与 agent_loop 完全相同的工具注册表（`create_mc_azalea_tools_full_with_semantic`，
+  含 54 工具 + `remember` 语义记忆），
   P100/P101/P102/P132 的派发时自动修正在 `GameTool::execute` 闭包内，桥接天然保留。
 
 ## 内嵌仪表盘（client 半边）

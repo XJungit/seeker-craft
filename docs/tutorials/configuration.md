@@ -1,14 +1,11 @@
 # Configuration
 
-> **现状说明**：本教程部分描述 in-bot 循环时代（`AgentConfig` 的 `max_iter` /
-> `enable_self_prompt` / `enable_compaction` 等字段、`build_dynamic_instructions_msg`）
-> 的配置。DSH 桥接模式（2026-08-14 起）下，LLM 后端与上下文/提示词装配由 **DSH 大脑**
-> 负责；Rust 侧 `craft-agent-model` 配置保留为兼容。LLM 后端配置段仍然有效（若走
-> `craft-agent-model` 路径），Agent 行为字段仅历史参考。
+> **现状说明**：DSH 桥接模式（2026-08-14 起）下，LLM 后端与上下文/提示词装配由 **DSH 大脑**
+> 负责；Rust 侧不再有 `craft-agent-model`（该 crate 已随阶段3清理删除）。下文
+> `agent.toml` 的 LLM 后端配置段是 in-bot 循环时代的历史参考，**DSH 模式下不需要也不使用**；
+> 运行时（viewer/connect）配置见「Runtime Mode」。
 
-Configure LLM/VLM backends, agent behavior, and runtime parameters.
-
-## Backends
+## Backends（历史参考，DSH 模式不使用）
 
 Edit `data/config/agent.toml` to select active LLM/VLM backends.
 Each backend can define model name, endpoint, API key env var, context window,
@@ -27,7 +24,10 @@ max_tokens = 4096
 active = "deepseek"
 ```
 
-## Agent Config
+> `data/config/agent.toml` 是 gitignored 的本地遗留配置，DSH 模式下 LLM 由 DSH 大脑提供，
+> 无需也不应配置此文件。
+
+## Agent Config（历史参考，已移除）
 
 Key `AgentConfig` options:
 
