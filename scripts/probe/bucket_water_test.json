@@ -1,0 +1,9 @@
+{
+  "steps": [
+    { "cmd": "equip bucket bucket" },
+    { "wait_ms": 1000 },
+    { "cmd": "interact -508 46 -155" },
+    { "wait_ms": 1500 },
+    { "state": true }
+  ]
+}

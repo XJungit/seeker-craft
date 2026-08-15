@@ -1,0 +1,13 @@
+{
+  "steps": [
+    { "cmd": "chat /tp @s -500 90 -168" },
+    { "wait_ms": 3000 },
+    { "state": true },
+    { "cmd": "goto -501 90 -168" },
+    { "wait_ms": 3000 },
+    { "state": true },
+    { "cmd": "goto -488 92 -152" },
+    { "wait_ms": 3000 },
+    { "state": true }
+  ]
+}
