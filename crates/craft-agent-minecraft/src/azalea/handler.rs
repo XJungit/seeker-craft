@@ -440,6 +440,10 @@ pub struct BotState {
     /// 时无限重试（每 tick block_interact + pathfinder，拖死 viewer API）。
     /// 启动时记录 ticks_connected，状态机推进处检查 >600 tick（30s）强制失败。
     pub make_obsidian_start_tick: Arc<Mutex<Option<u64>>>,
+    /// P161d：交互进行中标志（含截止 tick）。BlockInteract 对液体方块交互期间
+    /// 设置，P60c 地下脱困检测到该标志时跳过上升，避免装水/装岩浆被脱困打断。
+    /// (起始 tick, 截止 tick)：截止前 P60c 不触发。
+    pub interact_hold_until: Arc<Mutex<Option<u64>>>,
 }
 
 impl Default for BotState {
@@ -474,6 +478,7 @@ impl Default for BotState {
             mining_above_no_pick_warned: Arc::new(Mutex::new(false)),
             mining_above_soft_column: Arc::new(Mutex::new(None)),
             make_obsidian_start_tick: Arc::new(Mutex::new(None)),
+            interact_hold_until: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -2290,8 +2295,22 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                         || k == azalea_registry::builtin::BlockKind::PowderSnow
                                 })
                                 .unwrap_or(false);
+                            // P161c 诊断：输出目标方块类型与交互路径（viewer stderr 可查）
+                            let held_diag = bot
+                                .get_held_item()
+                                .ok()
+                                .filter(|s| !s.is_empty())
+                                .map(|s| s.kind().to_string())
+                                .unwrap_or_else(|| "empty".into());
+                            eprintln!(
+                                "[P161] interact ({x},{y},{z}) liquid={target_is_liquid} held={held_diag}"
+                            );
                             if target_is_liquid {
                                 if let Ok(p) = bot.position() {
+                                    // P161d：交互期间暂停 P60c 地下脱困（截止 +10 tick），
+                                    // 避免装水/装岩浆刚发出就被脱困拉走。
+                                    *state.interact_hold_until.lock().unwrap() =
+                                        Some(bot.ticks_connected() + 10);
                                     // P161b：先确保手持 bucket（P156 自动装备镐可能把主手切走）。
                                     // 目标液体是水/岩浆时，交互需要手持对应桶：水→bucket(空桶装水)，
                                     // 岩浆→bucket(装岩浆) 或已持有的 lava_bucket。此处统一确保空 bucket 在主手。
@@ -4031,7 +4050,14 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                 // goto/mine，bot 也能稳定爬出竖井，避免永久困死在 Y=12。
                 if let Ok(p) = bot.position() {
                     let y = p.y.floor() as i32;
-                    if y < 62 {
+                    // P161d：交互进行中（interact_hold_until 未过期）时暂停地下脱困，
+                    // 避免装水/装岩浆/右键液体被 P60c 强制上升打断。
+                    let interact_holding = state
+                        .interact_hold_until
+                        .lock()
+                        .unwrap()
+                        .is_some_and(|until| bot.ticks_connected() < until);
+                    if y < 62 && !interact_holding {
                         let cx = p.x.floor() as i32;
                         let cz = p.z.floor() as i32;
                         let head_air = bot
