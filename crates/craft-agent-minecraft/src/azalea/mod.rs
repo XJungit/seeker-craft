@@ -614,6 +614,47 @@ pub async fn auto_equip_best_pickaxe(bot: &Client) -> Option<String> {
     {
         return None;
     }
+    // P175：主手持有"非镐但有用"的物品（bucket/水桶/岩浆桶/flint_and_steel/弓/剑/
+    // 斧/锄等）时不自动切镐。根因（实机装水失败）：mine_above 模式每 20 tick 调用
+    // auto_equip_best_pickaxe，把刚装备的 bucket 切回镐，P161 装水时手持非 bucket
+    // 失败。修复：只有主手是空手/石头等"可丢弃"物品时才自动装备镐。
+    if let Ok(st) = bot.get_held_item() {
+        let k = st.kind();
+        use azalea_registry::builtin::ItemKind as IK;
+        let keep_held = matches!(
+            k,
+            IK::Bucket
+                | IK::WaterBucket
+                | IK::LavaBucket
+                | IK::FlintAndSteel
+                | IK::Bow
+                | IK::Crossbow
+                | IK::Shield
+                | IK::DiamondSword
+                | IK::IronSword
+                | IK::StoneSword
+                | IK::GoldenSword
+                | IK::WoodenSword
+                | IK::DiamondAxe
+                | IK::IronAxe
+                | IK::StoneAxe
+                | IK::GoldenAxe
+                | IK::WoodenAxe
+                | IK::DiamondHoe
+                | IK::IronHoe
+                | IK::StoneHoe
+                | IK::GoldenHoe
+                | IK::WoodenHoe
+                | IK::DiamondShovel
+                | IK::IronShovel
+                | IK::StoneShovel
+                | IK::GoldenShovel
+                | IK::WoodenShovel
+        );
+        if keep_held {
+            return None;
+        }
+    }
     let inv = bot.get_inventory().ok()?;
     // 找背包里最好的镐
     let menu = inv.menu().ok().flatten()?;
