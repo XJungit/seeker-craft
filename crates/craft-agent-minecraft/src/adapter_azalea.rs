@@ -526,8 +526,16 @@ impl MinecraftAzaleaAdapter {
     }
 
     fn execute_mc(&mut self, mc: MinecraftAction) -> Result<ExecResult> {
-        // 所有动作同步等待结果，让工具返回真实反馈而非"已下发"
-        self.exec_mc_sync(mc, 120_000)
+        // 所有动作同步等待结果，让工具返回真实反馈而非"已下发"。
+        // 超时按 handler 的 timeout_ticks（tick→ms，1 tick=50ms）推导，避免一刀切 120s：
+        // pathfinder 卡死（深部导航"修正但不移动"）时 goto 只需 30 tick=1.5s 就返回，
+        // 不会让 exec_mc_sync 持有的 adapter Mutex 阻塞 120s 拖死 viewer API（/api/bot_tool
+        // 与 /api/game-state 都抢同一把锁）。长动作（gather/smelt）仍保留 tick 对应的大超时。
+        let cmd = mc_to_cmd(mc.clone());
+        let ticks = crate::azalea::action_manager::timeout_ticks(&cmd);
+        // tick 基准：20 tick/s（50ms/tick）。留 2 倍余量，但封顶 120s 防异常。
+        let timeout_ms = (ticks * 50 * 2).clamp(1_000, 120_000);
+        self.exec_mc_sync(mc, timeout_ms)
     }
 }
 
