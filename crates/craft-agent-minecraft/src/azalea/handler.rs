@@ -2536,21 +2536,28 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                         (dz.atan2(dx).to_degrees() + 90.0).rem_euclid(360.0) as f32;
                                     let pitch =
                                         (-dy / dist).asin().to_degrees().clamp(-89.0, 89.0) as f32;
+                                    // P182：装水改用 block_interact(水源)（force_block 直接指定
+                                    // 水源方块，绕过 raycast）。P180 实测：set_direction +
+                                    // start_use_item 依赖 HitResultComponent raycast，射线常
+                                    // 命中水源旁的石头而非水源，服务端收到 UseItemOn(石头)
+                                    // 装水失败（filled=false）。block_interact 的 force_block
+                                    // 明确告诉服务端右键水源方块，装水可靠。
+                                    // 方向仍设置（保持视线合理），但交互用 force_block。
                                     let _ = bot.set_direction(yaw, pitch);
-                                    // 等方向生效（P118：set_direction 后 150ms 内 raycast 仍用旧朝向）
-                                    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-                                    // P180 诊断：start_use_item 前记录 held 与方向
+                                    tokio::time::sleep(std::time::Duration::from_millis(150)).await;
                                     eprintln!(
-                                        "[P180] 装水前 held={:?} yaw={yaw} pitch={pitch} target=({x},{y},{z})",
+                                        "[P180] 装水前 held={:?} target=({x},{y},{z}) force_block 装水",
                                         bot.get_held_item()
                                             .ok()
                                             .filter(|s| !s.is_empty())
                                             .map(|s| s.kind().to_string())
                                             .unwrap_or_else(|| "empty".into())
                                     );
+                                    // 先试 block_interact（force_block 指定水源）
+                                    bot.block_interact(BlockPos::new(x, y, z));
+                                    // 再补一次 start_use_item（面向水源的真实交互兜底）
                                     bot.start_use_item();
-                                    // P180：start_use_item 后短暂等待，装水应即时把 bucket→water_bucket。
-                                    // 用轮询确认装水是否生效（服务端同步延迟），给交互结果反馈。
+                                    // P180：交互后轮询确认装水是否生效
                                     let mut filled = false;
                                     for _ in 0..10 {
                                         tokio::time::sleep(std::time::Duration::from_millis(100))
