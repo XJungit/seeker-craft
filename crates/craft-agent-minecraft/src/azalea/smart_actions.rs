@@ -1120,6 +1120,14 @@ pub async fn pickup_nearby_items(bot: &Client) -> Result<String, String> {
         // P168：>2m 掉落物用 RadiusGoal 靠近（2m 内即可），避免 BlockPosGoal 精确对准
         // 在复杂地形（Y 差大/洞穴）让 pathfinder 漂移（实机：pickup 6m 外 obsidian 时
         // bot 从 (-490,93) 漂到 (-486,88)）。靠近到吸取半径内后，物理引擎自动吸起。
+        // P169：Y 差 >4 的掉落物（掉进下方缝隙/高处平台）不盲目 goto——pathfinder 跨
+        // 大高度差会绕远路漂移（实机：mine 挖 obsidian 后 pickup 把 bot 从黑曜石区拉到
+        // (-494,88)，obsidian 在 Y=92 高处仍捡不到）。跳过等下一轮，避免漂移浪费时间。
+        let y_diff = cur_pos.map(|p| (y - p.y).abs()).unwrap_or(0.0);
+        if y_diff > 4.0 {
+            sleep(Duration::from_millis(100)).await;
+            continue;
+        }
         if dist <= 12.0 {
             bot.start_goto(azalea::pathfinder::goals::RadiusGoal {
                 pos: azalea::Vec3::new(*x, *y, *z),
