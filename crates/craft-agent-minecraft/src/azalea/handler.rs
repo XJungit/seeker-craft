@@ -3940,7 +3940,20 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                 // （L121 "Y did not increase" 真实根因）。
                                 // 用 YGoal 只要求到达 y+2 高度（任意水平位置），
                                 // pathfinder 可自由挖墙/找楼梯上升（同 P60 主循环）。
-                                if !bot.is_calculating_path() && !bot.is_executing_path() {
+                                // P177：复用 P172 的 escape_up_cooldown——开阔洞穴
+                                // （黑曜石区 Y=40 等）P60b 每 4 tick 尝试 YGoal 45 上升，
+                                // pathfinder 反复 empty path 空转，抢占用作装水/造黑曜石的
+                                // pathfinder。失败后冷却 100 tick 内不再尝试上升。
+                                let since_fail = state
+                                    .escape_up_cooldown
+                                    .lock()
+                                    .unwrap()
+                                    .map(|t0| bot.ticks_connected().saturating_sub(t0))
+                                    .unwrap_or(u64::MAX);
+                                if since_fail > 100
+                                    && !bot.is_calculating_path()
+                                    && !bot.is_executing_path()
+                                {
                                     use azalea::pathfinder::PathfinderOpts;
                                     use std::time::Duration;
                                     let opts = PathfinderOpts::new()
@@ -3951,6 +3964,11 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                         YGoal::from(BlockPos::new(cx, y + 2, cz)),
                                         opts,
                                     );
+                                    // P177：记录上升尝试 tick，使下一次尝试至少隔 100 tick
+                                    *state.escape_up_cooldown.lock().unwrap() =
+                                        Some(bot.ticks_connected());
+                                } else if since_fail <= 100 {
+                                    // 冷却期内：不尝试（保持冷却起点不变）
                                 }
                             }
                         }
