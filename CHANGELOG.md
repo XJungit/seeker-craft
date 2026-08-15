@@ -7,6 +7,27 @@ with [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The project is
 currently in active development as a single-maintainer project; `v1.0.0` is the
 first tagged **1.0 release** (DSH bridge mode is the only supported usage).
 
+## [1.3.0] - 2026-08-16
+
+### Added
+
+- **Nether portal milestone — Tier 5 progress** — the bot built an obsidian
+  nether portal in the overworld (obsidian frame + flint_and_steel ignition) and
+  is ready to enter the Nether. The nether portal is now visible in world memory
+  (`传送门: 下界传送门 [nether_portal]`). Tier 4 (diamond age) is fully live;
+  Tier 5 (nether & magic) is now in progress.
+- **Full rebuild hygiene** — `cargo clean` + fresh full workspace build verified;
+  Cargo.lock azalea source kept as `git+https://github.com/XJungit/azalea`
+  (not `file:///...`) so fresh clones compile.
+
+### Changed
+
+- **Version alignment** — workspace version synced to `1.3.0` (was drifting at
+  `1.0.0` while tags were already at `v1.2.0`); `craft-agent-viewer` package
+  version aligned to the workspace.
+- **README progress table** — Tier 4 marked ✅ live (full diamond armor), Tier 5
+  marked 🔄 in progress (nether portal built, enchanting/brewing pending).
+
 ## [1.2.0] - 2026-08-15
 
 ### Added

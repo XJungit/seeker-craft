@@ -8,7 +8,7 @@
 [![Docs](https://img.shields.io/github/actions/workflow/status/XJungit/seeker-craft/deploy-docs.yml?label=docs&logo=github)](https://github.com/XJungit/seeker-craft/actions/workflows/deploy-docs.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust: nightly-2026-07-21](https://img.shields.io/badge/rust-nightly--2026--07--21-orange.svg)](rust-toolchain.toml)
-[![Release: v1.2.0](https://img.shields.io/badge/release-v1.2.0-blue.svg)](https://github.com/XJungit/seeker-craft/releases)
+[![Release: v1.3.0](https://img.shields.io/badge/release-v1.3.0-blue.svg)](https://github.com/XJungit/seeker-craft/releases)
 
 **一个由 LLM 驱动的 Minecraft 机器人，目标是击败末影龙。Rust + Azalea 协议客户端，
 无 mod、无截图——通过类型化工具观察、规划、执行的真正的协议级玩家。**
@@ -115,7 +115,7 @@ azalea (vendor) ──► MC server (TCP)
 
 23 个任务（6 层）全部以机器可判定 JSON 形式随仓库发布（[`data/tasks/`](data/tasks/)，任务系统说明见 [`docs/ARCHITECTURE.md`](ARCHITECTURE.md)）。
 
-## 当前进度（2026-08-15 · v1.2.0）
+## 当前进度（2026-08-16 · v1.3.0）
 
 **已实机端到端验证（真实服务器、无 mod）：**
 
@@ -124,7 +124,7 @@ azalea (vendor) ──► MC server (TCP)
 | Tier 1–2：木 → 石 → 铁镐链路 | ✅ 实机 | bot 自主采集木头、合成木板/木棍/镐，并经由附近工作台合成出 iron_pickaxe |
 | Tier 3：生存装备 | ✅ 实机 | 全套铁甲 + 钻石剑 + 盾牌；生命/饱食回满 |
 | Tier 4：钻石时代 | ✅ 实机 | bot 遵循 Y 层提示（mine_below 至 Y≤16），下挖到钻石层（Y=-59），用 `search_for_block` 定位并开采 diamond_ore；全套钻石甲装备 |
-| Tier 5：下界与魔法 | 🔄 进行中 | 下界传送门 / 附魔 / 酿造正在端到端推进 |
+| Tier 5：下界与魔法 | 🔄 进行中 | **下界传送门已建好**（黑曜石框架 + 打火石点燃，世界记忆可见 `nether_portal`）；附魔 / 酿造推进中 |
 | Tier 6：终局 | ⬜ 待办 | 下界合金 / 潜影盒 / 鞘翅 / 末影龙 |
 
 **近期里程碑（v1.0.0 发布基线）：**
