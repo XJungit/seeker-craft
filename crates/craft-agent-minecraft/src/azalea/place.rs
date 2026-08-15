@@ -340,6 +340,20 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
                         );
                     }
                 }
+                // P170：填充 cobblestone 后主手停留在 cobblestone（P164 递归 do_place 铺支撑
+                // 结束时主手是 cobblestone），必须重新装备原物品 obsidian，否则后续
+                // block_interact 手持 cobblestone → 服务端放 cobblestone 而非 obsidian →
+                // verify 失败（实机日志"重试放弃：主手物品已不是 obsidian"）。
+                let orig_kind = azalea_registry::builtin::ItemKind::from_str(&normalize_item(item))
+                    .or_else(|_| ItemKind::from_str(item))
+                    .ok();
+                if let Some(okind) = orig_kind
+                    && !crate::azalea::wait_for_held_item(bot, okind, 1500).await
+                {
+                    // 主手不是原物品：尝试从 hotbar 重新装备
+                    let _ = crate::azalea::force_hold_in_hotbar(bot, okind).await;
+                    let _ = crate::azalea::wait_for_held_item(bot, okind, 1500).await;
+                }
             }
         }
     }
