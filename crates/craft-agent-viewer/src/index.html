@@ -180,6 +180,8 @@
       <span>光照 <b id="gs-light">-</b></span>
       <span>天气 <b id="gs-weather">-</b></span>
       <span>时间 <b id="gs-time">-</b></span>
+      <span>传送门 <b id="gs-portal">-</b></span>
+      <span>击杀 <b id="gs-kills">-</b></span>
       <span id="gs-effects"></span>
     </div>
   </div>
@@ -596,6 +598,23 @@ async function pollGameState(){
       effEl.innerHTML="效果: "+st.effects.map(e=>`<span class="gs-effect">${e.id.split(":").pop()} ${e.amplifier+1}</span>`).join(" ");
     }else{
       effEl.innerHTML="";
+    }
+    // 传送门状态（portal_active：下界传送门是否已激活）
+    const portalEl=document.getElementById("gs-portal");
+    if(portalEl){
+      portalEl.textContent=st.portal_active==null?"-":(st.portal_active?"🔥 已激活":"未检测到");
+    }
+    // 击杀统计（kill_counts）
+    const killEl=document.getElementById("gs-kills");
+    if(killEl){
+      const kc=st.kill_counts;
+      if(kc&&kc.length)killEl.textContent=kc.map(k=>`${k[0]}×${k[1]}`).join(" ");
+      else killEl.textContent="无";
+    }
+    // LLM 感知：直接用 scene_desc 实时刷新（不再依赖 SSE，解决"等待首帧状态"）
+    if(st.scene_desc){
+      const pt=document.getElementById("perceiveText");
+      if(pt)pt.textContent=st.scene_desc;
     }
     // 背包
     if(st.inventory){
