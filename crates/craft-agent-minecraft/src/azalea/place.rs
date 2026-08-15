@@ -519,40 +519,17 @@ async fn place_block_direct(bot: &Client, item: &str, pos: BlockPos) -> bool {
     let Some(kind) = item_to_block_kind(item) else {
         return false;
     };
-    // 装备物品到主手：优先用 hotbar 已有物品（cobblestone 常驻 hotbar），
-    // 否则从主背包 shift_click。复用 do_place 已验证的 find_hotbar_slot 逻辑。
-    let equip_ok = {
-        let inv = bot.get_inventory().ok();
-        match inv {
-            Some(inv) => {
-                if let Some(s) = find_hotbar_slot(&inv, ItemKind::Cobblestone) {
-                    bot.set_selected_hotbar_slot(s);
-                    true
-                } else if let Some(main_slot) =
-                    find_item_slot_in_main_inventory(&inv, ItemKind::Cobblestone)
-                {
-                    inv.shift_click(main_slot);
-                    sleep(Duration::from_millis(200)).await;
-                    drop(inv);
-                    let inv2 = bot.get_inventory().ok();
-                    match inv2 {
-                        Some(inv2) => match find_hotbar_slot(&inv2, ItemKind::Cobblestone) {
-                            Some(s) => {
-                                bot.set_selected_hotbar_slot(s);
-                                true
-                            }
-                            None => false,
-                        },
-                        None => false,
-                    }
-                } else {
-                    false
-                }
-            }
-            None => false,
-        }
+    // 装备物品到主手：优先用 hotbar 已有，否则 shift_click，hotbar 满时 LRU 交换。
+    // P163 只用于铺 cobblestone 支撑，物品类型直接映射到 ItemKind::Cobblestone。
+    let item_kind = if item == "cobblestone" {
+        Some(ItemKind::Cobblestone)
+    } else {
+        ItemKind::from_str(&normalize_item(item)).ok()
     };
-    if !equip_ok {
+    let Some(item_kind) = item_kind else {
+        return false;
+    };
+    if !ensure_item_in_hotbar(bot, item_kind).await {
         return false;
     }
     let below = pos.down(1);
@@ -582,6 +559,77 @@ async fn place_block_direct(bot: &Client, item: &str, pos: BlockPos) -> bool {
                 .unwrap_or(false)
         }
         Err(_) => false,
+    }
+}
+
+/// P163d：确保指定物品在 hotbar（供 place_block_direct 铺支撑用）。
+/// 优先 hotbar 已有；否则从主背包 shift_click；hotbar 满时 LRU 交换到第一个 hotbar 槽。
+async fn ensure_item_in_hotbar(bot: &Client, kind: ItemKind) -> bool {
+    let inv = match bot.get_inventory() {
+        Ok(i) => i,
+        Err(_) => return false,
+    };
+    // 1) hotbar 已有
+    if let Some(s) = find_hotbar_slot(&inv, kind) {
+        bot.set_selected_hotbar_slot(s);
+        return true;
+    }
+    // 2) 主背包 shift_click 到 hotbar
+    let main_slot = match find_item_slot_in_main_inventory(&inv, kind) {
+        Some(s) => s,
+        None => return false,
+    };
+    inv.shift_click(main_slot);
+    sleep(Duration::from_millis(200)).await;
+    drop(inv);
+    let inv2 = match bot.get_inventory() {
+        Ok(i) => i,
+        Err(_) => return false,
+    };
+    if let Some(s) = find_hotbar_slot(&inv2, kind) {
+        bot.set_selected_hotbar_slot(s);
+        return true;
+    }
+    // 3) hotbar 满：LRU 交换到第一个 hotbar 槽
+    let menu = match inv2.menu().ok().flatten() {
+        Some(m) => m,
+        None => return false,
+    };
+    let hotbar_start = *menu.hotbar_slots_range().start();
+    let source_slot = match find_item_slot_in_main_inventory(&inv2, kind) {
+        Some(s) => s,
+        None => return false,
+    };
+    eprintln!(
+        "[place] P163d hotbar 满，LRU 交换：source=slot{source_slot} ↔ target=slot{hotbar_start}"
+    );
+    inv2.left_click(source_slot);
+    sleep(Duration::from_millis(150)).await;
+    drop(inv2);
+    let inv3 = match bot.get_inventory() {
+        Ok(i) => i,
+        Err(_) => return false,
+    };
+    inv3.left_click(hotbar_start);
+    sleep(Duration::from_millis(150)).await;
+    drop(inv3);
+    let inv4 = match bot.get_inventory() {
+        Ok(i) => i,
+        Err(_) => return false,
+    };
+    inv4.left_click(source_slot);
+    sleep(Duration::from_millis(200)).await;
+    drop(inv4);
+    let inv5 = match bot.get_inventory() {
+        Ok(i) => i,
+        Err(_) => return false,
+    };
+    match find_hotbar_slot(&inv5, kind) {
+        Some(s) => {
+            bot.set_selected_hotbar_slot(s);
+            true
+        }
+        None => false,
     }
 }
 
