@@ -565,17 +565,28 @@ async fn place_block_direct(bot: &Client, item: &str, pos: BlockPos) -> bool {
     }
     // 靠近到 reach 内
     walk_to_reach_for_place(bot, pos).await;
+    // P163g：与 do_place 主流程一致——2 次重试 + look_at 150ms + 更长 sleep。
+    // 原实现只有 1 次 block_interact + sleep 120/300ms，实机反复失败（本地同步时序）。
     let below_center = azalea::Vec3::new(
         below.x as f64 + 0.5,
         below.y as f64 + 0.5,
         below.z as f64 + 0.5,
     );
-    bot.look_at(below_center);
-    sleep(Duration::from_millis(120)).await;
-    bot.block_interact(below);
-    sleep(Duration::from_millis(300)).await;
-    // 验证：轮询最多 2.5s（本地 world 缓存滞后，单次查询常误判失败）
-    verify_block_placed(bot, pos, Some(kind)).await
+    for attempt in 0..2u8 {
+        bot.look_at(below_center);
+        sleep(Duration::from_millis(150)).await;
+        bot.block_interact(below);
+        sleep(if attempt == 0 {
+            Duration::from_millis(400)
+        } else {
+            Duration::from_millis(600)
+        })
+        .await;
+        if verify_block_placed(bot, pos, Some(kind)).await {
+            return true;
+        }
+    }
+    false
 }
 
 /// P163d：确保指定物品在 hotbar（供 place_block_direct 铺支撑用）。
