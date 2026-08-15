@@ -223,9 +223,14 @@ pub fn timeout_ticks(cmd: &BotCommand) -> u64 {
         BotCommand::Sleep => 600,               // 30s（找床+走过去+入睡+睡到醒）
         BotCommand::Harvest => 600,             // 30s（走到作物+挖掘+等待拾取，最多 24 棵）
         // 寻路/挖掘
-        BotCommand::Goto { .. } => 30, // 1.5s（长距离由 32m 限制拦截；无路径时快速失败）
+        // P162（2026-08-15）：Goto 超时从 30 tick(1.5s) 提升到 400 tick(20s)。
+        // 根因：probe 实测 azalea pathfinder 在 lush_caves 复杂地形计算路径需 ~1.1s，
+        // 加上执行路径时间，30 tick 超时在 pathfinder 算完/移动前就触发，导致
+        // "goto 显示到达但不移动"（路径规划未完成就被判超时）。20s 给足计算+执行，
+        // 由 P66 净移动看门狗（连续超时且净移动<1.5 格 → 强制脱困）兜底防卡死。
+        BotCommand::Goto { .. } => 400, // 20s（复杂地形 pathfinder 计算+执行；无路径由 P66 兜底）
         // P110：锚点导航解析后转 Goto，沿用 Goto 超时。
-        BotCommand::GotoAnchor { .. } => 30,
+        BotCommand::GotoAnchor { .. } => 400,
         // P110b：probe 侧 memory 操作即时完成。
         BotCommand::Memory { .. } => 20,
         BotCommand::Mine { .. } => 200, // 10s（深板岩/黑曜石等硬方块可能慢；wooden_pickaxe 挖 deepslate ~4.5s）

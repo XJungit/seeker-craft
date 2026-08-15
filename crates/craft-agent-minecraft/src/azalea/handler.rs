@@ -361,6 +361,10 @@ pub struct MineApproachWatchdog {
     pub stall_ticks: u64,
 }
 
+/// P162b：goto 执行中卡住检测状态（pathfinder 重算循环）。
+/// (上次位置, 连续无移动 tick 数)。
+pub type GotoStuckState = (Option<(f64, f64, f64)>, u64);
+
 /// handler 状态：持有命令队列、事件发送端与最近坐标（跨事件持久，Arc 共享）。
 #[derive(Component, Clone)]
 pub struct BotState {
@@ -394,6 +398,11 @@ pub struct BotState {
     /// P66：goto 冷却表（按 bot 当前格子）。触发脱困后冷却该格子 N tick，
     /// 期间 goto 直接拒绝，打破脚本/LLM 的 goto 死循环。
     pub goto_cooldown: Arc<Mutex<HashMap<ChunkPos, u64>>>,
+    /// P162b：goto 执行中卡住检测（pathfinder 重算循环）。
+    /// (上次位置, 连续无移动 tick 数)。goto 未完成且距目标 >2.5m 时每 tick 更新；
+    /// 连续 100 tick（5s）净移动 <1 格 → 判定 pathfinder 不完整路径重算循环，
+    /// 强制失败 + P66 脱困，避免空等 20s 超时。
+    pub goto_stuck: Arc<Mutex<GotoStuckState>>,
     /// P67：全局"原地冻死"看门狗。bot 位置长时间（~20s）不变且循环仍在推进，
     /// 说明卡在某个不动作（如空转 run_script / 无效 interact）。累计到阈值即
     /// 向 LLM 推强警告，逼其换策略（pi-agent 自主止损，覆盖所有非 goto 卡死）。
@@ -457,6 +466,7 @@ impl Default for BotState {
             last_position: Arc::new(Mutex::new(None)),
             goto_watchdog: Arc::new(Mutex::new((0, 0, 0, 0))),
             goto_cooldown: Arc::new(Mutex::new(HashMap::new())),
+            goto_stuck: Arc::new(Mutex::new((None, 0))),
             no_move_ticks: Arc::new(Mutex::new(0)),
             last_seen_pos: Arc::new(Mutex::new((0, 0, 0))),
             make_obsidian: Arc::new(Mutex::new(None)),
@@ -870,6 +880,96 @@ impl AzaleaBot {
                         // 按命令类型超时（取代原硬编码 60 tick）
                         let timed_out_cmd = state.action_mgr.check_timeout(tick_now);
                         let timed_out = timed_out_cmd.is_some();
+                        // P162b（2026-08-15）：goto 执行中卡住检测。
+                        // 根因：azalea pathfinder 对复杂地形（lush_caves）算出的路径是
+                        // "incomplete path"（is_path_partial=true），execute 的
+                        // recalculate_near_end_of_path 会在路径 <5 节点时反复重算 →
+                        // GotoEvent 无限循环，bot 原地不动直到超时（probe 实测每 60ms
+                        // "got goto" 重算一次、位置完全不变）。
+                        // 修复：goto 未完成且距目标 >2.5m 时，跟踪 bot 净移动；连续
+                        // 100 tick（5s）净移动 <1 格即判定 pathfinder 重算循环，立即
+                        // 强制失败 + 触发 P66 脱困（地下 mine_above / 地表挖障碍），
+                        // 而不是让 LLM 空等 20s 超时。
+                        let mut goto_stuck_now: Option<(i32, i32, i32)> = None;
+                        if !done
+                            && !timed_out
+                            && matches!(&qc.cmd, BotCommand::Goto { .. })
+                            && let BotCommand::Goto { x, y, z } = &qc.cmd
+                            && let Ok(p) = bot.position()
+                        {
+                            let d = ((p.x - *x as f64).powi(2)
+                                + (p.y - *y as f64).powi(2)
+                                + (p.z - *z as f64).powi(2))
+                            .sqrt();
+                            if d >= 2.5 {
+                                let mut sg = state.goto_stuck.lock().unwrap();
+                                let cur = (p.x, p.y, p.z);
+                                let moved = sg.0.is_none_or(|(lx, ly, lz)| {
+                                    (cur.0 - lx).abs() > 1.0
+                                        || (cur.1 - ly).abs() > 1.0
+                                        || (cur.2 - lz).abs() > 1.0
+                                });
+                                if moved {
+                                    *sg = (Some(cur), 0);
+                                } else {
+                                    sg.1 += 1;
+                                    if sg.1 >= 100 {
+                                        // 5s 无移动且距目标 >2.5m → pathfinder 重算循环
+                                        *sg = (None, 0);
+                                        drop(sg);
+                                        goto_stuck_now = Some((*x, *y, *z));
+                                    }
+                                }
+                            }
+                        }
+                        if let Some((gx, gy, gz)) = goto_stuck_now {
+                            if let Some(tx) = &qc.result_tx {
+                                let _ = tx.send(format!(
+                                    "Action output:\ngoto ({},{},{}) 执行中 5s 无移动——pathfinder 陷入不完整路径重算循环（复杂地形）。\
+                                     已自动脱困：{}。请换策略：1) 若目标在附近，用 mine 挖开挡路方块再走；\
+                                     2) 或 mine_above 上到地表开阔处再 goto；3) 不要重复 goto 同一片区域。",
+                                    gx, gy, gz,
+                                    if bot.position().map_or(true, |p| (p.y.floor() as i32) < 62) {
+                                        "地下已转 mine_above 向上挖出"
+                                    } else {
+                                        "已尝试挖开周围阻挡方块"
+                                    }
+                                ));
+                            }
+                            // 触发与 P66 相同的脱困
+                            if let Ok(p) = bot.position() {
+                                if (p.y.floor() as i32) < 62 {
+                                    *state.mining_above.lock().unwrap() = true;
+                                    *state.mining_above_start_y.lock().unwrap() =
+                                        Some(p.y.floor() as i32);
+                                    *state.mining_above_direction.lock().unwrap() = 0;
+                                } else if let Ok(world) = bot.world() {
+                                    let world = world.read();
+                                    for (bx, by, bz) in
+                                        [(gx, gy, gz), (gx, gy - 1, gz), (gx, gy + 1, gz)]
+                                    {
+                                        if let Some(bs) =
+                                            world.get_block_state(BlockPos::new(bx, by, bz))
+                                            && !bs.is_air()
+                                        {
+                                            bot.start_mining(BlockPos::new(bx, by, bz));
+                                        }
+                                    }
+                                }
+                            }
+                            bot.force_stop_pathfinding();
+                            if let Ok(cp) = bot.position() {
+                                let _ = state.goto_cooldown.lock().unwrap().insert(
+                                    (
+                                        cp.x.floor() as i32,
+                                        cp.y.floor() as i32,
+                                        cp.z.floor() as i32,
+                                    ),
+                                    bot.ticks_connected() + 300,
+                                );
+                            }
+                            state.action_mgr.clear_pending();
+                        }
                         // P65：goto 伪到达看门狗。当 goto 目标其实是脚下实心方块，
                         // bot 原地判"到达"(distance<1.5) 却从未真正移动 → 反复重发相同 goto 死循环。
                         // 检测：同一目标"done"了 2 次但 bot 实际位置(从 last_position)未变 → 强制 mine_above 脱困。

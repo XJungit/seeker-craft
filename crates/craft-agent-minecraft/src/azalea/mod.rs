@@ -196,6 +196,7 @@ impl AzaleaBot {
             combat_strafe_cd: Arc::new(Mutex::new(0)),
             goto_watchdog: Arc::new(Mutex::new((0, 0, 0, 0))),
             goto_cooldown: Arc::new(Mutex::new(HashMap::new())),
+            goto_stuck: Arc::new(Mutex::new((None, 0))),
             no_move_ticks: Arc::new(Mutex::new(0)),
             last_seen_pos: Arc::new(Mutex::new((0, 0, 0))),
             make_obsidian: Arc::new(Mutex::new(None)),
