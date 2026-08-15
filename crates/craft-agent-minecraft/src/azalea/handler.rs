@@ -2292,6 +2292,31 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                 .unwrap_or(false);
                             if target_is_liquid {
                                 if let Ok(p) = bot.position() {
+                                    // P161b：先确保手持 bucket（P156 自动装备镐可能把主手切走）。
+                                    // 目标液体是水/岩浆时，交互需要手持对应桶：水→bucket(空桶装水)，
+                                    // 岩浆→bucket(装岩浆) 或已持有的 lava_bucket。此处统一确保空 bucket 在主手。
+                                    let held_kind = bot
+                                        .get_held_item()
+                                        .ok()
+                                        .filter(|s| !s.is_empty())
+                                        .map(|s| s.kind());
+                                    let need_bucket = !held_kind.is_some_and(|k| {
+                                        k == azalea_registry::builtin::ItemKind::Bucket
+                                    });
+                                    if need_bucket {
+                                        if let Ok(inv) = bot.get_inventory() {
+                                            if let Some(h) = find_hotbar_slot_for(
+                                                &inv,
+                                                azalea_registry::builtin::ItemKind::Bucket,
+                                            ) {
+                                                bot.set_selected_hotbar_slot(h);
+                                                tokio::time::sleep(
+                                                    std::time::Duration::from_millis(150),
+                                                )
+                                                .await;
+                                            }
+                                        }
+                                    }
                                     let dx = x as f64 + 0.5 - p.x;
                                     let dy = y as f64 + 0.5 - p.y;
                                     let dz = z as f64 + 0.5 - p.z;
