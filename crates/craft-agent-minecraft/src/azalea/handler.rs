@@ -2449,6 +2449,42 @@ goto ({},{},{}) 失败——bot 头上有方块（可能在地下）。
                                         bot.set_selected_hotbar_slot(h);
                                         tokio::time::sleep(std::time::Duration::from_millis(150))
                                             .await;
+                                    } else if need_bucket
+                                        && let Ok(inv2) = bot.get_inventory()
+                                        && let Some(src) = find_item_slots(
+                                            &inv2,
+                                            azalea_registry::builtin::ItemKind::Bucket,
+                                        )
+                                        .into_iter()
+                                        .next()
+                                        && let Some(menu) = inv2.menu().ok().flatten()
+                                    {
+                                        // P171：bucket 在主背包（不在 hotbar）时，shift_click 到
+                                        // 空 hotbar 槽再选中。根因（实机装水失败）：bucket 在 slot36
+                                        // 主背包，find_hotbar_slot_for 返回 None，start_use_item 手持
+                                        // 非 bucket 装水失败。修复：从主背包 shift_click 到 hotbar。
+                                        let mut hotbar_range = menu.hotbar_slots_range();
+                                        let target_hb = hotbar_range.find(|&s| {
+                                            inv2.slots()
+                                                .map(|sl| {
+                                                    sl.get(s)
+                                                        .map(|st| st.is_empty())
+                                                        .unwrap_or(false)
+                                                })
+                                                .unwrap_or(false)
+                                        });
+                                        if let Some(hb) = target_hb {
+                                            inv2.shift_click(src);
+                                            tokio::time::sleep(std::time::Duration::from_millis(
+                                                150,
+                                            ))
+                                            .await;
+                                            bot.set_selected_hotbar_slot(hb as u8);
+                                            tokio::time::sleep(std::time::Duration::from_millis(
+                                                150,
+                                            ))
+                                            .await;
+                                        }
                                     }
                                     let dx = x as f64 + 0.5 - p.x;
                                     let dy = y as f64 + 0.5 - p.y;
