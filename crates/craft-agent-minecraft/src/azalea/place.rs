@@ -519,13 +519,40 @@ async fn place_block_direct(bot: &Client, item: &str, pos: BlockPos) -> bool {
     let Some(kind) = item_to_block_kind(item) else {
         return false;
     };
-    // 装备物品到主手（复用 do_place 的装备逻辑：hotbar 有则选，无则 shift_click）
-    let item_kind = ItemKind::from_str(&normalize_item(item)).ok();
-    if let Some(ik) = item_kind {
-        if equip_item_for_place(bot, ik).await.is_err() {
-            return false;
+    // 装备物品到主手：优先用 hotbar 已有物品（cobblestone 常驻 hotbar），
+    // 否则从主背包 shift_click。复用 do_place 已验证的 find_hotbar_slot 逻辑。
+    let equip_ok = {
+        let inv = bot.get_inventory().ok();
+        match inv {
+            Some(inv) => {
+                if let Some(s) = find_hotbar_slot(&inv, ItemKind::Cobblestone) {
+                    bot.set_selected_hotbar_slot(s);
+                    true
+                } else if let Some(main_slot) =
+                    find_item_slot_in_main_inventory(&inv, ItemKind::Cobblestone)
+                {
+                    inv.shift_click(main_slot);
+                    sleep(Duration::from_millis(200)).await;
+                    drop(inv);
+                    let inv2 = bot.get_inventory().ok();
+                    match inv2 {
+                        Some(inv2) => match find_hotbar_slot(&inv2, ItemKind::Cobblestone) {
+                            Some(s) => {
+                                bot.set_selected_hotbar_slot(s);
+                                true
+                            }
+                            None => false,
+                        },
+                        None => false,
+                    }
+                } else {
+                    false
+                }
+            }
+            None => false,
         }
-    } else {
+    };
+    if !equip_ok {
         return false;
     }
     let below = pos.down(1);
@@ -556,29 +583,6 @@ async fn place_block_direct(bot: &Client, item: &str, pos: BlockPos) -> bool {
         }
         Err(_) => false,
     }
-}
-
-/// P163：装备物品到主手（hotbar 有则选中，无则从主背包 shift_click）。
-async fn equip_item_for_place(bot: &Client, kind: ItemKind) -> Result<(), String> {
-    let inv = bot
-        .get_inventory()
-        .map_err(|e| format!("获取背包失败: {e:?}"))?;
-    if let Some(s) = find_hotbar_slot(&inv, kind) {
-        bot.set_selected_hotbar_slot(s);
-    } else {
-        let main_slot = find_item_slot_in_main_inventory(&inv, kind)
-            .ok_or_else(|| "背包未持有该物品".to_string())?;
-        inv.shift_click(main_slot);
-        sleep(Duration::from_millis(200)).await;
-        drop(inv);
-        let inv2 = bot
-            .get_inventory()
-            .map_err(|e| format!("获取背包失败: {e:?}"))?;
-        let s = find_hotbar_slot(&inv2, kind)
-            .ok_or_else(|| "shift_click 后物品仍不在 hotbar".to_string())?;
-        bot.set_selected_hotbar_slot(s);
-    }
-    Ok(())
 }
 
 /// 读取 pos 处的 BlockKind（空气或读取失败返回 None）。
