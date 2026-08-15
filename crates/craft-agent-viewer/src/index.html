@@ -183,6 +183,10 @@
       <span id="gs-effects"></span>
     </div>
   </div>
+  <div class="gs-section" id="gs-armor">
+    <label>装备</label>
+    <div class="gs-inv" id="gs-armor-grid"></div>
+  </div>
   <div class="gs-section" id="gs-hotbar">
     <label>快捷栏</label>
     <div class="gs-inv" id="gs-hotbar-grid"></div>
@@ -505,10 +509,21 @@ function renderInvCell(slot,isHotbar,selectedSlot){
 function buildInvGrid(inv,selectedSlot){
   const hotbarEl=document.getElementById("gs-hotbar-grid");
   const invEl=document.getElementById("gs-inv-grid");
-  hotbarEl.innerHTML="";invEl.innerHTML="";
+  const armorEl=document.getElementById("gs-armor-grid");
+  hotbarEl.innerHTML="";invEl.innerHTML="";if(armorEl)armorEl.innerHTML="";
   // 首次渲染即触发 MC 图标表加载；加载完成后重绘一次让图标出现
   if(mcTexMap===null){
     ensureMcTex().then(()=>{ if(inv!==undefined)buildInvGrid(inv,selectedSlot); }).catch(()=>{});
+  }
+  // 装备区：MC 槽号 5-8 = 头盔/胸甲/护腿/靴子
+  if(armorEl){
+    const armorOrder=[{slot:5,label:"头盔"},{slot:6,label:"胸甲"},{slot:7,label:"护腿"},{slot:8,label:"靴子"}];
+    const armorRow=document.createElement("div");armorRow.className="gs-inv-row";
+    for(const a of armorOrder){
+      const slot=(inv||[]).find(s=>s.slot===a.slot)||{slot:a.slot,id:"",count:0};
+      armorRow.appendChild(renderInvCell(slot,false,null));
+    }
+    armorEl.appendChild(armorRow);
   }
   // MC 客户端槽号布局：0-4 副手/盔甲区（忽略），5-8 盔甲，9-35 主背包，36-44 快捷栏。
   // selected_slot 是 0-8 的快捷栏索引，对应真实槽号 36+selected_slot。
