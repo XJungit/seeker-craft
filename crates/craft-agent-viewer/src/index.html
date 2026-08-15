@@ -510,16 +510,20 @@ function buildInvGrid(inv,selectedSlot){
   if(mcTexMap===null){
     ensureMcTex().then(()=>{ if(inv!==undefined)buildInvGrid(inv,selectedSlot); }).catch(()=>{});
   }
-  const hotbarSlots=inv?.filter(s=>s.slot<9)||[];
-  const invSlots=inv?.filter(s=>s.slot>=9)||[];
-  // 快捷栏：9格一行
+  // MC 客户端槽号布局：0-4 副手/盔甲区（忽略），5-8 盔甲，9-35 主背包，36-44 快捷栏。
+  // selected_slot 是 0-8 的快捷栏索引，对应真实槽号 36+selected_slot。
+  const HOTBAR_BASE=36;
+  const invSlots=inv?.filter(s=>s.slot>=9&&s.slot<=35)||[];
+  // 快捷栏：9格一行（真实槽号 36-44）
   const hRow=document.createElement("div");hRow.className="gs-inv-row";
   for(let i=0;i<9;i++){
-    const slot=hotbarSlots.find(s=>s.slot===i)||{slot:i,id:"",count:0};
-    hRow.appendChild(renderInvCell(slot,true,selectedSlot));
+    const realSlot=HOTBAR_BASE+i;
+    const slot=(inv||[]).find(s=>s.slot===realSlot)||{slot:realSlot,id:"",count:0};
+    // 手持高亮：selected_slot 是 0-8 索引，与 i 直接比较
+    hRow.appendChild(renderInvCell(slot,true,i===selectedSlot));
   }
   hotbarEl.appendChild(hRow);
-  // 背包：9列，3行
+  // 背包：9列，3行（真实槽号 9-35）
   for(let row=0;row<3;row++){
     const rDiv=document.createElement("div");rDiv.className="gs-inv-row";
     for(let col=0;col<9;col++){
