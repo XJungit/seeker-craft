@@ -42,6 +42,15 @@
 - **运维控制台（craft-agent-ctl）** — 进程生命周期、目标注入、会话检查。
 - **Autopilot** — 运维监督器（10s 轮询）：拉起 viewer + 连接 bot、停滞 steering、崩溃恢复、异常检测（无改代码逻辑）。
 
+## 截图
+
+bot 在 Minecraft 中实时运行，由 DSH（DeepSeek Harness）作为大脑驱动；
+craft-agent-viewer 仪表盘实时显示状态。
+
+| BOT 运行（DSH 大脑 + 实时仪表盘） | 仪表盘（全貌） | DSH 中的仪表盘按钮 |
+|---|---|---|
+| <img src="docs/images/screenshot-bot-running.png" width="280" alt="bot 运行"> | <img src="docs/images/screenshot-dashboard.png" width="280" alt="仪表盘"> | <img src="docs/images/screenshot-dashboard-button.png" width="280" alt="仪表盘按钮"> |
+
 ## 架构
 
 ```

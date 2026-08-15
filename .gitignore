@@ -24,6 +24,10 @@ config/.env
 _tmp_*
 smoke_*.txt
 
+# 但 docs/images/ 下的 README 截图要提交（上面 *.png 的例外）
+!docs/images/
+!docs/images/*.png
+
 # 大模型文件已移除（mod 桥接后不再需 ONNX 检测模型）
 
 # Python 缓存

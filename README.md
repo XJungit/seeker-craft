@@ -40,6 +40,15 @@
 - **Ops console (`craft-agent-ctl`)** — process lifecycle, goal injection, session inspection.
 - **Autopilot** — ops supervisor (10s polling): brings up viewer + connects bot, stall steering, crash recovery, anomaly detection (no code-editing logic).
 
+## Screenshots
+
+The bot runs live in Minecraft, driven by DSH (DeepSeek Harness) as its brain; the
+craft-agent-viewer dashboard shows the real-time state.
+
+| Bot running (DSH brain + live dashboard) | Dashboard (full view) | Dashboard button in DSH |
+|---|---|---|
+| <img src="docs/images/screenshot-bot-running.png" width="280" alt="bot running"> | <img src="docs/images/screenshot-dashboard.png" width="280" alt="dashboard"> | <img src="docs/images/screenshot-dashboard-button.png" width="280" alt="dashboard button"> |
+
 ## Architecture
 
 ```
