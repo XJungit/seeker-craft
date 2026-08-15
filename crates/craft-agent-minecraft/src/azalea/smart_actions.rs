@@ -1108,8 +1108,13 @@ pub async fn pickup_nearby_items(bot: &Client) -> Result<String, String> {
             .map(|p| ((x - p.x).powi(2) + (y - p.y).powi(2) + (z - p.z).powi(2)).sqrt())
             .unwrap_or(f64::MAX);
         if dist <= 2.0 {
-            // 已在吸取半径内：停留片刻让物理引擎吸起即可
-            sleep(Duration::from_millis(300)).await;
+            // 已在吸取半径内：先走到掉落物正上方格（精确对准，解决 obsidian 等
+            // 掉进缝隙/贴墙时 300ms 停留吸不起的问题——P166），再停留让物理引擎吸起。
+            // 原实现只原地停留 300ms，若 bot 站在掉落物 1.5-2m 外（吸取半径边缘）
+            // 或掉落物在下方缝隙，吸不起来 → obsidian 收集"挖到但没捡到"。
+            let target = BlockPos::new(x.floor() as i32, y.floor() as i32, z.floor() as i32);
+            bot.start_goto(BlockPosGoal(target));
+            sleep(Duration::from_millis(600)).await;
             continue;
         }
         let target = BlockPos::new(x.floor() as i32, y.floor() as i32, z.floor() as i32);
