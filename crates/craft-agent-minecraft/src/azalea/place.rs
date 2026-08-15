@@ -119,13 +119,14 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
     // 找一个合法位置（air + 下方 solid），自动用该位置放置。
     // 这样 LLM 只需"大致指个位置"，bot 自己找精确可放点——大幅降低 place 失败率。
     // P11 增强：扫描半径从 3 扩大到 5，覆盖更多地下场景（地下空间狭窄，3 格常找不到合法点）。
+    // P163b（2026-08-15）：把「下方空洞」从重定位条件中拆出——pos 是空气但下方空洞时，
+    // 保留原 pos，让下方 P163 自动铺 cobblestone 支撑（原位解决），而不是 find_valid_placement_nearby
+    // 重定位到偏的位置（搭传送门反复放偏的根因）。只有 pos 非空气或 bot 占位才重定位。
     let mut placement_pos = pos;
     let mut relocated = false;
-    let pos_invalid = !is_block_air(bot, pos).await
-        || !is_block_solid(bot, pos.down(1)).await
-        || pos_blocked_by_bot;
+    let pos_invalid = !is_block_air(bot, pos).await || pos_blocked_by_bot;
     if pos_invalid {
-        // LLM 给的位置无效，扫描附近（先 3 格，再扩到 5 格）
+        // LLM 给的位置无效（非空气或 bot 占位），扫描附近（先 3 格，再扩到 5 格）
         let nearby = find_valid_placement_nearby(bot, pos)
             .or_else(|| find_valid_placement_nearby_radius(bot, pos, 5));
         if let Some(np) = nearby {
@@ -134,6 +135,8 @@ pub async fn do_place(bot: &Client, item: &str, pos: BlockPos) -> Result<String,
         }
         // 若 nearby 也找不到，继续用原 pos（下面的检查会给出具体错误）
     }
+    // P163b：pos 是空气但下方空洞时，不再重定位（保留原 pos），
+    // 交给下方 P163 自动铺 cobblestone 支撑——原位解决，避免放偏。
 
     // P5 关键修复 1：放置前必须确认 placement_pos 是空气。
     let pos_was_air = is_block_air(bot, placement_pos).await;
