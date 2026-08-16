@@ -15,8 +15,13 @@ format = "terminal"
 # RUSTSEC-2026-0192 ttf-parser：上游宣布不再维护，无补丁版本。
 #   传递依赖（字体渲染链，如 shadow_text/文本测量），仅渲染用、处理受信字体，
 #   攻击面不可达；官方建议 skrifa 迁移属上游决策，故忽略（unmaintained 类）。
+# RUSTSEC-2026-0249 smartstring：上游宣布不再维护，无补丁版本。
+#   传递依赖（rhai 1.25.1 脚本引擎的字符串优化库，→ craft-agent-minecraft 的
+#   run_script/run_plan 工具），处理的是 LLM 定义的 rhai 脚本字符串（受信输入），
+#   攻击面不可达；rhai 升级属上游决策，故忽略（unmaintained 类）。
 ignore = [
     "RUSTSEC-2023-0071",
     "RUSTSEC-2024-0436",
     "RUSTSEC-2026-0192",
+    "RUSTSEC-2026-0249",
 ]

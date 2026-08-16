@@ -27,6 +27,7 @@ jobs:
         uses: rustsec/audit-check@v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          # 仅上传 SARIF（checks: write）；informational warnings（unmaintained/unsound）
-          # 不开 issue，GITHUB_TOKEN 未授予 issues: write，避免 job 标红
-          create-issues: false
+          # rustsec/audit-check v2 仅支持 token/ignore/working-directory 三个输入；
+          # 它只上传 SARIF 检查（checks: write），不会自动开 issue。
+          # informational warnings（unmaintained/unsound）不阻塞 job。
+          # 本地忽略清单见 .cargo/audit.toml（随仓库提交，CI 与本地一致）。
