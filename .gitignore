@@ -85,3 +85,9 @@ compile-log.txt
 AGENTS.md
 /.agents/
 /.zcode/
+
+# DSH 本地 agent 运行时数据（本机记忆数据库 memory.db / 会话 / 调试日志，机器相关，勿提交）
+.dsh-meow/
+
+# dsh-bridge 临时 pnpm 锁（含本机 link 绝对路径；该插件沿用 package-lock.json 入库）
+tools/dsh-bridge/pnpm-lock.yaml

@@ -22,7 +22,7 @@
  *   - 面板打开时给 DSH 三列布局的 grid frame 加右侧 padding（JS 动态让位）→ 真正
  *     “页面旁”，而非遮挡对话。稳定锚点是 layout 的 `[data-shell-overlay]` 的父元素
  *     （即 grid frame），不依赖任何哈希类名/易变选择器（真实 DSH 无 data-phase）。
- *   - 面板状态（userClosed / iframeLoaded / 当前是否 craft-bot）放在 window 上，
+ *   - 面板状态（userOpened / iframeLoaded / 当前是否 craft-bot）放在 window 上，
  *     函数每次重查 DOM，插件生命周期内始终拿到最新状态。
  *
  * viewer 地址：默认 http://127.0.0.1:8080，可用 localStorage 覆盖（settings 卡片）。
@@ -176,7 +176,8 @@ window.__ModuleLoader__.load({
     function setOpen(open, isCraft) {
       var p = queryParts()
       if (p === null) return
-      var show = open && isCraft && !W.__dshCraftUserClosed
+      // 仅在用户手动打开（userOpened）且处于 craft-bot 会话时显示；进入会话不再自动打开
+      var show = open && isCraft && !!W.__dshCraftUserOpened
       applyFramePadding(show)
       if (show) {
         // iframe 只加载一次（保留 viewer 的 SSE 连接）；切换会话只显隐不重载。
@@ -192,16 +193,16 @@ window.__ModuleLoader__.load({
       } else {
         p.panel.setAttribute('data-hidden', '')
         document.documentElement.removeAttribute(OPEN_ATTR)
-        // 仅 craft-bot 且用户手动关闭 → 显示启动器以便重开；其余情况（非 craft-bot）什么都不显示
+        // 仅 craft-bot 且面板未手动打开 → 显示启动器标签（点击手动打开）；其余情况隐藏
         if (p.launcher) {
-          if (isCraft && W.__dshCraftUserClosed) p.launcher.setAttribute('data-show', '')
+          if (isCraft && !W.__dshCraftUserOpened) p.launcher.setAttribute('data-show', '')
           else p.launcher.removeAttribute('data-show')
         }
       }
     }
 
     function renderCurrent() {
-      setOpen(true, !!W.__dshCraftIsCraft) // setOpen 内部会按 userClosed 决定最终态
+      setOpen(true, !!W.__dshCraftIsCraft) // setOpen 内部会按 userOpened 决定最终态（手动打开才显示）
     }
 
     // ── 插件 apply（client 半边）────────────────────────────────────────────
@@ -241,9 +242,9 @@ window.__ModuleLoader__.load({
         var current = currentId !== undefined && snap.byId ? snap.byId[currentId] : undefined
         var isCraft = !!(current && current.agentPreset === PRESET_ID)
         W.__dshCraftIsCraft = isCraft
-        // 离开 craft-bot → 重置手动关闭，下次进入自动重开
-        if (!isCraft) W.__dshCraftUserClosed = false
-        setOpen(isCraft && !W.__dshCraftUserClosed, isCraft)
+        // 显隐完全交给 setOpen：仅在用户手动打开（userOpened）且处于 craft-bot 时显示，
+        // 进入会话不再自动打开；非 craft-bot 时隐藏并移除启动器。
+        setOpen(true, isCraft)
       }
 
       var unsub = null
