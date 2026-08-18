@@ -65,6 +65,8 @@ window.__ModuleLoader__.load({
       'border-bottom:1px solid rgba(128,128,128,.2);font-size:12px;color:var(--dsw-alias-label-secondary,#888)}' +
       '.dsh-craft-bar b{color:inherit;font-weight:600}' +
       '.dsh-craft-bar .spacer{flex:1}' +
+      // 底部操作栏（关闭按钮放在面板右下角，避免与 DSH 右上角官方 UI 重叠）
+      '.dsh-craft-bar.dsh-craft-bar-bottom{justify-content:flex-end;border-bottom:none;border-top:1px solid rgba(128,128,128,.2)}' +
       '.dsh-craft-close{cursor:pointer;font-size:12px;padding:2px 10px;border:1px solid rgba(128,128,128,.4);' +
       'border-radius:6px;background:transparent;color:inherit}' +
       '.' + PANEL_CLS + ' iframe{flex:1;width:100%;border:0;background:#0f1419}' +
@@ -102,10 +104,14 @@ window.__ModuleLoader__.load({
       panel.className = PANEL_CLS
       panel.setAttribute('data-hidden', '')
       panel.innerHTML =
+        // 顶部栏：标题 + viewer 地址（关闭按钮已移到底部右下角）
         '<div class="dsh-craft-bar">' +
         '<b>Craft Bot 仪表盘</b>' +
         '<span class="dsh-craft-url"></span>' +
         '<span class="spacer"></span>' +
+        '</div>' +
+        // 底部栏：把关闭按钮放在面板右下角，避免与 DSH 右上角官方 UI 重叠
+        '<div class="dsh-craft-bar dsh-craft-bar-bottom">' +
         '<button type="button" class="dsh-craft-close">关闭 ✕</button>' +
         '</div>'
       var iframe = document.createElement('iframe')
@@ -113,20 +119,20 @@ window.__ModuleLoader__.load({
       iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms')
       iframe.setAttribute('referrerPolicy', 'no-referrer')
       panel.appendChild(iframe)
-      // 关闭：记录 userClosed（跨重求值存 window），按当前 isCraft 重新渲染
+      // 关闭：记录 userOpened=false（用户手动关闭），按当前 isCraft 重新渲染
       panel.querySelector('.dsh-craft-close').addEventListener('click', function () {
-        W.__dshCraftUserClosed = true
+        W.__dshCraftUserOpened = false
         renderCurrent()
       })
       host.appendChild(panel)
 
-      // 启动器：用户关闭后用于重开（仅在 craft-bot 且已关闭时显示）
+      // 启动器：仅在 craft-bot 且面板未手动打开时显示，供用户点击手动打开面板
       var launcher = document.createElement('button')
       launcher.type = 'button'
       launcher.className = LAUNCHER_CLS
       launcher.textContent = '🎮 Craft'
       launcher.addEventListener('click', function () {
-        W.__dshCraftUserClosed = false
+        W.__dshCraftUserOpened = true
         renderCurrent()
       })
       host.appendChild(launcher)
