@@ -246,17 +246,31 @@ async function doGoal(){
   await fetch("/api/goal",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({goal})});
 }
 
-setInterval(async()=>{
+// 状态轮询（带失败退避）：viewer 未启动时 fetch 全失败，连续失败 10 次（≈5s）后
+// 降频到 10s 一次并亮“未连接”灯，避免控制台每 500ms 一条 ERR_CONNECTION_REFUSED。
+let statusFailStreak=0;
+async function pollStatus(){
+  let ok=false;
   try{const r=await fetch("/api/status");const s=await r.json();
-    const running=s.running,paused=s.paused;
-    const start=document.getElementById("btnStart"),pause=document.getElementById("btnPause"),stop=document.getElementById("btnStop");
-    start.disabled=running;stop.disabled=!running;pause.disabled=!running;
-    pause.textContent=paused?"继续":"暂停";
-    document.getElementById("stStatus").textContent=running?(paused?"暂停中":"运行中"):"就绪";
-    document.getElementById("dotStatus").className="dot "+(running?(paused?"pa":"go"):"st");
-    document.getElementById("stTurns").textContent=s.step??0;
+    if(r.ok){
+      ok=true;
+      const running=s.running,paused=s.paused;
+      const start=document.getElementById("btnStart"),pause=document.getElementById("btnPause"),stop=document.getElementById("btnStop");
+      start.disabled=running;stop.disabled=!running;pause.disabled=!running;
+      pause.textContent=paused?"继续":"暂停";
+      document.getElementById("stStatus").textContent=running?(paused?"暂停中":"运行中"):"就绪";
+      document.getElementById("dotStatus").className="dot "+(running?(paused?"pa":"go"):"st");
+      document.getElementById("stTurns").textContent=s.step??0;
+    }
   }catch(e){}
-},500);
+  statusFailStreak=ok?0:statusFailStreak+1;
+  if(!ok&&statusFailStreak>=10){
+    document.getElementById("stStatus").textContent="未连接";
+    document.getElementById("dotStatus").className="dot st";
+  }
+  setTimeout(pollStatus,statusFailStreak>=10?10000:500);
+}
+pollStatus();
 
 const logEl=document.getElementById("log");
 function addLog(text,cls){
@@ -414,7 +428,14 @@ function render(data){
     }
   }
 }
-async function poll(){try{const r=await fetch("/api/session",{cache:"no-store"});if(r.ok)render(await r.json())}catch(_){}setTimeout(poll,1000)}
+// 会话轮询（带失败退避）：与 pollStatus 同理，viewer 未启动时降频到 10s。
+let sessionFailStreak=0;
+async function poll(){
+  let ok=false;
+  try{const r=await fetch("/api/session",{cache:"no-store"});if(r.ok){render(await r.json());ok=true;}}catch(_){}
+  sessionFailStreak=ok?0:sessionFailStreak+1;
+  setTimeout(poll,sessionFailStreak>=5?10000:1000);
+}
 poll();
 
 // 游戏状态面板
@@ -579,13 +600,20 @@ function formatPos(pos){
   if(!Array.isArray(pos))return"-";
   try{return pos.map(v=>+v.toFixed(1)).join(", ")}catch(e){return"-"}
 }
+// 游戏状态轮询（带失败退避）：viewer 未启动（fetch 抛错 / !ok）连续失败 5 次（≈10s）后，
+// 在感知区显示中文提示并降频到 10s；成功一次即恢复 2s。注意 not_connected 是正常状态
+//（viewer 活着但 bot 没连），不计入失败，仍保持 2s 轮询等 bot 上线。
+let gsFailStreak=0;
 async function pollGameState(){
   // 先安排下一次轮询（放最前，保证任何提前 return / 异常都不会中断自动更新）
-  setTimeout(pollGameState,2000);
+  // 间隔按当前失败 streak 动态定：退避中 10s，否则 2s。
+  const streakAtStart=gsFailStreak;
+  setTimeout(pollGameState,streakAtStart>=5?10000:2000);
   try{
     const r=await fetch("/api/game-state",{cache:"no-store"});
-    if(!r.ok)return;
+    if(!r.ok){gsFailStreak++;return;}
     const st=await r.json();
+    gsFailStreak=0;
     if(!st||st.status==="not_connected"){
       document.getElementById("gs-pos").textContent="未连接";
       return;
@@ -641,7 +669,13 @@ async function pollGameState(){
     if(st.inventory){
       buildInvGrid(st.inventory,st.held_item&&st.held_item!=="minecraft:air"?st.selected_slot??0:null);
     }
-  }catch(_){}
+  }catch(_){gsFailStreak++;}
+  // 退避中且失败：感知区给中文提示（只写一次用词，避免每轮刷屏感）
+  if(gsFailStreak===5){
+    document.getElementById("gs-pos").textContent="未连接";
+    const pt=document.getElementById("perceiveText");
+    if(pt)pt.textContent="viewer 未启动（127.0.0.1:8080 连不上）。先跑..\\scripts\\start.ps1 拉起 viewer 再连 bot，面板会自动恢复。";
+  }
 }
 pollGameState();
 </script>
