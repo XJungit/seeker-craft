@@ -7,6 +7,57 @@ with [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The project is
 currently in active development as a single-maintainer project; `v1.0.0` is the
 first tagged **1.0 release** (DSH bridge mode is the only supported usage).
 
+## [1.4.0] - 2026-09-05
+
+### Changed
+
+- **craft-bot preset adapted to the new DSH (Code Mode → PTC)** — the preset
+  now registers `@deepseek-ai/dsh-agent-tool-presentation` with `mode: ptc`,
+  giving the bot brain a `run_code` tool: one TypeScript program composes
+  multi-step file / search / check operations via the `tools` SDK, instead of
+  emitting native tool calls one by one. The old `mode: "code"` value was
+  removed in the new harness (the schema now accepts only `native|ptc|both`);
+  using it would fail the preset mount.
+- **Persona rewritten for PTC** — all tool calls go through
+  `await tools.xxx()` inside `run_code`; mission-first framing ("Beat
+  Minecraft" through the 6 tiers, self-evolution as the means, not the goal);
+  an explicit startup flow (perceive → assess → report & proceed); tool
+  families split (harness tools for self-evolution vs bridge tools
+  `game_state` / `bot_tool` / `set_goal` for bot control); self-evolution
+  scope clarified (this preset + dsh-bridge + Rust + docs; official presets
+  are copy-before-edit).
+- **`tool-workflow` disabled** — aligned with the official ptc policy: in PTC
+  mode `run_code` is already the model-authored orchestration surface, so a
+  second (workflow) tool is no longer published; the worker-thread engine is
+  retained for `ralph`.
+- **`tool-web` `fetch: true`** — aligned with the official ptc preset; the bot
+  can fetch full wiki / guide pages when needed.
+- **`tool-cordis` deliberately not registered** — `cordisInspect` is a
+  process-global Host registry; registering it here would collide with the
+  `cordis` (creation-mode) preset when both run in parallel sessions
+  ("Host Cordis inspect provider ... is already registered"). Use a `cordis`
+  session for cordis self-reference; craft-bot focuses on bot control +
+  self-evolution.
+- **skill-filesystem path** — the compose-authoring skills now resolve from
+  the deployed `@deepseek-ai/dsh-agent-presets` package (absolute path), not
+  the old `{{DSH_PKG_ROOT}}/config/agent-presets/cordis/` location.
+- **preset.yml description** updated — mentions Code Mode (`run_code`),
+  subagents + Ralph, self-evolution scope, and 49 tools (was 54).
+
+### Fixed
+
+- **dsh-bridge panel auto-open removed** — entering a craft-bot session no
+  longer auto-opens the bridge panel; it is now user-opened
+  (`__dshCraftUserOpened`), avoiding contention with the DSH official UI. The
+  close button moved to the bottom.
+- **dsh-bridge `dsh-tools` → peerDependencies** — avoids shadowing the host's
+  `dsh-tools` version; upgraded to `0.1.0-rc.7` to align with the harness.
+- **CI: Security Audit workflow** fixed; `h2` bumped to 0.4.16 to clear
+  RUSTSEC-2026-0258.
+- **.gitignore** — added `.dsh-meow/` (local memory DB / sessions / debug logs)
+  and `tools/dsh-bridge/pnpm-lock.yaml` (contains local link paths) to prevent
+  committing local agent runtime data.
+
 ## [1.3.0] - 2026-08-16
 
 ### Added
