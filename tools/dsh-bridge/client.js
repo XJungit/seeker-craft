@@ -44,13 +44,19 @@ window.__ModuleLoader__.load({
     require('react')
 
     // ── 常量 ────────────────────────────────────────────────────────────────
-    var PRESET_ID = 'craft-bot'
+    // 本部署里 Craft-Agent 脑会话可能挂在多个 preset id 下（会话头实测出现过
+    // 'craft-bot' 与 'code'——后者 header 写 code 却装载 craft-bot persona），
+    // 用名单匹配而非单一 id，避免换个预设名就静默失联。
+    var W = typeof window !== 'undefined' ? window : {}
+    var PRESET_IDS = ['craft-bot', 'code']
+    // 浏览器指纹：控制台读 window.__dshCraftBuild 即可确认载入的是哪一版 bundle，
+    // 改一次 client.js 就 bump 一次（字母递增），排障时先对指纹再谈逻辑。
+    W.__dshCraftBuild = '2026-09-05-d'
     var VIEWER_DEFAULT = 'http://127.0.0.1:8080'
     var HOST_ATTR = 'data-dsh-craft-host'
     var OPEN_ATTR = 'data-dsh-craft-open' // 挂在 documentElement，驱动对话列让位
     var PANEL_CLS = 'dsh-craft-panel'
     var LAUNCHER_CLS = 'dsh-craft-launcher'
-    var W = typeof window !== 'undefined' ? window : {}
 
     // ── CSS（内联注入，避免额外构建）─────────────────────────────────────────
     // 面板固定右侧停靠 = 真正的“页面旁”；打开时对话列右移让位，不遮挡对话。
@@ -72,7 +78,7 @@ window.__ModuleLoader__.load({
       '.' + PANEL_CLS + ' iframe{flex:1;width:100%;border:0;background:#0f1419}' +
       // 启动器小标签：仅 craft-bot 且用户关闭时才出现，用于重开（其他会话完全不显示）。
       // 位置：右边缘垂直居中（不占右上角，避免与 DSH 官方 Session log 等右上角按钮重叠）
-      '.' + LAUNCHER_CLS + '{position:fixed;top:50%;right:0;transform:translateY(-50%);z-index:41;display:none;' +
+      '.' + LAUNCHER_CLS + '{position:fixed;top:calc(50% + 72px);right:0;transform:translateY(-50%);z-index:41;display:none;' +
       'align-items:center;gap:6px;padding:8px 5px;border-radius:8px 0 0 8px;cursor:pointer;' +
       'border:1px solid rgba(74,163,255,.5);border-right:none;background:rgba(74,163,255,.15);color:inherit;font:inherit;font-size:12px;' +
       'writing-mode:vertical-rl;letter-spacing:.12em}' +
@@ -116,7 +122,12 @@ window.__ModuleLoader__.load({
         '</div>'
       var iframe = document.createElement('iframe')
       iframe.title = 'Craft-Agent Viewer'
-      iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms')
+      // 注意：sandbox 不能同时给 allow-scripts + allow-same-origin（沙箱逃逸警告）。
+      // viewer 是同源直连（http://127.0.0.1:8080），跨域靠 viewer 侧 CORS 头
+      // （Access-Control-Allow-Origin: *，不透明源 origin null 照样放行）解决，
+      // 所以只保留 allow-scripts + allow-forms；故意不加 allow-same-origin，iframe
+      // 以不透明源运行，即使其中脚本有漏洞也无法逃逸沙箱。
+      iframe.setAttribute('sandbox', 'allow-scripts allow-forms')
       iframe.setAttribute('referrerPolicy', 'no-referrer')
       panel.appendChild(iframe)
       // 关闭：记录 userOpened=false（用户手动关闭），按当前 isCraft 重新渲染
@@ -238,9 +249,42 @@ window.__ModuleLoader__.load({
         // 若 DSH API 变更此形状，这里是唯一需要同步调整的消费点。
         var snap = null
         try { if (sessions && sessions.list) snap = sessions.list.getSnapshot() } catch (e) { snap = null }
-        var currentId = snap && snap.current
-        var current = currentId !== undefined && snap.byId ? snap.byId[currentId] : undefined
-        var isCraft = !!(current && current.agentPreset === PRESET_ID)
+        var currentId = snap ? snap.current : undefined
+        var byIdMap = snap ? snap.byId : undefined
+        var current = undefined
+        try {
+          if (currentId !== undefined && byIdMap) current = byIdMap[currentId]
+          // 兼容 items 数组形态：某些版本快照用 items 列表而非 byId 字典
+          if (current === undefined && snap && Object.prototype.toString.call(snap.items) === '[object Array]') {
+            for (var bi = 0; bi < snap.items.length; bi++) {
+              if (snap.items[bi] && snap.items[bi].sessionId === currentId) { current = snap.items[bi]; break }
+            }
+          }
+        } catch (e2) { current = undefined }
+        // agentPreset 等同于挂载的 composition id，本部署里 Craft 脑挂 'craft-bot'
+        // 或 'code'（见上名单）。不做 startsWith/包含匹配——短名包含极易跨预设误命中；
+        // 日后新增挂载位时只改上名单。
+        // agentPreset 可能藏在 projectionValues 里（新版 projectList 只显式拷贝
+        // 部分顶层字段，agentPreset 进了 projectionValues），两层都查。
+        var pv0 = (current && current.projectionValues) || null
+        var ap = (current && current.agentPreset !== undefined) ? current.agentPreset
+          : ((pv0 && pv0.agentPreset !== undefined) ? pv0.agentPreset : undefined)
+        var isCraft = !!(ap && PRESET_IDS.indexOf(ap) !== -1)
+        // 一次性诊断探针：把原始快照形状写到 window，用户控制台
+        // JSON.stringify(window.__dshCraftDbg) 一次即可看到全部真相。
+        try {
+          var pv = (current && current.projectionValues) || null
+          W.__dshCraftDbg = {
+            build: W.__dshCraftBuild || null,
+            currentId: currentId === undefined ? null : String(currentId),
+            keys: current ? Object.keys(current).slice(0, 24) : [],
+            agentPreset: ap === undefined ? null : ap,
+            pvKeys: pv ? Object.keys(pv).slice(0, 24) : [],
+            pvPreset: (pv && pv.agentPreset !== undefined) ? pv.agentPreset : null,
+            cwd: (current && current.cwd !== undefined) ? String(current.cwd).slice(0, 80) : null,
+            ids: (snap && snap.ids) ? snap.ids.slice(0, 8) : null
+          }
+        } catch (dbgE) { /* 诊断失败不影响主逻辑 */ }
         W.__dshCraftIsCraft = isCraft
         // 显隐完全交给 setOpen：仅在用户手动打开（userOpened）且处于 craft-bot 时显示，
         // 进入会话不再自动打开；非 craft-bot 时隐藏并移除启动器。

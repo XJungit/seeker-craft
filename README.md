@@ -37,8 +37,7 @@
 - **Spatial WorldMemory** — chunk-indexed memories (resources, structures, containers, hazards, portals) with TTL forgetting and named anchors.
 - **DSH bridge mode** — since 2026-08-14 the in-bot LLM loop is removed; DSH (DeepSeek Harness) is the sole brain driving the bot through the viewer bridge (`/api/connect` + `/api/bot_tool` + `/api/game-state` + `/api/goal`).
 - **Probe mode** — a no-LLM tool-layer test harness that verifies tool behavior in seconds (not minutes of LLM runtime).
-- **Ops console (`craft-agent-ctl`)** — process lifecycle, goal injection, session inspection.
-- **Autopilot** — ops supervisor (10s polling): brings up viewer + connects bot, stall steering, crash recovery, anomaly detection (no code-editing logic).
+- **Ops console (`craft-agent-ctl`)** — process lifecycle, goal injection, session inspection. (autopilot supervisor removed in v1.5.0; DSH is the sole brain).
 
 ## Screenshots
 
@@ -58,7 +57,6 @@ seeker-craft/
 │   ├── craft-agent/               # pure logic lib: types/GameTool/ToolRegistry/WorldMemory/session/task/profile/skill
 │   ├── craft-agent-minecraft/     # Azalea adapter: bot + 49 tools (craft/smelt/enchant/brew/combat/farm)
 │   ├── craft-agent-viewer/        # web dashboard (Axum + SSE) + DSH bridge (connect/bot_tool/game-state/goal)
-│   ├── craft-agent-autopilot/     # ops supervisor (10s polling: viewer+connect, stall steering, crash recovery)
 │   └── craft-agent-ctl/           # ops console
 ├── data/
 │   ├── config/agent.example.toml  # legacy LLM template (in-bot era; not used in DSH mode)
@@ -254,7 +252,7 @@ set_goal("Collect 24 iron ore and smelt into ingots")           # set the ops go
 ### 6. Stop
 
 ```powershell
-.\scripts\stop.ps1        # stops viewer/autopilot (does not affect MC server or DSH)
+.\scripts\stop.ps1        # stops viewer (does not affect MC server or DSH)
 ```
 
 ### Build & test (for development)

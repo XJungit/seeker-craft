@@ -1,6 +1,6 @@
-﻿<#
+<#
 .SYNOPSIS
-  SeekerCraft 一键停止：停止 viewer / autopilot（经 craft-agent-ctl stop）。
+  SeekerCraft 一键停止：停止 viewer（经 craft-agent-ctl stop）。
 .DESCRIPTION
   停止 viewer 与相关 bot 进程。不影响 Minecraft 服务器与 DSH。
 .NOTES
@@ -18,7 +18,7 @@ if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
 }
 $ProjectRoot = [System.IO.Path]::GetFullPath($ProjectRoot)
 
-Write-Host "==> 停止 SeekerCraft viewer/autopilot ..." -ForegroundColor Cyan
+Write-Host "==> 停止 SeekerCraft viewer ..." -ForegroundColor Cyan
 Push-Location $ProjectRoot
 try {
     $ctl = Join-Path $ProjectRoot 'target\debug\craft-agent-ctl.exe'

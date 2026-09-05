@@ -3,6 +3,27 @@
 craft-bot 预设的 viewer 桥插件（DSH 侧）。让 [DSH](https://github.com/deepseek-ai/deepseek-harness)
 作为 Minecraft bot（Craft-Agent）的**唯一大脑**：经 craft-agent-viewer 的 HTTP API 驱动 live bot。
 
+## 支持的 DSH 版本
+
+| 依赖项 | 支持范围 | 说明 |
+|---|---|---|
+| `@deepseek-ai/dsh`（CLI / harness） | `>=0.1.2-rc.1 <0.2.0` | **实测通过版本：0.1.2-rc.1** |
+| `@deepseek-ai/dsh-tools` | `^0.1.0-rc.7`（peerDependency） | 提供 `defineTool`；由 DSH CLI 自带副本经 `link:` 解析 |
+| `@deepseek-ai/schemastery` | `^3.18.1` | 配置 schema |
+
+本插件依赖的 DSH 契约（升级 DSH 时优先回归验证以下几处，任一变更都会让插件**静默失效**）：
+
+- **client 半边**：`window.__ModuleLoader__.load({ id, factory })`；`package.json` 的
+  `dsh.client.{platform,inject}` 声明；`ctx.sessions.list`（ObservableSnapshot，
+  `getSnapshot() -> { current, byId }`）与会话字段 `agentPreset`。
+- **host 半边**：`inject = ['tools', 'systemPrompt', 'webServer']` 三个服务名，以及经
+  `webServer` 挂 `/craft/api/*` 同源代理的路由接口。
+- **已知破坏性变更**：harness 已将 Code Mode 更名为 **PTC**（Programmatic Tool Calling），
+  `@deepseek-ai/dsh-agent-tool-presentation` 的 schema 只接受 `native|ptc|both`；旧值 `"code"`
+  会导致预设挂载失败（craft-bot 预设已改为 `mode: ptc`）。
+
+> **维护约定**：每次改动本插件时，同步更新上表的实测版本与契约清单。
+
 ## 工具
 
 | 工具 | 端点 | 说明 |
@@ -31,17 +52,19 @@ craft-bot 预设的 viewer 桥插件（DSH 侧）。让 [DSH](https://github.com
   no-op disposer（参考 whale-girl 的 `[data-whale-girl]` 守卫）。DSH 的 client bundle 是一个 cordis
   plugin entry（一个包 = 一个 loader entry = 一次 apply，见 web/src/boot.tsx），即使全局行与
   craft-bot 预设行同时挂载同一插件，页面中也**始终只存在一个**仪表盘。
-- **面板**：craft-bot 会话加载即**自动打开**，固定右侧停靠（"页面旁"），iframe 嵌入
-  viewer（`http://127.0.0.1:8080`，无 X-Frame-Options 可直接嵌）实时显示状态流；iframe 只加载一次、
-  保留 viewer 的 SSE 连接，切换会话只显隐不重载。用户可点 ✕ 关闭，关闭后右上角出现 “🎮 Craft Bot
-  仪表盘” 启动器用于重开（尊重手动关闭，本会话内不强制重开）。
+- **面板（不自动打开，仅手动）**：进入 craft-bot 会话时面板**保持隐藏**，只在**右边缘垂直居中**
+  显示 “🎮 Craft” 启动器小标签（writing-mode 竖排）；点击它才打开面板。面板固定右侧停靠（"页面旁"），
+  iframe 嵌入 viewer（`http://127.0.0.1:8080`，无 X-Frame-Options 可直接嵌）实时显示状态流；iframe 只加载
+  一次、保留 viewer 的 SSE 连接，切换会话只显隐不重载。**关闭按钮 “关闭 ✕” 位于面板底部栏右下角**
+  （不放右上角，避免与 DSH 原生右上 UI 如 Session log 重叠）；关闭后启动器重现，可再次手动打开。
+  显隐由 `window.__dshCraftUserOpened` 单一标志决定（默认 false = 不自动打开）。
 - **对话列让位（真正“页面旁”而非遮挡）**：DSH 布局是三列 CSS grid（sidebar/center/details），列类名是
   哈希过的、无稳定选择器。实现用 JS 动态让位：面板打开时给 grid frame 加 `padding-right`（宽度与面板
   一致），把对话区让到面板左侧。稳定锚点是 layout 的 `[data-shell-overlay]` 的父元素（即 grid frame）；
   找不到时退化为纯 fixed 停靠（仍可用）。
 - **仅 craft-bot 显示**：通过 `ctx.sessions.list.subscribe()` 订阅会话列表，当前会话切到/离开
-  craft-bot 时自动显隐（`agentPreset === 'craft-bot'` 才显示；其他预设/普通会话面板保持隐藏、侧边栏
-  无任何入口）。离开 craft-bot 会重置“手动关闭”标志，下次进入自动重开。
+  craft-bot 时自动显隐（`agentPreset === 'craft-bot'` 才注册 UI；其他预设/普通会话面板保持隐藏、
+  侧边栏无任何入口）。离开 craft-bot 会把 `__dshCraftUserOpened` 重置为 `false`，**下次进入仍需手动打开**。
 - **多 craft-bot 会话共享同一个仪表盘**：因为 host 是 DOM 单例，无论同时打开几个 craft-bot 会话，
   页面旁始终只有一块仪表盘（各自会话的入口按钮/启动器都操控同一面板）。
 - **同源代理**：host 端挂 `/craft/api/*` → viewer `/api/*` 转发（GET/POST 透传），
@@ -107,7 +130,7 @@ craft-bot 预设的 viewer 桥插件（DSH 侧）。让 [DSH](https://github.com
 ```
 
 并在 `~/.dsh/profiles/web/package.json` 的 dependencies 加 link 依赖指向本目录
-（`<repo-root>` 为你的仓库克隆路径，如 `D:/Craft-Agent`）：
+（`<repo-root>` 为你的仓库克隆路径，如 `D:/SeekerCraft`）：
 
 ```json
 "dsh-bridge": "link:<repo-root>/tools/dsh-bridge"
@@ -162,5 +185,6 @@ node scripts/verify-tool-names.mjs
 端到端（DSH 会话内）：`game_state` 感知 → `bot_tool(name, args)` 执行 → `set_goal(text)` 设目标。
 三工具出现在工具目录即挂载成功。`bot_tool` 的参数按各工具 schema 传（如 `equip` 需
 `{item, slot}`，`slot` 枚举 hand/helmet/chestplate/leggings/boots）。
-仪表盘面板：重启 DSH 后，进入 craft-bot 会话即于页面右侧自动内嵌显示 viewer 仪表盘（"页面旁"）；
-切到非 craft-bot 会话自动收起，多 craft-bot 会话共享同一块面板。
+仪表盘面板：重启 DSH 后，进入 craft-bot 会话会在**右边缘**出现 “🎮 Craft” 启动器小标签，
+**点击它才打开**面板（不自动弹出）；切到非 craft-bot 会话自动收起，多 craft-bot 会话共享同一块面板。
+面板内容依赖 viewer 存活（`127.0.0.1:8080`）——viewer 未启动时标签仍会出现，但面板内 iframe 会空白/报错。

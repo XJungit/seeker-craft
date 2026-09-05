@@ -1129,15 +1129,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "craft-agent-autopilot"
-version = "1.4.0"
-dependencies = [
- "reqwest 0.12.28",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "craft-agent-ctl"
 version = "1.4.0"
 dependencies = [

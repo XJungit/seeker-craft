@@ -8,15 +8,13 @@
 resolver = "3"
 members = [
     "crates/craft-agent",             # 核心：通用抽象（types / GameAdapter / core：WorldMemory·GameTool·ToolRegistry）
-    "crates/craft-agent-minecraft",   # MC 适配器：azalea 协议（精确状态）+ 54 工具
+    "crates/craft-agent-minecraft",   # MC 适配器：azalea 协议（精确状态）+ 49 工具
     "crates/craft-agent-viewer",      # 运行可视化：把 session JSONL 渲染成 Web 仪表盘（对话历史 + 工具调用）
-     # 全自动测试工具链：程序化测试运行、失败分析、自动修复
-    "crates/craft-agent-autopilot",   # 全自动化自进化主循环：无人值守连续运行直至通关
     "crates/craft-agent-ctl",         # 运维控制台：部署/状态/监控/会话分析（替代频繁 shell 操作）
 ]
 
 [workspace.package]
-version = "1.4.0"
+version = "1.5.0"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/XJungit/seeker-craft"

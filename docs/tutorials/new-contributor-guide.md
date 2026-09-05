@@ -12,7 +12,7 @@ This page maps the fastest path from zero to productive.
 ## Key Documents for v1.0
 
 - `../../ARCHITECTURE.md` — current architecture (DSH bridge runtime, azalea fork maintenance)
-- `../../README.md` — overview, 54-tool table, 6-stage path
+- `../../README.md` — overview, 49-tool table, 6-stage path
 - `../../tools/dsh-bridge/README.md` — the DSH bridge plugin (game_state / bot_tool / set_goal)
 
 ## Crate-Level Docs

@@ -9,7 +9,7 @@ single-route architecture and P55-P58 fixes.
   `refactor-numen-philosophy-baritone-base.md`（Baritone 方案，已弃用）、`game-agent-design.md`（v0.4 纯视觉设计）。
 
 See also:
-- [`ARCHITECTURE.md`](../../ARCHITECTURE.md) — Layered overview, DSH bridge runtime, 54 tools, P56-P58 governance (historical).
+- [`ARCHITECTURE.md`](../../ARCHITECTURE.md) — Layered overview, DSH bridge runtime, 49 tools, P56-P58 governance (historical).
 - [`PLAN.md`](../../PLAN.md) — Current project plan (azalea-bot route, Mindcraft philosophy,通关路径).
 - [`AGENTS.md`](../../AGENTS.md) — Full automation workflow manual + section 9-bis Mindcraft philosophy rules.
 - [`adr.md`](../adr.md) — ADR-001 (azalea-only) / ADR-004 (LLM-driven tools, supersedes old GoalEngine plan).

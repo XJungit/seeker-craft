@@ -39,8 +39,7 @@
 - **空间 WorldMemory** — 按区块索引的记忆（资源/建筑/容器/危险/传送门），带 TTL 遗忘与命名锚点。
 - **DSH 桥接模式** — 2026-08-14 起 in-bot LLM 循环已移除，DSH（DeepSeek Harness）成为唯一大脑，经 viewer 桥（`/api/connect` + `/api/bot_tool` + `/api/game-state` + `/api/goal`）驱动 bot。
 - **Probe 模式** — 无 LLM 的工具层测试框架，秒级验证工具行为（而非分钟的 LLM 运行时）。
-- **运维控制台（craft-agent-ctl）** — 进程生命周期、目标注入、会话检查。
-- **Autopilot** — 运维监督器（10s 轮询）：拉起 viewer + 连接 bot、停滞 steering、崩溃恢复、异常检测（无改代码逻辑）。
+- **运维控制台（craft-agent-ctl）** — 进程生命周期、目标注入、会话检查。（autopilot 监督器已在 v1.5.0 移除；DSH 是唯一大脑。）
 
 ## 截图
 
@@ -60,7 +59,6 @@ seeker-craft/
 │   ├── craft-agent/               # 纯逻辑库：types/GameTool/ToolRegistry/WorldMemory/session/task/profile/skill
 │   ├── craft-agent-minecraft/     # Azalea 适配器：bot + 49 个工具
 │   ├── craft-agent-viewer/        # Web 仪表盘（Axum + SSE）+ DSH 桥（connect/bot_tool/game-state/goal）
-│   ├── craft-agent-autopilot/     # 运维监督器（10s 轮询：viewer+连接、停滞 steering、崩溃恢复）
 │   └── craft-agent-ctl/           # 运维控制台
 ├── data/
 │   ├── config/agent.example.toml  # in-bot 时代遗留 LLM 模板（DSH 模式不使用）
@@ -250,7 +248,7 @@ set_goal("收集 24 个铁矿并熔炼成铁锭")           # 设置运营目标
 ### 6. 停止
 
 ```powershell
-.\scripts\stop.ps1        # 停止 viewer/autopilot（不影响 MC 服务器与 DSH）
+.\scripts\stop.ps1        # 停止 viewer（不影响 MC 服务器与 DSH）
 ```
 
 ### 构建与测试（开发用）

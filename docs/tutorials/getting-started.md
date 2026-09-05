@@ -13,7 +13,7 @@ DSH (DeepSeek Harness)  ←  the LLM brain (you install this yourself)
    ▼
 craft-agent-viewer  ←  HTTP bridge (Rust, part of this repo)
    ▼
-craft-agent-minecraft  ←  54 typed tools (Rust, part of this repo)
+craft-agent-minecraft  ←  49 typed tools (Rust, part of this repo)
    ▼
 azalea (fork, vendored)  ←  Minecraft protocol client
    ▼
@@ -111,7 +111,7 @@ cargo run -p craft-agent-ctl -- status                         # verify running=
 
 ```
 game_state()                                   # perceive live state
-bot_tool(name:"craft", args:{item:"stone_pickaxe"})   # run one of the 54 tools
+bot_tool(name:"craft", args:{item:"stone_pickaxe"})   # run one of the 49 tools
 set_goal("Collect 24 iron ore and smelt into ingots") # set the ops goal
 ```
 
@@ -139,7 +139,7 @@ cargo run -p craft-agent-minecraft --example azalea_probe --features azalea-bot 
 
 Set `RUST_LOG=debug` for verbose output (azalea pathfinder logs included).
 Session logs: `sessions/mc_run.jsonl` (viewer runtime data, gitignored).
-Viewer/autopilot logs: `%TEMP%\opencode\viewer_run.log` (override with `SEEKER_LOG_DIR`).
+Viewer logs: `%TEMP%\opencode\viewer_run.log` (override with `SEEKER_LOG_DIR`).
 
 ## Troubleshooting
 

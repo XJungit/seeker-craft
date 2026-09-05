@@ -18,12 +18,10 @@ This guide explains the main directories and crates in SeekerCraft (Craft-Agent)
 
 - `craft-agent` — generic game-agent logic library: types, GameTool, ToolRegistry, WorldMemory,
   session archive format, task system, profiles, skills. No I/O; shared by viewer and adapters.
-- `craft-agent-minecraft` — Minecraft adapter (azalea protocol): the bot, 54 LLM tools,
+- `craft-agent-minecraft` — Minecraft adapter (azalea protocol): the bot, 49 LLM tools,
   azalea domain modules (`commands.rs` / `handler.rs` / `mod.rs`), WorldMemory scanner.
 - `craft-agent-viewer` — Axum + SSE web dashboard + DSH bridge endpoints
   (`/api/connect`, `/api/bot_tool`, `/api/game-state`, `/api/goal`).
-- `craft-agent-autopilot` — ops supervisor (10s polling): brings up viewer + connects bot,
-  stall steering, crash recovery, anomaly detection.
 - `craft-agent-ctl` — ops console: `status|stop|build|deploy|goal|start|viewer|session|tail|health`.
   All paths derived at runtime from the crate location — no machine-specific hard-coding.
 
@@ -45,7 +43,7 @@ This guide explains the main directories and crates in SeekerCraft (Craft-Agent)
   `.env` copy → plugin verification. Flags: `-SkipBuild`, `-SkipDsh`.
 - `scripts/start.ps1` — one-shot start: viewer (via `craft-agent-ctl viewer`) → connect bot →
   poll until ready. Params: `-Goal`, `-Steps`, `-Port`, `-Mc`, `-Username`.
-- `scripts/stop.ps1` — stop viewer/autopilot via `craft-agent-ctl stop`.
+- `scripts/stop.ps1` — stop viewer via `craft-agent-ctl stop`.
 - `scripts/probe/*.json` — tool-layer live-test scripts (no LLM; seconds instead of minutes).
 
 ## Vendor / azalea

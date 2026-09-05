@@ -7,6 +7,51 @@ with [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The project is
 currently in active development as a single-maintainer project; `v1.0.0` is the
 first tagged **1.0 release** (DSH bridge mode is the only supported usage).
 
+## [Unreleased]
+
+### Added
+
+- **`craft-agent-ctl viewer` gains `[port] [mc] [username]` passthrough** —
+  `start.ps1` forwards `-Port/-Mc/-Username` (defaults
+  `8080/localhost:4444/CraftAgent`); username must match the MC offline save
+  name (empty name joins as a fresh profile and loses the backpack).
+- **dsh-bridge DSH compat contract** — README documents the supported DSH
+  range + the exact host/client contract (`__ModuleLoader__.load`,
+  `dsh.client.*`, `sessions.list` snapshot shape, host inject services);
+  `package.json` carries a `dshCompat` stanza; client build fingerprint
+  (`window.__dshCraftBuild`) bumps on each `client.js` change.
+
+### Changed
+
+- **`craft-agent-ctl viewer` is idempotent** — reuses the running viewer
+  (reconnect bot via `/api/connect`) instead of killing it; cold start
+  spawns with the full arg set.
+- **`scripts/start.ps1` one-shot hardened** — fixed Goal double-quoting bug
+  (literal quotes leaked into `/api/status`); `/api/connect` treats
+  `already_connected` as success; undetectable `game-state` is now a hard
+  failure (exit 1, points at the MC server) instead of a soft warning.
+- **dsh-bridge panel session matching hardened** — preset allowlist
+  (`craft-bot`, `code`), `projectionValues.agentPreset` lookup, `items[]`
+  snapshot-shape fallback, launcher offset below the DSH turn UI, sandbox
+  without `allow-same-origin` (viewer CORS header covers the opaque origin).
+- **Stale `54 tools` counts → 49** across live docs (`ALL_TOOL_NAMES`
+  verified: 49 entries).
+
+### Removed
+
+- **`craft-agent-autopilot` crate deleted** — the 10s-polling supervisor is
+  obsolete in DSH-sole-brain mode (its stall-steering would fight DSH's goal
+  rhythm; `running` is always false so `deploy`'s wait was dead). Workspace
+  is 4 crates now. `ctl build/deploy/status/tail` updated; live docs
+  updated (history sections in CHANGELOG/PLAN/ARCHITECTURE kept as-is).
+
+### Fixed
+
+- **Viewer CORS allow-all** — every response carries
+  `Access-Control-Allow-Origin: *` so the DSH panel iframe (opaque origin
+  `null`) can read `/api/status|session|game-state` again (was stuck at
+  initial values with console CORS errors).
+
 ## [1.4.0] - 2026-09-05
 
 ### Changed

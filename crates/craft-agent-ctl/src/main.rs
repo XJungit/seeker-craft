@@ -4,8 +4,8 @@
 //! 用法：
 //!   craft-agent-ctl status      # 全面状态：进程 + API + game-state 摘要 + 会话最近动作
 //!   craft-agent-ctl stop        # 停止所有 craft-agent 进程
-//!   craft-agent-ctl build       # 编译 viewer + autopilot exe
-//!   craft-agent-ctl deploy      # stop → build → 启动 viewer + autopilot（autopilot 自动连接 bot）
+//!   craft-agent-ctl build       # 编译 viewer exe
+//!   craft-agent-ctl deploy      # stop → build → 启动 viewer + 连接 bot
 //!   craft-agent-ctl goal "<g>"  # 注入新 goal
 //!   craft-agent-ctl start       # POST /api/connect（DSH 模式无 in-bot agent，仅触发 bot 连接）
 //!   craft-agent-ctl session N   # 分析会话最近 N 个工具结果（默认 10）
@@ -35,13 +35,6 @@ fn viewer_exe() -> PathBuf {
         .join("target")
         .join("debug")
         .join("craft-agent-viewer.exe")
-}
-
-fn autopilot_exe() -> PathBuf {
-    workspace_root()
-        .join("target")
-        .join("debug")
-        .join("craft-agent-autopilot.exe")
 }
 
 fn session_path() -> PathBuf {
@@ -144,7 +137,7 @@ fn spawn_detached(exe: &str, args: &[&str], out_log: &str) -> bool {
         cmd.stderr(f);
     }
     // Windows：父进程（ctl 命令）spawn 后立即退出，若不设进程组/脱离标志，
-    // 子进程（viewer/autopilot）会随父进程一起被回收——表现为 banner 打印后进程消失、
+    // 子进程（viewer）会随父进程一起被回收——表现为 banner 打印后进程消失、
     // API 不可达。设 CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS 让子进程独立存活。
     #[cfg(windows)]
     cmd.creation_flags(0x00000200 | 0x00000008); // CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS
@@ -200,10 +193,7 @@ fn cmd_status() {
     } else {
         println!("[status] game-state unavailable");
     }
-    for (name, path, exe_name) in [
-        ("autopilot", "auto5_out.log", "craft-agent-autopilot.exe"),
-        ("viewer", "viewer_run.log", "craft-agent-viewer.exe"),
-    ] {
+    for (name, path, exe_name) in [("viewer", "viewer_run.log", "craft-agent-viewer.exe")] {
         let alive = procs.iter().any(|(_, n)| n == exe_name);
         if !alive {
             println!("[status] {name} NOT RUNNING（跳过旧日志，避免误导）");
@@ -278,9 +268,26 @@ fn cmd_start() {
     }
 }
 
-/// 只启动 viewer（不起 autopilot）：用于按需观测（probe 级别不可达时），
-/// 观测完 `ctl stop`。goal/steps 可选（默认常驻 GOAL/40 步）。
-fn cmd_viewer(goal: Option<&str>, steps: Option<&str>) {
+/// 启动 viewer（bot 连接的唯一入口）：幂等——已在运行则直接复用并仅重连 bot。
+/// goal/steps/port/mc/username 全部透传，可选（默认 GOAL/40 步/8080/localhost:4444/CraftAgent）。
+/// username 必须与 MC 离线档名一致（默认 CraftAgent），空名会进新档丢背包。
+fn cmd_viewer(
+    goal: Option<&str>,
+    steps: Option<&str>,
+    port: Option<&str>,
+    mc: Option<&str>,
+    username: Option<&str>,
+) {
+    let port = port.unwrap_or("8080");
+    let mc = mc.unwrap_or("localhost:4444");
+    let username = username.unwrap_or("CraftAgent");
+    // 幂等：API 已通说明 viewer 活着，直接复用（不再 kill，避免打断正在跑的 bot）。
+    if http_get("/api/status").is_some() {
+        println!("[viewer] already running at {port}（复用现有进程）");
+        cmd_start();
+        cmd_status();
+        return;
+    }
     kill_all();
     std::thread::sleep(Duration::from_secs(2));
     let goal = goal.unwrap_or(GOAL);
@@ -293,11 +300,11 @@ fn cmd_viewer(goal: Option<&str>, steps: Option<&str>) {
             "--steps",
             steps,
             "--port",
-            "8080",
+            port,
             "--mc",
-            "localhost:4444",
+            mc,
             "--username",
-            "CraftAgent",
+            username,
         ],
         "viewer_run.log",
     );
@@ -309,7 +316,7 @@ fn cmd_viewer(goal: Option<&str>, steps: Option<&str>) {
 }
 
 fn cmd_build() {
-    for pkg in ["craft-agent-viewer", "craft-agent-autopilot"] {
+    for pkg in ["craft-agent-viewer"] {
         let mut cmd = Command::new("cargo");
         cmd.args(["build", "-p", pkg]);
         cmd.current_dir(workspace_root());
@@ -347,23 +354,11 @@ fn cmd_deploy() {
             "--username",
             "CraftAgent",
         ],
-        "viewer_out.log",
-    );
-    std::thread::sleep(Duration::from_secs(1));
-    println!("[deploy] spawning autopilot");
-    spawn_detached(
-        autopilot_exe().to_string_lossy().as_ref(),
-        &[],
-        "auto5_out.log",
+        "viewer_run.log",
     );
     std::thread::sleep(Duration::from_secs(12));
-    // 等 autopilot 自动 start；若未 running 则手动 start
-    let running = http_get("/api/status")
-        .map(|v| v["running"].as_bool().unwrap_or(false))
-        .unwrap_or(false);
-    if !running {
-        cmd_start();
-    }
+    // DSH 为唯一大脑：viewer 起服后直连 bot 即可（/api/connect 幂等，已连则 no-op）。
+    cmd_start();
     println!("[deploy] done");
     cmd_status();
 }
@@ -412,7 +407,9 @@ fn usage() {
     println!(
         "usage: craft-agent-ctl <status|stop|build|deploy|goal|start|viewer|session|tail|health>"
     );
-    println!("  viewer [goal] [steps]   # 只启动 viewer（不起 autopilot），按需观测");
+    println!(
+        "  viewer [goal] [steps] [port] [mc] [username]   # 启动 viewer（幂等复用，默认 40 步/8080/localhost:4444/CraftAgent）"
+    );
 }
 
 fn main() {
@@ -434,13 +431,16 @@ fn main() {
         "viewer" => cmd_viewer(
             args.get(2).map(|s| s.as_str()),
             args.get(3).map(|s| s.as_str()),
+            args.get(4).map(|s| s.as_str()),
+            args.get(5).map(|s| s.as_str()),
+            args.get(6).map(|s| s.as_str()),
         ),
         "session" => {
             let n = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(10);
             cmd_session(n);
         }
         "tail" => {
-            let path = args.get(2).map(|s| s.as_str()).unwrap_or("auto5_out.log");
+            let path = args.get(2).map(|s| s.as_str()).unwrap_or("viewer_run.log");
             let n = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(10);
             for l in tail_file(&log_dir().join(path).to_string_lossy(), n) {
                 println!("{l}");

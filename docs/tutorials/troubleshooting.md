@@ -60,6 +60,6 @@ Common build, install, runtime, and configuration problems and fixes (v1.0 · DS
 ## Logs
 
 - `RUST_LOG=debug` for detailed bot/tool logs (azalea pathfinder included).
-- Viewer/autopilot logs: `%TEMP%\opencode\viewer_run.log` / `.err` (override with `SEEKER_LOG_DIR`).
+- Viewer logs: `%TEMP%\opencode\viewer_run.log` / `.err` (override with `SEEKER_LOG_DIR`).
 - Session JSONL (`sessions/mc_run.jsonl`) is the source of truth for replay and debugging.
 - `craft-agent-ctl session N` / `craft-agent-ctl tail <log> <N>` / `craft-agent-ctl status` for ops.

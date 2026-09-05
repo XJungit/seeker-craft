@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   SeekerCraft 一键启动：构建 viewer -> 启动 viewer -> 连接 bot（经 craft-agent-ctl）。
 .DESCRIPTION
@@ -50,10 +50,12 @@ if (-not $viewerRunning) {
             Write-Host "    构建 craft-agent-ctl ..."
             cargo build -p craft-agent-ctl 2>&1 | ForEach-Object { Write-Host "    $_" }
         }
-        # ctl viewer 是阻塞式后台进程；用 Start-Process 分离启动
+        # ctl viewer 幂等：viewer 已在运行时复用进程 + 重连 bot；冷启动才 spawn。
+        # 注意：ArgumentList 数组元素已按参数分隔，Goal 不得再包字面引号
+        # （旧写法 `"$Goal"` 会把引号吃进 goal，/api/status 显示乱码）。
         $logDir = "$env:TEMP\opencode"
         New-Item -ItemType Directory -Force -Path $logDir | Out-Null
-        $p = Start-Process -FilePath $ctl -ArgumentList @('viewer', "`"$Goal`"", "$Steps") `
+        $p = Start-Process -FilePath $ctl -ArgumentList @('viewer', "$Goal", "$Steps", "$Port", "$Mc", "$Username") `
             -RedirectStandardOutput "$logDir\viewer_run.log" `
             -RedirectStandardError "$logDir\viewer_run.err.log" -PassThru
         Write-Ok "viewer 已启动 (PID $($p.Id))，日志: $logDir\viewer_run.log"
@@ -77,10 +79,13 @@ if (-not $viewerRunning) {
     } finally { Pop-Location }
 }
 
-Write-Step "3/3 连接 bot（POST /api/connect）"
+Write-Step "3/3 连接 bot（POST /api/connect，幂等）"
+# /api/connect 幂等：已连返回 already_connected。MC 没开则 connect 仍 200 但 game-state
+# 一直 not_connected——第 4 步轮询会如实报失败，不在这里误报成功。
 try {
     $conn = Invoke-RestMethod -Uri "http://127.0.0.1:$Port/api/connect" -Method Post -TimeoutSec 20
-    Write-Ok "连接结果: $($conn | ConvertTo-Json -Compress)"
+    if ($conn.already_connected) { Write-Ok "bot 已连接（复用现有连接）" }
+    else { Write-Ok "连接结果: $($conn | ConvertTo-Json -Compress)" }
 } catch {
     Write-Fail "连接失败: $_"
     Write-Host "  请确认：1) Minecraft 26.2 服务器在 $Mc 运行；2) viewer 日志 $env:TEMP\opencode\viewer_run.log"
@@ -106,7 +111,9 @@ for ($i = 0; $i -lt 30; $i++) {
     Write-Host "    等待 bot 加入世界（$($i + 1)/30）..."
 }
 if (-not $ready) {
-    Write-Warn "bot 状态暂不可读。若 MC 服务器已启动，可稍后重试 .\scripts\start.ps1，或检查 viewer 日志。"
+    Write-Fail "bot 未能加入世界（game-state 持续 not_connected）。最可能：MC 服务器没在 $Mc 运行。"
+    Write-Host "  启动 MC 26.2 服务器后重跑 .\scripts\start.ps1（幂等，可直接重跑）。日志：$env:TEMP\opencode\viewer_run.log"
+    exit 1
 }
 
 Write-Host "`n启动完成！"
