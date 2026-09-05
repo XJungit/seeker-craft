@@ -13,7 +13,7 @@ mod controller;
 use axum::{
     Router,
     extract::State,
-    http::StatusCode,
+    http::{HeaderValue, StatusCode},
     response::{
         Html, IntoResponse,
         sse::{Event, Sse},
@@ -166,7 +166,11 @@ async fn main() -> anyhow::Result<()> {
         .route("/api/bot_tool", post(api_bot_tool))
         .route("/api/chat", get(api_chat))
         .route("/api/connect", post(api_connect))
-        .with_state(state.clone());
+        .with_state(state.clone())
+        // CORS：面板 iframe 以不透明源（origin null）直连 viewer 取数，不加此头
+        // 浏览器会拦截 /api/* 的 fetch，面板永留初始值。GET 只读轮询放行 * 即可；
+        // 紧凑模式无 POST 按钮，不处理 OPTIONS 预检。
+        .layer(axum::middleware::from_fn(cors_allow_all));
 
     let addr = format!("127.0.0.1:{port}");
     // 端口绑定：带重试，避免 TIME_WAIT 导致崩溃
@@ -200,6 +204,17 @@ async fn main() -> anyhow::Result<()> {
 
 async fn index() -> Html<&'static str> {
     Html(INDEX_HTML)
+}
+
+/// 给每个响应补 Access-Control-Allow-Origin: *（见路由层注释）。
+async fn cors_allow_all(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> impl IntoResponse {
+    let mut res = next.run(req).await.into_response();
+    res.headers_mut()
+        .insert("access-control-allow-origin", HeaderValue::from_static("*"));
+    res
 }
 
 // ── 控制 API ──
