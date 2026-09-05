@@ -52,6 +52,14 @@ first tagged **1.0 release** (DSH bridge mode is the only supported usage).
   `null`) can read `/api/status|session|game-state` again (was stuck at
   initial values with console CORS errors).
 
+### Dependencies
+
+- **azalea fork synced to upstream** (`e384e70` → `3615b07`, merge of
+  upstream `153c90a` "Fix Rust 1.100.0 warnings, force older trait solver").
+  Lint/warning-only changes (codec derives, pathfinder goal cleanup); custom
+  APIs (`stop_use_item` / `use_item_air` / `force_miss`) verified intact.
+  `Cargo.lock` regenerated from the https source (no `file://` entries).
+
 ## [1.4.0] - 2026-09-05
 
 ### Changed

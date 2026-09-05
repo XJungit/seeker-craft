@@ -196,7 +196,7 @@ cargo test -p craft-agent-minecraft --features azalea-bot --lib  # 适配器测�
   `do_craft_3x3` state machines without needing a Minecraft server.
 - 运维脚本见 `craft-agent-ctl`（`status`/`stop`/`build`/`viewer`/`goal`/`session`/`tail`）；
   原 `auto_diag.ps1` / `verify_build.ps1` / `scan_run.ps1` 等 legacy PowerShell 诊断流程
-  已随 1.0 清理删除，由 ctl + autopilot 取代。
+  已随 1.0 清理删除，由 ctl 取代（autopilot 监督器已在 v1.5.0 移除）。
 
 See [`docs/mindcraft-gap.md`](./docs/mindcraft-gap.md) for the automation workflow records.
 See [`docs/tutorials/`](./docs/tutorials/) for developer guides.
@@ -211,7 +211,7 @@ See [`docs/tutorials/`](./docs/tutorials/) for developer guides.
 ### 依赖声明
 
 - `crates/craft-agent-minecraft/Cargo.toml` — 6 个 azalea 依赖统一声明
-  `git = "https://github.com/XJungit/azalea"` + `rev = "e384e70..."`（`craft-agent` 分支 HEAD）。
+  `git = "https://github.com/XJungit/azalea"` + `rev = "3615b07..."`（`craft-agent` 分支 HEAD，含上游 153c90a Rust 1.100 警告修复）。
 - `Cargo.lock` — 记录 https 源 + rev（随 commit 提交）。
 - `vendor/azalea/` — 本地离线镜像（submodule，独立 git repo + workspace）。开发时由
   `.cargo/config.toml`（**gitignored**）的 `[patch."https://github.com/XJungit/azalea"]`
