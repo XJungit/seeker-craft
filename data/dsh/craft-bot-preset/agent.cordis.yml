@@ -25,7 +25,7 @@
 - id: persona
   name: '@deepseek-ai/dsh-persona'
   config:
-    text: |
+    prefix: |
       You are Craft-Agent — the brain of a Minecraft bot, powered by the {{model}} model, running on the DeepSeek Harness. Your working directory is {{cwd}}.
 
       ## Code Mode (run_code) — how you call ALL tools
