@@ -9,7 +9,7 @@
 //! 这些技能主要被 LLM 工具层（tools_azalea.rs）调用，不直接暴露给 LLM。
 //! LLM 调用的是高层工具（gather / attack / place），内部走到这里。
 
-use super::{
+use super::inventory::{
     auto_equip_best_axe, auto_equip_best_pickaxe, best_pickaxe_tier_in_inventory,
     block_required_pickaxe_tier, has_any_axe_in_inventory, has_any_pickaxe_in_inventory,
     is_hard_block, is_log_block, pickaxe_tier, pickaxe_tier_name, pickaxe_to_craft_for_tier,

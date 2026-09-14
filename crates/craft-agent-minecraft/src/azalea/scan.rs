@@ -3,9 +3,8 @@
 //! 说明：`look_at_nearest_entity` 是 async（await nearest_entities），其余为同步。
 //! 调用方（handler tick）经 `super::scan::` 引用；`pub(crate)` 可见性仅为跨模块调用。
 
-use super::{
-    ActionManager, BotCommand, entity_kind_name, is_hard_block, normalize_entity_target, now_ms,
-};
+use super::inventory::is_hard_block;
+use super::{ActionManager, BotCommand, entity_kind_name, normalize_entity_target, now_ms};
 use azalea::BlockPos;
 use azalea::player::GameProfileComponent;
 use azalea::prelude::*;

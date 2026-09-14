@@ -28,7 +28,7 @@ fn bare(id: &str) -> &str {
 /// 归一化物品 id：与 `azalea::mod.rs::normalize_item_id` 同一实现
 /// （补 `minecraft:` 前缀 + 单复数容错），此处转发避免双份逻辑漂移。
 fn normalize_item(item: &str) -> String {
-    super::normalize_item_id(item)
+    super::inventory::normalize_item_id(item)
 }
 
 /// 在玩家背包范围（排除网格/盔甲）内找到第一个含指定物品种类的槽位。

@@ -3,6 +3,11 @@
 //! 说明：handler 是 `fn` 指针（azalea 要求不捕获），队列/事件通道挂在
 //! 自定义 `BotState`（Arc<Mutex<...>>，实现 Component + Default + Clone）上。
 
+use super::inventory::{
+    auto_equip_best_pickaxe, count_item, count_overhead_solid, do_consume, do_discard, do_equip,
+    find_hotbar_slot_for, find_item_slots, has_any_pickaxe_in_inventory, is_hard_block,
+    mine_above_reached_surface,
+};
 use super::scan::{
     current_action_label, is_natural_mineable, look_at_nearest_entity, nearby_active_portal,
     nearby_player_position, nearest_soft_column, nearest_solid_block, nearest_standable_air,
@@ -10,10 +15,7 @@ use super::scan::{
 };
 use super::{
     ActionManager, AzaleaBot, BotCommand, BotEvent, ChunkPos, EntityAgg, ObsidianTask, Priority,
-    QueuedCommand, SubmitOutcome, auto_equip_best_pickaxe, count_item, count_overhead_solid,
-    do_consume, do_discard, do_equip, entity_kind_name, find_hotbar_slot_for, find_item_slots,
-    has_any_pickaxe_in_inventory, is_hard_block, mine_above_reached_surface,
-    normalize_entity_target, parse_chat_command,
+    QueuedCommand, SubmitOutcome, entity_kind_name, normalize_entity_target, parse_chat_command,
 };
 use azalea::BlockPos;
 use azalea::core::direction::Direction;

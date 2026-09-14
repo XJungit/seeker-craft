@@ -8,7 +8,7 @@
 //! - 没有合适工具时立即返回明确错误，提示 LLM 先合成工具。
 //! - 检测"开始挖后方块长时间不消失" → 视为缺工具，避免空等。
 
-use super::{
+use super::inventory::{
     auto_equip_best_axe, auto_equip_best_pickaxe, best_pickaxe_tier_in_inventory, block_drops_item,
     block_required_pickaxe_tier, has_any_axe_in_inventory, has_any_pickaxe_in_inventory,
     is_hard_block, is_log_block, pickaxe_tier_name, pickaxe_to_craft_for_tier,
