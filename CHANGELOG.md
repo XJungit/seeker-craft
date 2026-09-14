@@ -51,6 +51,24 @@ first tagged **1.0 release** (DSH bridge mode is the only supported usage).
   `Access-Control-Allow-Origin: *` so the DSH panel iframe (opaque origin
   `null`) can read `/api/status|session|game-state` again (was stuck at
   initial values with console CORS errors).
+- **`/api/goal` interrupt semantics** — setting a goal drains the queued
+  goals to latest + interrupts the bot's current action (`cancel_commands`);
+  `/api/status` gains `pending_goals`; panel shows a 待办 badge. Fixes
+  "setting goal stalls the bot" (old action kept running while the new
+  goal's first step queued behind it).
+
+### Refactored
+
+- **azalea module splits (pure moves, R5/R10/R11)** — `handler.rs` scan
+  helpers → `scan.rs`; `AzaleaBot` connect/actions → `bot.rs`; equip /
+  discard / consume / auto_equip / pickaxe-tier / block-judgement utils →
+  `inventory.rs`. `mod.rs` 2410 → 192 lines (harness + re-exports only);
+  `handler.rs` tick body untouched (highest logic density, split later).
+- **9 duplicate helpers merged into `inventory.rs` (R12–R13)** —
+  `normalize_item[id]` ×5, `count_item[kind]` ×3, `overhead_slot` ×2,
+  `find_hotbar_slot[for]` ×2. Call sites unchanged (alias imports /
+  `pub(crate) use` re-export for `craft::*` submodules). Total
+  37829 → 37686 lines.
 
 ### Dependencies
 
