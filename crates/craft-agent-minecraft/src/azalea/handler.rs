@@ -1,5 +1,4 @@
 //! azalea tick handler：所有 bot 逻辑（命令队列排空、世界扫描、模式、动作执行）。
-//! P2.2（2026-08-03）：从 azalea/mod.rs 纯移动拆出，行为与拆前逐字一致。
 //!
 //! 说明：handler 是 `fn` 指针（azalea 要求不捕获），队列/事件通道挂在
 //! 自定义 `BotState`（Arc<Mutex<...>>，实现 Component + Default + Clone）上。
@@ -9,7 +8,7 @@ use super::{
     QueuedCommand, SubmitOutcome, auto_equip_best_pickaxe, count_item, count_overhead_solid,
     do_consume, do_discard, do_equip, entity_kind_name, find_hotbar_slot_for, find_item_slots,
     has_any_pickaxe_in_inventory, is_hard_block, mine_above_reached_surface,
-    normalize_entity_target, parse_chat_command,
+    normalize_entity_target, now_ms, parse_chat_command,
 };
 use azalea::BlockPos;
 use azalea::core::direction::Direction;
@@ -30,14 +29,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::sleep;
-
-fn now_ms() -> u64 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-}
 
 /// P135：读取物品耐久 (damage, max_damage)——剩余耐久 = max - damage。
 /// 非工具（max_damage=0）返回 None；工具用 azalea 组件默认表兜底满耐久。

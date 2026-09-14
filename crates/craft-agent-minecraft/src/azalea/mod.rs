@@ -51,6 +51,15 @@ pub type ObsidianTask = Option<(u32, u8, Option<ChunkPos>)>;
 /// 感知聚合：(实体名, (数量, 最近距离, 坐标))。
 pub type EntityAgg = HashMap<String, (u32, f64, ChunkPos)>;
 
+/// 当前 Unix 时间戳（毫秒）。
+pub(crate) fn now_ms() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 fn normalize_entity_target(target: &str) -> String {
     let normalized = target.trim().to_ascii_lowercase();
     normalized
