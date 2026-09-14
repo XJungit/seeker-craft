@@ -37,7 +37,7 @@
 - **Spatial WorldMemory** — chunk-indexed memories (resources, structures, containers, hazards, portals) with TTL forgetting and named anchors.
 - **DSH bridge mode** — since 2026-08-14 the in-bot LLM loop is removed; DSH (DeepSeek Harness) is the sole brain driving the bot through the viewer bridge (`/api/connect` + `/api/bot_tool` + `/api/game-state` + `/api/goal`).
 - **Probe mode** — a no-LLM tool-layer test harness that verifies tool behavior in seconds (not minutes of LLM runtime).
-- **Ops console (`craft-agent-ctl`)** — process lifecycle, goal injection, session inspection. (autopilot supervisor removed in v1.5.0; DSH is the sole brain).
+- **Ops console (`craft-agent-ctl`)** — process lifecycle, goal injection, session inspection (DSH is the sole brain).
 
 ## Screenshots
 
@@ -113,7 +113,7 @@ azalea (vendor) ──► MC server (TCP)
 
 All 23 tasks (6 tiers) ship as machine-checkable JSON in [`data/tasks/`](data/tasks/).
 
-## Current Progress (2026-09-05 · v1.4.0)
+## Current Progress (2026-09-14 · v1.5.0)
 
 **Verified end-to-end (live server, no mods):**
 

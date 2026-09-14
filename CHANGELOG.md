@@ -214,7 +214,7 @@ first tagged **1.0 release** (DSH bridge mode is the only supported usage).
 
 - **1.0 one-shot scripts** — `scripts/setup.ps1` (prereq check → build → DSH bridge
   plugin → craft-bot preset → verify), `scripts/start.ps1` (viewer + connect bot),
-  `scripts/stop.ps1` (stop viewer/autopilot). Fresh-clone friendly.
+  `scripts/stop.ps1` (stop viewer). Fresh-clone friendly.
 - **DSH craft-bot preset** — `data/dsh/craft-bot-preset/` template; `setup.ps1` generates
   `~/.dsh/.agent-presets/craft-bot` from it (substituting `{{PROJECT_ROOT}}` / `{{DSH_PKG_ROOT}}`).
 - **azalea fork dependency** — azalea moved to the maintained fork

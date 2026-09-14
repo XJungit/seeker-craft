@@ -39,7 +39,7 @@
 - **空间 WorldMemory** — 按区块索引的记忆（资源/建筑/容器/危险/传送门），带 TTL 遗忘与命名锚点。
 - **DSH 桥接模式** — 2026-08-14 起 in-bot LLM 循环已移除，DSH（DeepSeek Harness）成为唯一大脑，经 viewer 桥（`/api/connect` + `/api/bot_tool` + `/api/game-state` + `/api/goal`）驱动 bot。
 - **Probe 模式** — 无 LLM 的工具层测试框架，秒级验证工具行为（而非分钟的 LLM 运行时）。
-- **运维控制台（craft-agent-ctl）** — 进程生命周期、目标注入、会话检查。（autopilot 监督器已在 v1.5.0 移除；DSH 是唯一大脑。）
+- **运维控制台（craft-agent-ctl）** — 进程生命周期、目标注入、会话检查（DSH 是唯一大脑）。
 
 ## 截图
 
@@ -113,7 +113,7 @@ azalea (vendor) ──► MC server (TCP)
 
 23 个任务（6 层）全部以机器可判定 JSON 形式随仓库发布（[`data/tasks/`](data/tasks/)，任务系统说明见 [`docs/ARCHITECTURE.md`](ARCHITECTURE.md)）。
 
-## 当前进度（2026-09-05 · v1.4.0）
+## 当前进度（2026-09-14 · v1.5.0）
 
 **已实机端到端验证（真实服务器、无 mod）：**
 

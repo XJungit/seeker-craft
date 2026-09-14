@@ -6,7 +6,7 @@ This document describes how to prepare a release of SeekerCraft (Craft-Agent).
 
 We use semver-like tags:
 - `v1.0.0` — first stable 1.0 release (2026-08-15; DSH bridge mode is the only supported usage)
-- `v1.1.0` — P156 semantic memory (`remember` tool, 54 tools) (2026-08-15)
+- `v1.1.0` — P156 semantic memory (`remember` tool, 49 tools) (2026-08-15)
 - Later `v1.x.y` / `v2.x.y` milestones
 - Breaking changes documented in [`../CHANGELOG.md`](../CHANGELOG.md) (Keep a Changelog format)
 

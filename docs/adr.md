@@ -57,7 +57,7 @@ This directory tracks important architecture decisions.
     drives the bot through a viewer HTTP bridge (`/api/connect` + `/api/bot_tool`
     + `/api/game-state` + `/api/goal`), with a DSH plugin (`tools/dsh-bridge/`)
     exposing three tools (`game_state` / `bot_tool` / `set_goal`). Rust keeps only
-    bot-side real-time capability (54 tools + WorldMemory + perceive snapshots).
+    bot-side real-time capability (49 tools + WorldMemory + perceive snapshots).
   - Consequences: No Rust-side prompt assembly or per-turn injection. The DSH
     bridge plugin ships in-repo; `scripts/setup.ps1` registers it + generates the
     craft-bot preset. The 13-step loop, auto_perceive, SelfPrompter, execute_batch
