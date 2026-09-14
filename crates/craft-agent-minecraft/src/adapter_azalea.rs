@@ -124,6 +124,13 @@ impl ArcAzaleaAdapter {
         let mut q = guard.chat_queue.lock().unwrap();
         q.drain(..).collect()
     }
+
+    /// 中断 bot 当前动作（设新 goal 时调用）：复用 P95 `cancel_commands`，
+    /// 强停寻路/清 pending 槽/复位持续挖掘标志。返回被取消的排队命令数。
+    /// 注意：异步执行中（busy）的 Craft/Gather 等等其自然完成，不强杀。
+    pub fn interrupt_current(&self) -> usize {
+        self.0.lock().unwrap().bot.cancel_commands()
+    }
 }
 
 impl MinecraftAzaleaAdapter {

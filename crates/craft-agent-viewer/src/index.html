@@ -153,6 +153,7 @@
   <button class="btn stop" id="btnStop" onclick="doStop()" disabled>停止</button>
   <span class="badge">状态 <b id="stStatus">就绪</b> <span class="dot st" id="dotStatus"></span></span>
   <span class="badge">轮次 <b id="stTurns">0</b></span>
+  <span class="badge" id="goalBadge" title="待执行目标数">待办 <b id="stGoals">0</b></span>
   <span class="badge">工具 <b id="stTools">0</b></span>
   <span class="badge" id="totalTokens" style="font-family:Menlo,monospace">▲0 ▼0</span>
 </div>
@@ -261,6 +262,9 @@ async function pollStatus(){
       document.getElementById("stStatus").textContent=running?(paused?"暂停中":"运行中"):"就绪";
       document.getElementById("dotStatus").className="dot "+(running?(paused?"pa":"go"):"st");
       document.getElementById("stTurns").textContent=s.step??0;
+      const pg=s.pending_goals??0;
+      document.getElementById("stGoals").textContent=pg;
+      document.getElementById("goalBadge").style.borderColor=pg>0?"var(--accent)":"";
     }
   }catch(e){}
   statusFailStreak=ok?0:statusFailStreak+1;

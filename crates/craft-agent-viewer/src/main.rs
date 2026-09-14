@@ -220,8 +220,18 @@ async fn api_goal(
     if goal.is_empty() {
         return axum::Json(json!({"ok": false, "error": "goal 不能为空"}));
     }
-    state.controller.push_goal(goal.to_string());
-    axum::Json(json!({"ok": true, "goal": goal}))
+    // 设新 goal = 中断旧活：排空待执行队列只留最新，并中断 bot 当前动作
+    // （否则旧动作继续跑、新 goal 第一步抢占排队，表现像“设 goal 就停一下”）。
+    state.controller.replace_goal(goal.to_string());
+    let interrupted = state
+        .controller
+        .game_adapter
+        .read()
+        .unwrap()
+        .as_ref()
+        .map(|a| a.interrupt_current())
+        .unwrap_or(0);
+    axum::Json(json!({"ok": true, "goal": goal, "interrupted": interrupted}))
 }
 
 // ── 桥接：DSH/Cordis 经 HTTP 驱动 bot ───────────────────────────────────────

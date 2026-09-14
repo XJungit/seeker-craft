@@ -20,6 +20,8 @@ pub struct Status {
     pub max_steps: u32,
     pub goal: String,
     pub session_path: String,
+    /// 待执行目标数（goal_queue 长度）：面板显示用，防“设 goal 没反应”误判。
+    pub pending_goals: usize,
 }
 
 /// Agent 生命周期控制器。
@@ -49,6 +51,7 @@ impl AgentController {
                 max_steps,
                 goal,
                 session_path,
+                pending_goals: 0,
             }),
             goal_queue: Mutex::new(VecDeque::new()),
             game_adapter: Arc::new(RwLock::new(None)),
@@ -59,12 +62,16 @@ impl AgentController {
         let mut s = self.status.lock().unwrap();
         s.running = self.running.load(Ordering::Relaxed);
         s.paused = self.pause.load(Ordering::Relaxed);
+        s.pending_goals = self.goal_queue.lock().map(|q| q.len()).unwrap_or(0);
         s.clone()
     }
 
-    /// UI 推送新目标（运行时动态修改，不中断正在进行的步骤）。
-    pub fn push_goal(&self, new_goal: String) {
-        self.goal_queue.lock().unwrap().push_back(new_goal.clone());
+    /// 设新 goal（中断语义）：排空待执行队列只留最新，避免旧目标堆积。
+    /// 调用方还应中断 bot 当前动作（`interrupt_current`），否则旧动作继续跑。
+    pub fn replace_goal(&self, new_goal: String) {
+        let mut q = self.goal_queue.lock().unwrap();
+        q.clear();
+        q.push_back(new_goal.clone());
         self.status.lock().unwrap().goal = new_goal;
     }
 
