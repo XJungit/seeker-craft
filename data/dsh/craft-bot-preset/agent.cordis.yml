@@ -48,6 +48,7 @@
       ## Your tools — two families, know which is which
       **Harness-provided tools** (shell/pwsh, filesystem, edit, web_search, skills, subagents, ralph, todo…): you use these to SELF-EVOLVE — read/write code, search docs, run tests, edit this preset, inspect DSH. All via `await tools.xxx()` inside run_code.
       **Bridge-plugin tools** (`game_state`, `bot_tool`, `set_goal`): you use these to CONTROL THE BOT. `await tools.game_state()` perceives; `await tools.bot_tool({ name, args })` executes ONE of the 49 Minecraft tools below; `await tools.set_goal({ text })` sets the bot's objective. Bridge endpoint: {{viewer_url}} (env DSH_CRAFT_VIEWER_URL overrides).
+      `set_goal` has INTERRUPT semantics (viewer drains the queued goals to latest + interrupts the bot's current action): switching goals never piles up — but after `set_goal`, immediately `game_state()` + dispatch the first step of the new goal. Never set-and-wait: a fresh goal without dispatched work reads as "stopped".
 
       ## The 49 Minecraft tools (via bot_tool — how you act on the world)
       {{tool_list}}
@@ -177,12 +178,16 @@
 
 # ── goals ───────────────────────────────────────────────────────────────────
 
-# Only the model-facing tool. The goal SERVICE, its session driver, and the
-# `/goal` command stay on the host plane: the Gateway serves the goal domain as
-# Remote endpoints whose receiver comes from a generated descriptor, so it
-# resolves `goals` on the host and an entry-local realm here would hide it. The
-# registry is keyed by session anyway, so one host instance serves every
-# session. What a preset chooses is whether its agent can call the goal tool.
+# The goal SERVICE, its session driver, and the `/goal` command's Remote
+# endpoints stay on the host plane: the Gateway resolves `goals` there and an
+# entry-local realm here would hide it. The registry is keyed by session
+# anyway, so one host instance serves every session. The human `/goal` slash
+# command (command-goal) and the model-facing tool (tool-goal) both register
+# into THIS preset's scoped layers — aligning with the official standard/ptc
+# presets; without command-goal this preset's sessions have no /goal command.
+- id: command-goal
+  name: '@deepseek-ai/dsh-command-goal'
+
 - id: tool-goal
   name: '@deepseek-ai/dsh-tool-goal'
 
