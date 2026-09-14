@@ -139,10 +139,6 @@ impl Skill {
         self.hit_count += 1;
         self.last_used = now_ms;
     }
-    #[allow(dead_code)]
-    fn mark_success(&mut self) {
-        self.success_count += 1;
-    }
     fn decay(&mut self, now_ms: i64, decay_after_ms: i64) {
         if now_ms - self.last_used > decay_after_ms && self.success_count > 0 {
             self.success_count = self.success_count.saturating_sub(1);
