@@ -9,7 +9,6 @@
 //! LLM 只需调用一次 `craft_3x3` 或 `smelt`，bot 自动处理放桌、开桌、操作、收桌。
 
 use azalea::BlockPos;
-use azalea::container::ContainerHandleRef;
 use azalea::prelude::*;
 use azalea_registry::builtin::{BlockKind, ItemKind};
 use std::str::FromStr;
@@ -150,27 +149,6 @@ fn count_in_inventory(bot: &Client, item: &str) -> u32 {
         }
     }
     total
-}
-
-/// 走到 pos 旁（不严格到 pos 上方）。简化：调用 bot.goto；调用方应保证 pos 可达。
-/// 这里只做小段等待，让 pathfinder 推进；真正的 goto 由 ActionManager 外层调度。
-#[allow(dead_code)]
-async fn walk_near(bot: &Client, pos: BlockPos) -> Result<(), String> {
-    // 这里不再触发 goto（避免与 ActionManager 串行命令冲突）。
-    // 调用方应在调用 ensure_table_open 前已使 bot 处于合理位置，
-    // 或者使用 hint_pos = None 让本函数直接放头顶桌。
-    let p = bot
-        .position()
-        .map_err(|e| format!("无法读取 bot 位置: {e:?}"))?;
-    let dx = p.x - pos.x as f64;
-    let dz = p.z - pos.z as f64;
-    let dist = (dx * dx + dz * dz).sqrt();
-    if dist > 6.0 {
-        return Err(format!(
-            "目标桌距 bot {dist:.1}m 过远（>6m），请先 go 到附近再调用"
-        ));
-    }
-    Ok(())
 }
 
 /// P5 新增：用 pathfinder 把 bot 走到 pos 旁 1-2m 内（reach 范围内）。
@@ -909,27 +887,6 @@ fn find_table_block_nearby(
         }
     }
     best.map(|(p, _)| p)
-}
-
-/// 找到背包里持有 item 的 hotbar 槽位（0..=8），无则 None。
-#[allow(dead_code)]
-fn find_hotbar_slot(inv: &ContainerHandleRef, kind: ItemKind) -> Option<u8> {
-    let menu = inv.menu().ok()??;
-    // P5 修复：原代码 idx 算反了（详见 place.rs 同名函数注释）。
-    let hotbar_range = menu.hotbar_slots_range();
-    let hotbar_start = *hotbar_range.start();
-    let slots = inv.slots()?;
-    for s in hotbar_range {
-        if let Some(stack) = slots.get(s)
-            && !stack.is_empty()
-            && stack.kind() == kind
-        {
-            let idx = (s - hotbar_start) as u8;
-            debug_assert!(idx <= 8, "hotbar idx out of range: {idx}");
-            return Some(idx);
-        }
-    }
-    None
 }
 
 /// 检查 pos 处是否可以放置一个方块（用于自动放桌选位）。

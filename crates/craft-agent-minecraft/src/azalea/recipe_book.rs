@@ -9,7 +9,6 @@ use std::str::FromStr;
 
 use azalea_protocol::common::recipe::{RecipeDisplayData, SlotDisplayData};
 use azalea_protocol::packets::game::c_recipe_book_add::Entry;
-use azalea_protocol::packets::game::c_update_recipes::SingleInputEntry;
 use azalea_registry::builtin::ItemKind;
 use serde_json::Value;
 
@@ -235,13 +234,6 @@ pub fn store_recipe_book_entry(book: &mut RecipeBook, e: &Entry) {
         book.insert(r);
     }
 }
-
-/// 补充切石机配方（来自 ClientboundUpdateRecipes.stonecutter_recipes）。
-/// 注意：Stonecutter 的 `option_display` 仅含结果展示，无法重建完整配方，
-/// 故此处暂存为占位（不自动合成）。后续如需切石机自动合成，需解析
-/// `StonecutterRecipeDisplay` 全结构。
-#[allow(dead_code)]
-pub fn store_stonecutter_entry(_book: &mut RecipeBook, _e: &SingleInputEntry) {}
 
 /// 统一物品 id 为无命名空间小写。
 pub fn normalize_item(id: &str) -> String {

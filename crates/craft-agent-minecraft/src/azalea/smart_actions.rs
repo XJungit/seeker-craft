@@ -435,17 +435,6 @@ enum ToolNeed {
     Axe,
     None,
 }
-#[allow(dead_code)]
-impl ToolNeed {
-    fn label(&self) -> &'static str {
-        match self {
-            ToolNeed::Pickaxe => "镐",
-            ToolNeed::Axe => "斧",
-            ToolNeed::None => "工具",
-        }
-    }
-}
-
 pub async fn collect_block_smart(bot: &Client, item: &str, count: u32) -> Result<String, String> {
     let block_kinds = expand_block_aliases(item);
     let item_kinds = expand_item_aliases(item);
@@ -1223,31 +1212,6 @@ pub async fn defend_self(bot: &Client) -> Result<String, String> {
         "防御完成（{:.1}→{:.1}，受到伤害 {:.1}）。附近敌人由 handler 自动攻击。",
         health_before, health_after, damage_taken
     ))
-}
-
-#[allow(dead_code)]
-fn hostile_entity_kinds() -> Vec<EntityKind> {
-    use EntityKind::*;
-    vec![
-        Zombie,
-        Skeleton,
-        Creeper,
-        Spider,
-        Enderman,
-        Witch,
-        Blaze,
-        Ghast,
-        Slime,
-        MagmaCube,
-        Silverfish,
-        Endermite,
-        Stray,
-        Husk,
-        Drowned,
-        Phantom,
-        WitherSkeleton,
-        Warden,
-    ]
 }
 
 /// 计算放置方块的辅助位置（学习自 Mindcraft placeBlock 的 buildOff）。
