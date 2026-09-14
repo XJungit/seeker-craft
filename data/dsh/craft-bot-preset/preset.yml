@@ -1,2 +1,3 @@
 name: Craft Bot 大脑
-description: DSH 作为 Minecraft bot（Craft-Agent）的唯一大脑：内置 viewer 桥（game_state / bot_tool / set_goal）驱动 live bot，基于标准编码 Agent（完整编码 + 子代理 + Ralph 循环）+ Code Mode（run_code 工具，一次程序调用组合多步文件/搜索/检查操作），支持自进化（改预设 / dsh-bridge / Rust / Azalea）。含 49 工具参考、MC 知识与自进化护栏。仅 Minecraft 项目选用，其他项目不受影响。
+description: DSH 作为 Minecraft bot（Craft-Agent）的唯一大脑：内置 viewer 桥（game_state / bot_tool / set_goal）驱动 live bot，基于 PTC 模式编码 Agent（完整编码 + 子代理 + Ralph 循环，工具经 run_code 一次程序调用组合多步文件/搜索/检查操作），支持自进化（改预设 / dsh-bridge / Rust / Azalea）。含 49 工具参考、MC 知识与自进化护栏。仅 Minecraft 项目选用，其他项目不受影响。
+order: 10

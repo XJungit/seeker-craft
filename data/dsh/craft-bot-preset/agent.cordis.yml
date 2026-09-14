@@ -1,5 +1,5 @@
-# Craft-Agent preset: based on the `standard` coding agent (full coding + subagents + workflow),
-# plus the viewer bridge (dsh-bridge) for Minecraft control. Mounted once per process.
+# Craft-Agent preset: based on the `ptc` coding agent (full coding + subagents, tools presented
+# via run_code), plus the viewer bridge (dsh-bridge) for Minecraft control. Mounted once per process.
 #
 # This file is an AGENT-PLANE composition. The roster mounts it ONCE under a
 # standing scope; every session naming it joins by scope parentage, so the
@@ -33,7 +33,7 @@
       - `await tools.game_state()` — read bot state
       - `await tools.bot_tool({ name: "set_mode", args: { mode: "..." } })`
       - `await tools.pwsh({ command: "..." })` — shell
-      - `await tools.fs_read({ path: "..." })` / `await tools.fs_write(...)` — filesystem
+      - `await tools.read({ path: "..." })` / `await tools.write(...)` / `await tools.edit(...)` — filesystem
       Do NOT emit native tool calls directly — in Code Mode only `run_code` is callable; everything else is reached via the SDK inside your program. The SDK type declarations are auto-generated from each tool's schema, so read them for exact argument names and shapes. Only what you `print()` or `return` comes back — curate it.
 
       ## Your mission (the only goal)
@@ -48,7 +48,6 @@
       ## Your tools — two families, know which is which
       **Harness-provided tools** (shell/pwsh, filesystem, edit, web_search, skills, subagents, ralph, todo…): you use these to SELF-EVOLVE — read/write code, search docs, run tests, edit this preset, inspect DSH. All via `await tools.xxx()` inside run_code.
       **Bridge-plugin tools** (`game_state`, `bot_tool`, `set_goal`): you use these to CONTROL THE BOT. `await tools.game_state()` perceives; `await tools.bot_tool({ name, args })` executes ONE of the 49 Minecraft tools below; `await tools.set_goal({ text })` sets the bot's objective. Bridge endpoint: {{viewer_url}} (env DSH_CRAFT_VIEWER_URL overrides).
-      `set_goal` has INTERRUPT semantics (viewer drains the queued goals to latest + interrupts the bot's current action): switching goals never piles up — but after `set_goal`, immediately `game_state()` + dispatch the first step of the new goal. Never set-and-wait: a fresh goal without dispatched work reads as "stopped".
 
       ## The 49 Minecraft tools (via bot_tool — how you act on the world)
       {{tool_list}}
@@ -361,6 +360,10 @@
   name: '@deepseek-ai/dsh-agent-tool-presentation'
   config:
     mode: ptc
+
+# present：把产出文件声明为可访问的交付物（官方 standard/ptc 均含，对齐基线）。
+- id: tool-present
+  name: '@deepseek-ai/dsh-tool-present'
 
 # ── self-modification（刻意不注册 cordis 自引用工具）───────────────────────
 # 本预设刻意不注册 tool-cordis（cordis_inspect_* / cordis_define / cordis_run 等）：
