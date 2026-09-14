@@ -23,6 +23,7 @@ pub mod harvest;
 pub mod place;
 pub mod recipe_book;
 pub mod recipes;
+pub mod scan;
 pub mod sleep;
 pub mod smart_actions;
 pub mod table_flow;
