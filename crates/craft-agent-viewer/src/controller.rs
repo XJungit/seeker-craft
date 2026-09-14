@@ -23,7 +23,6 @@ pub struct Status {
 }
 
 /// Agent 生命周期控制器。
-#[allow(dead_code)]
 pub struct AgentController {
     pub pause: Arc<AtomicBool>,
     pub stop: Arc<AtomicBool>,
@@ -34,14 +33,6 @@ pub struct AgentController {
     goal_queue: Mutex<VecDeque<String>>,
     /// 共享的 azalea 适配器引用（bot 连接后填充，viewer 从中读取游戏状态）。
     pub game_adapter: Arc<RwLock<Option<ArcAzaleaAdapter>>>,
-    /// 模式 profile 名（如 "survival" / "creative" / "assistant" / "god_mode"）。
-    /// 加载 `profiles/defaults/{mode}.json` 叠加到 _default 之上。
-    pub mode_profile: Option<String>,
-    /// 个体 profile 名（如 "deepseek" / "claude" / "gpt"）。
-    /// 加载 `profiles/{individual}.json` 叠加到 _default + mode 之上。
-    pub individual_profile: Option<String>,
-    /// Rotate the existing JSONL once, before attaching it to an Agent writer.
-    pub rollover_session: bool,
 }
 
 impl AgentController {
@@ -61,9 +52,6 @@ impl AgentController {
             }),
             goal_queue: Mutex::new(VecDeque::new()),
             game_adapter: Arc::new(RwLock::new(None)),
-            mode_profile: None,
-            individual_profile: None,
-            rollover_session: false,
         }
     }
 
