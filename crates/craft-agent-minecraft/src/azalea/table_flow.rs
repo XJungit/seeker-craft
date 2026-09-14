@@ -27,14 +27,7 @@ fn table_item_id(table_kind: &str) -> Option<&'static str> {
     }
 }
 
-/// 把 "oak_planks" / "minecraft:oak_planks" 统一为 "minecraft:oak_planks"。
-fn normalize_item_id(item: &str) -> String {
-    if item.starts_with("minecraft:") {
-        item.to_string()
-    } else {
-        format!("minecraft:{item}")
-    }
-}
+use super::inventory::normalize_item_id;
 
 /// 当前是否已打开非 Player 菜单（即任意容器）。
 pub fn is_container_open(bot: &Client) -> bool {
@@ -58,19 +51,7 @@ pub fn close_container_if_open(bot: &Client) -> bool {
     false
 }
 
-/// bot 头顶上方的空气格（已废弃：bot 自己占据该格，服务端拒绝放置）。
-///
-/// 保留函数仅用作 `hint_pos` 缺省兜底；真正放桌逻辑改走 `find_nearby_placement_spot`
-/// 找一个 bot 旁边的位置（避免 bot bounding box 冲突）。
-fn overhead_slot(bot: &Client) -> Option<BlockPos> {
-    let p = bot.position().ok()?;
-    Some(BlockPos::new(
-        p.x.floor() as i32,
-        p.y.floor() as i32 + 1,
-        p.z.floor() as i32,
-    ))
-}
-
+use super::inventory::overhead_slot;
 /// P5 关键修复：扫描 bot 附近（2-3 格半径内）找一个 **bot 不占据** 的合法放置位置。
 ///
 /// 修复前的问题：`overhead_slot` 返回 bot 头顶格，但 bot 自己占据 foot+head 两格，

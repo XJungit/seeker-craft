@@ -25,11 +25,8 @@ fn bare(id: &str) -> &str {
 
 /// 把 `oak_planks`/`spruce_planks`/... 这类木板动态派生为「由对应原木合成」的配方，
 /// 免去逐条登记。若查询本身不是木板（如原木），返回 None，避免自引用死循环。
-/// 归一化物品 id：与 `azalea::mod.rs::normalize_item_id` 同一实现
-/// （补 `minecraft:` 前缀 + 单复数容错），此处转发避免双份逻辑漂移。
-fn normalize_item(item: &str) -> String {
-    super::inventory::normalize_item_id(item)
-}
+/// 归一化物品 id（转调 inventory 权威实现；craft 子模块经 `super::*` 继承）。
+pub(crate) use super::inventory::normalize_item_id as normalize_item;
 
 /// 在玩家背包范围（排除网格/盔甲）内找到第一个含指定物品种类的槽位。
 fn find_source_slot(inv: &ContainerHandleRef, kind: ItemKind) -> Option<usize> {

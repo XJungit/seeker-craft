@@ -16,31 +16,7 @@ use tokio::time::sleep;
 /// 填充 cobblestone 时置 true，do_place 开头检查并跳过 P163 的递归触发。
 static PLACE_FILLING: AtomicBool = AtomicBool::new(false);
 
-/// 找到背包里持有 item 的 hotbar 槽位（0..=8），无则 None。
-fn find_hotbar_slot(inv: &ContainerHandleRef, kind: ItemKind) -> Option<u8> {
-    let menu = inv.menu().ok()??;
-    // hotbar_slots_range() 返回 hotbar 的绝对槽号范围（最后 9 个 player slot）。
-    // hotbar 索引 0 = range.start(), 索引 8 = range.end()。
-    // 之前的代码用 (last - s).unsigned_abs() 算 idx，结果完全反了：
-    // s=end → idx=0（应该是 8），s=start → idx=8（应该是 0），导致
-    // bot.set_selected_hotbar_slot() 选错槽位，block_interact 时手持空手/错物品，
-    // 服务端拒绝放置 → place 100% 失败。
-    let hotbar_range = menu.hotbar_slots_range();
-    let hotbar_start = *hotbar_range.start();
-    let slots = inv.slots()?;
-    for s in hotbar_range {
-        if let Some(stack) = slots.get(s)
-            && !stack.is_empty()
-            && stack.kind() == kind
-        {
-            let idx = (s - hotbar_start) as u8;
-            debug_assert!(idx <= 8, "hotbar idx out of range: {idx}");
-            return Some(idx);
-        }
-    }
-    None
-}
-
+use super::inventory::find_hotbar_slot_for as find_hotbar_slot;
 /// 把 ItemKind 映射到对应的 BlockKind（用于放置后的方块种类校验）。
 /// 大多数放置类物品（工作台/熔炉/箱子/砖块等）的 item id 与 block id 一致。
 fn item_to_block_kind(item: &str) -> Option<BlockKind> {
@@ -719,13 +695,7 @@ fn is_container_block(k: BlockKind) -> bool {
     )
 }
 
-fn normalize_item(item: &str) -> String {
-    if item.starts_with("minecraft:") {
-        item.to_string()
-    } else {
-        format!("minecraft:{item}")
-    }
-}
+use super::inventory::normalize_item_id as normalize_item;
 
 /// P11 新增：扫描 origin 附近 radius 格半径，找最近的容器方块（crafting_table/furnace/chest等）。
 ///

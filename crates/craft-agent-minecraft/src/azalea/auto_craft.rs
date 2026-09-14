@@ -370,16 +370,7 @@ fn expand_ingredient_aliases_pub(kind: ItemKind) -> Vec<ItemKind> {
         .collect()
 }
 
-/// bot 头顶上方的空气格（用于临时放置工作台/熔炉）。
-fn overhead_slot(bot: &Client) -> Option<BlockPos> {
-    let p = bot.position().ok()?;
-    Some(BlockPos::new(
-        p.x.floor() as i32,
-        p.y.floor() as i32 + 1,
-        p.z.floor() as i32,
-    ))
-}
-
+use super::inventory::overhead_slot;
 /// 确保背包有 `amount` 个 `item`：沿配方图递归满足原料。
 async fn ensure(bot: &Client, item: &str, amount: u32) -> Result<(), String> {
     // P27 修复（2026-07-27）：用 has_item_with_aliases 替代 has_item。

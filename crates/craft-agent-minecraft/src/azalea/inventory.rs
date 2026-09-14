@@ -1569,6 +1569,40 @@ pub async fn do_consume(bot: &Client, item: &str) -> String {
     }
 }
 
+/// 统计指定背包句柄中某物品的总数（player槽范围）。
+/// 与 `count_item`（按 bot 取背包）互补：已有 inv 句柄时用本函数，避免重复 get_inventory。
+pub(crate) fn count_item_kind(inv: &ContainerHandleRef, kind: ItemKind) -> u32 {
+    let Some(menu) = inv.menu().ok().flatten() else {
+        return 0;
+    };
+    let Some(slots) = inv.slots() else {
+        return 0;
+    };
+    let mut total = 0u32;
+    for s in menu.player_slots_range() {
+        if let Some(stack) = slots.get(s)
+            && !stack.is_empty()
+            && stack.kind() == kind
+        {
+            total += stack.count().max(0) as u32;
+        }
+    }
+    total
+}
+
+/// bot 头顶上方的空气格（临时放桌/炉用）。
+///
+/// 注意（原 table_flow 废弃注）：bot 自己占据 foot+head 两格，服务端拒绝在
+/// bounding box 内放方块——调用方应优先找旁边空位，本函数仅作缺省兜底。
+pub(crate) fn overhead_slot(bot: &Client) -> Option<azalea::BlockPos> {
+    let p = bot.position().ok()?;
+    Some(azalea::BlockPos::new(
+        p.x.floor() as i32,
+        p.y.floor() as i32 + 1,
+        p.z.floor() as i32,
+    ))
+}
+
 /// 统计背包中指定物品的总数。
 pub fn count_item(bot: &Client, kind: ItemKind) -> u32 {
     let Some(slots) = bot.get_inventory().ok().and_then(|i| i.slots()) else {

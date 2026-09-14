@@ -20,14 +20,7 @@ use std::str::FromStr;
 use std::time::Duration;
 use tokio::time::sleep;
 
-/// 把 "oak_planks" / "minecraft:oak_planks" 统一为 "minecraft:oak_planks"。
-fn normalize_item_id(item: &str) -> String {
-    if item.starts_with("minecraft:") {
-        item.to_string()
-    } else {
-        format!("minecraft:{item}")
-    }
-}
+use super::inventory::normalize_item_id;
 
 /// 解析物品 id 为 ItemKind，兼容带/不带 minecraft: 前缀。
 fn parse_item_kind(item: &str) -> Result<ItemKind, String> {

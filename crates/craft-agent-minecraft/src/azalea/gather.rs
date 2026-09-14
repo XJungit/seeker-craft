@@ -10,12 +10,12 @@
 
 use super::inventory::{
     auto_equip_best_axe, auto_equip_best_pickaxe, best_pickaxe_tier_in_inventory, block_drops_item,
-    block_required_pickaxe_tier, has_any_axe_in_inventory, has_any_pickaxe_in_inventory,
-    is_hard_block, is_log_block, pickaxe_tier_name, pickaxe_to_craft_for_tier,
+    block_required_pickaxe_tier, count_item_kind as count_item, has_any_axe_in_inventory,
+    has_any_pickaxe_in_inventory, is_hard_block, is_log_block, pickaxe_tier_name,
+    pickaxe_to_craft_for_tier,
 };
 // P46: do_auto_craft 已删除——回归 Mindcraft 哲学，bot 不主动合成工具。
 use azalea::BlockPos;
-use azalea::container::ContainerHandleRef;
 use azalea::pathfinder::goals::BlockPosGoal;
 use azalea::prelude::*;
 use azalea_registry::builtin::{BlockKind, ItemKind};
@@ -50,29 +50,6 @@ fn scan_blocks(
     // 按到中心距离排序
     found.sort_by_key(|p| (p.x - cx).pow(2) + (p.y - cy).pow(2) + (p.z - cz).pow(2));
     found
-}
-
-/// 统计背包中指定物品数量。
-fn count_item(inv: &ContainerHandleRef, kind: ItemKind) -> u32 {
-    let menu = match inv.menu().ok().flatten() {
-        Some(m) => m,
-        None => return 0,
-    };
-    let range = menu.player_slots_range();
-    let slots = match inv.slots() {
-        Some(s) => s,
-        None => return 0,
-    };
-    let mut total = 0u32;
-    for s in range {
-        if let Some(stack) = slots.get(s)
-            && !stack.is_empty()
-            && stack.kind() == kind
-        {
-            total += stack.count().max(0) as u32;
-        }
-    }
-    total
 }
 
 /// 根据目标方块种类决定应该装备的工具类型。
@@ -584,10 +561,4 @@ pub async fn do_gather(bot: &Client, item: &str, count: u32) -> Result<String, S
     }
 }
 
-fn normalize_item(item: &str) -> String {
-    if item.starts_with("minecraft:") {
-        item.to_string()
-    } else {
-        format!("minecraft:{item}")
-    }
-}
+use super::inventory::normalize_item_id as normalize_item;

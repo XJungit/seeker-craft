@@ -11,8 +11,9 @@
 
 use super::inventory::{
     auto_equip_best_axe, auto_equip_best_pickaxe, best_pickaxe_tier_in_inventory,
-    block_required_pickaxe_tier, has_any_axe_in_inventory, has_any_pickaxe_in_inventory,
-    is_hard_block, is_log_block, pickaxe_tier, pickaxe_tier_name, pickaxe_to_craft_for_tier,
+    block_required_pickaxe_tier, count_item_kind, has_any_axe_in_inventory,
+    has_any_pickaxe_in_inventory, is_hard_block, is_log_block, pickaxe_tier, pickaxe_tier_name,
+    pickaxe_to_craft_for_tier,
 };
 use azalea::BlockPos;
 use azalea::pathfinder::goals::BlockPosGoal;
@@ -1019,28 +1020,6 @@ async fn format_item_breakdown(bot: &Client, kinds: &[ItemKind]) -> String {
             .collect::<Vec<_>>()
             .join(", ")
     }
-}
-
-fn count_item_kind(inv: &azalea::container::ContainerHandleRef, kind: ItemKind) -> u32 {
-    let menu = match inv.menu().ok().flatten() {
-        Some(m) => m,
-        None => return 0,
-    };
-    let range = menu.player_slots_range();
-    let slots = match inv.slots() {
-        Some(s) => s,
-        None => return 0,
-    };
-    let mut total = 0u32;
-    for s in range {
-        if let Some(stack) = slots.get(s)
-            && !stack.is_empty()
-            && stack.kind() == kind
-        {
-            total += stack.count().max(0) as u32;
-        }
-    }
-    total
 }
 
 /// 捡起附近所有掉落物（学习自 Mindcraft pickupNearbyItems）。
