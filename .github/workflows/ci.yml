@@ -5,9 +5,11 @@ on:
     branches: [main, master]
   pull_request:
   workflow_dispatch:
-  # 每日定时构建：防止依赖/工具链漂移在 push 前积累
+  # 每周定时构建：防止依赖/工具链漂移在 push 前积累
+  # （每日定时由 audit.yml 承担——它跑 ubuntu 便宜；CI 全是 windows-latest，
+  # 每天全量编 azalea 太贵，改每周。）
   schedule:
-    - cron: "0 0 * * *"
+    - cron: "0 0 * * 0"
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -18,8 +20,10 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  quality:
-    name: fmt + clippy
+  # quality + test 合并为一个 job：只 checkout/装工具链/热 cache 一次，
+  # fmt→clippy→test 串行跑，总时长反而比“两个 job 各自冷启动编两遍依赖”短。
+  check:
+    name: fmt + clippy + test
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -34,17 +38,6 @@ jobs:
         run: cargo clippy --workspace --all-targets --features craft-agent-minecraft/azalea-bot -- -D warnings
       - name: validate data JSON (tasks/profiles/blueprints/actions)
         run: python scripts/ci/validate_data_json.py
-
-  test:
-    name: test
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install nightly-2026-07-21 toolchain
-        uses: dtolnay/rust-toolchain@master
-        with:
-          toolchain: "nightly-2026-07-21"
-      - uses: Swatinem/rust-cache@v2
       - name: cargo test (default features)
         run: cargo test --workspace --no-fail-fast
       - name: cargo test (azalea-bot)
@@ -61,8 +54,12 @@ jobs:
           toolchain: "nightly-2026-07-21"
           components: llvm-tools-preview
       - uses: Swatinem/rust-cache@v2
-      - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov --locked
+      # cargo-binstall 拿预编译二进制（秒级）；fallback 回源码编译。
+      # 原 `cargo install --locked` 每次重编 3~5 分钟，是 coverage 最慢的一环。
+      - name: Install cargo-llvm-cov (binstall)
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov
       - name: Generate coverage (lcov, incl. azalea-bot)
         run: cargo llvm-cov --workspace --features craft-agent-minecraft/azalea-bot --lcov --output-path lcov.info
       - name: Upload coverage artifact

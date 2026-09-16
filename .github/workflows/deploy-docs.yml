@@ -3,6 +3,12 @@ name: Deploy Docs
 on:
   push:
     branches: [main, master]
+    # 非代码变更（preset/scripts/纯文档）不触发 cargo doc
+    paths:
+      - 'crates/**'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - '.github/workflows/deploy-docs.yml'
   workflow_dispatch:
 
 concurrency:
@@ -17,7 +23,8 @@ permissions:
 jobs:
   docs:
     name: rustdoc + GitHub Pages
-    runs-on: windows-latest
+    # rustdoc 只做文档生成，无需 MSVC 链接——ubuntu 比 windows 快且便宜。
+    runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
