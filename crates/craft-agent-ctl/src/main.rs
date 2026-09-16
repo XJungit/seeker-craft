@@ -12,6 +12,9 @@
 //!   craft-agent-ctl tail F N    # 打印日志文件尾部 N 行
 //!   craft-agent-ctl health      # 持续健康检查（最多 10 分钟，检测到进步就退出）
 
+// Windows-only：后台启动 viewer 用 creation_flags 脱离控制台。
+// 无门 import 会导致 Linux 下 cargo doc/clippy 直接 E0433（CI deploy-docs）。
+#[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
