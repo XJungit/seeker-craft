@@ -35,6 +35,13 @@ jobs:
         with:
           toolchain: "nightly-2026-07-21"
       - uses: Swatinem/rust-cache@v2
+      # B方案：azalea/bevy/reqwest 的传递 -sys 依赖在 Linux 要系统库
+      #（pkg-config+openssl 给 reqwest；alsa+udev 给 bevy；xkb+X11 给 winit 系）。
+      # Windows 有 SDK 全家所以一直绿，ubuntu-runner 裸机则挂在这里。
+      - name: Install Linux system deps (reqwest/bevy -sys)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config libssl-dev libasound2-dev libudev-dev libxkbcommon-dev libx11-dev
       - name: cargo doc (workspace, incl. azalea-bot)
         run: cargo doc --workspace --no-deps --features craft-agent-minecraft/azalea-bot
       - name: Generate root index (cargo doc has no workspace landing page)
