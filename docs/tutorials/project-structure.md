@@ -33,8 +33,14 @@ This guide explains the main directories and crates in SeekerCraft (Craft-Agent)
 - `data/profiles/` — prompt templates (`_default.json` + per-provider overrides).
 - `data/blueprints/` — build blueprints (JSON).
 - `data/actions/` — LLM-defined rhai scripts (JSON-wrapped).
-- `data/dsh/craft-bot-preset/` — DSH craft-bot preset template; `setup.ps1` generates
-  `~/.dsh/.agent-presets/craft-bot` from it, substituting `{{PROJECT_ROOT}}` / `{{DSH_PKG_ROOT}}`.
+- `data/dsh/craft-bot-preset/` — DSH craft-bot preset **source of truth** (rc.3 directory
+  format: `agent.cordis.yml` + `preset.yml`, with `{{PROJECT_ROOT}}` / `{{DSH_PKG_ROOT}}`
+  placeholders). On DSH 0.1.5-rc.3, `setup.ps1` expands it into
+  `~/.dsh/.agent-presets/craft-bot`.
+- `data/dsh/craft-bot-preset-017/` — the same preset as a DSH **0.1.7+ bundle**: `package.json`
+  declares `dsh.bundle.patch`, and `cordis.patch.yml` is **generated** from the template above
+  by `scripts/gen-craft-bot-preset-017.mjs` (never hand-edit it). Verify with
+  `node scripts/verify-craft-bot-preset-017.mjs <repo-root> <dsh-pkg-root>`.
 
 ## Scripts
 

@@ -72,8 +72,15 @@ Idempotent and repeatable. What it does (in order):
    - appends the plugin config override to `cordis.patch.yml`
    - links `@deepseek-ai/dsh-tools` / `@deepseek-ai/schemastery` into the plugin's `node_modules`
    - runs `pnpm install` and the plugin verification script
-4. **Generates the craft-bot preset** into `~/.dsh/.agent-presets/craft-bot` from
-   `data/dsh/craft-bot-preset/` (substituting `{{PROJECT_ROOT}}` / `{{DSH_PKG_ROOT}}`).
+4. **Installs the craft-bot preset**, in the format the detected DSH needs:
+   - **DSH 0.1.7+** — a single `@deepseek-ai/dsh-agent-preset` declaration carried by a
+     bundle. `data/dsh/craft-bot-preset-017/cordis.patch.yml` is generated from
+     `data/dsh/craft-bot-preset/agent.cordis.yml` by `scripts/gen-craft-bot-preset-017.mjs`,
+     then the bundle is linked into `~/.dsh/profiles/web` and added to `dsh.profile.bundles`
+     (restart DSH afterwards; a running process does not pick up a new bundle).
+   - **DSH 0.1.5-rc.3** — a directory preset at `~/.dsh/.agent-presets/craft-bot` expanded
+     from `data/dsh/craft-bot-preset/` (substituting `{{PROJECT_ROOT}}` / `{{DSH_PKG_ROOT}}`).
+     Note that 0.1.7 no longer scans `.agent-presets`, so this path is legacy-only.
 5. **Copies `.env.example` → `.env`** if absent.
 6. **Verifies** the DSH plugin loads in the harness module graph.
 

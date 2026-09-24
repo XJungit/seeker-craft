@@ -283,6 +283,13 @@ if (-not (Test-Path $templateDir)) {
         node @genArgs 2>&1 | ForEach-Object { Write-Host "    $_" }
         if ($LASTEXITCODE -eq 0) {
             Write-Ok "cordis.patch.yml 已生成（0.1.7+ bundle 格式）"
+
+            # 4b-2. 校验生成物与模板往返一致（防止两份内容漂移）
+            $verifyScript = Join-Path $ProjectRoot 'scripts\verify-craft-bot-preset-017.mjs'
+            if ((Test-Path $verifyScript) -and $dshPkgRoot) {
+                node $verifyScript $ProjectRoot $dshPkgRoot 2>&1 | ForEach-Object { Write-Host "    $_" }
+                if ($LASTEXITCODE -ne 0) { Write-Warn "预设一致性校验未通过（exit=$LASTEXITCODE）" }
+            }
         } else {
             Write-Warn "0.1.7+ 预设生成失败（exit=$LASTEXITCODE）"
         }
@@ -300,32 +307,42 @@ if (-not (Test-Path $templateDir)) {
     #              (@deepseek-ai/dsh-agent-preset): Cannot find package ...
     #              [ERR_MODULE_NOT_FOUND]     -> exit=1
     #     故仅 0.1.7+ 注册；rc.3 继续用 4a 的 .agent-presets 目录格式。
+    $cbBundleDir = Join-Path $ProjectRoot 'data\dsh\craft-bot-preset-017'
     $cbPkgPath = Join-Path $webDir 'package.json'
     if (-not $isV017) {
         Write-Ok "跳过 0.1.7+ preset bundle 注册（rc.3 系，注册会导致启动崩溃）"
-    } elseif (Test-Path $cbPkgPath) {
-        try {
-            $cbPkg = Read-Text $cbPkgPath | ConvertFrom-Json
-            $cbChanged = $false
-            if (-not $cbPkg.dependencies.PSObject.Properties['dsh-preset-craft-bot']) {
-                $cbPkg.dependencies | Add-Member -NotePropertyName 'dsh-preset-craft-bot' `
-                    -NotePropertyValue "link:$ProjectRootPosix/data/dsh/craft-bot-preset-017"
-                $cbChanged = $true
-                Write-Ok "package.json 添加 dsh-preset-craft-bot link 依赖"
-            }
-            if (-not $cbPkg.dsh.profile.bundles -contains 'dsh-preset-craft-bot') {
-                $cbPkg.dsh.profile.bundles += 'dsh-preset-craft-bot'
-                $cbChanged = $true
-                Write-Ok "package.json bundles 添加 dsh-preset-craft-bot"
-            }
-            if ($cbChanged) {
-                Write-Text $cbPkgPath ($cbPkg | ConvertTo-Json -Depth 10)
-                Write-Ok "package.json 已更新（craft-bot 预设 bundle）"
+    } elseif (-not (Test-Path $cbBundleDir)) {
+        Write-Warn "未找到 preset bundle 目录 $cbBundleDir（跳过注册）"
+    } else {
+        # 用官方 CLI 通道注册：`dsh plugin --profile <name> add <bundle-dir>` 会一次性完成
+        # 「写入 link 依赖 → 安装落地 → 选中 bundle」三步，且顺序由 DSH 自己保证。
+        #
+        # 为何不用手写 package.json + pnpm install：那是复现安装步骤（技能明确要求避免），
+        # 且极易产生顺序缺陷 —— 历史故障正是先选了 bundle 而依赖未落地，导致启动时
+        # 该 bundle 载入失败、预设从会话列表中「消失」。
+        $alreadyLinked = Test-Path (Join-Path $webDir 'node_modules\dsh-preset-craft-bot')
+        $bundles = @()
+        if (Test-Path $cbPkgPath) {
+            try { $bundles = @((Read-Text $cbPkgPath | ConvertFrom-Json).dsh.profile.bundles) } catch { }
+        }
+        $alreadySelected = $bundles -contains 'dsh-preset-craft-bot'
+
+        if ($alreadyLinked -and $alreadySelected) {
+            Write-Ok "craft-bot 预设 bundle 已注册（跳过）"
+        } else {
+            Push-Location $ProjectRoot
+            try {
+                Write-Ok "注册 craft-bot 预设 bundle：dsh plugin --profile web add $cbBundleDir"
+                & dsh plugin --profile web add $cbBundleDir 2>&1 | ForEach-Object { Write-Host "    $_" }
+                $addExit = $LASTEXITCODE
+            } finally { Pop-Location }
+
+            if ($addExit -eq 0) {
+                Write-Ok "craft-bot 预设 bundle 已注册（依赖 + 安装 + bundle 选择）"
             } else {
-                Write-Ok "package.json 已包含 craft-bot 预设 bundle（跳过）"
+                Write-Warn "注册失败（exit=$addExit）。请手动执行："
+                Write-Warn "  dsh plugin --profile web add `"$cbBundleDir`""
             }
-        } catch {
-            Write-Warn "无法更新 $cbPkgPath（$_）"
         }
     }
     Write-Ok "craft-bot 预设已就绪（rc.3 目录：$presetDir；0.1.7+ bundle：$preset017Dir）"
@@ -350,6 +367,6 @@ Write-Host ""
 Write-Host "SeekerCraft 安装配置完成！下一步：" -ForegroundColor Green
 Write-Host "  1) 启动 Minecraft Java 版 26.2 服务器（bot 默认连接 localhost:4444）"
 Write-Host "  2) 运行 .\scripts\start.ps1 启动 viewer 并连接 bot"
-Write-Host "  3) 启动 DeepSeek Harness，在 DSH 中选择 craft-bot 预设会话，即可用 game_state / bot_tool / set_goal 驱动 bot"
-Write-Host "     注：DSH 0.1.7+ 需重启 DSH 后预设才会出现（新 bundle 在启动时装载）"
+Write-Host "  3) 重启 DeepSeek Harness，在 DSH 中选择 craft-bot 预设会话，即可用 game_state / bot_tool / set_goal 驱动 bot"
+Write-Host "     注：0.1.7+ 的预设以 bundle 形式装载，必须重启 DSH 才会出现（运行中的进程不会加载新 bundle）"
 Write-Host "  详细教程见 README.md（Quick Start / DSH 模式）与 docs/tutorials/getting-started.md"

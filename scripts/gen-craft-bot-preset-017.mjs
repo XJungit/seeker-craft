@@ -16,10 +16,12 @@
  *            其中 `plugins` 正是 rc.3 那份数组，整体缩进 +10 后再缩进到 `plugins:` 之下。
  *            0.1.7 不再扫描 `.agent-presets`，预设必须由 bundle 的 `dsh.bundle.patch` 提供。
  *
- * 除缩进/包装外，本脚本还处理两处 0.1.7 的破坏性变更：
+ * 除缩进/包装外，本脚本还处理三处 0.1.7 的破坏性变更：
  *   1. `@deepseek-ai/dsh-workflow-worker-thread` → `@deepseek-ai/dsh-workflow-ptc`（包改名）；
  *   2. 复用官方预设技能目录的表达式改为 `createRequire(baseUrl)` 版本 —— 0.1.7 里
- *      `dsh-agent-presets`（复数）包已不存在，绝对路径写法必然失效。
+ *      `dsh-agent-presets`（复数）包已不存在，绝对路径写法必然失效；
+ *   3. 注入 `tool-cordis` + `tool-plugin-manager`（自进化能力）—— 见下方 (3) 的说明，
+ *      模板出于 rc.3 的 process-global 约束刻意不含这两行，仅在 0.1.7 输出中注入。
  *
  * 用法：
  *   node scripts/gen-craft-bot-preset-017.mjs [--project-root <path>] [--dsh-pkg-root <path>] [--out <file>]
@@ -116,6 +118,40 @@ for (const raw of lines) {
   body.push(line)
 }
 
+// ── (3) 0.1.7 专属：注入 cordis 自引用能力（self-modification 段）─────────────
+//  模板本身是 rc.3 / 0.1.7 共用源，而这一段的行为在两版本下**相反**：
+//    rc.3   ：cordisInspect 是 process-global，多预设各注册一次会碰撞 → 刻意不注册；
+//    0.1.7+ ：provider 由 host 的 `cordis-inspect-providers` 每进程注册一次，
+//             预设行只做 ctx.tools.register → 可安全注册，且 json 里 persona 明确
+//             把「改预设 / 装插件」列为自进化使命，故对齐官方 cordis（创造模式）预设
+//             一并启用 tool-plugin-manager。
+//  因此不在模板里写这两行，而由生成器只在 0.1.7 输出中注入。
+const SELF_MOD_ROWS = [
+  '',
+  '# 以下两行由生成器为 0.1.7+ 注入（rc.3 模板中刻意省略，原因见上）。',
+  "- id: tool-cordis",
+  "  name: '@deepseek-ai/dsh-tool-cordis'",
+  '',
+  "# profile 层（dsh-web-app）把该行全局置为 disabled: true；官方 cordis 预设用",
+  "# `!!js \"!ctx.get('profileContext')\"` 在有 profile 的会话中启用。此表达式与官方一致。",
+  '# 注意：plugin_manager 相关调用需 danger-full-access 或逐次批准。',
+  "- id: tool-plugin-manager",
+  "  name: '@deepseek-ai/dsh-plugin-manager/tools'",
+  '  disabled: !!js "!ctx.get(\'profileContext\')"',
+]
+
+let selfModInjected = false
+{
+  const marker = body.findIndex((l) => /─+\s*self-modification/.test(l))
+  if (marker >= 0) {
+    // 找到该注释段的最后一行（连续注释块），在其后插入
+    let last = marker
+    for (let i = marker; i < body.length; i++) if (/^\s*#/.test(body[i])) last = i
+    body.splice(last + 1, 0, ...SELF_MOD_ROWS)
+    selfModInjected = true
+  }
+}
+
 // ── 包装为 0.1.7 的单条声明 ─────────────────────────────────────────────────
 const head = [
   `# Craft-Agent 的 craft-bot 预设 —— DeepSeek Harness 0.1.7+ 格式。`,
@@ -145,14 +181,18 @@ mkdirSync(dirname(outPath), { recursive: true })
 writeFileSync(outPath, out.join('\n') + '\n', 'utf8')
 
 // ── 自检 ────────────────────────────────────────────────────────────────────
+const outText = out.join('\n')
 const problems = []
 if (!skillsReplaced) problems.push('未替换技能目录表达式（模板可能已改）')
-if (/dsh-agent-presets[\/\\]presets/.test(out.join('\n'))) problems.push('输出中仍残留旧 `dsh-agent-presets/presets` 路径')
-if (/dsh-workflow-worker-thread/.test(out.join('\n'))) problems.push('输出中仍残留 `dsh-workflow-worker-thread`')
-if (!/workflow-ptc/.test(out.join('\n'))) problems.push('输出中未见 `workflow-ptc`')
+if (/dsh-agent-presets[\/\\]presets/.test(outText)) problems.push('输出中仍残留旧 `dsh-agent-presets/presets` 路径')
+if (/dsh-workflow-worker-thread/.test(outText)) problems.push('输出中仍残留 `dsh-workflow-worker-thread`')
+if (!/workflow-ptc/.test(outText)) problems.push('输出中未见 `workflow-ptc`')
+if (!selfModInjected) problems.push('未找到 self-modification 注释段，cordis 自引用行未注入')
+if (!/^ {10}- id: tool-cordis$/m.test(outText)) problems.push('输出中未见 tool-cordis 行')
+if (!/^ {10}- id: tool-plugin-manager$/m.test(outText)) problems.push('输出中未见 tool-plugin-manager 行')
 
 console.log(`[OK] 已生成 0.1.7 预设：${outPath}`)
-console.log(`     行数 ${out.length} ｜ 技能表达式替换 ${skillsReplaced ? '是' : '否'} ｜ workflow 改名 ${workflowRenamed} 处`)
+console.log(`     行数 ${out.length} ｜ 技能表达式替换 ${skillsReplaced ? '是' : '否'} ｜ workflow 改名 ${workflowRenamed} 处 ｜ 自引用行注入 ${selfModInjected ? '是' : '否'}`)
 if (problems.length) {
   console.error('[FAIL] 自检未通过：')
   for (const p of problems) console.error('   - ' + p)

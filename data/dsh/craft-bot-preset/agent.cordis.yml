@@ -12,11 +12,15 @@
 # A service row here MUST sit inside a group carrying an `isolate` realm.
 # Without one it publishes into the root realm, where it is process-global —
 # another preset publishing the same name collides, and a host reader would
-# resolve one preset's instance for every session; `dsh-agent-presets` rejects
-# that at mount. `true` means an entry-local realm: this standing mount's own
-# private instance, apart from every other preset's. (A shared label does NOT
-# pool instances — `provide()` throws on the second registration under the
-# same realm symbol; labels join REALMS, and are not what this file needs.)
+# resolve one preset's instance for every session. `true` means an entry-local
+# realm: this standing mount's own private instance, apart from every other
+# preset's. (A shared label does NOT pool instances — `provide()` throws on the
+# second registration under the same realm symbol; labels join REALMS, and are
+# not what this file needs.)
+#
+# 0.1.7 注：本文件同时充当 rc.3 目录格式的预设正文、以及 0.1.7 bundle 格式的源：
+# scripts/gen-craft-bot-preset-017.mjs 会把它整体缩进到声明行的 `config.plugins`
+# 之下，并改写 {{PROJECT_ROOT}}（→ 本机绝对路径）与技能目录表达式（见 §skills）。
 
 # ── identity ────────────────────────────────────────────────────────────────
 
@@ -92,9 +96,10 @@
 
       ## Self-evolution (serving the mission)
       - **Your scope**: edit THIS preset (craft-bot) freely, plus the dsh-bridge plugin, Rust crates, docs. NOT yours: other projects' presets and the official shipped presets (`ptc`/`standard`/`minimal`/`cordis` — copy before editing).
+      - **How this preset is stored (0.1.7)**: the LIVE preset is a bundle patch, NOT a directory. Source of truth is `data/dsh/craft-bot-preset/agent.cordis.yml` (this file); `data/dsh/craft-bot-preset-017/cordis.patch.yml` is GENERATED from it by `scripts/gen-craft-bot-preset-017.mjs` — never hand-edit the generated file. After changing the source: regenerate, then reinstall the bundle (`plugin_manager` install_bundle on `data/dsh/craft-bot-preset-017`) and open a NEW session — an existing session keeps the preset revision it started with.
       - **Loop**: hit a wall ≥2 times in-game → record to NOTEBOOK.md → decide: discipline problem (fix persona/prompt) or code bug (fix Rust/plugin) → fix → test → commit → continue. Long-run autonomy is the norm; obstacles are material, not reasons to stop.
       - **Code discipline**: pass `cargo fmt --all`, `cargo clippy --workspace --all-targets -- -D warnings`, `cargo test --workspace`; commit locally, probe-verify before push. Never edit vendor/azalea — use only its public API. New tools must sync ALL_TOOL_NAMES + TOOL_NAMES mirror (verify-in-harness). Irreversible decisions (delete a tool, change perceive format, shrink the 49-tool set) require explicit user confirmation.
-      - Your conversation session is at `$env:DSH_SESSION_JSONL` (id: `$env:DSH_SESSION_ID`). Before editing a composition, load `editing-cordis-compositions`; for dynamic plugins use `cordis-plugin-development`.
+      - Your conversation session is at `$env:DSH_SESSION_JSONL` (id: `$env:DSH_SESSION_ID`). Before editing a composition, load `editing-cordis-compositions`; for dynamic plugins use `cordis-plugin-development`. Use `cordis_inspect_*` to read exact Service/Event/Config/Tool contracts before writing plugin code.
 
 - id: agent-instructions
   name: '@deepseek-ai/dsh-agent-instructions'
@@ -167,8 +172,10 @@
   name: '@deepseek-ai/dsh-skill-filesystem'
   config:
     # 复用 cordis 预设自带的 compose-authoring 技能（editing-cordis-compositions /
-    # cordis-plugin-development），随部署升级自动同步。注意：这里的 customSkillDirs
-    # 引用的是 cordis 官方预设的技能目录（绝对路径，官方预设位于 dsh-agent-presets 包），而非本预设自身。
+    # cordis-plugin-development / cordis-composition-reference），随部署升级自动同步。
+    # 这里的写法是 rc.3 形态（绝对路径，技能当时位于复数包 dsh-agent-presets 的
+    # presets/cordis/ 下）；0.1.7 起该复数包已删除、技能移入单数包 dsh-agent-preset/skills/，
+    # 由 scripts/gen-craft-bot-preset-017.mjs 改写成 createRequire(baseUrl) 形态。
     customSkillDirs:
       - !!js "process.getBuiltinModule('node:url').fileURLToPath(new URL('skills/', 'file:///{{DSH_PKG_ROOT}}/node_modules/@deepseek-ai/dsh-agent-presets/presets/cordis/'))"
 
@@ -319,7 +326,7 @@
     - id: tool-workflow
       name: '@deepseek-ai/dsh-tool-workflow'
       # 对齐官方 ptc 策略：PTC 模式下 run_code 已是模型自写的编排面，
-      # 不再发布第二个（workflow）；上方 worker-thread 引擎保留给 ralph。
+      # 不再发布第二个（workflow）；上方 workflow-ptc 引擎保留给 ralph。
       disabled: true
 
     - id: tool-ralph
@@ -365,11 +372,21 @@
 - id: tool-present
   name: '@deepseek-ai/dsh-tool-present'
 
-# ── self-modification（刻意不注册 cordis 自引用工具）───────────────────────
-# 本预设刻意不注册 tool-cordis（cordis_inspect_* / cordis_define / cordis_run 等）：
-# cordisInspect 是 process-global 的 Host 注册表，tool-cordis 只能被一个层注册一次，
-# 而本预设需要与 cordis（创造模式）等预设并行开多会话。若两预设都注册，后挂载的
-# 会抛 "Host Cordis inspect provider ... is already registered" 并导致该会话创建失败。
-# 需要 cordis 自引用能力时，请使用 cordis（创造模式）会话；
-# 本预设专注 Minecraft bot 控制与自进化（改 preset / dsh-bridge / Rust），两者不冲突。
+# ── self-modification（自进化：对齐创造模式预设）───────────────────────────
+#
+# 本段在 rc.3 与 0.1.7 两种格式下**行为不同**，故不在此处直接写行，改由生成器按版本注入：
+#
+#   rc.3（本模板直接就是预设正文）：**刻意不注册** tool-cordis。
+#     彼时 cordisInspect 是 process-global 的 Host 注册表，只能被一个层注册一次；
+#     本预设需与 cordis（创造模式）等预设并行开多会话，两者都注册会让后挂载者抛出
+#     "Host Cordis inspect provider ... is already registered" 并使会话创建失败。
+#     需要 cordis 自引用能力时用创造模式会话。
+#
+#   0.1.7+（经 scripts/gen-craft-bot-preset-017.mjs 转换）：**注册** tool-cordis。
+#     契约已变：provider 由 host 组合里的 `cordis-inspect-providers`
+#     （@deepseek-ai/dsh-tool-cordis/host）每进程注册一次，预设里的行只做
+#     ctx.tools.register —— 只消费 cordisInspect、不发布 provider，多预设各挂一份不再碰撞。
+#     转换时随 tool-cordis 一并注入 tool-plugin-manager（disabled 表达式同官方 cordis 预设），
+#     使 bot 能自行查 API、装 bundle、改预设（persona 里的「自进化」使命）。
+#     注意：plugin_manager 每次调用需 danger-full-access 或逐次批准。
 
