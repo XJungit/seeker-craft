@@ -1,4 +1,4 @@
-﻿<#
+<#
 .SYNOPSIS
   SeekerCraft (Craft-Agent) 1.0 一键安装/配置脚本（幂等，可重复运行）。
 .DESCRIPTION
@@ -207,9 +207,10 @@ if ($SkipDsh -or -not (Test-Path $webDir)) {
 }
 
 # ---------------------------------------------------------------- craft-bot 预设
-Write-Step "4/6 生成 craft-bot 预设 (~/.dsh/.agent-presets/craft-bot)"
+Write-Step "4/6 生成 craft-bot 预设（rc.3 目录格式 + 0.1.7+ bundle 格式）"
 $presetDir = "$env:USERPROFILE\.dsh\.agent-presets\craft-bot"
 $templateDir = Join-Path $ProjectRoot 'data\dsh\craft-bot-preset'
+$preset017Dir = Join-Path $ProjectRoot 'data\dsh\craft-bot-preset-017'
 
 if (-not (Test-Path $templateDir)) {
     Write-Warn "未找到预设模板 $templateDir（跳过）"
@@ -228,24 +229,106 @@ if (-not (Test-Path $templateDir)) {
         if (Test-Path $cand) { $dshPkgRoot = $cand; break }
     }
 
+    # ── 版本判定（决定用哪种预设格式）──────────────────────────────────────
+    #  判据：DSH 自身 package.json 的 dependencies 是否含 `@deepseek-ai/dsh-agent-preset`（单数）。
+    #  0.1.7 引入了该包（预设改为声明式注册，且不再扫描 .agent-presets）；
+    #  rc.3 只有 `dsh-agent-presets`（复数，目录扫描式）。
+    #  用 dependencies 而非目录探测，可避开 npm 全局（rc.3 嵌套 dsh/node_modules）与
+    #  npx/pnpm（0.1.7 提升到顶层 node_modules）两种布局差异带来的误判。
+    $isV017 = $false
+    $dshVersion = $null
+    if ($dshPkgRoot) {
+        $dshPj = Join-Path $dshPkgRoot 'package.json'
+        if (Test-Path $dshPj) {
+            try {
+                $dshMeta = Read-Text $dshPj | ConvertFrom-Json
+                $dshVersion = $dshMeta.version
+                $isV017 = ($dshMeta.dependencies.PSObject.Properties.Name -contains '@deepseek-ai/dsh-agent-preset')
+            } catch {
+                Write-Warn "无法解析 $dshPj（$_），按 rc.3 处理"
+            }
+        }
+    }
+    Write-Ok "DSH $dshVersion -> 预设格式：$(if ($isV017) { '0.1.7+ bundle' } else { 'rc.3 目录' })"
+
+    # ── 4a. rc.3 格式：~/.dsh/.agent-presets/craft-bot/{agent.cordis.yml,preset.yml}
+    #        仅在 rc.3 系生成，避免在 0.1.7 上留下一个永不被扫描的死目录。
     $template = Read-Text (Join-Path $templateDir 'agent.cordis.yml')
-    if ($template) {
-        $template = $template -replace '\{\{PROJECT_ROOT\}\}', $ProjectRootPosix
+    if (-not $template) {
+        Write-Warn "预设模板 agent.cordis.yml 为空（跳过）"
+    } elseif ($isV017) {
+        Write-Ok "跳过 rc.3 目录格式（当前 DSH 为 0.1.7+，只用 bundle 格式）"
+    } else {
+        $expanded = $template -replace '\{\{PROJECT_ROOT\}\}', $ProjectRootPosix
         if ($dshPkgRoot) {
-            $template = $template -replace '\{\{DSH_PKG_ROOT\}\}', (($dshPkgRoot -replace '\\', '/'))
+            $expanded = $expanded -replace '\{\{DSH_PKG_ROOT\}\}', (($dshPkgRoot -replace '\\', '/'))
         } else {
             Write-Warn "未定位 DSH 包根，{{DSH_PKG_ROOT}} 保留占位符（需手动替换 skills 路径）"
         }
-        Write-Text (Join-Path $presetDir 'agent.cordis.yml') $template
-        Write-Ok "agent.cordis.yml 已生成（PROJECT_ROOT=$ProjectRootPosix）"
+        Write-Text (Join-Path $presetDir 'agent.cordis.yml') $expanded
+        Write-Ok "agent.cordis.yml 已生成（rc.3 格式，PROJECT_ROOT=$ProjectRootPosix）"
+        if (Test-Path (Join-Path $templateDir 'preset.yml')) {
+            Copy-Item (Join-Path $templateDir 'preset.yml') (Join-Path $presetDir 'preset.yml') -Force
+            Write-Ok "preset.yml 已复制"
+        }
+    }
+
+    # ── 4b. 0.1.7+ 格式：data/dsh/craft-bot-preset-017/cordis.patch.yml（由生成器产出）
+    #        生成文件本身对 rc.3 无害（不被引用就不会加载），故始终生成，便于仓库内自查；
+    #        但只有 0.1.7+ 才注册进 profile bundles（见 4c）。
+    $genScript = Join-Path $ProjectRoot 'scripts\gen-craft-bot-preset-017.mjs'
+    if (Test-Path $genScript) {
+        $genArgs = @($genScript, '--project-root', $ProjectRoot)
+        if ($dshPkgRoot) { $genArgs += @('--dsh-pkg-root', $dshPkgRoot) }
+        node @genArgs 2>&1 | ForEach-Object { Write-Host "    $_" }
+        if ($LASTEXITCODE -eq 0) {
+            Write-Ok "cordis.patch.yml 已生成（0.1.7+ bundle 格式）"
+        } else {
+            Write-Warn "0.1.7+ 预设生成失败（exit=$LASTEXITCODE）"
+        }
     } else {
-        Write-Warn "预设模板 agent.cordis.yml 为空（跳过）"
+        Write-Warn "未找到 $genScript（跳过 0.1.7+ 预设生成）"
     }
-    if (Test-Path (Join-Path $templateDir 'preset.yml')) {
-        Copy-Item (Join-Path $templateDir 'preset.yml') (Join-Path $presetDir 'preset.yml') -Force
-        Write-Ok "preset.yml 已复制"
+
+    # ── 4c. 把 0.1.7+ 预设注册为 profile bundle（幂等，且必须版本门控）
+    #
+    #  ⚠️ 该 bundle 的 cordis.patch.yml 引用了 `@deepseek-ai/dsh-agent-preset`（单数），
+    #     此包在 rc.3 中**不存在**。若在 rc.3 上把本 bundle 加进 dsh.profile.bundles，
+    #     DSH 启动时直接崩溃（已实测）：
+    #       Error: dsh: plugin tree failed to load: failed to apply loader entry include
+    #              (cordis:include): failed to import loader entry preset-craft-bot
+    #              (@deepseek-ai/dsh-agent-preset): Cannot find package ...
+    #              [ERR_MODULE_NOT_FOUND]     -> exit=1
+    #     故仅 0.1.7+ 注册；rc.3 继续用 4a 的 .agent-presets 目录格式。
+    $cbPkgPath = Join-Path $webDir 'package.json'
+    if (-not $isV017) {
+        Write-Ok "跳过 0.1.7+ preset bundle 注册（rc.3 系，注册会导致启动崩溃）"
+    } elseif (Test-Path $cbPkgPath) {
+        try {
+            $cbPkg = Read-Text $cbPkgPath | ConvertFrom-Json
+            $cbChanged = $false
+            if (-not $cbPkg.dependencies.PSObject.Properties['dsh-preset-craft-bot']) {
+                $cbPkg.dependencies | Add-Member -NotePropertyName 'dsh-preset-craft-bot' `
+                    -NotePropertyValue "link:$ProjectRootPosix/data/dsh/craft-bot-preset-017"
+                $cbChanged = $true
+                Write-Ok "package.json 添加 dsh-preset-craft-bot link 依赖"
+            }
+            if (-not $cbPkg.dsh.profile.bundles -contains 'dsh-preset-craft-bot') {
+                $cbPkg.dsh.profile.bundles += 'dsh-preset-craft-bot'
+                $cbChanged = $true
+                Write-Ok "package.json bundles 添加 dsh-preset-craft-bot"
+            }
+            if ($cbChanged) {
+                Write-Text $cbPkgPath ($cbPkg | ConvertTo-Json -Depth 10)
+                Write-Ok "package.json 已更新（craft-bot 预设 bundle）"
+            } else {
+                Write-Ok "package.json 已包含 craft-bot 预设 bundle（跳过）"
+            }
+        } catch {
+            Write-Warn "无法更新 $cbPkgPath（$_）"
+        }
     }
-    Write-Ok "craft-bot 预设位于 $presetDir"
+    Write-Ok "craft-bot 预设已就绪（rc.3 目录：$presetDir；0.1.7+ bundle：$preset017Dir）"
 }
 
 # ---------------------------------------------------------------- .env
@@ -268,4 +351,5 @@ Write-Host "SeekerCraft 安装配置完成！下一步：" -ForegroundColor Gree
 Write-Host "  1) 启动 Minecraft Java 版 26.2 服务器（bot 默认连接 localhost:4444）"
 Write-Host "  2) 运行 .\scripts\start.ps1 启动 viewer 并连接 bot"
 Write-Host "  3) 启动 DeepSeek Harness，在 DSH 中选择 craft-bot 预设会话，即可用 game_state / bot_tool / set_goal 驱动 bot"
+Write-Host "     注：DSH 0.1.7+ 需重启 DSH 后预设才会出现（新 bundle 在启动时装载）"
 Write-Host "  详细教程见 README.md（Quick Start / DSH 模式）与 docs/tutorials/getting-started.md"

@@ -1,0 +1,11 @@
+{
+  "name": "dsh-preset-craft-bot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Craft-Agent 的 craft-bot 预设（DeepSeek Harness 0.1.7+ 新格式）。cordis.patch.yml 由 scripts/setup.ps1 依据 ../craft-bot-preset/agent.cordis.yml 生成，请勿手工编辑。",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

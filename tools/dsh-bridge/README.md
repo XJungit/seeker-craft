@@ -7,17 +7,22 @@ craft-bot 预设的 viewer 桥插件（DSH 侧）。让 [DSH](https://github.com
 
 | 依赖项 | 支持范围 | 说明 |
 |---|---|---|
-| `@deepseek-ai/dsh`（CLI / harness） | `>=0.1.2-rc.1 <0.2.0` | **实测通过版本：0.1.2-rc.1** |
-| `@deepseek-ai/dsh-tools` | `^0.1.0-rc.7`（peerDependency） | 提供 `defineTool`；由 DSH CLI 自带副本经 `link:` 解析 |
-| `@deepseek-ai/schemastery` | `^3.18.1` | 配置 schema |
+| `@deepseek-ai/dsh`（CLI / harness） | `0.1.5-rc.3` / `0.1.7-rc.1` | 两个版本均已实测通过（跑 `scripts/verify-in-harness.mjs`，17/17） |
+| `@deepseek-ai/dsh-tools` | `0.1.5-rc.3 \|\| 0.1.7-rc.1`（peerDependency） | 提供 `defineTool`；由 DSH CLI 自带副本经 `link:` 解析 |
+| `@deepseek-ai/schemastery` | `3.18.2 \|\| 3.18.4` | 配置 schema（分别对应 rc.3 与 0.1.7） |
+
+> peerDependencies 只枚举**本机实测过**的精确版本，不使用开放区间（`^`/`>=`）——开放区间会在
+> DSH 新版本发布时被动“自动通过”却从未验证。新增支持版本时需先实测、再逐条追加。
 
 本插件依赖的 DSH 契约（升级 DSH 时优先回归验证以下几处，任一变更都会让插件**静默失效**）：
 
 - **client 半边**：`window.__ModuleLoader__.load({ id, factory })`；`package.json` 的
   `dsh.client.{platform,inject}` 声明；`ctx.sessions.list`（ObservableSnapshot，
   `getSnapshot() -> { current, byId }`）与会话字段 `agentPreset`。
-- **host 半边**：`inject = ['tools', 'systemPrompt', 'webServer']` 三个服务名，以及经
-  `webServer` 挂 `/craft/api/*` 同源代理的路由接口。
+- **host 半边**：`inject = ['tools', 'systemPrompt', 'webServer']` 三个服务名；`ctx.tools.register(defineTool(...))`；
+  `ctx.systemPrompt.variable(name, fn)` / `ctx.systemPrompt.context({...})`；
+  `ctx.webServer.register({ kind: 'prefix', path, handler })`（经此外挂 `/craft/api/*` 同源代理）。
+  以上 4 处 API 的签名已在 0.1.5-rc.3 与 0.1.7-rc.1 上逐一比对，**完全一致**。
 - **已知破坏性变更**：harness 已将 Code Mode 更名为 **PTC**（Programmatic Tool Calling），
   `@deepseek-ai/dsh-agent-tool-presentation` 的 schema 只接受 `native|ptc|both`；旧值 `"code"`
   会导致预设挂载失败（craft-bot 预设已改为 `mode: ptc`）。
