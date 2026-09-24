@@ -212,6 +212,17 @@ if (!/^ {10}- id: present$/m.test(outText)) problems.push('present 行 id 未对
 if (/^ {10}- id: tool-present$/m.test(outText)) problems.push('输出中仍有旧行 id `tool-present`')
 if (!/^ {14}- id: tool-ralph$\n(?:.*\n)*?^ {16}disabled: true$/m.test(outText)) problems.push('tool-ralph 未禁用（官方三预设均禁用）')
 
+// 预设 description 不得宣称已禁用的能力（防止文本漂移：描述写 Ralph/workflow 但对应行已 disabled）
+const descLine = outText.split(/\r?\n/).find((l) => /^\s*description:/.test(l)) || ''
+for (const [word, why] of [
+  ['Ralph', 'tool-ralph 已 disabled'],
+  ['ralph', 'tool-ralph 已 disabled'],
+  ['workflow', 'workflow-ptc / tool-workflow 已 disabled'],
+  ['autopilot', '本预设无 autopilot 行'],
+]) {
+  if (descLine.includes(word)) problems.push(`description 仍宣称「${word}」，但${why}（文本漂移）`)
+}
+
 console.log(`[OK] 已生成 0.1.7 预设：${outPath}`)
 console.log(`     行数 ${out.length} ｜ 技能表达式替换 ${skillsReplaced ? '是' : '否'} ｜ workflow 改名 ${workflowRenamed} 处 ｜ 自引用行注入 ${selfModInjected ? '是' : '否'}`)
 if (problems.length) {
