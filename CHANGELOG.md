@@ -7,6 +7,54 @@ with [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The project is
 currently in active development as a single-maintainer project; `v1.0.0` is the
 first tagged **1.0 release** (DSH bridge mode is the only supported usage).
 
+## [1.6.1] - 2026-09-24
+
+### Fixed
+
+- **craft-bot preset never mounted on DSH 0.1.7** — the preset's `dsh-bridge`
+  row declared a scheme-less Windows absolute path
+  (`name: D:/…/tools/dsh-bridge/index.js`). The 0.1.7 Loader hands any `name`
+  that does not start with `.` straight to Node's `import()`, which rejects a
+  bare Windows path with `ERR_UNSUPPORTED_ESM_URL_SCHEME` ("On Windows,
+  absolute paths must be valid file:// URLs. Received protocol 'd:'"). That
+  single row failed activation, and `mountPreset` rejects the whole revision
+  when any row fails its audit — so the preset was never mounted at all,
+  breaking every craft-bot session under 0.1.7. The template now uses a
+  `{{PROJECT_ROOT_URL}}` placeholder that both expanders
+  (`scripts/gen-craft-bot-preset-017.mjs` and `scripts/setup.ps1`) render as a
+  `file://` URL. Both loaders (rc.3's `cordis-plugin-loader` 1.0.3 and 0.1.7's
+  1.0.5) share a byte-identical `import()`, so this is also the correct form
+  for the rc.3 directory layout. The generator self-check now fails on any
+  scheme-less absolute `name` and on a residual `PROJECT_ROOT` placeholder.
+- **Preset alignment with the shipped `standard`/`ptc`/`cordis` presets** —
+  three divergences that the officials do not have:
+  - `tool-subagent` gains `modelSelectionSettings: true` (its absence silently
+    disabled child-model selection; the host composition provides the required
+    `subagent-model-selection-settings` row in every DSH version from
+    `0.1.5-rc.1` on).
+  - `tool-subagent-codex` / `tool-subagent-claude-code` replace the legacy
+    `enableRunInBackground: false` with `backgroundMode: one-shot`.
+  - the `present` row id loses its `tool-` prefix, matching the officials.
+- **`tool-ralph` and the `workflow-ptc` engine are now disabled** — all three
+  shipped presets disable `tool-ralph`, and its README scopes it to runs a
+  human explicitly requests ("use goal tools for ordinary long-running work").
+  Each round gets a fresh child that does not inherit parent context, and the
+  call is a foreground blocking loop — mismatched with this preset's
+  goal-driven autonomous play. With ralph off, `workflow-ptc` (its only
+  in-preset consumer) is disabled too, so the workflow plane now matches `ptc`
+  exactly.
+
+### Verified
+
+- `agentPresets.list()` reports no `broken` entry for `craft-bot`, and
+  `compositionInventory()` shows all 26 enabled rows at `fiberState: 2` — the
+  same shape as `standard`/`ptc`/`minimal`/`cordis`. Read from a live profile
+  on a spare port, never the running instance.
+- A `js-yaml` tree diff against all three shipped presets leaves exactly three
+  intended differences: `persona` (craft-bot identity), `dsh-bridge`
+  (craft-bot-only), and `skill-filesystem.customSkillDirs` (the generator's
+  0.1.7 `createRequire(baseUrl)` expression).
+
 ## [1.6.0] - 2026-09-24
 
 ### Added

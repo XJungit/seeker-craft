@@ -16,11 +16,14 @@
  *            其中 `plugins` 正是 rc.3 那份数组，整体缩进 +10 后再缩进到 `plugins:` 之下。
  *            0.1.7 不再扫描 `.agent-presets`，预设必须由 bundle 的 `dsh.bundle.patch` 提供。
  *
- * 除缩进/包装外，本脚本还处理三处 0.1.7 的破坏性变更：
+ * 除缩进/包装外，本脚本还处理四处 0.1.7 的破坏性变更：
  *   1. `@deepseek-ai/dsh-workflow-worker-thread` → `@deepseek-ai/dsh-workflow-ptc`（包改名）；
  *   2. 复用官方预设技能目录的表达式改为 `createRequire(baseUrl)` 版本 —— 0.1.7 里
  *      `dsh-agent-presets`（复数）包已不存在，绝对路径写法必然失效；
- *   3. 注入 `tool-cordis` + `tool-plugin-manager`（自进化能力）—— 见下方 (3) 的说明，
+ *   3. `{{PROJECT_ROOT_URL}}` → `file:///<PROJECT_ROOT>`：0.1.7 的 loader 把非 `.`
+ *      开头的 name 直接交给 Node `import()`，无 scheme 的 Windows 绝对路径会被拒
+ *      （ERR_UNSUPPORTED_ESM_URL_SCHEME），dsh-bridge 行必须写文件 URL；
+ *   4. 注入 `tool-cordis` + `tool-plugin-manager`（自进化能力）—— 见下方 (3) 的说明，
  *      模板出于 rc.3 的 process-global 约束刻意不含这两行，仅在 0.1.7 输出中注入。
  *
  * 用法：
@@ -46,6 +49,10 @@ const arg = (name, fallback) => {
 }
 const projectRoot = resolve(arg('--project-root', REPO_ROOT))
 const projectRootPosix = projectRoot.replace(/\\/g, '/')
+// 0.1.7 的 loader 把非 `.` 开头的 name 直接交给 Node `import()`，而无 scheme 的
+// Windows 绝对路径会被拒绝（ERR_UNSUPPORTED_ESM_URL_SCHEME），故 dsh-bridge 行
+// 必须写成 file:// URL。
+const projectRootUrl = 'file:///' + projectRootPosix
 const templatePath = join(projectRoot, 'data', 'dsh', 'craft-bot-preset', 'agent.cordis.yml')
 const metaPath = join(projectRoot, 'data', 'dsh', 'craft-bot-preset', 'preset.yml')
 const outPath = resolve(arg('--out', join(projectRoot, 'data', 'dsh', 'craft-bot-preset-017', 'cordis.patch.yml')))
@@ -90,6 +97,8 @@ for (const raw of lines) {
   let line = raw
 
   // 占位符替换（0.1.7 输出保留 {{model}} / {{cwd}} / {{tool_list}} / {{viewer_url}} 这类运行时变量）
+  // {{PROJECT_ROOT_URL}} 必须先于 {{PROJECT_ROOT}} 替换，否则会被后者截断前缀。
+  line = line.replace(/\{\{PROJECT_ROOT_URL\}\}/g, projectRootUrl)
   line = line.replace(/\{\{PROJECT_ROOT\}\}/g, projectRootPosix)
   if (dshPkgRoot) line = line.replace(/\{\{DSH_PKG_ROOT\}\}/g, dshPkgRoot.replace(/\\/g, '/'))
 
@@ -190,6 +199,18 @@ if (!/workflow-ptc/.test(outText)) problems.push('输出中未见 `workflow-ptc`
 if (!selfModInjected) problems.push('未找到 self-modification 注释段，cordis 自引用行未注入')
 if (!/^ {10}- id: tool-cordis$/m.test(outText)) problems.push('输出中未见 tool-cordis 行')
 if (!/^ {10}- id: tool-plugin-manager$/m.test(outText)) problems.push('输出中未见 tool-plugin-manager 行')
+
+// dsh-bridge 必须以 file:// URL 加载：无 scheme 的 Windows 绝对路径会被 Node ESM 拒绝
+if (/^\s*name:\s*[A-Za-z]:[\\/]/.test(outText)) problems.push('输出中存在无 scheme 的 Windows 绝对路径 name（0.1.7 loader 会拒绝）')
+if (!/^\s*name:\s*file:\/\/\/.*\/tools\/dsh-bridge\/index\.js$/m.test(outText)) problems.push('dsh-bridge 行未写成 file:// URL')
+if (/\{\{PROJECT_ROOT(_URL)?\}\}/.test(outText)) problems.push('输出中残留未替换的 PROJECT_ROOT 占位符')
+
+// 与官方 standard/ptc/cordis 的基线对齐（v1.6.1 修复项）——防止回退：
+if (!/^\s*modelSelectionSettings: true$/m.test(outText)) problems.push('tool-subagent 缺少 `modelSelectionSettings: true`（未对齐官方基线）')
+if (/enableRunInBackground/.test(outText)) problems.push('输出中仍有旧式键 `enableRunInBackground`（应为 `backgroundMode`）')
+if (!/^ {10}- id: present$/m.test(outText)) problems.push('present 行 id 未对齐官方（应为 `present`）')
+if (/^ {10}- id: tool-present$/m.test(outText)) problems.push('输出中仍有旧行 id `tool-present`')
+if (!/^ {14}- id: tool-ralph$\n(?:.*\n)*?^ {16}disabled: true$/m.test(outText)) problems.push('tool-ralph 未禁用（官方三预设均禁用）')
 
 console.log(`[OK] 已生成 0.1.7 预设：${outPath}`)
 console.log(`     行数 ${out.length} ｜ 技能表达式替换 ${skillsReplaced ? '是' : '否'} ｜ workflow 改名 ${workflowRenamed} 处 ｜ 自引用行注入 ${selfModInjected ? '是' : '否'}`)

@@ -79,7 +79,8 @@ Idempotent and repeatable. What it does (in order):
      then the bundle is linked into `~/.dsh/profiles/web` and added to `dsh.profile.bundles`
      (restart DSH afterwards; a running process does not pick up a new bundle).
    - **DSH 0.1.5-rc.3** — a directory preset at `~/.dsh/.agent-presets/craft-bot` expanded
-     from `data/dsh/craft-bot-preset/` (substituting `{{PROJECT_ROOT}}` / `{{DSH_PKG_ROOT}}`).
+     from `data/dsh/craft-bot-preset/` (substituting `{{PROJECT_ROOT}}` /
+     `{{PROJECT_ROOT_URL}}` / `{{DSH_PKG_ROOT}}`).
      Note that 0.1.7 no longer scans `.agent-presets`, so this path is legacy-only.
 5. **Copies `.env.example` → `.env`** if absent.
 6. **Verifies** the DSH plugin loads in the harness module graph.

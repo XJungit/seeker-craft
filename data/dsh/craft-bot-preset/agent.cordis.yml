@@ -20,7 +20,8 @@
 #
 # 0.1.7 注：本文件同时充当 rc.3 目录格式的预设正文、以及 0.1.7 bundle 格式的源：
 # scripts/gen-craft-bot-preset-017.mjs 会把它整体缩进到声明行的 `config.plugins`
-# 之下，并改写 {{PROJECT_ROOT}}（→ 本机绝对路径）与技能目录表达式（见 §skills）。
+# 之下，并改写 {{PROJECT_ROOT}} / {{PROJECT_ROOT_URL}}（→ 本机绝对路径 / file URL）
+# 与技能目录表达式（见 §skills）。
 
 # ── identity ────────────────────────────────────────────────────────────────
 
@@ -50,7 +51,7 @@
       3. **Report & proceed** — tell the user the current state and your plan, then autonomously push toward the next milestone. Do not wait for instructions on routine play.
 
       ## Your tools — two families, know which is which
-      **Harness-provided tools** (shell/pwsh, filesystem, edit, web_search, skills, subagents, ralph, todo…): you use these to SELF-EVOLVE — read/write code, search docs, run tests, edit this preset, inspect DSH. All via `await tools.xxx()` inside run_code.
+      **Harness-provided tools** (shell/pwsh, filesystem, edit, web_search, skills, subagents, todo…): you use these to SELF-EVOLVE — read/write code, search docs, run tests, edit this preset, inspect DSH. All via `await tools.xxx()` inside run_code.
       **Bridge-plugin tools** (`game_state`, `bot_tool`, `set_goal`): you use these to CONTROL THE BOT. `await tools.game_state()` perceives; `await tools.bot_tool({ name, args })` executes ONE of the 49 Minecraft tools below; `await tools.set_goal({ text })` sets the bot's objective. Bridge endpoint: {{viewer_url}} (env DSH_CRAFT_VIEWER_URL overrides).
 
       ## The 49 Minecraft tools (via bot_tool — how you act on the world)
@@ -109,13 +110,16 @@
 # ── viewer bridge（仅本预设加载：Minecraft 项目专属，不污染其他项目）──────────
 # dsh-bridge 注册 game_state / bot_tool / set_goal 三工具，以及 {{viewer_url}} /
 # {{tool_list}} 两个 prompt 变量（system 段）+ bot_state 动态上下文（user 角色快照）。
-# 用绝对路径加载：bare 名 `dsh-bridge` 只存在于 profile node_modules，harness base
-# 解析不到；loader 对绝对路径转 file URL 导入，插件自身依赖经其 node_modules 解析。
+# 用绝对 file:// URL 加载：bare 名 `dsh-bridge` 只存在于 profile node_modules，
+# harness base 解析不到；而 0.1.7 的 loader 经 Node ESM 导入，**无 scheme 的
+# Windows 绝对路径（`D:/...`）会被拒绝**（ERR_UNSUPPORTED_ESM_URL_SCHEME：
+# "绝对路径必须是合法 file:// URL，收到协议 'd:'"），故必须写成 file:// URL。
+# 插件自身的依赖经其所在目录的 node_modules 解析。
 # 该行只消费 host 的 tools/systemPrompt 注册表、不发布任何 service，故可松散放置。
 # hostTools:true（默认）注册三工具；proxy:false——仪表盘代理由 profile 全局行
 # （dsh-bridge bundle，hostTools:false + proxy:true）提供，避免 webServer 同路径重复。
 - id: dsh-bridge
-  name: {{PROJECT_ROOT}}/tools/dsh-bridge/index.js
+  name: {{PROJECT_ROOT_URL}}/tools/dsh-bridge/index.js
   config:
     hostTools: true
     proxy: false
@@ -288,6 +292,9 @@
       config:
         provider: spawn
         toolName: subagent
+        # 对齐官方 standard/ptc/cordis：开启子代理模型选择（宿主组合提供
+        # `subagent-model-selection-settings`；该键自 rc.1 起即在 schema 中）。
+        modelSelectionSettings: true
         backgroundMode: continuable
 
     - id: tool-subagent-fork
@@ -306,7 +313,7 @@
       config:
         provider: codex
         toolName: subagent_codex
-        enableRunInBackground: false
+        backgroundMode: one-shot
         maxDepth: provider-managed
 
     - id: tool-subagent-claude-code
@@ -315,22 +322,28 @@
       config:
         provider: claude-code
         toolName: subagent_claude_code
-        enableRunInBackground: false
+        backgroundMode: one-shot
         maxDepth: provider-managed
 
     - id: workflow-worker-thread
       name: '@deepseek-ai/dsh-workflow-worker-thread'
+      # 对齐官方 ptc 预设：本预设的策略面是 PTC —— run_code 即模型自写的编排面，
+      # 故不启用 workflow 引擎，也不发布第二个编排工具（tool-workflow）。
+      disabled: true
       config:
         provider: spawn
 
     - id: tool-workflow
       name: '@deepseek-ai/dsh-tool-workflow'
-      # 对齐官方 ptc 策略：PTC 模式下 run_code 已是模型自写的编排面，
-      # 不再发布第二个（workflow）；上方 workflow-ptc 引擎保留给 ralph。
       disabled: true
 
     - id: tool-ralph
       name: '@deepseek-ai/dsh-tool-ralph'
+      # 官方三个预设均禁用 ralph。其 README 明确：仅当人类显式要求 Ralph 式
+      # fresh-agent 迭代时使用，普通长程工作应走 goal 工具。craft-bot 由 goal
+      # 驱动自主游玩，且 ralph 每轮子代理不继承父上下文（inheritsParentContext
+      # = false）、调用为前台阻塞循环，与自主 goal 节奏相冲。
+      disabled: true
       config:
         subagentProvider: spawn
         maxRounds: 64
@@ -368,8 +381,9 @@
   config:
     mode: ptc
 
-# present：把产出文件声明为可访问的交付物（官方 standard/ptc 均含，对齐基线）。
-- id: tool-present
+# present：把产出文件声明为可访问的交付物（官方 standard/ptc/cordis 均含，行 id
+# 亦与官方一致，均为 `present`；仅插件名决定行为）。
+- id: present
   name: '@deepseek-ai/dsh-tool-present'
 
 # ── self-modification（自进化：对齐创造模式预设）───────────────────────────

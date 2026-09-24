@@ -259,7 +259,8 @@ if (-not (Test-Path $templateDir)) {
     } elseif ($isV017) {
         Write-Ok "跳过 rc.3 目录格式（当前 DSH 为 0.1.7+，只用 bundle 格式）"
     } else {
-        $expanded = $template -replace '\{\{PROJECT_ROOT\}\}', $ProjectRootPosix
+        $expanded = $template -replace '\{\{PROJECT_ROOT_URL\}\}', "file:///$ProjectRootPosix"
+        $expanded = $expanded -replace '\{\{PROJECT_ROOT\}\}', $ProjectRootPosix
         if ($dshPkgRoot) {
             $expanded = $expanded -replace '\{\{DSH_PKG_ROOT\}\}', (($dshPkgRoot -replace '\\', '/'))
         } else {
