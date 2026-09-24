@@ -7,7 +7,92 @@ with [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The project is
 currently in active development as a single-maintainer project; `v1.0.0` is the
 first tagged **1.0 release** (DSH bridge mode is the only supported usage).
 
-## [Unreleased]
+## [1.6.0] - 2026-09-24
+
+### Added
+
+- **DSH 0.1.7 support (alongside 0.1.5-rc.3)** — 0.1.7 removed the plural
+  `@deepseek-ai/dsh-agent-presets` directory scan (grep confirms zero
+  `.agent-presets` references remain in `dsh-agent-preset`, `dsh-app-boot`,
+  `dsh-web-app`, and `dsh-base`). A preset is now one
+  `@deepseek-ai/dsh-agent-preset` declaration row whose `config.plugins`
+  carries the former `agent.cordis.yml` list, delivered as a bundle patch.
+  The template stays the single source of truth:
+  `scripts/gen-craft-bot-preset-017.mjs` rewrites it into
+  `data/dsh/craft-bot-preset-017/cordis.patch.yml` (declared as
+  `dsh.bundle.patch`), which is generated and never hand-edited.
+  `scripts/setup.ps1` picks the rc.3 directory path or the 0.1.7 bundle path
+  from the installed DSH, and registers the bundle only under 0.1.7 — rc.3
+  cannot load it at all (startup exits 1 with `ERR_MODULE_NOT_FOUND`).
+- **craft-bot gains self-reference: `tool-cordis` + `tool-plugin-manager`** —
+  aligned verbatim with the official `cordis` (creation-mode) preset,
+  including `disabled: !!js "!ctx.get('profileContext')"`. The bot can read
+  exact Service/Event/Config/Tool contracts before writing plugin code,
+  install bundles, and edit its own preset. Injected by the generator for
+  0.1.7 only: on rc.3 `cordisInspect` is a process-global registry, so two
+  presets registering it collide ("Host Cordis inspect provider ... is
+  already registered") and session creation fails. 0.1.7 registers the
+  provider once in the host composition (`dsh-tool-cordis/host`), so a preset
+  row only consumes it — parallel presets no longer collide.
+- **`scripts/verify-craft-bot-preset-017.mjs`** — round-trip byte-exact check
+  between the template and the generated patch, wired into `setup.ps1`
+  (§4b-2) so the two can no longer drift.
+
+### Changed
+
+- **CI consolidated** — quality and test merged into one job with a weekly
+  schedule and `cargo-binstall` llvm-cov; the docs job runs on ubuntu behind
+  a `path-filter`.
+- **docs CI** — install the Linux system deps required by the `-sys` crates.
+
+### Fixed
+
+- **`setup.ps1` craft-bot bundle registration order** — the hand-written path
+  wrote the `link:` dependency and appended the bundle *after* `pnpm install`
+  had already run, so the dependency never resolved and the preset vanished
+  from the session list. Replaced with the official
+  `dsh plugin --profile web add <bundle-dir>` channel, which performs the
+  dependency write, install, and bundle selection in one ordered step,
+  guarded by an idempotency check.
+- **`craft-agent-ctl` Linux doc build** — gate the Windows `CommandExt`
+  import with `cfg(windows)` so `cargo doc` links on Linux.
+
+### Dependencies
+
+- **rustls 0.23.41 → 0.23.45** — fixes RUSTSEC-2026-0285 (TLS handshake).
+
+## [1.5.1] - 2026-09-14
+
+### Fixed
+
+- **`/api/goal` interrupt semantics** — setting a goal drains the queued
+  goals to latest + interrupts the bot's current action (`cancel_commands`);
+  `/api/status` gains `pending_goals`; panel shows a 待办 badge. Fixes
+  "setting goal stalls the bot" (old action kept running while the new
+  goal's first step queued behind it).
+
+### Refactored
+
+- **azalea module splits (pure moves, R5/R10/R11)** — `handler.rs` scan
+  helpers → `scan.rs`; `AzaleaBot` connect/actions → `bot.rs`; equip /
+  discard / consume / auto_equip / pickaxe-tier / block-judgement utils →
+  `inventory.rs`. `mod.rs` 2410 → 192 lines (harness + re-exports only);
+  `handler.rs` tick body untouched (highest logic density, split later).
+- **9 duplicate helpers merged into `inventory.rs` (R12–R13)** —
+  `normalize_item[id]` ×5, `count_item[kind]` ×3, `overhead_slot` ×2,
+  `find_hotbar_slot[for]` ×2. Call sites unchanged (alias imports /
+  `pub(crate) use` re-export for `craft::*` submodules). Total
+  37829 → 37686 lines.
+
+### Dependencies
+
+- **azalea fork synced to upstream** (`e384e70` → `3615b07`, merge of
+  upstream `153c90a` "Fix Rust 1.100.0 warnings, force older trait solver").
+  Lint/warning-only changes (codec derives, pathfinder goal cleanup); custom
+  APIs (`stop_use_item` / `use_item_air` / `force_miss`) verified intact.
+  `Cargo.lock` regenerated from the https source (no `file://` entries).
+
+## [1.5.0] - 2026-09-05
 
 ### Added
 
@@ -51,32 +136,6 @@ first tagged **1.0 release** (DSH bridge mode is the only supported usage).
   `Access-Control-Allow-Origin: *` so the DSH panel iframe (opaque origin
   `null`) can read `/api/status|session|game-state` again (was stuck at
   initial values with console CORS errors).
-- **`/api/goal` interrupt semantics** — setting a goal drains the queued
-  goals to latest + interrupts the bot's current action (`cancel_commands`);
-  `/api/status` gains `pending_goals`; panel shows a 待办 badge. Fixes
-  "setting goal stalls the bot" (old action kept running while the new
-  goal's first step queued behind it).
-
-### Refactored
-
-- **azalea module splits (pure moves, R5/R10/R11)** — `handler.rs` scan
-  helpers → `scan.rs`; `AzaleaBot` connect/actions → `bot.rs`; equip /
-  discard / consume / auto_equip / pickaxe-tier / block-judgement utils →
-  `inventory.rs`. `mod.rs` 2410 → 192 lines (harness + re-exports only);
-  `handler.rs` tick body untouched (highest logic density, split later).
-- **9 duplicate helpers merged into `inventory.rs` (R12–R13)** —
-  `normalize_item[id]` ×5, `count_item[kind]` ×3, `overhead_slot` ×2,
-  `find_hotbar_slot[for]` ×2. Call sites unchanged (alias imports /
-  `pub(crate) use` re-export for `craft::*` submodules). Total
-  37829 → 37686 lines.
-
-### Dependencies
-
-- **azalea fork synced to upstream** (`e384e70` → `3615b07`, merge of
-  upstream `153c90a` "Fix Rust 1.100.0 warnings, force older trait solver").
-  Lint/warning-only changes (codec derives, pathfinder goal cleanup); custom
-  APIs (`stop_use_item` / `use_item_air` / `force_miss`) verified intact.
-  `Cargo.lock` regenerated from the https source (no `file://` entries).
 
 ## [1.4.0] - 2026-09-05
 
