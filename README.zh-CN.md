@@ -8,7 +8,7 @@
 [![Docs](https://img.shields.io/github/actions/workflow/status/XJungit/seeker-craft/deploy-docs.yml?label=docs&logo=github)](https://github.com/XJungit/seeker-craft/actions/workflows/deploy-docs.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Rust: nightly-2026-07-21](https://img.shields.io/badge/rust-nightly--2026--07--21-orange.svg)](rust-toolchain.toml)
-[![Release: v1.6.1](https://img.shields.io/badge/release-v1.6.1-blue.svg)](https://github.com/XJungit/seeker-craft/releases)
+[![Release: v1.6.2](https://img.shields.io/badge/release-v1.6.2-blue.svg)](https://github.com/XJungit/seeker-craft/releases)
 
 **一个由 LLM 驱动的 Minecraft 机器人，目标是击败末影龙。Rust + Azalea 协议客户端，
 无 mod、无截图——通过类型化工具观察、规划、执行的真正的协议级玩家。**
@@ -72,7 +72,7 @@ seeker-craft/
 │   ├── start.ps1                  # 一键启动 viewer + 连接 bot
 │   ├── stop.ps1                   # 一键停止
 │   └── probe/*.json               # 工具层实测脚本（无 LLM）
-├── tools/dsh-bridge/              # DSH 桥插件（game_state/bot_tool/set_goal + 仪表盘）
+├── tools/dsh-bridge/              # DSH 桥插件（game_state/bot_tool/set_goal；0.1.7+ 面板由 dsh-preset-craft-bot 预设包交付）
 └── vendor/azalea/                 # azalea 源码副本（维护 fork 的本地镜像，submodule）
 ```
 
@@ -113,7 +113,7 @@ azalea (vendor) ──► MC server (TCP)
 
 23 个任务（6 层）全部以机器可判定 JSON 形式随仓库发布（[`data/tasks/`](data/tasks/)，任务系统说明见 [`docs/ARCHITECTURE.md`](ARCHITECTURE.md)）。
 
-## 当前进度（2026-09-24 · v1.6.1）
+## 当前进度（2026-09-25 · v1.6.2）
 
 **已实机端到端验证（真实服务器、无 mod）：**
 

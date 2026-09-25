@@ -116,8 +116,13 @@
 # "绝对路径必须是合法 file:// URL，收到协议 'd:'"），故必须写成 file:// URL。
 # 插件自身的依赖经其所在目录的 node_modules 解析。
 # 该行只消费 host 的 tools/systemPrompt 注册表、不发布任何 service，故可松散放置。
-# hostTools:true（默认）注册三工具；proxy:false——仪表盘代理由 profile 全局行
-# （dsh-bridge bundle，hostTools:false + proxy:true）提供，避免 webServer 同路径重复。
+# 仪表盘代理（/craft/api/*）按 DSH 版本二选一，避免 webServer 同路径重复注册：
+#   rc.3   ：保持本行 proxy:false —— 代理与浏览器 client 半边都由 profile 层的
+#            dsh-bridge bundle 全局行提供（hostTools:false + proxy:true）；
+#   0.1.7+ ：生成器把本行翻转为 proxy:true，并把 client 半边交给载体行
+#            dsh-preset-craft-bot（预设包自身，见生成器输出的第二条 insert）——
+#            profile 层不再注册 dsh-bridge bundle，代理由本行（预设 scope，
+#            每进程只 mount 一次）自己挂载。
 - id: dsh-bridge
   name: {{PROJECT_ROOT_URL}}/tools/dsh-bridge/index.js
   config:

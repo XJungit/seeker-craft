@@ -1,6 +1,6 @@
 {
   "name": "dsh-bridge",
-  "version": "0.2.0",
+  "version": "0.2.2",
   "description": "craft-bot preset viewer bridge: game_state / bot_tool / set_goal tools that drive the live Minecraft bot through the craft-agent-viewer HTTP API, plus an embedded viewer dashboard panel in the DSH web UI (craft-bot sessions only).",
   "type": "module",
   "main": "index.js",
@@ -38,13 +38,14 @@
     "dsh": "0.1.5-rc.3 || 0.1.7-rc.1",
     "testedWith": "0.1.7-rc.1",
     "dshTools": "0.1.5-rc.3 || 0.1.7-rc.1",
-    "notes": "依赖契约：__ModuleLoader__.load / dsh.client.{platform,inject} / sessions.list.getSnapshot().byId[].agentPreset / host inject ['tools','systemPrompt','webServer'] / dsh-tools defineTool + tools.register / systemPrompt.{variable,context} / webServer.register({kind:'prefix'})。已在 DSH 0.1.5-rc.3 与 0.1.7-rc.1 上分别跑通 scripts/verify-in-harness.mjs（17/17）。peerDependencies 只枚举实测过的精确版本（不用开放区间），详见 README《支持的 DSH 版本》。"
+    "notes": "依赖契约：__ModuleLoader__.load / dsh.client.{platform,inject} / sessions.list.getSnapshot().byId[].agentPreset / host inject ['tools','systemPrompt','webServer'] / dsh-tools defineTool + tools.register / systemPrompt.{variable,context} / webServer.register({kind:'prefix'})。已在 DSH 0.1.5-rc.3 与 0.1.7-rc.1 上分别跑通 scripts/verify-in-harness.mjs（17/17）。0.1.7+ 部署形态：dsh-bridge 不再注册为 profile bundle，其 client 半边由预设包 dsh-preset-craft-bot 的 dsh.client 声明交付（client.js 镜像），代理由 craft-bot 预设内部的 dsh-bridge 行挂载（proxy:true）。peerDependencies 只枚举实测过的精确版本（不用开放区间），详见 README《支持的 DSH 版本》。"
   },
   "dependencies": {
     "@deepseek-ai/schemastery": "^3.18.1"
   },
   "peerDependencies": {
-    "@deepseek-ai/dsh-tools": "0.1.5-rc.3 || 0.1.7-rc.1",
+    "@deepseek-ai/dsh-tools": "0.1.5-rc.3 || 0.1.7-rc.1 || 0.1.7-rc.2",
     "@deepseek-ai/schemastery": "3.18.2 || 3.18.4"
   }
 }
+

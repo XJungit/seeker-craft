@@ -7,8 +7,8 @@ craft-bot 预设的 viewer 桥插件（DSH 侧）。让 [DSH](https://github.com
 
 | 依赖项 | 支持范围 | 说明 |
 |---|---|---|
-| `@deepseek-ai/dsh`（CLI / harness） | `0.1.5-rc.3` / `0.1.7-rc.1` | 两个版本均已实测通过（跑 `scripts/verify-in-harness.mjs`，17/17） |
-| `@deepseek-ai/dsh-tools` | `0.1.5-rc.3 \|\| 0.1.7-rc.1`（peerDependency） | 提供 `defineTool`；由 DSH CLI 自带副本经 `link:` 解析 |
+| `@deepseek-ai/dsh`（CLI / harness） | `0.1.5-rc.3` / `0.1.7-rc.1` / `0.1.7-rc.2` | 0.1.7 上以单插件形态部署（见下文「部署形态」）；rc.3 保持 profile-bundle 双行形态 |
+| `@deepseek-ai/dsh-tools` | `0.1.5-rc.3 \|\| 0.1.7-rc.1 \|\| 0.1.7-rc.2`（peerDependency） | 提供 `defineTool`；由 DSH CLI 自带副本经 `link:` / junction 解析 |
 | `@deepseek-ai/schemastery` | `3.18.2 \|\| 3.18.4` | 配置 schema（分别对应 rc.3 与 0.1.7） |
 
 > peerDependencies 只枚举**本机实测过**的精确版本，不使用开放区间（`^`/`>=`）——开放区间会在
@@ -75,12 +75,13 @@ craft-bot 预设的 viewer 桥插件（DSH 侧）。让 [DSH](https://github.com
 - **同源代理**：host 端挂 `/craft/api/*` → viewer `/api/*` 转发（GET/POST 透传），
   浏览器端零跨域读取 viewer API。
 
-**双行配置**（避免 webServer 路径重复注册）：
+**部署形态与双行配置**（避免 webServer 路径重复注册；按 DSH 版本二选一）：
 
-| 位置 | hostTools | proxy | 作用 |
-|---|---|---|---|
-| profile 全局行（`cordis.patch.yml`，包名 `dsh-bridge`） | `false` | `true` | client 半边（面板 + 代理），不污染其他项目工具 |
-| craft-bot 预设行（`agent.cordis.yml`，绝对路径） | `true` | `false` | host 工具（三工具 + prompt 变量）驱动 bot |
+| DSH 版本 | 部署形态 | hostTools | proxy | 说明 |
+|---|---|---|---|---|
+| 0.1.7+（单插件） | 预设行（预设包内嵌，`file://` URL） | `true` | `true` | 工具 + 代理 + prompt 变量全部由这一行提供；面板由预设包自身的 `dsh.client` 声明（载体行 `dsh-preset-craft-bot`）交付 |
+| 0.1.5-rc.3（双行） | profile 全局行（`cordis.patch.yml`，包名 `dsh-bridge`） | `false` | `true` | client 半边（面板 + 代理），不污染其他项目工具 |
+| 0.1.5-rc.3（双行） | craft-bot 预设行（`agent.cordis.yml`，`file://` URL） | `true` | `false` | host 工具（三工具 + prompt 变量）驱动 bot |
 
 > client 半边（client.js 浏览器面板）不依赖 hostTools：只要包被 loader 以包名加载，
 > DSH 的 client-modules 就会独立发现 `dsh.client` 声明并注入浏览器。
@@ -125,7 +126,14 @@ craft-bot 预设的 viewer 桥插件（DSH 侧）。让 [DSH](https://github.com
 > 步骤（注册插件、链接依赖、pnpm install、生成 craft-bot 预设、运行验证）。
 > 以下为手动安装参考（等价于 setup.ps1 的 3/4 步）。
 
-本插件作为本地包通过 profile 的 `cordis.patch.yml` 注册：
+> **0.1.7+ 不需要本节**：0.1.7 起 dsh-bridge 不再注册为 profile bundle——它的
+> client 半边由 craft-bot 预设包 `dsh-preset-craft-bot` 的 `dsh.client` 声明交付
+> （client.js 镜像），代理由预设内部的 dsh-bridge 行挂载（`proxy: true`，生成器
+> 翻转）。安装 = 注册预设包一个 bundle（见 `scripts/setup.ps1` 第 4 步）+ 下面的
+> node_modules 链接（预设行的 `file://` 导入解析依赖仍需要它）。本节的 profile
+> bundle 注册只适用于 DSH 0.1.5-rc.3。
+
+本插件作为本地包通过 profile 的 `cordis.patch.yml` 注册（仅 rc.3）：
 
 ```yaml
 # ~/.dsh/profiles/web/cordis.patch.yml 追加
@@ -147,6 +155,9 @@ craft-bot 预设的 viewer 桥插件（DSH 侧）。让 [DSH](https://github.com
 
 `index.js` import `@deepseek-ai/dsh-tools` / `@deepseek-ai/schemastery`。link 包的真实路径在
 仓库内，Node 默认从该路径向上解析依赖会失败。需要把 DSH 实际使用的包链接到插件本地：
+
+> **两种部署形态都需要这一步**：0.1.7+ 的预设行以 `file://` URL 加载本插件，
+> 依赖解析同样落在本目录的 `node_modules` 上。
 
 ```powershell
 # 定位 DSH 的 npx 安装根（dsh CLI 所在 node_modules/@deepseek-ai）

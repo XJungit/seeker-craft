@@ -24,7 +24,13 @@
  *      开头的 name 直接交给 Node `import()`，无 scheme 的 Windows 绝对路径会被拒
  *      （ERR_UNSUPPORTED_ESM_URL_SCHEME），dsh-bridge 行必须写文件 URL；
  *   4. 注入 `tool-cordis` + `tool-plugin-manager`（自进化能力）—— 见下方 (3) 的说明，
- *      模板出于 rc.3 的 process-global 约束刻意不含这两行，仅在 0.1.7 输出中注入。
+ *      模板出于 rc.3 的 process-global 约束刻意不含这两行，仅在 0.1.7 输出中注入；
+ *   5. 翻转 dsh-bridge 行的 proxy（false→true：0.1.7 起 profile 层不再注册
+ *      dsh-bridge bundle，代理由预设行自己挂载），并追加第二条 insert——
+ *      「载体行」dsh-preset-craft-bot（预设包自身，bare 包名）：让 client-modules
+ *      在 host 面发现本包的 dsh.client 声明，把 client.js 注入浏览器（viewer 面板，
+ *      仅 craft-bot 会话显示）。client.js 由本脚本从 tools/dsh-bridge/client.js
+ *      逐字节镜像，保持唯一来源。
  *
  * 用法：
  *   node scripts/gen-craft-bot-preset-017.mjs [--project-root <path>] [--dsh-pkg-root <path>] [--out <file>]
@@ -161,13 +167,34 @@ let selfModInjected = false
   }
 }
 
-// ── 包装为 0.1.7 的单条声明 ─────────────────────────────────────────────────
+// ── (2b) 0.1.7 专属：dsh-bridge 行 proxy 翻转 ───────────────────────────────
+//  模板保持 rc.3 语义（proxy:false，代理由 profile 层 dsh-bridge bundle 的全局行
+//  提供）。0.1.7 起 profile 层不再注册 dsh-bridge bundle（单插件交付），浏览器
+//  client 半边交给本文件第二条 insert（载体行 dsh-preset-craft-bot），代理必须由
+//  预设内部的 dsh-bridge 行自己挂载。预设组合在 standing scope 下每进程只 mount
+//  一次，因此这里的 proxy:true 不会造成 /craft/api/* 重复注册。
+let proxyFlipped = false
+{
+  const i = body.findIndex((l) => /^\s*proxy:\s*false\s*$/.test(l))
+  if (i >= 0) {
+    body[i] = body[i].replace('false', 'true')
+    proxyFlipped = true
+  }
+}
+
+// ── 包装为 0.1.7 的声明（两条 insert）───────────────────────────────────────
 const head = [
   `# Craft-Agent 的 craft-bot 预设 —— DeepSeek Harness 0.1.7+ 格式。`,
   `#`,
   `# ⚠️ 本文件由 scripts/gen-craft-bot-preset-017.mjs 生成，请勿手工编辑。`,
   `# 源模板：data/dsh/craft-bot-preset/agent.cordis.yml（rc.3 格式，两者共用同一份内容）。`,
   `# 该文件包含本机绝对路径，已加入 .gitignore。`,
+  `#`,
+  `# 两条 insert：`,
+  `#   1. preset-craft-bot —— @deepseek-ai/dsh-agent-preset 声明（工具/prompt/persona）；`,
+  `#   2. dsh-preset-craft-bot —— 预设包自身（载体行，bare 包名）：仅为了在 host 面`,
+  `#      暴露包的 dsh.client 声明，把 client.js（viewer 面板）注入浏览器。载体本身`,
+  `#      是 no-op（见包内 index.js），不注册任何工具/服务。`,
   `- insert:`,
   `    - id: preset-${PRESET_ID}`,
   `      name: '@deepseek-ai/dsh-agent-preset'`,
@@ -184,6 +211,34 @@ for (const line of head) out.push(line)
 for (const line of body) {
   if (line.trim() === '') { out.push(''); continue }
   out.push('          ' + line)   // 缩进到 `plugins:` 的条目层级
+}
+
+// 第二条 insert：载体行。顶层 op 级注释行 + insert，与其他 op 之间空行分隔。
+out.push(
+  '',
+  '# 载体行（host 面）：让 client-modules 发现本包的 dsh.client 声明 → 浏览器注入',
+  '# client.js viewer 面板（仅 craft-bot 会话显示）。bare 包名经 profile node_modules',
+  '# 的 junction（dsh-preset-craft-bot → 本目录）解析，无需绝对路径。',
+  '- insert:',
+  `    - id: dsh-preset-${PRESET_ID}`,
+  `      name: dsh-preset-${PRESET_ID}`,
+)
+
+// ── client.js 镜像（单一来源：tools/dsh-bridge/client.js）────────────────────
+// 浏览器面板源码只维护一份；生成器负责把副本写进本包（exports["./client"] 指向
+// 它）。内容零改动：内部 id（'dsh-bridge'）与指纹（__dshCraftBuild）保持原样，
+// 面板显隐由 client.js 自己的 PRESET_IDS 名单判断，与加载它的包名无关。
+const bridgeClient = join(projectRoot, 'tools', 'dsh-bridge', 'client.js')
+const clientMirrorPath = join(projectRoot, 'data', 'dsh', 'craft-bot-preset-017', 'client.js')
+const clientSource = readFileSync(bridgeClient, 'utf8')
+let clientMirrored = false
+{
+  let current = null
+  try { current = readFileSync(clientMirrorPath, 'utf8') } catch { }
+  if (current !== clientSource) {
+    writeFileSync(clientMirrorPath, clientSource, 'utf8')
+    clientMirrored = true
+  }
 }
 
 mkdirSync(dirname(outPath), { recursive: true })
@@ -205,6 +260,23 @@ if (/^\s*name:\s*[A-Za-z]:[\\/]/.test(outText)) problems.push('输出中存在�
 if (!/^\s*name:\s*file:\/\/\/.*\/tools\/dsh-bridge\/index\.js$/m.test(outText)) problems.push('dsh-bridge 行未写成 file:// URL')
 if (/\{\{PROJECT_ROOT(_URL)?\}\}/.test(outText)) problems.push('输出中残留未替换的 PROJECT_ROOT 占位符')
 
+// 载体行（host 面第二条 insert）：client-modules 只扫描 host 面 loader 条目来发现
+// dsh.client 声明，缺了它浏览器就拿不到 viewer 面板。
+if (!/^ {4}- id: dsh-preset-craft-bot$\n {6}name: dsh-preset-craft-bot$/m.test(outText)) {
+  problems.push('载体行缺失（应有第二条 insert：id 与 name 均为 dsh-preset-craft-bot，bare 包名）')
+}
+if ((outText.match(/^- insert:$/gm) || []).length !== 2) problems.push('patch 顶层应有且仅有两条 insert（预设行 + 载体行）')
+// 0.1.7 下代理由预设内部 dsh-bridge 行自己挂载（生成器翻转 (2b)，profile 层不再有全局行）
+if (!/^ {14}proxy: true$/m.test(outText)) problems.push('dsh-bridge 行 proxy 未翻转为 true（0.1.7 下面板将无法读取 viewer）')
+if (/^ {14}proxy: false$/m.test(outText)) problems.push('输出中仍有 proxy:false（0.1.7 下会导致 /craft/api/* 无人挂载）')
+// client.js 镜像必须与 tools/dsh-bridge/client.js 逐字节一致（单一来源纪律）
+if (clientSource !== readFileSync(clientMirrorPath, 'utf8')) problems.push('client.js 镜像与 tools/dsh-bridge/client.js 不一致')
+// 载体包三要素：可导入的宿主半边 + dsh.client 声明 + exports["./client"]
+const pkg017Text = readFileSync(join(projectRoot, 'data', 'dsh', 'craft-bot-preset-017', 'package.json'), 'utf8')
+if (!existsSync(join(projectRoot, 'data', 'dsh', 'craft-bot-preset-017', 'index.js'))) problems.push('载体包缺少 index.js（host 面行将 import 失败）')
+if (!/"client":\s*\{\s*"platform":\s*"web"/.test(pkg017Text)) problems.push('载体包 package.json 缺少 dsh.client.platform=web 声明')
+if (!/"\.\/client": "\.\/client\.js"/.test(pkg017Text)) problems.push('载体包 package.json 缺少 exports["./client"]')
+
 // 与官方 standard/ptc/cordis 的基线对齐（v1.6.1 修复项）——防止回退：
 if (!/^\s*modelSelectionSettings: true$/m.test(outText)) problems.push('tool-subagent 缺少 `modelSelectionSettings: true`（未对齐官方基线）')
 if (/enableRunInBackground/.test(outText)) problems.push('输出中仍有旧式键 `enableRunInBackground`（应为 `backgroundMode`）')
@@ -225,6 +297,7 @@ for (const [word, why] of [
 
 console.log(`[OK] 已生成 0.1.7 预设：${outPath}`)
 console.log(`     行数 ${out.length} ｜ 技能表达式替换 ${skillsReplaced ? '是' : '否'} ｜ workflow 改名 ${workflowRenamed} 处 ｜ 自引用行注入 ${selfModInjected ? '是' : '否'}`)
+console.log(`     proxy 翻转 ${proxyFlipped ? '是' : '否'} ｜ 载体行 已附加 ｜ client.js 镜像 ${clientMirrored ? '已更新' : '一致（跳过写入)'}`)
 if (problems.length) {
   console.error('[FAIL] 自检未通过：')
   for (const p of problems) console.error('   - ' + p)

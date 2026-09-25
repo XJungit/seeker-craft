@@ -1,11 +1,24 @@
 {
   "name": "dsh-preset-craft-bot",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "Craft-Agent 的 craft-bot 预设（DeepSeek Harness 0.1.7+ 新格式）。cordis.patch.yml 由 scripts/setup.ps1 依据 ../craft-bot-preset/agent.cordis.yml 生成，请勿手工编辑。",
+  "type": "module",
+  "description": "Craft-Agent 的 craft-bot 预设（DSH 0.1.7+ bundle 格式），兼作 viewer 面板的 client 半边载体：dsh.client 声明把 client.js（镜像自 tools/dsh-bridge）注入浏览器，仅 craft-bot 会话显示。cordis.patch.yml 与 client.js 由 scripts/gen-craft-bot-preset-017.mjs 生成/镜像，请勿手工编辑；index.js 是宿主面载体插件（no-op）。",
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "sessions"
+      ]
     }
   }
 }

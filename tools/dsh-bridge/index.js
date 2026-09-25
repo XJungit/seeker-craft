@@ -34,20 +34,24 @@ export const inject = ['tools', 'systemPrompt', 'webServer']
 export const Config = z.object({
   /**
    * 是否注册 host 工具（game_state/bot_tool/set_goal）与 prompt 变量。
-   * - craft-bot 预设（绝对路径加载，hostTools 默认 true）：注册工具，驱动 bot。
-   * - profile 全局行（包名加载，hostTools:false）：只提供 client 半边（仪表盘面板），
-   *   不向其他项目的会话暴露 Minecraft 工具。
+   * - craft-bot 预设（file:// URL 加载，hostTools 默认 true）：注册工具，驱动 bot；
+   *   0.1.7 起本行同时挂代理（proxy:true，见下）。
+   * - 0.1.5-rc.3 的 profile 全局行（包名加载，hostTools:false）：只提供 client 半边
+   *   （仪表盘面板）与代理，不向其他项目的会话暴露 Minecraft 工具。0.1.7 起不再
+   *   存在这种全局行——client 半边由预设包 dsh-preset-craft-bot 的 dsh.client
+   *   声明提供。
    * 注意：client 半边（client.js 的浏览器面板）不依赖 hostTools——只要包被 loader
    * 以包名加载，DSH 的 client-modules 就会独立发现 dsh.client 声明并注入浏览器，
-   * 面板的显示与否由 client.js 的 agentPreset === 'craft-bot' 判断决定。
+   * 面板的显示与否由 client.js 的 agentPreset 判断决定。
    */
   hostTools: z.boolean().default(true),
   /**
    * 是否挂仪表盘代理（/craft/api/*）。
-   * - profile 全局行（hostTools:false, proxy 默认 true）：client 面板需要代理读 viewer。
-   * - craft-bot 预设行（hostTools:true, proxy:false）：预设内不需要代理（client 面板由
-   *   全局行提供），避免 webServer 同路径重复注册。注意：proxy 默认是 true，预设行必须
-   *   显式传 false，否则会在预设 scope 里重复注册同一条 /craft/api/* 路由。
+   * - 0.1.7+：craft-bot 预设行（hostTools:true）必须传 proxy:true —— profile 层
+   *   不再注册 dsh-bridge bundle，代理由预设行自己挂载（生成器从模板的 false
+   *   翻转为 true；预设 scope 每进程只 mount 一次，不会重复注册）。
+   * - 0.1.5-rc.3：预设行必须保持 proxy:false，代理由 profile 全局行
+   *   （hostTools:false, proxy:true）提供，避免 webServer 同路径重复注册。
    */
   proxy: z.boolean().default(true),
 })

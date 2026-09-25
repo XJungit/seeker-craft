@@ -34,4 +34,5 @@ Each crate has its own README with API details:
 ## DSH Bridge Plugin
 
 The `tools/dsh-bridge/` plugin adds `game_state` / `bot_tool` / `set_goal` to DSH and
-embeds a live bot dashboard. See [`../../tools/dsh-bridge/README.md`](../../tools/dsh-bridge/README.md).
+embeds a live bot dashboard (on DSH 0.1.7+ the dashboard ships via the
+`dsh-preset-craft-bot` preset package). See [`../../tools/dsh-bridge/README.md`](../../tools/dsh-bridge/README.md).

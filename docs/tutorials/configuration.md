@@ -65,7 +65,7 @@ bot name. Critical constraints:
 - **Byte stability**: the rendered system prompt must be byte-identical across
   all turns for DeepSeek prefix cache to hit. Dynamic variables go into user
   messages. In DSH era (2026-08-14+) the **DSH brain** owns assembly; the
-  dsh-bridge plugin feeds dynamic state as a user-context snapshot
+  preset's embedded dsh-bridge plugin feeds dynamic state as a user-context snapshot
   (`systemPrompt.context`), keeping the system prompt byte-stable.
 - **Premature-completion governance** (P56 legacy): the in-bot nudge was removed;
   the craft-bot preset persona (guardrail) forbids declaring "task complete ✅"

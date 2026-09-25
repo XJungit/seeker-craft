@@ -101,6 +101,38 @@ if ($SkipDsh -or -not (Test-Path $webDir)) {
 } else {
     New-Item -ItemType Directory -Force -Path $pluginNodeModules | Out-Null
 
+    # ── 版本判定（决定部署形态，需先于 3a/3b）────────────────────────────
+    #  判据与 4c 相同：DSH package.json 的 dependencies 是否含
+    #  `@deepseek-ai/dsh-agent-preset`（单数，0.1.7 引入）。
+    #    0.1.7+：单插件交付 —— profile 层只注册 dsh-preset-craft-bot 预设包；
+    #            dsh-bridge 不进 bundles、不加 link 依赖、不打全局配置补丁
+    #            （它的 client 半边由预设包的 dsh.client 声明交付，代理由
+    #            craft-bot 预设内部的 dsh-bridge 行挂载）。但仍需 3c 的
+    #            node_modules 链接：预设行的 file:// URL 加载 dsh-bridge 时，
+    #            依赖经其所在目录的 node_modules 解析。
+    #    rc.3   ：维持原 profile 级 dsh-bridge 部署（3a/3b/3c/3d/3e 全套）。
+    $dshPkgRoot3 = $null
+    foreach ($cand in @(
+        (Join-Path $webDir 'node_modules\@deepseek-ai\dsh'),
+        "$env:APPDATA\npm\node_modules\@deepseek-ai\dsh",
+        "$env:USERPROFILE\AppData\Roaming\npm\node_modules\@deepseek-ai\dsh"
+    )) {
+        if (Test-Path $cand) { $dshPkgRoot3 = $cand; break }
+    }
+    $isV017Plugin = $false
+    if ($dshPkgRoot3) {
+        try {
+            $dshMeta3 = Read-Text (Join-Path $dshPkgRoot3 'package.json') | ConvertFrom-Json
+            $isV017Plugin = ($dshMeta3.dependencies.PSObject.Properties.Name -contains '@deepseek-ai/dsh-agent-preset')
+        } catch { Write-Warn "无法解析 DSH package.json（$_），按 rc.3 部署处理" }
+    }
+    Write-Ok "桥插件部署形态：$(if ($isV017Plugin) { '单插件（预设包载体，0.1.7+）' } else { 'profile 级 bundle（rc.3）' })"
+
+    if ($isV017Plugin) {
+        # ── 0.1.7+ 精简路径：只保证 dsh-bridge 的依赖链接可解析 ────────────
+        Write-Ok "0.1.7+：跳过 profile 级 dsh-bridge 注册（client 半边由预设包交付）"
+        # 3c 的链接逻辑原样复用（file:// 预设行的依赖解析仍然需要它）
+    } else {
     # 3a. package.json: 加 dsh-bridge link 依赖 + bundles 条目（幂等）
     $pkgPath = Join-Path $webDir 'package.json'
     try {
@@ -138,18 +170,20 @@ if ($SkipDsh -or -not (Test-Path $webDir)) {
         $block = @"
 
 # --- SeekerCraft dsh-bridge 全局配置覆盖（由 setup.ps1 自动追加）---
-# hostTools:false -> 不向其他项目暴露 Minecraft 工具；面板由 client.js 按
-# agentPreset === 'craft-bot' 判断显示。craft-bot 预设内另用绝对路径加载。
+# hostTools:false -> 不向其他项目暴露 Minecraft 工具；proxy:true -> 代理 +
+# client 面板都由这条 profile 全局行提供（craft-bot 预设行 proxy:false）。
+# 0.1.7+ 部署形态不同：profile 层不注册 dsh-bridge，一切由预设包载体交付。
 - id: dsh-bridge
   config:
     hostTools: false
+    proxy: true
 "@
         Write-Text $patchPath ($patchRaw + $block)
         Write-Ok "cordis.patch.yml 追加 dsh-bridge 配置覆盖"
     } else {
         Write-Warn "未找到 $patchPath（跳过）"
     }
-
+    }   # end rc.3-only（3a/3b：profile 级 dsh-bridge 注册）
     # 3c. 链接 @deepseek-ai/dsh-tools / schemastery 到插件 node_modules
     # 候选来源（由近到远）：profile node_modules / npm 全局根 / DSH 全局包嵌套 node_modules
     $srcRoots = @()
@@ -187,6 +221,7 @@ if ($SkipDsh -or -not (Test-Path $webDir)) {
         }
     }
 
+    if (-not $isV017Plugin) {
     # 3d. pnpm install
     Push-Location $webDir
     try {
@@ -203,6 +238,64 @@ if ($SkipDsh -or -not (Test-Path $webDir)) {
             Write-Ok "运行 verify-in-harness 验证"
             node scripts/verify-in-harness.mjs 2>&1 | ForEach-Object { Write-Host "    $_" }
         } finally { Pop-Location }
+    }
+    }   # end rc.3-only（3d/3e）
+
+    # 3f. 迁移清理（仅 0.1.7+）：移除 rc.3 时代遗留的 profile 级 dsh-bridge 部署。
+    #     不清理的话会有两个 host 面 dsh.client 来源（dsh-bridge bundle + 预设包
+    #     载体）——DOM 单例守卫能挡住双面板，但插件清单/客户端表会出现两条目，
+    #     且 bundle 重复加载桥代码。junction dsh-preset-craft-bot 保留（载体行用）。
+    if ($isV017Plugin) {
+        # package.json：bundles 去掉 dsh-bridge、dependencies 去掉 link 依赖
+        $pkgPath3f = Join-Path $webDir 'package.json'
+        if (Test-Path $pkgPath3f) {
+            try {
+                $pkg3f = Read-Text $pkgPath3f | ConvertFrom-Json
+                $changed3f = $false
+                if ($pkg3f.dsh.profile.bundles -contains 'dsh-bridge') {
+                    $pkg3f.dsh.profile.bundles = @($pkg3f.dsh.profile.bundles | Where-Object { $_ -ne 'dsh-bridge' })
+                    $changed3f = $true
+                }
+                if ($pkg3f.dependencies.PSObject.Properties['dsh-bridge']) {
+                    $pkg3f.dependencies.PSObject.Properties.Remove('dsh-bridge')
+                    $changed3f = $true
+                }
+                if ($changed3f) {
+                    Write-Text $pkgPath3f ($pkg3f | ConvertTo-Json -Depth 10)
+                    Write-Ok "profile package.json：移除 profile 级 dsh-bridge（bundles + 依赖）"
+                } else {
+                    Write-Ok "profile package.json：无 profile 级 dsh-bridge 残留（跳过）"
+                }
+            } catch {
+                Write-Warn "profile package.json 解析失败（$_）；跳过迁移清理"
+            }
+        }
+        # cordis.patch.yml：移除 `- id: dsh-bridge` 覆盖块（含其前导注释）
+        $patchPath3f = Join-Path $webDir 'cordis.patch.yml'
+        if (Test-Path $patchPath3f) {
+            $lines3f = @((Read-Text $patchPath3f) -split "`r?`n")
+            $start3f = -1
+            for ($i = 0; $i -lt $lines3f.Count; $i++) {
+                if ($lines3f[$i] -match '^- id:\s*dsh-bridge\s*$') { $start3f = $i; break }
+            }
+            if ($start3f -ge 0) {
+                while ($start3f -gt 0 -and $lines3f[$start3f - 1] -match '^#') { $start3f-- }
+                $end3f = $start3f + 1
+                while ($end3f -lt $lines3f.Count -and ($lines3f[$end3f] -match '^\s' -or $lines3f[$end3f] -match '^\s*$' -or $lines3f[$end3f] -match '^#')) { $end3f++ }
+                $kept3f = @($lines3f[0..($start3f - 1)] + $lines3f[$end3f..($lines3f.Count - 1)])
+                Write-Text $patchPath3f (($kept3f -join "`r`n").TrimEnd() + "`r`n")
+                Write-Ok "cordis.patch.yml：移除 dsh-bridge 配置覆盖块"
+            } else {
+                Write-Ok "cordis.patch.yml：无 dsh-bridge 覆盖块（跳过）"
+            }
+        }
+        # node_modules\dsh-bridge junction（rmdir 只删 junction 本身，不动目标）
+        $junc3f = Join-Path $webDir 'node_modules\dsh-bridge'
+        if (Test-Path $junc3f) {
+            cmd /c rmdir /q "$junc3f"
+            if (-not (Test-Path $junc3f)) { Write-Ok "移除 junction node_modules\dsh-bridge" }
+            else { Write-Warn "junction node_modules\dsh-bridge 删除失败（可手动 rmdir）" }
+        }
     }
 }
 

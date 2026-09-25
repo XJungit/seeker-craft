@@ -9,7 +9,7 @@ This guide explains the main directories and crates in SeekerCraft (Craft-Agent)
 - `data/` — runtime data: tasks, profiles, blueprints, actions, DSH preset template, config template.
 - `docs/` — architecture, tutorials, ADRs, design archives.
 - `scripts/` — one-shot setup/start/stop scripts + probe JSON test scripts + CI helpers.
-- `tools/dsh-bridge/` — the DSH bridge plugin (game_state / bot_tool / set_goal + dashboard).
+- `tools/dsh-bridge/` — the DSH bridge plugin (game_state / bot_tool / set_goal; on DSH 0.1.7+ the dashboard ships via the `dsh-preset-craft-bot` preset package).
 - `vendor/azalea/` — local mirror of the maintained azalea fork (submodule, independent git repo + workspace).
 - `sessions/` — session JSONL files (gitignored runtime data).
 - `.github/workflows/` — CI (fmt+clippy), tests, security audit, docs deploy.

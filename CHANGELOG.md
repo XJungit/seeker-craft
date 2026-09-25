@@ -7,6 +7,56 @@ with [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The project is
 currently in active development as a single-maintainer project; `v1.0.0` is the
 first tagged **1.0 release** (DSH bridge mode is the only supported usage).
 
+## [1.6.2] - 2026-09-25
+
+### Added
+
+- **Single-plugin delivery for DSH 0.1.7+** — the craft-bot preset bundle
+  (`dsh-preset-craft-bot`) is now a complete, self-contained DSH plugin: it
+  ships the preset rows, the three host tools, *and* the browser-side viewer
+  panel. Registering this one bundle (plus its `node_modules` junction) is the
+  entire install; no profile-level `dsh-bridge` bundle is needed anymore.
+  - `data/dsh/craft-bot-preset-017/index.js` — a no-op carrier plugin that
+    makes the preset package a host-plane loader entry. This matters because
+    DSH 0.1.7's client-modules scanner only discovers `dsh.client` declarations
+    on host-plane rows; rows inside a preset composition are invisible to it.
+  - `data/dsh/craft-bot-preset-017/package.json` — adds
+    `dsh.client { platform: "web", inject: ["sessions"] }` and
+    `exports["./client"]`, turning the preset package into the panel's client
+    half; `index.js` stays a zero-dependency no-op so the carrier row can never
+    fail or register anything.
+  - `data/dsh/craft-bot-preset-017/client.js` — byte-identical mirror of
+    `tools/dsh-bridge/client.js`, kept in sync by the generator (single source
+    of truth). The panel still shows only for `agentPreset ∈ {craft-bot, code}`
+    sessions — other presets are completely unaffected.
+  - The generator now appends a second top-level `insert` op (the *carrier
+    row*, `name: dsh-preset-craft-bot`, resolved via the profile
+    `node_modules` junction) and flips the preset-internal `dsh-bridge` row's
+    `proxy` to `true`: on 0.1.7 the `/craft/api/*` proxy is owned by the
+    preset's own bridge row (mounted once per process), so exactly one
+    registration survives. New self-checks fail the build if the carrier row,
+    the flip, or the client.js mirror drift.
+- `scripts/setup.ps1` — version-branched bridge deployment. On 0.1.7+ it skips
+  the rc.3 profile-level `dsh-bridge` registration entirely (3a/3b/3d/3e),
+  keeps only the `@deepseek-ai` junction step the preset row's `file://` import
+  needs, and runs a new idempotent **3f migration cleanup** that removes a
+  legacy profile-level deployment (bundle entry, link dependency, config
+  override block, `node_modules\dsh-bridge` junction) from existing profiles.
+  rc.3 setups keep the full 3a–3e path unchanged (its appended override block
+  now also sets `proxy: true` explicitly).
+
+### Changed
+
+- `data/dsh/craft-bot-preset/agent.cordis.yml` — comments rewritten to describe
+  the dual proxy semantics (rc.3: profile-global bridge row owns the proxy and
+  the panel; 0.1.7+: generator flips the preset row to `proxy:true` and the
+  carrier row delivers the panel). Template values unchanged — shared source
+  for both formats.
+- `tools/dsh-bridge/index.js` — `hostTools`/`proxy` config docs rewritten to
+  match the new deployment split (no behavior change).
+- `tools/dsh-bridge/package.json` → 0.2.2 (compat notes describe the
+  preset-carrier delivery form).
+
 ## [1.6.1] - 2026-09-24
 
 ### Fixed

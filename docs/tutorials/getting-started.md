@@ -8,7 +8,8 @@ only an HTTP bridge.
 
 ```
 DSH (DeepSeek Harness)  ←  the LLM brain (you install this yourself)
-   │  via the dsh-bridge plugin (shipped in tools/dsh-bridge/)
+   │  via the dsh-bridge plugin (shipped in tools/dsh-bridge/; on DSH 0.1.7+
+   │    delivered inside the dsh-preset-craft-bot preset package)
    │    game_state() / bot_tool() / set_goal()
    ▼
 craft-agent-viewer  ←  HTTP bridge (Rust, part of this repo)
@@ -67,11 +68,18 @@ Idempotent and repeatable. What it does (in order):
 
 1. **Checks prerequisites** — cargo / git / node / pnpm; tells you what to install if missing.
 2. **Builds the workspace** — `cargo build --workspace`.
-3. **Registers the DSH bridge plugin** (`tools/dsh-bridge/`) into `~/.dsh/profiles/web`:
-   - adds the `dsh-bridge` link dependency to the profile `package.json`
-   - appends the plugin config override to `cordis.patch.yml`
-   - links `@deepseek-ai/dsh-tools` / `@deepseek-ai/schemastery` into the plugin's `node_modules`
-   - runs `pnpm install` and the plugin verification script
+3. **Wires the DSH bridge plugin** (`tools/dsh-bridge/`) — deployment shape depends on
+   the detected DSH version:
+   - **DSH 0.1.7+ (single-plugin form)** — the bridge ships *inside* the
+     `dsh-preset-craft-bot` preset package (its `dsh.client` declaration delivers the
+     dashboard panel; the preset's own bridge row mounts the `/craft/api/*` proxy).
+     Setup only links `@deepseek-ai/dsh-tools` / `@deepseek-ai/schemastery` into the
+     plugin's `node_modules` (needed by the preset row's `file://` import) and removes
+     any legacy profile-level `dsh-bridge` registration (migration cleanup, step 3f).
+   - **DSH 0.1.5-rc.3 (profile-bundle form)** — adds the `dsh-bridge` link dependency
+     to the profile `package.json`, appends the plugin config override
+     (`hostTools: false`, `proxy: true`) to `cordis.patch.yml`, links the
+     `@deepseek-ai` deps, and runs `pnpm install` + the plugin verification script.
 4. **Installs the craft-bot preset**, in the format the detected DSH needs:
    - **DSH 0.1.7+** — a single `@deepseek-ai/dsh-agent-preset` declaration carried by a
      bundle. `data/dsh/craft-bot-preset-017/cordis.patch.yml` is generated from
@@ -115,7 +123,7 @@ cargo run -p craft-agent-ctl -- status                         # verify running=
 
 1. Open **DeepSeek Harness**, create/enter a **craft-bot** preset session.
 2. A **Craft Bot dashboard** embeds on the right (live bot state).
-3. Use the three bridge tools (registered by the dsh-bridge plugin):
+3. Use the three bridge tools (registered by the preset's embedded dsh-bridge plugin):
 
 ```
 game_state()                                   # perceive live state

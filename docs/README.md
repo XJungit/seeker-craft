@@ -24,7 +24,7 @@ Start with `tutorials/INDEX.md` for the full guide map.
 
 ## DSH Bridge Plugin
 
-- `../tools/dsh-bridge/README.md` — the DSH bridge plugin (game_state / bot_tool / set_goal + dashboard)
+- `../tools/dsh-bridge/README.md` — the DSH bridge plugin (game_state / bot_tool / set_goal; the dashboard panel ships via the `dsh-preset-craft-bot` preset package on DSH 0.1.7+)
 
 ## Crate-level Docs
 

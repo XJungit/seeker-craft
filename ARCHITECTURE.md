@@ -7,7 +7,7 @@ main crates interact at runtime.
 
 ```text
 DSH (DeepSeek Harness, 外部大脑)          ← 唯一 LLM 大脑（决策/规划/自进化）
-        |  HTTP 桥（DSH 侧 dsh-bridge 插件）
+        |  HTTP 桥（DSH 侧 dsh-bridge 插件；0.1.7+ 经 craft-bot 预设包内嵌交付）
         v
 craft-agent-viewer (Axum + SSE 桥)        ← /api/connect / /api/bot_tool / /api/game-state / /api/goal
         |
@@ -36,7 +36,7 @@ craft-agent-minecraft  ──→  azalea (vendor)  ──→  MC server (TCP)
 ### DSH Bridge Runtime (current)
 
 ```text
-DSH 大脑（外部 Cordis 插件，tools/dsh-bridge/）
+DSH 大脑（Cordis 插件 tools/dsh-bridge/；0.1.7+ 内嵌于 craft-bot 预设包 dsh-preset-craft-bot）
   │  POST /api/connect          → viewer 把 azalea 客户端连上 MC（account CraftAgent）
   │  POST /api/bot_tool {name,args}  → viewer 派发 49 工具之一（GameTool::execute）
   │  GET  /api/game-state       → viewer 实时拉 BotState 快照（perceive 格式）
