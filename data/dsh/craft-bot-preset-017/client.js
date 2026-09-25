@@ -35,7 +35,7 @@
  */
 
 window.__ModuleLoader__.load({
-  id: 'dsh-bridge',
+  id: 'dsh-preset-craft-bot',
   factory: (require) => {
     var module = { exports: {} }
     var exports = module.exports

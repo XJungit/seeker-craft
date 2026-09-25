@@ -7,6 +7,27 @@ with [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The project is
 currently in active development as a single-maintainer project; `v1.0.0` is the
 first tagged **1.0 release** (DSH bridge mode is the only supported usage).
 
+## [1.6.3] - 2026-09-25
+
+### Fixed
+
+- **Web boot crash from the 1.6.2 carrier client mirror** — the
+  `dsh-preset-craft-bot` mirror of `tools/dsh-bridge/client.js` kept the
+  original `id: 'dsh-bridge'` in its `__ModuleLoader__.load()` call, but the
+  client runner accepts a registration **by package name**: the carrier row
+  (`dsh-preset-craft-bot`) loaded a module that never registered under its own
+  name → "loaded without registering dsh-preset-craft-bot" failed that entry
+  and dragged the whole web boot down; simultaneously the preset-internal
+  dsh-bridge row (the `file://` tools row) had already registered `dsh-bridge`
+  with the original client, so the mirror's second registration hit
+  "duplicate factory registration for dsh-bridge". The mirror now rewrites
+  only the `load()` id to `dsh-preset-craft-bot` (panel logic, CSS keys,
+  localStorage keys untouched); the generator performs the rewrite
+  (preserving the source newline) and fails loudly if the source shape
+  drifts, so regeneration cannot revert the fix. Each client now registers
+  exactly once under its own name; the DOM singleton guard makes the second
+  panel mount a no-op.
+
 ## [1.6.2] - 2026-09-25
 
 ### Added

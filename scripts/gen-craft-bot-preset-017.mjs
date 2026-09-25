@@ -226,17 +226,25 @@ out.push(
 
 // ── client.js 镜像（单一来源：tools/dsh-bridge/client.js）────────────────────
 // 浏览器面板源码只维护一份；生成器负责把副本写进本包（exports["./client"] 指向
-// 它）。内容零改动：内部 id（'dsh-bridge'）与指纹（__dshCraftBuild）保持原样，
+// 它）。除 load() 注册 id 外逐字节一致：loader 要求 client 注册载体包名
+// （'dsh-preset-craft-bot'），保持原 id 会导致载体行判
+// "loaded without registering dsh-preset-craft-bot"，且与预设内部 dsh-bridge 行
+// 注入的原版 client 撞 id（duplicate factory registration）。
 // 面板显隐由 client.js 自己的 PRESET_IDS 名单判断，与加载它的包名无关。
 const bridgeClient = join(projectRoot, 'tools', 'dsh-bridge', 'client.js')
 const clientMirrorPath = join(projectRoot, 'data', 'dsh', 'craft-bot-preset-017', 'client.js')
 const clientSource = readFileSync(bridgeClient, 'utf8')
+const clientExpected = clientSource.replace(
+  /(window\.__ModuleLoader__\.load\(\{\r?\n  id: )'dsh-bridge',/,
+  "$1'dsh-preset-craft-bot',",
+)
+const clientIdRewritten = clientExpected.includes("id: 'dsh-preset-craft-bot',")
 let clientMirrored = false
 {
   let current = null
   try { current = readFileSync(clientMirrorPath, 'utf8') } catch { }
-  if (current !== clientSource) {
-    writeFileSync(clientMirrorPath, clientSource, 'utf8')
+  if (current !== clientExpected) {
+    writeFileSync(clientMirrorPath, clientExpected, 'utf8')
     clientMirrored = true
   }
 }
@@ -269,8 +277,9 @@ if ((outText.match(/^- insert:$/gm) || []).length !== 2) problems.push('patch �
 // 0.1.7 下代理由预设内部 dsh-bridge 行自己挂载（生成器翻转 (2b)，profile 层不再有全局行）
 if (!/^ {14}proxy: true$/m.test(outText)) problems.push('dsh-bridge 行 proxy 未翻转为 true（0.1.7 下面板将无法读取 viewer）')
 if (/^ {14}proxy: false$/m.test(outText)) problems.push('输出中仍有 proxy:false（0.1.7 下会导致 /craft/api/* 无人挂载）')
-// client.js 镜像必须与 tools/dsh-bridge/client.js 逐字节一致（单一来源纪律）
-if (clientSource !== readFileSync(clientMirrorPath, 'utf8')) problems.push('client.js 镜像与 tools/dsh-bridge/client.js 不一致')
+// client.js 镜像必须等于源文件仅改写 load() id 后的期望内容（单一来源纪律 + 载体包名注册）
+if (!clientIdRewritten) problems.push('client.js 镜像 id 改写失败（源文件 load() 形状可能已变）')
+if (clientExpected !== readFileSync(clientMirrorPath, 'utf8')) problems.push('client.js 镜像与期望内容不一致（应为源文件 + id 改写为 dsh-preset-craft-bot）')
 // 载体包三要素：可导入的宿主半边 + dsh.client 声明 + exports["./client"]
 const pkg017Text = readFileSync(join(projectRoot, 'data', 'dsh', 'craft-bot-preset-017', 'package.json'), 'utf8')
 if (!existsSync(join(projectRoot, 'data', 'dsh', 'craft-bot-preset-017', 'index.js'))) problems.push('载体包缺少 index.js（host 面行将 import 失败）')
