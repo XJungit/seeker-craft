@@ -37,7 +37,7 @@ first tagged **1.0 release** (DSH bridge mode is the only supported usage).
   DSH from starting. `client.js` now splits `apply` into `applyInner` plus a
   fault-isolating wrapper: on error it logs to the console, records
   `window.__dshCraftError`, and returns a no-op disposer so the fiber still
-  settles `active`. The build fingerprint is bumped to `2026-09-05-g`.
+  settles `active`. The build fingerprint is bumped to `2026-09-05-h`.
 - **Web boot crash from the 1.6.2 carrier client mirror** — the
   `dsh-preset-craft-bot` mirror of `tools/dsh-bridge/client.js` kept the
   original `id: 'dsh-bridge'` in its `__ModuleLoader__.load()` call, but the
@@ -54,6 +54,26 @@ first tagged **1.0 release** (DSH bridge mode is the only supported usage).
   drifts, so regeneration cannot revert the fix. Each client now registers
   exactly once under its own name; the DOM singleton guard makes the second
   panel mount a no-op.
+
+### Changed
+
+- **Default placement is now `both`** — with the two inject planes fixed, the
+  panel could still be missing if `dsh-bridge.placement` defaulted to
+  `overlay`: the sidebar-right tab is only registered in `sidebar`/`both`
+  mode, so the sidebar would show no dashboard button at all (the user's
+  original report). The default is now `both`, giving the official sidebar tab
+  (auto-`openTab` on entering a craft session) *and* the right-side overlay
+  (opened manually via the `🎮` launcher, still gated on `userOpened` so it
+  never steals focus). Switch modes anytime with
+  `localStorage.setItem('dsh-bridge.placement','sidebar'|'overlay'|'both')`
+  followed by `window.__dshCraftRefresh()`; other tabs pick it up through the
+  `storage` event. `verify-client.mjs` now asserts the default using a freshly
+  evaluated module — the first version of that check was vacuous because it
+  reused the shared instance that already had `both` baked into its closure,
+  so mutating the default back to `overlay` still passed.
+- Corrected two comments that described behaviour the code never had: there is
+  no settings card registering a placement toggle (the console is the only
+  entry point), and the `storage` event only fires for *other* tabs.
 
 ### Verified
 

@@ -39,7 +39,7 @@
  *     保留行）的 agentPreset ∈ {craft-bot, code} 显隐（顶层与 projectionValues
  *     两层都查，快照无 current），其他预设不受影响。面板双模式：overlay 浮层
  *     + sidebar-right tab（kind='craft-bot'），placement 经 localStorage
- *     dsh-bridge.placement 配置（overlay/sidebar/both，默认 overlay）。
+ *     dsh-bridge.placement 配置（'both' 默认 | 'sidebar' | 'overlay'）。
  * 0.1.7 起 profile 层不再注册 dsh-bridge bundle，本包是面板的唯一来源。
  *
  * @module dsh-preset-craft-bot

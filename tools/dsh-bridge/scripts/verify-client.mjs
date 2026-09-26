@@ -344,6 +344,27 @@ check('exports.inject 不含任何包名（服务门不认包名，会导致整�
     `pkg=${JSON.stringify(pkgInject)} svcProviders=${JSON.stringify([...new Set(Object.values(SERVICE_PROVIDER))])}`)
 }
 
+// 默认 placement 必须是 'both'（侧栏 tab + 浮层并存）。防的是「boot 修好了、但用户
+// 依然看不到侧栏按钮」这类回归：默认若是 overlay，sidebar tab 根本不会注册，用户
+// 原始诉求（侧栏出现仪表盘按钮）就无法满足。
+// 关键：必须用 factoryExports(def, sandbox, {}) 拿**全新模块**。上面第 295 行的
+// clientMod 是把 BOTH 烘进闭包的实例，用它测默认值等于测「显式设了 both」——曾经
+// 因此静默通过（把默认改回 overlay 也不报警）。空 storage 的新实例才是真默认。
+// 位置要求：必须在下面 shared 那次 apply **之前**——client.js 开头有 DOM 单例守卫，
+// 页面已有 host 时第二次 apply 直接返回 no-op，不会注册任何 tab 类型。
+// 跑完立刻调 disposer 清掉 host，避免污染后续所有用例。
+{
+  const dfltMod = factoryExports(def, sandbox, {})
+  const dflt = makeCtx({ s1: { preset: 'craft-bot', mainView: true } }, {})
+  const dfltDisposer = dfltMod.apply(dflt.ctx)
+  check('默认 placement（localStorage 未设）= both：sidebar tab 类型照样注册（侧栏有按钮）',
+    dflt.tabsRegs.length === 1 && dflt.tabsRegs[0].kind === 'craft-bot',
+    `tabsRegs=${JSON.stringify(dflt.tabsRegs.map((r) => [r.id, r.kind]))}`)
+  if (typeof dfltDisposer === 'function') dfltDisposer()
+  check('默认 placement 用例自清理（host 已移除，DOM 单例守卫不干扰后续用例）',
+    countHosts() === 0, `hosts=${countHosts()}`)
+}
+
 const shared = makeCtx({ s1: { preset: 'craft-bot', mainView: true } }, BOTH)
 const disposer = clientMod.apply(shared.ctx)
 check('apply 返回 disposer（cordis 契约）', typeof disposer === 'function', `type=${typeof disposer}`)

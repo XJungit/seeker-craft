@@ -76,8 +76,8 @@ window.__ModuleLoader__.load({
     var PRESET_IDS = ['craft-bot', 'code']
     // 浏览器指纹：控制台读 window.__dshCraftBuild 即可确认载入的是哪一版 bundle，
     // 改一次 client.js 就 bump 一次（字母递增），排障时先对指纹再谈逻辑。
-    // 'g' = 双平面 inject 修正确认版 + apply 故障隔离外壳（面板 bug 不再拖垮 boot）
-    W.__dshCraftBuild = '2026-09-05-g'
+    // 'h' = 默认 placement 改为 both（侧栏 tab + 浮层并存），并修正两处失实注释
+    W.__dshCraftBuild = '2026-09-05-h'
     var VIEWER_DEFAULT = 'http://127.0.0.1:8080'
     var HOST_ATTR = 'data-dsh-craft-host'
     var OPEN_ATTR = 'data-dsh-craft-open' // 挂在 documentElement，驱动对话列让位
@@ -87,18 +87,28 @@ window.__ModuleLoader__.load({
     // id 是实现标识（keyed slot 的 dispatch key，用包名前缀避免与官方 id 碰撞）。
     var TAB_KIND = 'craft-bot'
     var TYPE_ID = 'dsh-preset-craft-bot/craft-bot'
-    // placement 配置键（localStorage）：'overlay' | 'sidebar' | 'both'，默认 'overlay'
+    // placement 配置键（localStorage）：'sidebar' | 'both' | 'overlay'，默认 'both'
     var PLACEMENT_KEY = 'dsh-bridge.placement'
 
     // ── placement（双模式开关）──────────────────────────────────────────────
-    // 存 localStorage，用户在 settings 卡片/控制台可改，无需重装 bundle。
-    // 非法值回落 overlay（老行为），保证升级不断档。
+    // 存 localStorage，用户在控制台改即可生效，无需重装 bundle。
+    // 改法（本插件不注册 settings 卡片，只有这两个入口）：
+    //   localStorage.setItem('dsh-bridge.placement','sidebar'); window.__dshCraftRefresh()
+    //   （跨 tab 时 storage 事件会自动生效，无需手动 refresh）
+    // 默认 'both'：侧边栏出 tab（进 craft 会话自动 openTab）+ overlay 浮层
+    // （用 🎮 启动器手动开）两种都在，用户可按需切到单一模式：
+    //   localStorage.setItem('dsh-bridge.placement','sidebar')  → 只要侧栏
+    //   localStorage.setItem('dsh-bridge.placement','overlay')  → 只要浮层
+    // 为什么默认不是单模式：sidebar 是官方 UI 接缝（可 dock/float/split、由用户
+    // 自己排布），overlay 是不依赖任何 sidebar 服务的兜底；两者同时在时互不干扰
+    // （overlay 显隐仍受 userOpened 门控，不会自己弹出来抢注意力）。
+    // 非法值同样回落 'both'，保证行为可预期。
     function placement() {
       try {
         var saved = localStorage.getItem(PLACEMENT_KEY)
         if (saved === 'sidebar' || saved === 'both' || saved === 'overlay') return saved
       } catch (e) { /* localStorage 不可用时忽略 */ }
-      return 'overlay'
+      return 'both'
     }
     function wantOverlay() { var p = placement(); return p === 'overlay' || p === 'both' }
     function wantSidebar() { var p = placement(); return p === 'sidebar' || p === 'both' }
@@ -476,12 +486,13 @@ window.__ModuleLoader__.load({
       try { if (sessions && sessions.list && typeof sessions.list.subscribe === 'function') unsub = sessions.list.subscribe(sync) } catch (e) { unsub = null }
       sync()
 
-      // placement 切换监听（同 tab 改 localStorage）：storage 事件跨 tab 生效，
-      // 同 tab 内由 settings 卡片直接调 window.__dshCraftRefresh。
+      // placement 切换监听：storage 事件只在**其他 tab** 改动 localStorage 时触发，
+      // 同 tab 内改完需自己调 window.__dshCraftRefresh()（见上方 placement 注释）。
       function onStorage(ev) {
         if (ev && ev.key === PLACEMENT_KEY) { renderCurrent(); sync() }
       }
       if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('storage', onStorage)
+      // 手动刷新入口：改完 placement 后调它立刻生效（同 tab 场景）。
       W.__dshCraftRefresh = function () { renderCurrent(); sync() }
 
       // 窗口缩放时重算让位宽度（46vw 随视口变化）
