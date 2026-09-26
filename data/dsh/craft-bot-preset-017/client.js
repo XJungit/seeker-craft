@@ -5,31 +5,53 @@
  * 会话流）以 iframe 形式内嵌进 DSH 页面，在对话区“页面旁”实时显示。
  *
  * 关键约束（用户明确要求）：**只有 craft-bot 预设（DSH 控制 Minecraft bot 的会话）
- * 才显示**。判断依据：`ctx.sessions.list`（ObservableSnapshot）当前会话的
- * `agentPreset === 'craft-bot'`。其他预设/普通会话里面板保持隐藏，不干扰。
+ * 才显示**。判断依据：当前主会话（mainView 保留的会话）的 `agentPreset`。
+ * agentPreset 可能藏在 projectionValues 里（projectList 只显式拷贝部分顶层字段，
+ * agentPreset 进了 projectionValues），顶层与 projectionValues 两层都查。
+ * 其他预设/普通会话里面板保持隐藏，不干扰。
  *
- * 挂载方式（遵循 DSH 官方插件开发文档 §3.4“选择正确的 UI 接缝：slot 优先，body
- * portal 兜底”）：本面板是“跨会话、固定在 shell 角落”的全局面板，故用 body portal +
- * fixed 定位（而非塞进某个语义 slot）。要点：
- *   - host 必须是 DOM 单例（`[data-dsh-craft-host]`），`apply` 开头用 DOM 守卫：
- *     已存在则返回 no-op disposer（参考 whale-girl 的 `[data-whale-girl]` 守卫）——
- *     无论插件被挂载几次（如全局行 + craft-bot 预设行同时存在），页面中永远只存在
- *     一个仪表盘，根治“多仪表盘”。
- *   - DSH 的 client bundle 是一个 cordis 插件 entry（见 web/src/boot.tsx：一个 plugin
- *     包 = 一个 loader entry = 一次 apply），`apply` 返回的函数即 cordis disposer，
- *     在插件卸载/HMR 时清理订阅、监听、让位与 DOM。
+ * 双模式（placement 可配置，见下 PLACEMENT）：
+ *   - 'overlay'（默认）：body portal + fixed 右侧停靠（原有行为，保持不动）；
+ *   - 'sidebar'：注册官方 sidebar-right tab 类型（kind='craft-bot'，extension 段），
+ *     body 走 keyed slot `sidebar.right.pane.tab`（key=TYPE_ID），guide 走
+ *     tab 定义的 guide 条目（点选即 openTab）。sidebar 模式下不建 body-portal
+ *     host、不碰 grid frame padding、不显示 🎮 启动器——打开位置完全交给官方
+ *     sidebar（dock/float/split 都由用户在侧栏里自己排）。
+ *   - 'both'：两种同时开。
+ *
+ * 挂载细节（遵循 DSH 官方插件开发文档 §3.4“选择正确的 UI 接缝：slot 优先，body
+ * portal 兜底”，以及 cordis-plugin-development skill 的 practices.md）：
+ *   - overlay host 必须是 DOM 单例（`[data-dsh-craft-host]`），`apply` 开头用 DOM
+ *     守卫：已存在则返回 no-op disposer（参考 whale-girl 的 `[data-whale-girl]`
+ *     守卫）——无论插件被挂载几次，页面中永远只存在一个仪表盘，根治“多仪表盘”。
+ *   - DSH 的 client bundle 是一个 cordis 插件 entry（一个 plugin 包 = 一个 loader
+ *     entry = 一次 apply），`apply` 返回的函数即 cordis disposer，在插件卸载/HMR
+ *     时清理订阅、监听、让位与 DOM。
  *   - 通过 `ctx.sessions.list.subscribe()` 订阅会话变化来显隐（正经做法，替代轮询）。
- *   - 面板打开时给 DSH 三列布局的 grid frame 加右侧 padding（JS 动态让位）→ 真正
- *     “页面旁”，而非遮挡对话。稳定锚点是 layout 的 `[data-shell-overlay]` 的父元素
- *     （即 grid frame），不依赖任何哈希类名/易变选择器（真实 DSH 无 data-phase）。
+ *   - overlay 打开时给 DSH 三列布局的 grid frame 加右侧 padding（JS 动态让位）→
+ *     真正“页面旁”，而非遮挡对话。稳定锚点是 layout 的 `[data-shell-overlay]`
+ *     的父元素（即 grid frame），不依赖任何哈希类名/易变选择器。
  *   - 面板状态（userOpened / iframeLoaded / 当前是否 craft-bot）放在 window 上，
  *     函数每次重查 DOM，插件生命周期内始终拿到最新状态。
+ *   - sidebar body 是 React 组件（slot 体系只渲染 React）：React 取自浏览器模块
+ *     表 `require('react')`（官方 ui-plugin.md：禁止自带 React/CDN/UMD）；iframe
+ *     用原生 <iframe> 元素，tab 卸载即销毁（keepMounted 省略=默认 false）。
+ *   - 不 require 任何 `@deepseek-ai/*` client 包（practices.md 明令禁止：无类型
+ *     检查、随时变更、抛错会 blank 整个 slot entry）。只用 ctx 注入的服务
+ *     （sessions/slots/sidebarRight/sidebarRightTabs）与 slot 传给 body 的标准
+ *     props（useSessions/useTabInfo）。
  *
- * viewer 地址：默认 http://127.0.0.1:8080，可用 localStorage 覆盖（settings 卡片）。
+ * 主会话判定（sessions.list 快照实测结论）：
+ *   - `SessionListState = { ids, byId, phase, projectionsBySession }` —— **没有
+ *     `current` 字段**（见 service.d.ts:43-52）。旧代码读 `snap.current` 永远
+ *     undefined，是“预设下没有仪表盘”的直接原因之一。
+ *   - 主视图会话 = `byId` 里 `retainedBy.mainView > 0` 的行（ui-session 的
+ *     publishMain 就是这么找的，见 client.js:279-290）。本插件沿用同一规则。
+ *   - 兜底链：mainView 行 → 无 mainView 行时若 `ids` 仅一项则取该项 → 否则判
+ *     非 craft（两侧都隐藏，不误伤其他预设）。
+ *
+ * viewer 地址：默认 http://127.0.0.1:8080，可用 localStorage 覆盖。
  * client 端不直接 fetch viewer（跨域），一律走 host 的 /craft/api/* 同源代理。
- *
- * 实现用纯 DOM（无 react-dom 依赖）：DSH client 环境保证 require('react')，但不保证
- * react-dom/client；纯 DOM 与 shell 的 React 子树互不干扰（官方文档同款取舍）。
  *
  * @module dsh-bridge/client
  */
@@ -40,8 +62,11 @@ window.__ModuleLoader__.load({
     var module = { exports: {} }
     var exports = module.exports
     Object.defineProperty(exports, Symbol.toStringTag, { value: 'Module' })
-    // react 仅作环境兼容占位（DSH client 保证可 require），本插件纯 DOM 渲染不依赖它。
-    require('react')
+    // React 取自浏览器模块表（shell 预置的 seed，见 web 前端 WS()：react /
+    // react/jsx-runtime / react-dom 都在表里）。plain-JS 手写 createElement，
+    // 无 JSX/TS 构建步骤。注意：只 require 'react'，不 require 'react-dom' 与
+    // 任何 @deepseek-ai/* 包（practices.md 禁止事项）。
+    var React = require('react')
 
     // ── 常量 ────────────────────────────────────────────────────────────────
     // 本部署里 Craft-Agent 脑会话可能挂在多个 preset id 下（会话头实测出现过
@@ -51,12 +76,32 @@ window.__ModuleLoader__.load({
     var PRESET_IDS = ['craft-bot', 'code']
     // 浏览器指纹：控制台读 window.__dshCraftBuild 即可确认载入的是哪一版 bundle，
     // 改一次 client.js 就 bump 一次（字母递增），排障时先对指纹再谈逻辑。
-    W.__dshCraftBuild = '2026-09-05-d'
+    // 'g' = 双平面 inject 修正确认版 + apply 故障隔离外壳（面板 bug 不再拖垮 boot）
+    W.__dshCraftBuild = '2026-09-05-g'
     var VIEWER_DEFAULT = 'http://127.0.0.1:8080'
     var HOST_ATTR = 'data-dsh-craft-host'
     var OPEN_ATTR = 'data-dsh-craft-open' // 挂在 documentElement，驱动对话列让位
     var PANEL_CLS = 'dsh-craft-panel'
     var LAUNCHER_CLS = 'dsh-craft-launcher'
+    // sidebar tab 类型标识：kind 是 openTab 用的名字（全局唯一，取 craft-bot）；
+    // id 是实现标识（keyed slot 的 dispatch key，用包名前缀避免与官方 id 碰撞）。
+    var TAB_KIND = 'craft-bot'
+    var TYPE_ID = 'dsh-preset-craft-bot/craft-bot'
+    // placement 配置键（localStorage）：'overlay' | 'sidebar' | 'both'，默认 'overlay'
+    var PLACEMENT_KEY = 'dsh-bridge.placement'
+
+    // ── placement（双模式开关）──────────────────────────────────────────────
+    // 存 localStorage，用户在 settings 卡片/控制台可改，无需重装 bundle。
+    // 非法值回落 overlay（老行为），保证升级不断档。
+    function placement() {
+      try {
+        var saved = localStorage.getItem(PLACEMENT_KEY)
+        if (saved === 'sidebar' || saved === 'both' || saved === 'overlay') return saved
+      } catch (e) { /* localStorage 不可用时忽略 */ }
+      return 'overlay'
+    }
+    function wantOverlay() { var p = placement(); return p === 'overlay' || p === 'both' }
+    function wantSidebar() { var p = placement(); return p === 'sidebar' || p === 'both' }
 
     // ── CSS（内联注入，避免额外构建）─────────────────────────────────────────
     // 面板固定右侧停靠 = 真正的“页面旁”；打开时对话列右移让位，不遮挡对话。
@@ -101,7 +146,44 @@ window.__ModuleLoader__.load({
       return VIEWER_DEFAULT
     }
 
-    // ── 面板 DOM 构建（仅首次，之后复用同一 host）────────────────────────────
+    // ── 主会话判定 ──────────────────────────────────────────────────────────
+    // sessions.list 快照无 current（service.d.ts:43-52）；主视图会话 = byId 里
+    // retainedBy.mainView > 0 的行（与 ui-session publishMain 同规则）。
+    function mainRow(snap) {
+      if (!snap || !snap.byId) return undefined
+      var byId = snap.byId
+      var main = undefined
+      var ids = Array.isArray(snap.ids) ? snap.ids : Object.keys(byId)
+      for (var i = 0; i < ids.length; i++) {
+        var row = byId[ids[i]]
+        if (row && row.retainedBy && (row.retainedBy.mainView || 0) > 0) { main = row; break }
+      }
+      // 兜底：没有 mainView 行、但列表仅一项 → 取该项（单会话页常见）。
+      if (main === undefined && ids.length === 1 && byId[ids[0]]) main = byId[ids[0]]
+      // 兼容 items 数组形态：某些版本快照用 items 列表而非 byId 字典
+      if (main === undefined && snap && Object.prototype.toString.call(snap.items) === '[object Array]') {
+        for (var bi = 0; bi < snap.items.length; bi++) {
+          var it = snap.items[bi]
+          if (it && it.retainedBy && (it.retainedBy.mainView || 0) > 0) { main = it; break }
+        }
+        if (main === undefined && snap.items.length === 1) main = snap.items[0]
+      }
+      return main
+    }
+    // agentPreset 等同于挂载的 composition id，本部署里 Craft 脑挂 'craft-bot'
+    // 或 'code'（见上名单）。不做 startsWith/包含匹配——短名包含极易跨预设误命中；
+    // 日后新增挂载位时只改上名单。
+    // agentPreset 可能藏在 projectionValues 里（新版 projectList 只显式拷贝
+    // 部分顶层字段，agentPreset 进了 projectionValues），两层都查。
+    function presetOf(row) {
+      if (!row) return undefined
+      if (row.agentPreset !== undefined) return row.agentPreset
+      var pv = row.projectionValues || null
+      if (pv && pv.agentPreset !== undefined) return pv.agentPreset
+      return undefined
+    }
+
+    // ── overlay 面板 DOM 构建（仅首次，之后复用同一 host）────────────────────
     function buildHost() {
       var host = document.createElement('div')
       host.setAttribute(HOST_ATTR, '')
@@ -167,7 +249,7 @@ window.__ModuleLoader__.load({
       }
     }
 
-    // ── 显隐渲染（纯 DOM 驱动，重求值安全）──────────────────────────────────
+    // ── overlay 显隐渲染（纯 DOM 驱动，重求值安全）───────────────────────────
     // 面板宽度：与 CSS 的 width:min(720px,46vw) 保持一致，用于给三列 grid frame 让位
     function panelWidthPx() {
       var vw = (typeof window !== 'undefined' && window.innerWidth) || 0
@@ -187,6 +269,8 @@ window.__ModuleLoader__.load({
     function setOpen(open, isCraft) {
       var p = queryParts()
       if (p === null) return
+      // overlay 模式被关掉时：面板强制隐藏（sidebar 接管显示），让位恢复。
+      if (!wantOverlay()) open = false
       // 仅在用户手动打开（userOpened）且处于 craft-bot 会话时显示；进入会话不再自动打开
       var show = open && isCraft && !!W.__dshCraftUserOpened
       applyFramePadding(show)
@@ -206,7 +290,7 @@ window.__ModuleLoader__.load({
         document.documentElement.removeAttribute(OPEN_ATTR)
         // 仅 craft-bot 且面板未手动打开 → 显示启动器标签（点击手动打开）；其余情况隐藏
         if (p.launcher) {
-          if (isCraft && !W.__dshCraftUserOpened) p.launcher.setAttribute('data-show', '')
+          if (isCraft && !W.__dshCraftUserOpened && wantOverlay()) p.launcher.setAttribute('data-show', '')
           else p.launcher.removeAttribute('data-show')
         }
       }
@@ -216,17 +300,72 @@ window.__ModuleLoader__.load({
       setOpen(true, !!W.__dshCraftIsCraft) // setOpen 内部会按 userOpened 决定最终态（手动打开才显示）
     }
 
+    // ── sidebar tab body（React，slot 体系只渲染 React 组件）─────────────────
+    // props 说明（按 slots.d.ts 的 SidebarRightTabInjected + SessionStandardProps，
+    // 由 ui-session / sidebar-right 声明合并后注入——运行时只认存在性，不认类型）：
+    //   useSessions(select) —— 全局席：会话列表快照（含 byId/retainedBy.mainView）；
+    //   useTabInfo() —— tab  occurrence 信息（本 body 不需要 tab 动作，仅取 refresh 信号位）。
+    // 预设门控同样走主会话判定：非 craft-bot 时 body 渲染提示行（tab 本体由 openTab
+    // 调用方控制开关，见下 syncSidebar；body 内二次门控防止“别的会话恢复出 tab”）。
+    function CraftSidebarBody(props) {
+      var useSessions = props && props.useSessions
+      var preset = null
+      try {
+        if (typeof useSessions === 'function') {
+          preset = useSessions(function (state) {
+            var byId = (state && state.byId) || {}
+            var ids = (state && state.ids) || Object.keys(byId)
+            var main = null
+            for (var i = 0; i < ids.length; i++) {
+              var row = byId[ids[i]]
+              if (row && row.retainedBy && (row.retainedBy.mainView || 0) > 0) { main = row; break }
+            }
+            if (!main && ids.length === 1) main = byId[ids[0]]
+            if (!main) return null
+            if (main.agentPreset !== undefined) return main.agentPreset
+            var pv = main.projectionValues || null
+            return (pv && pv.agentPreset !== undefined) ? pv.agentPreset : null
+          })
+        }
+      } catch (e) { preset = null }
+      var isCraft = !!(preset && PRESET_IDS.indexOf(preset) !== -1)
+      if (!isCraft) {
+        return React.createElement('div', { style: { padding: '24px 16px', color: 'var(--dsw-alias-label-tertiary,#888)', fontSize: '12px' } },
+          'Craft Bot 仪表盘仅在 craft-bot 预设会话中可用。')
+      }
+      return React.createElement('iframe', {
+        title: 'Craft-Agent Viewer',
+        src: viewerUrl() + '/?compact=1',
+        sandbox: 'allow-scripts allow-forms',
+        referrerPolicy: 'no-referrer',
+        style: { width: '100%', height: '100%', border: '0', background: '#0f1419', flex: '1' },
+      })
+    }
+
+    function CraftSidebarTitle() {
+      return React.createElement('span', null, '🎮 Craft Bot')
+    }
+
     // ── 插件 apply（client 半边）────────────────────────────────────────────
     /**
      * DSH 会把 client bundle 当作一个 cordis 插件 entry 挂载：apply 只被调用
-     * 一次（每个 plugin 包一个 entry/fiber，见 web/src/boot.tsx），且返回的
-     * 函数就是 cordis 的 disposer（插件卸载/HMR 时被调用）。参考优秀实现
-     * whale-girl：重复挂载用 DOM 单例守卫直接返回 no-op，杜绝多面板。
+     * 一次（每个 plugin 包一个 entry/fiber），且返回的函数就是 cordis 的
+     * disposer（插件卸载/HMR 时被调用）。参考优秀实现 whale-girl：重复挂载用
+     * DOM 单例守卫直接返回 no-op，杜绝多面板。
+     *
+     * inject 是两个不同平面，别写反（见文件末尾 exports.inject 处的长注释）：
+     *   · package.json dsh.client.inject = **包名**（boot 图到达顺序）
+     *     api-session-controller（sessions）+ ui-renderer（slots）+
+     *     ui-sidebar-right（sidebarRight/sidebarRightTabs）；
+     *   · exports.inject = **服务名**（fiber 激活门）。
+     * 本处 apply 用服务名取 ctx（ctx.sessions / ctx.slots / ctx.sidebarRight /
+     * ctx.sidebarRightTabs），sidebar placement 关掉时不触碰 sidebar 服务、
+     * 仅订阅 sessions。
      *
      * @param {import('@deepseek-ai/dsh-client-runtime/client').ClientContext} ctx
      * @returns {() => void} disposer
      */
-    function apply(ctx) {
+    function applyInner(ctx) {
       // DOM 单例守卫：无论插件被挂载几次（如全局行 + craft-bot 预设行同时存在），
       // 页面中永远只允许一个仪表盘 host；重复挂载直接返回 no-op disposer。
       if (typeof document !== 'undefined' && document.querySelector('[' + HOST_ATTR + ']') !== null) {
@@ -234,66 +373,116 @@ window.__ModuleLoader__.load({
       }
 
       // 兼容两种注入形态：ctx.sessions（声明式）或 ctx.get('sessions')（旧式）。
-      // 缺 sessions 时仍建 host（隐藏），但无法订阅显隐——插件声明了 inject:['sessions']，
-      // 正常不会走到。
       var sessions = ctx && (ctx.sessions || (typeof ctx.get === 'function' && ctx.get('sessions')))
+      var slots = ctx && (ctx.slots || (typeof ctx.get === 'function' && ctx.get('slots')))
+      var sidebarRight = ctx && (ctx.sidebarRight || (typeof ctx.get === 'function' && ctx.get('sidebarRight')))
+      var sidebarRightTabs = ctx && (ctx.sidebarRightTabs || (typeof ctx.get === 'function' && ctx.get('sidebarRightTabs')))
 
-      // 构建 host（此时必为空，守卫已保证单例）
-      buildHost()
+      // overlay host：sidebar-only  placement 下不建（sidebar 接管显示），避免
+      // body 里多一个永远隐藏的 fixed 节点。
+      if (wantOverlay()) buildHost()
 
-      // 订阅会话列表（ObservableSnapshot.subscribe）→ 当前会话切到/离开 craft-bot 时
-      // 自动显隐。正经做法，替代脆弱的 setInterval 轮询。
+      var unsub = null
+      var disposers = []
+      function track(d) { if (typeof d === 'function') disposers.push(d) }
+
+      // ── sidebar tab 类型注册（仅 wantSidebar，且服务齐备才注册）───────────
+      // kind='craft-bot' 全局唯一（官方 terminal/browser/files 均用短名，无碰撞）；
+      // priority 省略即 'extension'（tab-registry.d.ts:102：不声明就是 extension 段，
+      // 与 builtin 不冲突）；multiple 省略=每 pane 一页（够用，不开多实例）；
+      // guide 条目让用户在侧栏 guide 页点选打开；title 走定义 title()，另注册
+      // keyed title 组件做实时标题。
+      var sidebarOn = false
+      if (wantSidebar() && slots && sidebarRightTabs) {
+        try {
+          track(ctx.effect(function () {
+            var disposeType = null
+            var disposeBody = null
+            var disposeTitle = null
+            try {
+              disposeType = sidebarRightTabs.register({
+                id: TYPE_ID,
+                kind: TAB_KIND,
+                title: function () { return 'Craft Bot' },
+                guide: [{
+                  id: 'open',
+                  order: 20,
+                  title: function () { return 'Craft Bot 仪表盘' },
+                  description: function () { return 'Minecraft bot 实时状态（viewer）' },
+                }],
+              })
+            } catch (e) { disposeType = null }
+            try {
+              disposeBody = slots.inject('sidebar.right.pane.tab', function () {
+                return slots.register({ name: 'sidebar.right.pane.tab', key: TYPE_ID }, CraftSidebarBody)
+              })
+            } catch (e) { disposeBody = null }
+            try {
+              disposeTitle = slots.inject('sidebar.right.pane.tab.title', function () {
+                return slots.register({ name: 'sidebar.right.pane.tab.title', key: TYPE_ID }, CraftSidebarTitle)
+              })
+            } catch (e) { disposeTitle = null }
+            sidebarOn = !!(disposeType || disposeBody || disposeTitle)
+            return function () {
+              sidebarOn = false
+              try { if (disposeTitle) disposeTitle() } catch (e) { /* noop */ }
+              try { if (disposeBody) disposeBody() } catch (e) { /* noop */ }
+              try { if (disposeType) disposeType() } catch (e) { /* noop */ }
+            }
+          }, 'dsh-bridge: sidebar tab'))
+        } catch (e) { sidebarOn = false }
+      }
+
+      // 订阅会话列表（ObservableSnapshot.subscribe）→ 当前主会话切到/离开
+      // craft-bot 时：overlay 显隐 + sidebar openTab（正经做法，替代轮询）。
+      // sidebar 的 open 由订阅驱动：进 craft 主会话 → openTab（幂等，去重由
+      // sidebar 自己做，pages always deduplicate）；离 craft → 不自动关（用户
+      // 的 tab 归用户，关闭走 tab 自身 ×；body 内二次门控防“恢复出 tab”）。
       function sync() {
-        // 依赖 DSH client 的 sessions.list（ObservableSnapshot）契约：
-        // getSnapshot() 同步返回 { current, byId }，subscribe(fn) 在变更时回调。
-        // 若 DSH API 变更此形状，这里是唯一需要同步调整的消费点。
         var snap = null
         try { if (sessions && sessions.list) snap = sessions.list.getSnapshot() } catch (e) { snap = null }
-        var currentId = snap ? snap.current : undefined
-        var byIdMap = snap ? snap.byId : undefined
-        var current = undefined
-        try {
-          if (currentId !== undefined && byIdMap) current = byIdMap[currentId]
-          // 兼容 items 数组形态：某些版本快照用 items 列表而非 byId 字典
-          if (current === undefined && snap && Object.prototype.toString.call(snap.items) === '[object Array]') {
-            for (var bi = 0; bi < snap.items.length; bi++) {
-              if (snap.items[bi] && snap.items[bi].sessionId === currentId) { current = snap.items[bi]; break }
-            }
-          }
-        } catch (e2) { current = undefined }
-        // agentPreset 等同于挂载的 composition id，本部署里 Craft 脑挂 'craft-bot'
-        // 或 'code'（见上名单）。不做 startsWith/包含匹配——短名包含极易跨预设误命中；
-        // 日后新增挂载位时只改上名单。
-        // agentPreset 可能藏在 projectionValues 里（新版 projectList 只显式拷贝
-        // 部分顶层字段，agentPreset 进了 projectionValues），两层都查。
-        var pv0 = (current && current.projectionValues) || null
-        var ap = (current && current.agentPreset !== undefined) ? current.agentPreset
-          : ((pv0 && pv0.agentPreset !== undefined) ? pv0.agentPreset : undefined)
+        var row = mainRow(snap)
+        var ap = presetOf(row)
         var isCraft = !!(ap && PRESET_IDS.indexOf(ap) !== -1)
         // 一次性诊断探针：把原始快照形状写到 window，用户控制台
         // JSON.stringify(window.__dshCraftDbg) 一次即可看到全部真相。
         try {
-          var pv = (current && current.projectionValues) || null
+          var pv = (row && row.projectionValues) || null
+          var mainId = (row && (row.id || row.sessionId)) || null
           W.__dshCraftDbg = {
             build: W.__dshCraftBuild || null,
-            currentId: currentId === undefined ? null : String(currentId),
-            keys: current ? Object.keys(current).slice(0, 24) : [],
+            mainId: mainId === undefined ? null : (mainId === null ? null : String(mainId)),
+            keys: row ? Object.keys(row).slice(0, 24) : [],
             agentPreset: ap === undefined ? null : ap,
             pvKeys: pv ? Object.keys(pv).slice(0, 24) : [],
             pvPreset: (pv && pv.agentPreset !== undefined) ? pv.agentPreset : null,
-            cwd: (current && current.cwd !== undefined) ? String(current.cwd).slice(0, 80) : null,
+            retainedBy: (row && row.retainedBy) || null,
+            cwd: (row && row.cwd !== undefined) ? String(row.cwd).slice(0, 80) : null,
+            placement: placement(),
+            sidebarOn: !!sidebarOn,
             ids: (snap && snap.ids) ? snap.ids.slice(0, 8) : null
           }
         } catch (dbgE) { /* 诊断失败不影响主逻辑 */ }
         W.__dshCraftIsCraft = isCraft
-        // 显隐完全交给 setOpen：仅在用户手动打开（userOpened）且处于 craft-bot 时显示，
-        // 进入会话不再自动打开；非 craft-bot 时隐藏并移除启动器。
+        // overlay：显隐完全交给 setOpen：仅在用户手动打开（userOpened）且处于
+        // craft-bot 时显示，进入会话不再自动打开；非 craft-bot 时隐藏并移除启动器。
         setOpen(true, isCraft)
+        // sidebar：进 craft 主会话且 sidebar 服务齐备 → openTab（幂等）。
+        if (isCraft && sidebarOn && sidebarRight) {
+          try { sidebarRight.openTab(TAB_KIND) } catch (e) { /* tab 未挂载/无 seat 时下次订阅重试 */ }
+        }
       }
 
-      var unsub = null
       try { if (sessions && sessions.list && typeof sessions.list.subscribe === 'function') unsub = sessions.list.subscribe(sync) } catch (e) { unsub = null }
       sync()
+
+      // placement 切换监听（同 tab 改 localStorage）：storage 事件跨 tab 生效，
+      // 同 tab 内由 settings 卡片直接调 window.__dshCraftRefresh。
+      function onStorage(ev) {
+        if (ev && ev.key === PLACEMENT_KEY) { renderCurrent(); sync() }
+      }
+      if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('storage', onStorage)
+      W.__dshCraftRefresh = function () { renderCurrent(); sync() }
 
       // 窗口缩放时重算让位宽度（46vw 随视口变化）
       var onResize = function () { renderCurrent() }
@@ -303,6 +492,11 @@ window.__ModuleLoader__.load({
       return function disposer() {
         try { if (unsub) unsub() } catch (e) { /* noop */ }
         try { if (typeof window !== 'undefined' && window.removeEventListener) window.removeEventListener('resize', onResize) } catch (e) { /* noop */ }
+        try { if (typeof window !== 'undefined' && window.removeEventListener) window.removeEventListener('storage', onStorage) } catch (e) { /* noop */ }
+        try { if (W.__dshCraftRefresh) delete W.__dshCraftRefresh } catch (e) { /* noop */ }
+        for (var i = disposers.length - 1; i >= 0; i--) {
+          try { disposers[i]() } catch (e) { /* noop */ }
+        }
         // 恢复 grid frame 让位
         try {
           var overlay = document.querySelector('[data-shell-overlay]')
@@ -322,7 +516,46 @@ window.__ModuleLoader__.load({
       }
     }
 
-    exports.inject = ['sessions']
+    // ── apply 的**故障隔离外壳**（2026-09-26 事故的第二次加固）──────────────
+    // 为什么必须有：cordis 的 Fiber 只要 apply 抛异常就把状态置为 failed
+    // （cordis/lib/index.js:1290 `if (this._error) return 3`），而 web boot 的
+    // 激活审计对 failed 与 pending 一视同仁地抛错：
+    //   `web boot: 1 entry did not activate\n<name>: failed`
+    // （已在 verify-cordis-service-gate.mjs 里用真实 cordis 复现 pending 分支；
+    //   failed 分支同一处代码 `I7[s.fiber.state] !== "active"` 必然入列）
+    // → 面板里任何一个小 bug（选择器、localStorage 被策略禁用、DOM 结构变了）
+    //   都能把整个桌面端启动拖垮。这个仪表盘是**可选 UI**，绝不该有这个权力：
+    //   boot 必须成功，面板最坏情况只是不出现 + console 报错。
+    // 所以：apply 本体整段 try/catch（原 apply 改名为 applyInner），出错时打印
+    // 诊断并返回 no-op disposer，让 fiber 稳定落在 active。
+    function apply(ctx) {
+      try {
+        return applyInner(ctx)
+      } catch (error) {
+        try {
+          console.error('[dsh-bridge] 面板初始化失败（已隔离，不影响 DSH 启动）:', error)
+          W.__dshCraftError = {
+            build: W.__dshCraftBuild || null,
+            message: error && error.message ? String(error.message) : String(error),
+            stack: error && error.stack ? String(error.stack).slice(0, 1200) : null,
+          }
+        } catch (e) { /* 诊断本身也失败就彻底静默 */ }
+        return function noopDisposer() { /* 初始化失败，无副作用可清 */ }
+      }
+    }
+
+    // ── exports.inject = 服务名（fiber 激活门），绝不能写包名！─────────────
+    // 这里和 package.json 的 dsh.client.inject 是**两个不同的平面**，写反了会
+    // 让整个 web boot 挂掉（桌面端起不来）：
+    //   · package.json dsh.client.inject = 包名 → boot 图的“到达顺序”依赖
+    //     （client-modules 的 arriveGraphRow 预载这些包的行，未知名字静默跳过）；
+    //   · exports.inject（本处）= ctx 服务名 → client runner 的**服务门**
+    //     （dsh-cordis-client-runner L590 waitingFor 按 Object.keys(fiber.inject)
+    //     查 ctx.get(name)，查不到就一直 pending）。
+    // 2026-09-26 事故：把包名写进这里后，载体行会永远等一个名为
+    // '@deepseek-ai/dsh-client-ui-renderer' 的服务 → “1 entry did not activate”
+    // → 桌面端 web boot 失败。服务名必须与 apply 里真正访问的属性一一对应。
+    exports.inject = ['sessions', 'slots', 'sidebarRight', 'sidebarRightTabs']
     exports.name = 'dsh-bridge'
     exports.apply = apply
     return module.exports

@@ -7,10 +7,37 @@ with [Semantic Versioning](https://semver.org/spec/v2.0.0.html). The project is
 currently in active development as a single-maintainer project; `v1.0.0` is the
 first tagged **1.0 release** (DSH bridge mode is the only supported usage).
 
-## [1.6.3] - 2026-09-25
+## [1.6.3] - 2026-09-26
 
 ### Fixed
 
+- **Desktop web boot crash: the two `inject` planes were swapped** — cordis has
+  two unrelated `inject` declarations and the carrier package had them
+  backwards, which took the whole desktop app down on 2026-09-26:
+  - `package.json` → `dsh.client.inject` = **package names** (`@deepseek-ai/…`).
+    The browser boot graph reads these for arrival ordering
+    (`client-modules` `arriveGraphRow`); unknown names are skipped silently.
+  - `client.js` → `exports.inject` = **ctx service names** (`sessions`, `slots`,
+    …). This is the cordis **fiber activation gate**: the client runner polls
+    `ctx.get(name)` for every `Object.keys(fiber.inject)` and parks the entry
+    while any name is missing (`dsh-cordis-client-runner` `waitingFor`).
+  The three package names had been moved into `client.js` `exports.inject`, so
+  the carrier fiber waited forever for a service literally named
+  `@deepseek-ai/dsh-client-ui-renderer`; the boot audit
+  (`I7[fiber.state] !== "active"` in the web frontend) then threw
+  `web boot: 1 entry did not activate` and desktop DSH would not open. Both
+  planes are restored and pinned by three layers: the generator self-checks
+  (asserting both directions, including a negative regex that fails if a
+  package name leaks back into `exports.inject`), `verify-client.mjs`, and the
+  new `verify-boot-inject.mjs`.
+- **Panel failures can no longer take boot down (second hardening)** — cordis
+  marks a fiber `failed` when `apply` throws, and the boot audit treats
+  `failed` exactly like `pending`, so any small bug in the optional dashboard
+  (a selector, a `localStorage` policy denial, a DOM change) could again stop
+  DSH from starting. `client.js` now splits `apply` into `applyInner` plus a
+  fault-isolating wrapper: on error it logs to the console, records
+  `window.__dshCraftError`, and returns a no-op disposer so the fiber still
+  settles `active`. The build fingerprint is bumped to `2026-09-05-g`.
 - **Web boot crash from the 1.6.2 carrier client mirror** — the
   `dsh-preset-craft-bot` mirror of `tools/dsh-bridge/client.js` kept the
   original `id: 'dsh-bridge'` in its `__ModuleLoader__.load()` call, but the
@@ -27,6 +54,24 @@ first tagged **1.0 release** (DSH bridge mode is the only supported usage).
   drifts, so regeneration cannot revert the fix. Each client now registers
   exactly once under its own name; the DOM singleton guard makes the second
   panel mount a no-op.
+
+### Verified
+
+- `verify-cordis-service-gate.mjs` (new) reproduces both fatal branches against
+  the **real** `@deepseek-ai/cordis` runtime shipped with DSH, rather than a
+  hand-made harness: service names + providers ⇒ `active`; package names in
+  `exports.inject` ⇒ `pending` with the exact
+  `waiting for services: …` message seen in the desktop incident; a throwing
+  `apply` ⇒ `failed`; and the isolation shell ⇒ `active`.
+- `verify-gen-assertions-not-vacuous.mjs` (new) mutation-tests the generator's
+  new isolation assertions. It caught a genuinely vacuous check on first run
+  (`noopDisposer` also appears in the DOM-singleton guard, so a whole-file grep
+  was always true); the assertion is now region-anchored to the `apply` shell
+  and all three mutations fail loudly.
+- `verify-boot-inject.mjs` also guards that the desktop profile carries no
+  residual `disabled: true` override on the carrier row — the emergency
+  workaround applied while DSH was unopenable has been removed from
+  `~/.dsh/profiles/desktop/cordis.patch.yml` (418 → 412 lines).
 
 ## [1.6.2] - 2026-09-25
 

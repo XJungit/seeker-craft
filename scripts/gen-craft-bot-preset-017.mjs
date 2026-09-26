@@ -231,6 +231,13 @@ out.push(
 // "loaded without registering dsh-preset-craft-bot"，且与预设内部 dsh-bridge 行
 // 注入的原版 client 撞 id（duplicate factory registration）。
 // 面板显隐由 client.js 自己的 PRESET_IDS 名单判断，与加载它的包名无关。
+// 双模式说明：client.js 内 placement 开关（localStorage dsh-bridge.placement）
+// 决定 overlay 浮层 / sidebar-right tab（kind='craft-bot'）/ 两者；sidebar 注册
+// 需要两个平面同时正确：package.json dsh.client.inject 含三个**包名**
+// （api-session-controller / ui-renderer / ui-sidebar-right，boot 图到达顺序）
+// + client.js exports.inject 含四个**服务名**（sessions/slots/sidebarRight/
+// sidebarRightTabs，fiber 激活门）。两者写反 = 载体行永远 pending = web boot
+// 失败（2026-09-26 桌面端事故）。
 const bridgeClient = join(projectRoot, 'tools', 'dsh-bridge', 'client.js')
 const clientMirrorPath = join(projectRoot, 'data', 'dsh', 'craft-bot-preset-017', 'client.js')
 const clientSource = readFileSync(bridgeClient, 'utf8')
@@ -285,6 +292,52 @@ const pkg017Text = readFileSync(join(projectRoot, 'data', 'dsh', 'craft-bot-pres
 if (!existsSync(join(projectRoot, 'data', 'dsh', 'craft-bot-preset-017', 'index.js'))) problems.push('载体包缺少 index.js（host 面行将 import 失败）')
 if (!/"client":\s*\{\s*"platform":\s*"web"/.test(pkg017Text)) problems.push('载体包 package.json 缺少 dsh.client.platform=web 声明')
 if (!/"\.\/client": "\.\/client\.js"/.test(pkg017Text)) problems.push('载体包 package.json 缺少 exports["./client"]')
+// 双模式 contract：boot 图依赖用**包名**（package.json dsh.client.inject），
+// fiber 服务门用**服务名**（client.js exports.inject）——两个平面写反会让载体行
+// 永远 pending →“1 entry did not activate”→整个 web boot 失败（2026-09-26
+// 桌面端事故）。两端都查，防止任一侧再被写反。
+for (const pkg of ['@deepseek-ai/dsh-api-session-controller', '@deepseek-ai/dsh-client-ui-renderer', '@deepseek-ai/dsh-client-ui-sidebar-right']) {
+  if (!pkg017Text.includes(`"${pkg}"`)) problems.push(`载体包 dsh.client.inject 缺少包名 ${pkg}（boot 图到达顺序需要）`)
+}
+const serviceInject = /exports\.inject\s*=\s*\[([^\]]*)\]/.exec(clientExpected)?.[1] ?? ''
+for (const svc of ['sessions', 'slots', 'sidebarRight', 'sidebarRightTabs']) {
+  if (!serviceInject.includes(`'${svc}'`)) problems.push(`client.js exports.inject 缺少服务名 ${svc}（fiber 激活门需要）`)
+}
+// 反向断言：exports.inject 里出现带 '/' 的包名 = 服务门永远等不到 → boot 崩溃
+if (/exports\.inject\s*=\s*\[[^\]]*['"][^'"]*\/[^'"]*['"]/.test(clientExpected)) {
+  problems.push('client.js exports.inject 含包名——服务门只认 ctx 服务名，这会让整个 web boot 失败（2026-09-26 事故）')
+}
+// client.js 源码级 contract：主会话判定走 mainView（快照无 current），双模式开关齐备
+if (!/retainedBy\.mainView/.test(clientExpected)) problems.push('client.js 缺少 mainView 主会话判定（快照无 current，直接读 snap.current 会永远判空）')
+if (!/sidebar\.right\.pane\.tab/.test(clientExpected)) problems.push('client.js 缺少 sidebar.right.pane.tab 注册（sidebar 模式未实现）')
+if (!/openTab\(TAB_KIND\)/.test(clientExpected)) problems.push('client.js 缺少 sidebar openTab 调用（进 craft 会话不会自动打开 tab）')
+
+// apply 故障隔离外壳（2026-09-26 第二次加固）：cordis 里 apply 抛异常 → fiber failed，
+// boot 激活审计对 failed 与 pending 一视同仁地抛错 → 桌面端起不来。面板是可选 UI，
+// 绝不能有这个权力。断言**限定在 apply 外壳这一段内**（切片到 exports.inject 注释），
+// 否则 "noopDisposer" 在 DOM 单例守卫里也出现一次，断言会退化成永远为真
+// （已用 verify-gen-assertions-not-vacuous.mjs 的变异测试抓到这个空转并修正）。
+if (!/function applyInner\(ctx\)/.test(clientExpected)) problems.push('client.js 缺少 applyInner（apply 未被拆分为可隔离的本体）')
+{
+  const shellStart = clientExpected.indexOf('function apply(ctx) {')
+  // 终点锚在 exports.name 赋值上（apply 外壳之后才有）——不能用 'exports.inject'，
+  // 因为文件前面 applyInner 的文档注释里也出现过这个词，indexOf 会先命中注释导致切片为空。
+  const shellEnd = shellStart >= 0 ? clientExpected.indexOf('exports.name', shellStart) : -1
+  const shell = shellStart >= 0 && shellEnd > shellStart ? clientExpected.slice(shellStart, shellEnd) : ''
+  if (shell === '') {
+    problems.push('client.js 找不到 apply(ctx) 外壳段（无法确认故障隔离是否还在）')
+  } else {
+    if (!/return\s+applyInner\(ctx\)/.test(shell)) {
+      problems.push('apply 外壳未调用 applyInner(ctx)（隔离本体没被接上）')
+    }
+    if (!/try\s*\{[\s\S]*?return\s+applyInner\(ctx\)[\s\S]*?\}\s*catch/.test(shell)) {
+      problems.push('apply 外壳未把 applyInner 调用包进 try/catch（面板 bug 会再次拖垮整个 web boot）')
+    }
+    if (!/catch\s*\(\s*error\s*\)[\s\S]*?return\s+function/.test(shell)) {
+      problems.push('apply 外壳的 catch 分支未返回 disposer 函数（cordis 契约要求返回函数）')
+    }
+  }
+}
 
 // 与官方 standard/ptc/cordis 的基线对齐（v1.6.1 修复项）——防止回退：
 if (!/^\s*modelSelectionSettings: true$/m.test(outText)) problems.push('tool-subagent 缺少 `modelSelectionSettings: true`（未对齐官方基线）')
