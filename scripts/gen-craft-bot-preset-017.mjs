@@ -339,6 +339,26 @@ if (!/function applyInner\(ctx\)/.test(clientExpected)) problems.push('client.js
   }
 }
 
+// guide 条目按会话门控（2026-09-26 用户要求「其他预设不受影响」）——防止回退成
+// 无条件注册 guide：registry 的 guide 页条目是全局收集的（refresh() 里 flatMap，
+// 无任何会话过滤），无条件注册会让别的预设的侧栏也出现「Craft Bot 仪表盘」入口。
+// 三处都必须还在：①注册函数按参数决定带不带 guide ②门控翻转时先 dispose 再注册
+// （真实 registry 对重复 id 直接抛错）③sync() 里真的调用门控。
+if (!/function typeDef\(withGuide\)/.test(clientExpected)) {
+  problems.push('client.js 的 tab 类型定义未参数化（guide 条目无法按会话门控）')
+} else if (!/if\s*\(withGuide\)\s*\{[\s\S]*?def\.guide\s*=/.test(clientExpected)) {
+  problems.push('typeDef 未按 withGuide 决定是否挂 guide 条目（门控形同虚设）')
+}
+if (!/function registerType\(withGuide\)[\s\S]*?disposeType\(\)[\s\S]*?register\(typeDef\(withGuide\)\)/.test(clientExpected)) {
+  problems.push('registerType 未在重新注册前 dispose 旧注册（registry id 唯一，会抛错导致门控失效）')
+}
+if (!/setGuideGate\s*=\s*function[\s\S]*?registerType\(want\)/.test(clientExpected)) {
+  problems.push('setGuideGate 未按目标状态调用 registerType（guide 门控没接上）')
+}
+if (!/setGuideGate\(isCraft\)/.test(clientExpected)) {
+  problems.push('sync() 未按主会话 craft 判定驱动 guide 门控（切预设时 guide 条目不会跟着变）')
+}
+
 // 与官方 standard/ptc/cordis 的基线对齐（v1.6.1 修复项）——防止回退：
 if (!/^\s*modelSelectionSettings: true$/m.test(outText)) problems.push('tool-subagent 缺少 `modelSelectionSettings: true`（未对齐官方基线）')
 if (/enableRunInBackground/.test(outText)) problems.push('输出中仍有旧式键 `enableRunInBackground`（应为 `backgroundMode`）')

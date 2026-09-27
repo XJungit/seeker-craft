@@ -77,7 +77,7 @@ window.__ModuleLoader__.load({
     // 浏览器指纹：控制台读 window.__dshCraftBuild 即可确认载入的是哪一版 bundle，
     // 改一次 client.js 就 bump 一次（字母递增），排障时先对指纹再谈逻辑。
     // 'h' = 默认 placement 改为 both（侧栏 tab + 浮层并存），并修正两处失实注释
-    W.__dshCraftBuild = '2026-09-05-h'
+    W.__dshCraftBuild = '2026-09-05-i'
     var VIEWER_DEFAULT = 'http://127.0.0.1:8080'
     var HOST_ATTR = 'data-dsh-craft-host'
     var OPEN_ATTR = 'data-dsh-craft-open' // 挂在 documentElement，驱动对话列让位
@@ -396,32 +396,76 @@ window.__ModuleLoader__.load({
       var disposers = []
       function track(d) { if (typeof d === 'function') disposers.push(d) }
 
+      // 主会话是否 craft 的即时判定（供注册期初始门控与 sync 复用，避免两处逻辑漂移）
+      function currentIsCraft() {
+        var snap = null
+        try { if (sessions && sessions.list) snap = sessions.list.getSnapshot() } catch (e) { snap = null }
+        var ap = presetOf(mainRow(snap))
+        return !!(ap && PRESET_IDS.indexOf(ap) !== -1)
+      }
+      // guide 条目门控的当前状态（诊断用；同时也是再注册的去抖依据）
+      var guideGateOn = false
+
       // ── sidebar tab 类型注册（仅 wantSidebar，且服务齐备才注册）───────────
       // kind='craft-bot' 全局唯一（官方 terminal/browser/files 均用短名，无碰撞）；
       // priority 省略即 'extension'（tab-registry.d.ts:102：不声明就是 extension 段，
       // 与 builtin 不冲突）；multiple 省略=每 pane 一页（够用，不开多实例）；
       // guide 条目让用户在侧栏 guide 页点选打开；title 走定义 title()，另注册
       // keyed title 组件做实时标题。
+      //
+      // ── guide 条目必须按会话门控（2026-09-26，用户要求「其他预设不受影响」）──
+      // registry 的 guide 页条目是**全局**收集的：
+      //   refresh(): guideEntries = cached.flatMap(d => (d.guide ?? []).map(...))
+      // 完全没有按会话/预设过滤（ui-sidebar-right/lib/client.js:8845）。若不门控，
+      // 任何预设的侧栏 guide 页都会出现「Craft Bot 仪表盘」胶囊——点了虽只得到
+      // 「仅在 craft-bot 可用」提示（body 内二次门控），但入口本身泄漏了。
+      // 而 SidebarRightGuideEntry 只有 id/order/title/description/icon，没有任何
+      // 可见性谓词，refresh() 又是**私有方法**、只由 register/unregister 触发重算，
+      // 所以门控只能走公开 API：先 dispose 再按需要带/不带 guide 重新 register。
+      // 两步在同一个 tick 内完成，React 渲染是批处理+异步的，来不及看到未注册的
+      // 中间态，因此不会出现「tab 短暂消失」。类型本身始终注册（只是有无 guide
+      // 条目之分）——这样已打开的 craft tab 在切走再切回时始终能解析到定义。
       var sidebarOn = false
+      var setGuideGate = null
       if (wantSidebar() && slots && sidebarRightTabs) {
         try {
           track(ctx.effect(function () {
             var disposeType = null
             var disposeBody = null
             var disposeTitle = null
-            try {
-              disposeType = sidebarRightTabs.register({
+            function typeDef(withGuide) {
+              var def = {
                 id: TYPE_ID,
                 kind: TAB_KIND,
                 title: function () { return 'Craft Bot' },
-                guide: [{
+              }
+              if (withGuide) {
+                def.guide = [{
                   id: 'open',
                   order: 20,
                   title: function () { return 'Craft Bot 仪表盘' },
                   description: function () { return 'Minecraft bot 实时状态（viewer）' },
-                }],
-              })
-            } catch (e) { disposeType = null }
+                }]
+              }
+              return def
+            }
+            // 重新注册：register 对同 id 会抛（ids 唯一），必须先 dispose。
+            // 两处都 try/catch：注册失败不能连累整个 fiber。
+            function registerType(withGuide) {
+              try { if (disposeType) disposeType() } catch (e) { /* noop */ }
+              disposeType = null
+              try { disposeType = sidebarRightTabs.register(typeDef(withGuide)) } catch (e) { disposeType = null }
+              return disposeType !== null
+            }
+            // 初始即按当前会话判定，避免启动时 craft 会话多一次「无 guide → 有 guide」翻转
+            var guideOn = currentIsCraft()
+            registerType(guideOn)
+            // 暴露给 sync()：仅在门控状态真的翻转时才重注册，避免每次会话变更都抖动
+            setGuideGate = function (on) {
+              var want = !!on
+              if (want === guideOn) return
+              if (registerType(want)) guideOn = want
+            }
             try {
               disposeBody = slots.inject('sidebar.right.pane.tab', function () {
                 return slots.register({ name: 'sidebar.right.pane.tab', key: TYPE_ID }, CraftSidebarBody)
@@ -435,6 +479,7 @@ window.__ModuleLoader__.load({
             sidebarOn = !!(disposeType || disposeBody || disposeTitle)
             return function () {
               sidebarOn = false
+              setGuideGate = null
               try { if (disposeTitle) disposeTitle() } catch (e) { /* noop */ }
               try { if (disposeBody) disposeBody() } catch (e) { /* noop */ }
               try { if (disposeType) disposeType() } catch (e) { /* noop */ }
@@ -454,6 +499,11 @@ window.__ModuleLoader__.load({
         var row = mainRow(snap)
         var ap = presetOf(row)
         var isCraft = !!(ap && PRESET_IDS.indexOf(ap) !== -1)
+        // guide 条目按会话门控：只有 craft 主会话才把「Craft Bot 仪表盘」胶囊挂到
+        // 侧栏 guide 页（否则别的预设也会看到这个入口）。翻转时才重注册。
+        if (setGuideGate) {
+          try { setGuideGate(isCraft); guideGateOn = isCraft } catch (e) { /* 门控失败不影响面板 */ }
+        }
         // 一次性诊断探针：把原始快照形状写到 window，用户控制台
         // JSON.stringify(window.__dshCraftDbg) 一次即可看到全部真相。
         try {
@@ -470,6 +520,7 @@ window.__ModuleLoader__.load({
             cwd: (row && row.cwd !== undefined) ? String(row.cwd).slice(0, 80) : null,
             placement: placement(),
             sidebarOn: !!sidebarOn,
+            guideGate: !!guideGateOn,
             ids: (snap && snap.ids) ? snap.ids.slice(0, 8) : null
           }
         } catch (dbgE) { /* 诊断失败不影响主逻辑 */ }

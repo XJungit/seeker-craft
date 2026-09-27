@@ -237,8 +237,17 @@ function makeCtx(rows, storage = {}) {
     inject: (ownerKey, fn) => { const d = fn(); effDisposers.push(d); return () => {} },
     register: (opts, comp) => { slotRegs.push({ ...opts, comp }); return () => {} },
   }
+  // 贴近真实 SidebarRightTabRegistry：id 唯一（重复注册抛错）、disposer 后同 id
+  // 可再注册、可查询「当前在force 的定义」。guide 门控依赖这三个语义，mock 必须
+  // 忠实，否则门控测试会假通过。
+  const tabsLive = new Map()
   const sidebarRightTabs = {
-    register: (def) => { tabsRegs.push(def); return () => {} },
+    register: (def) => {
+      if (tabsLive.has(def.id)) throw new Error(`sidebarRight: tab type id "${def.id}" is already registered`)
+      tabsRegs.push(def)
+      tabsLive.set(def.id, def)
+      return () => { tabsLive.delete(def.id) }
+    },
   }
   const sidebarRight = {
     openTab: (kind, opts) => { opened.push({ kind, opts }) },
@@ -254,6 +263,12 @@ function makeCtx(rows, storage = {}) {
   return {
     ctx, subs, tabsRegs, slotRegs, opened, effDisposers,
     fire() { for (const fn of subs) fn() },
+    // 当前真正在册的定义（门控测试用；tabsRegs 是历史累积，含已 dispose 的）
+    liveDef() { return tabsLive.get('dsh-preset-craft-bot/craft-bot') },
+    liveGuide() {
+      const d = tabsLive.get('dsh-preset-craft-bot/craft-bot')
+      return d && Array.isArray(d.guide) ? d.guide.length : 0
+    },
     sandbox,
   }
 }
@@ -392,6 +407,13 @@ shared.fire()
 check('切到 ptc 预设后面板隐藏（不显示）', panelHidden(), `hidden=${panelHidden()}`)
 check('切到 ptc 预设后不新建仪表盘（仍只 1 个）', countHosts() === 1, `hosts=${countHosts()}`)
 check('非 craft 主会话不调用 openTab（其他预设不受影响）', shared.opened.length === 0, `opened=${shared.opened.length}`)
+// guide 条目门控：非 craft 会话时侧栏 guide 页不得出现「Craft Bot 仪表盘」胶囊。
+// registry 的 guide 页条目是全局收集的（refresh() 里 flatMap，无会话过滤），
+// 所以必须靠「不带 guide 重新注册」来隐藏，否则别的预设也看得到这个入口。
+check('非 craft 主会话 guide 条目已撤下（其他预设侧栏干净）', shared.liveGuide() === 0,
+  `guide=${JSON.stringify((shared.liveDef() && shared.liveDef().guide) || [])}`)
+check('非 craft 会话 tab 类型仍在册（已打开的 craft tab 切回时仍能解析定义）',
+  shared.liveDef() !== undefined, `live=${shared.liveDef() !== undefined}`)
 
 // 3) 主会话切回 craft-bot（agentPreset 藏 projectionValues，顶层无）→ 兜底判定命中 + openTab
 shared.opened.length = 0
@@ -402,6 +424,26 @@ shared.ctx.sessions.list.getSnapshot = () => ({
 })
 shared.fire()
 check('projectionValues 兜底：切回 craft-bot 后 openTab 恢复', shared.opened.length === 1, `opened=${shared.opened.length}`)
+check('切回 craft 主会话后 guide 条目恢复（侧栏 guide 页重新出现入口）',
+  shared.liveGuide() === 1 && shared.liveDef().guide[0].title() === 'Craft Bot 仪表盘',
+  `guide=${JSON.stringify((shared.liveDef() && shared.liveDef().guide) || [])}`)
+// 反复切换不得泄漏「已注册 id」——真实 registry 对重复 id 直接抛错，
+// 门控若忘了先 dispose 就会在这里炸出来。
+shared.ctx.sessions.list.getSnapshot = () => ({
+  ids: ['s1'],
+  byId: { s1: { id: 's1', retainedBy: { mainView: 1 }, agentPreset: 'ptc' } },
+  phase: 'ready', projectionsBySession: {},
+})
+shared.fire()
+shared.ctx.sessions.list.getSnapshot = () => ({
+  ids: ['s1'],
+  byId: { s1: { id: 's1', retainedBy: { mainView: 1 }, agentPreset: 'craft-bot' } },
+  phase: 'ready', projectionsBySession: {},
+})
+shared.fire()
+check('反复切换预设不残留重复注册（registry id 唯一，未 dispose 会抛）',
+  shared.liveGuide() === 1 && shared.liveDef() !== undefined,
+  `live=${shared.liveDef() !== undefined} guide=${shared.liveGuide()}`)
 
 // 4) sidebar body 组件：craft 主会话渲染 iframe；非 craft 渲染提示行
 {

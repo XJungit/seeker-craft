@@ -74,6 +74,20 @@ first tagged **1.0 release** (DSH bridge mode is the only supported usage).
 - Corrected two comments that described behaviour the code never had: there is
   no settings card registering a placement toggle (the console is the only
   entry point), and the `storage` event only fires for *other* tabs.
+- **The guide entry is now gated per session.** The sidebar-right registry
+  collects guide capsules globally — `refresh()` does
+  `guideEntries = cached.flatMap((d) => d.guide ?? [])` with no session or
+  preset filter (`ui-sidebar-right/lib/client.js:8845`) — so once the sidebar
+  tab was registered, `Craft Bot 仪表盘` appeared on the guide page of *every*
+  preset, not just this one. That contradicts the "其他预设不会被这个插件影响"
+  requirement. `SidebarRightGuideEntry` carries no visibility predicate
+  (`id`/`order`/`title`/`description`/`icon` only) and `refresh()` is private
+  and recomputed only on register/unregister, so gating goes through the public
+  API: the type definition is parameterised on `withGuide`, and
+  `registerType()` disposes before re-registering so the registry's
+  unique-`id` check never trips. The gate flips only on real transitions and
+  the type itself stays registered at all times, so an already-open craft tab
+  still resolves its definition. The fingerprint is bumped to `2026-09-05-i`.
 
 ### Verified
 
@@ -87,7 +101,11 @@ first tagged **1.0 release** (DSH bridge mode is the only supported usage).
   new isolation assertions. It caught a genuinely vacuous check on first run
   (`noopDisposer` also appears in the DOM-singleton guard, so a whole-file grep
   was always true); the assertion is now region-anchored to the `apply` shell
-  and all three mutations fail loudly.
+  and all three mutations fail loudly. Extended for this release with mutations
+  D/E/F covering the guide gate: unconditional `guide` registration, a skipped
+  `dispose` before re-registering, and a disconnected `sync()` — each asserted
+  to actually change the source first, so the checks cannot pass by a failed
+  string replacement.
 - `verify-boot-inject.mjs` also guards that the desktop profile carries no
   residual `disabled: true` override on the carrier row — the emergency
   workaround applied while DSH was unopenable has been removed from
