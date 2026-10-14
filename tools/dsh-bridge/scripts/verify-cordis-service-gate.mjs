@@ -17,9 +17,24 @@
  */
 import { createContext } from 'node:vm'
 import { pathToFileURL } from 'node:url'
+import { existsSync } from 'node:fs'
+import { join } from 'node:path'
+import { ensureCompatCache, resolveDshDir } from './dsh-root.mjs'
 
-const CORDIS = process.env.CORDIS_PATH
-  || 'C:/Users/xj/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai/cordis/lib/index.js'
+// 真实 cordis 的来源随 DSH 安装方式变化：0.1.x 在 npm 全局有散包，0.2.0 桌面端
+// 全在 resources/app.asar 里（profile 下的 @deepseek-ai/* junction 已全悬挂）。
+// 所以按「磁盘散包 → asar 按需解出缓存」顺序找，不再写死一个 npm 路径。
+const CORDIS = process.env.CORDIS_PATH || (() => {
+  const dir = resolveDshDir()
+  const loose = dir && join(dir, 'cordis/lib/index.js')
+  if (loose && existsSync(loose)) return loose
+  return ensureCompatCache()
+})()
+
+if (!CORDIS || !existsSync(CORDIS)) {
+  console.error('❌ 找不到可用的 cordis（DSH 0.1.x npm 全局散包 / 0.2.x resources/app.asar 都没有）')
+  process.exit(2)
+}
 
 let failures = 0
 function check(name, cond, detail) {

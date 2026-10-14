@@ -11,6 +11,34 @@ first tagged **1.0 release** (DSH bridge mode is the only supported usage).
 
 ### Fixed
 
+- **Security Audit workflow failed on every scheduled run** — two independent
+  causes, neither of which was a code regression (the same commit `0ea1b01`
+  passed on 10-12 and failed on 10-13):
+  - **Missing `issues: write`.** `rustsec/audit-check` branches on
+    `github.context.eventName`: scheduled runs call `reporter.reportIssues()`
+    (`client.rest.issues.create`, one issue per new advisory), while push/PR
+    runs call `reportCheck()`. `audit.yml` granted only `checks: write`, so the
+    nightly cron could never succeed and always ended with
+    `Resource not accessible by integration - …/issues#create-an-issue`. The
+    action's README documents the same requirement (`issues: write` + `checks:
+    write`). Because the failure happens at the very end, the audit itself had
+    already run — a red scheduled run does **not** by itself mean new
+    vulnerabilities were found. The in-file comment that claimed the action
+    "只上传 SARIF 检查，不会自动开 issue" was factually wrong and has been
+    replaced with the real branch behaviour.
+  - **Five real advisories in transitively-vendored `quinn-proto` 0.11.16**
+    (RUSTSEC-2026-0338/0339/0340/0341/0342) plus a `chacha20` 0.10.1
+    **yanked-crate** warning, reachable through
+    `rand → quinn-proto → quinn → reqwest → azalea-*`. Patched releases exist,
+    so these are upgraded rather than ignored (`cargo update -p quinn-proto` →
+    0.11.19, `cargo update -p chacha20` → 0.10.2; both 0.10.0 and 0.10.1 were
+    yanked upstream, so the fix has to move forward, not back).
+    `cargo audit` is clean afterwards: 0 vulnerabilities, 0 warnings.
+- `actions/checkout@v4` → `@v5` in `audit.yml`. v4 declares `using: node20`,
+  v5 `using: node24` — the two `action.yml` files are identical apart from that
+  one line — which clears the "Node.js 20 is deprecated … forced to run on
+  Node.js 24" annotation. `rustsec/audit-check` stays at `v2.0.0`: it is still
+  the newest tag the project publishes and already runs on `node24`.
 - **Desktop web boot crash: the two `inject` planes were swapped** — cordis has
   two unrelated `inject` declarations and the carrier package had them
   backwards, which took the whole desktop app down on 2026-09-26:
@@ -110,6 +138,44 @@ first tagged **1.0 release** (DSH bridge mode is the only supported usage).
   residual `disabled: true` override on the carrier row — the emergency
   workaround applied while DSH was unopenable has been removed from
   `~/.dsh/profiles/desktop/cordis.patch.yml` (418 → 412 lines).
+- **DSH 0.2.0-rc.2 compatibility, verified against the real packages.** The
+  desktop app moved from an npm-global install to a self-contained runtime with
+  everything packed into `resources/app.asar` (installed version confirmed by
+  reading `dsh/node_modules/@deepseek-ai/dsh/package.json` out of the archive),
+  and the 250 `@deepseek-ai/*` junctions under `~/.dsh/profiles/node_modules`
+  now all dangle at the removed npm directory. Every API this plugin depends on
+  was re-read from the shipped 0.2.0-rc.2 code and is unchanged:
+  `SidebarRightGuideEntry` still carries no visibility predicate (only
+  `id`/`order`/`title`/`description`/`icon`), `refresh()` still collects guide
+  entries globally via `flatMap` with no session filter — so the per-session
+  gate remains necessary and correct — `register()` still throws
+  `sidebarRight: tab type id "…" is already registered` on duplicate ids, the
+  `guide` kind is still `"guide"`, the slot keys
+  (`sidebar.right.pane.tab`, `sidebar.right.pane.tab.title`,
+  `sidebar.right.tab.guide.entry`) and the reflected service names
+  (`sidebarRight`, `sidebarRightTabs`, plus the `sessions`/`slots` cordis
+  services) are all identical, and the carrier manifest shape
+  (`dsh.client.inject` = package names, `platform: web`) still matches. The
+  same three inject packages are all present in the 0.2.0 boot graph, and
+  `verify-cordis-service-gate.mjs` was re-run against the **cordis 4.0.4 that
+  ships inside `app.asar`** — the activation-gate behaviour is byte-for-byte
+  the same. Live confirmation, independent of the static comparison: this
+  session runs on 0.2.0-rc.2 and the client inspect tools show our tab
+  registered (`registrant: dsh-bridge`, key
+  `dsh-preset-craft-bot/craft-bot`) with all three slots active.
+- **The three DSH-touching verifiers now resolve the install themselves**
+  (`tools/dsh-bridge/scripts/dsh-root.mjs`, new). They had the old npm-global
+  path hard-coded, so after the 0.2.0 upgrade they all reported
+  `missing=[…]` / `provider 读不到` — a false alarm that read like an API break
+  but was only a stale probe path. Resolution now walks a candidate list (explicit
+  `DSH_PKG_ROOT` → desktop `app.asar` → unpacked dir → npm global → pnpm global
+  → local checkout) and, when only the archive exists, materialises the needed
+  packages out of it on demand into a git-ignored cache
+  (`/data/dsh/compat-020/`, third-party code stays out of the repo). Re-running
+  all four suites on 0.2.0-rc.2 gives 4/4 green, and
+  `scripts/extract-asar.mjs` gained a working `extract` mode plus a corrected
+  header offset (the JSON header starts at byte 16, not 8 — the old parser
+  crashed with `Unexpected non-whitespace character after JSON`).
 
 ## [1.6.2] - 2026-09-25
 

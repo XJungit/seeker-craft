@@ -17,17 +17,32 @@ jobs:
     name: cargo audit
     runs-on: ubuntu-latest
     permissions:
+      # checks: write —— push/PR 事件下 audit-check 写 check run（reportCheck）。
+      # issues: write —— **schedule 事件下 audit-check 改走 reportIssues，为每条新
+      #   advisory 开 issue**（src/main.ts: 按 github.context.eventName == 'schedule'
+      #   分支）。原先只给了 checks: write，于是每日定时任务必然以
+      #   "Resource not accessible by integration - .../issues#create-an-issue" 失败
+      #   （2026-10-13、10-14 两次红灯即此因，与代码改动无关）。
+      #   官方 README「Granular Permissions」同样要求 issues: write + checks: write。
+      #   注意：权限不足时报错发生在 job 末尾，前面的漏洞检测其实已经跑完了——
+      #   所以"红灯"不等于仓库真有新漏洞，需看 annotation 区分。
       checks: write
+      issues: write
     steps:
-      - uses: actions/checkout@v4
+      # v5 起 action 运行时为 node24；旧版 checkout@v4 跑在 node20 上会收到
+      # "Node.js 20 is deprecated ... forced to run on Node.js 24" 告警。
+      - uses: actions/checkout@v5
       - name: Install stable toolchain
         uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Run cargo audit
+        # v2.0.0 仍是 rustsec/audit-check 的最新 tag（node24 运行时），无更新可升。
         uses: rustsec/audit-check@v2.0.0
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          # rustsec/audit-check v2 仅支持 token/ignore/working-directory 三个输入；
-          # 它只上传 SARIF 检查（checks: write），不会自动开 issue。
+          # 只支持 token/ignore/working-directory 三个输入。
           # informational warnings（unmaintained/unsound）不阻塞 job。
           # 本地忽略清单见 .cargo/audit.toml（随仓库提交，CI 与本地一致）。
+          # 注意：.cargo/audit.toml 的 ignore 由 cargo-audit 自己读取，与 action 的
+          # ignore 输入是两套机制——CI 里本仓库根目录就是 working-directory（默认 .），
+          # 所以本地清单同样生效，无需在此重复列举。

@@ -95,3 +95,7 @@ tools/dsh-bridge/pnpm-lock.yaml
 # craft-bot 预设的 0.1.7+ 生成物（含本机绝对路径；由 scripts/gen-craft-bot-preset-017.mjs
 # 依据入库模板 data/dsh/craft-bot-preset/ 生成，setup.ps1 会自动产出）
 /data/dsh/craft-bot-preset-017/cordis.patch.yml
+
+# 从 DSH 桌面端 resources/app.asar 里抠出来的 0.2.0-rc.2 官方包，仅用于本地兼容性
+# 比对（第三方代码，不入库）。由 tools/dsh-bridge/scripts/dsh-root.mjs 按需重建。
+/data/dsh/compat-020/

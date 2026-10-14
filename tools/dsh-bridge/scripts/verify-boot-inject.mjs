@@ -22,10 +22,21 @@
  */
 import { readFileSync, existsSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
+import { ensureCompatCache, resolveDshDir } from './dsh-root.mjs'
 
-const DSH_ROOT = process.env.DSH_PKG_ROOT
-  || 'C:/Users/xj/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai'
+// DSH 安装根随版本换代：0.1.x 装在 npm 全局（散包），0.2.0 桌面端改为自带运行时
+// 并把 @deepseek-ai/* 打进 resources/app.asar。原先写死的 npm 路径在升级后
+// 变成空目录，本脚本于是误报「inject 包不存在 / provider 读不到」——看着像兼容性
+// 炸了，其实只是探测路径过期。现在按「谁真的在」解析，必要时从 asar 解出缓存。
+ensureCompatCache()
+const DSH_ROOT = process.env.DSH_PKG_ROOT || resolveDshDir()
 const REPO = new URL('../../..', import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')
+
+if (!DSH_ROOT || !existsSync(DSH_ROOT)) {
+  console.error('❌ 找不到可用的 DSH 安装（npm 全局散包 / resources/app.asar 都不可读）')
+  console.error('   可显式指定: DSH_PKG_ROOT=<含 @deepseek-ai/* 的目录>')
+  process.exit(2)
+}
 
 let failures = 0
 function check(name, cond, detail) {

@@ -25,6 +25,7 @@
 import { readFileSync } from 'node:fs'
 import vm from 'node:vm'
 import { createRequire } from 'node:module'
+import { ensureCompatCache, resolveDshDir } from './dsh-root.mjs'
 
 const clientSrc = readFileSync(new URL('../client.js', import.meta.url), 'utf8')
 
@@ -278,9 +279,14 @@ const BOTH = { 'dsh-bridge.placement': 'both' }
 
 // ── 两个 inject 平面的“真机对照”检查（2026-09-26 boot 崩溃的回归测试）──────
 // 崩溃根因：exports.inject 写了包名，服务门按 ctx.get(name) 永远查不到 → pending
-// →“1 entry did not activate”→ web boot 失败。这里真的去 DSH 安装目录里读
+// →“1 entry did not activate”→ web boot 失败。这里真的去 DSH 安装里读
 // provider，逐一确认声明的服务确实有人 provide、声明的包确实是 graph 行。
-const DSH_ROOT = process.env.DSH_PKG_ROOT || 'C:/Users/xj/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/node_modules/@deepseek-ai'
+//
+// 包源随版本换代：0.1.x 是 npm 全局散包；0.2.0 桌面端把 @deepseek-ai/* 打进
+// resources/app.asar（profile 下同名 junction 全悬挂）。写死旧路径会让这里
+// 误报“provider 读不到”，所以交给 dsh-root.mjs 解析/按需解出。
+ensureCompatCache()
+const DSH_ROOT = process.env.DSH_PKG_ROOT || resolveDshDir()
 // 服务名 → 提供它的包（由 ctx.reflect.provide(...) 实测得出）
 const SERVICE_PROVIDER = {
   sessions: '@deepseek-ai/dsh-api-session-controller',
