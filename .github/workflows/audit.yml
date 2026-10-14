@@ -17,15 +17,29 @@ jobs:
     name: cargo audit
     runs-on: ubuntu-latest
     permissions:
+      # contents: read —— 显式写 permissions 会把未列出的权限一律置为 none。
+      #   私有仓库下 checkout 会因读不到 contents 而失败；公开仓库只是碰巧能匿名
+      #   拉取（本次 run 能过属于这种情况）。显式声明，避免仓库转私有后以很绕的
+      #   方式炸掉。
+      contents: read
       # checks: write —— push/PR 事件下 audit-check 写 check run（reportCheck）。
       # issues: write —— **schedule 事件下 audit-check 改走 reportIssues，为每条新
       #   advisory 开 issue**（src/main.ts: 按 github.context.eventName == 'schedule'
-      #   分支）。原先只给了 checks: write，于是每日定时任务必然以
+      #   分支）。原先只给了 checks: write，于是定时任务一旦发现 advisory 必然以
       #   "Resource not accessible by integration - .../issues#create-an-issue" 失败
       #   （2026-10-13、10-14 两次红灯即此因，与代码改动无关）。
       #   官方 README「Granular Permissions」同样要求 issues: write + checks: write。
-      #   注意：权限不足时报错发生在 job 末尾，前面的漏洞检测其实已经跑完了——
-      #   所以"红灯"不等于仓库真有新漏洞，需看 annotation 区分。
+      #
+      # 判读口径（读 src/main.ts 得到，别猜）：
+      #   · reportIssues 在 `if (!shouldReport) return` **之后**才被调用，而
+      #     shouldReport 只在真有 vulnerability 或 warning 时才置 true。
+      #     所以「权限不足」这个报错只可能发生在**已经检出 advisory** 的时候，
+      #     定时任务红灯确实意味着有新 advisory —— 不是误报。
+      #   · schedule 分支不开 issue 的情况只有一种：warnings 全是 yanked
+      #     （reporter.ts 对 yanked 明确 continue，不开 issue），此时不会碰
+      #     issues API，也就不会因权限失败。
+      #   · 修好权限后，定时任务的行为是「发现新 advisory → 开 issue → 正常退出」，
+      #     即靠 issue 而不是红灯来通知；已开过的 issue 用搜索去重，不会刷屏。
       checks: write
       issues: write
     steps:

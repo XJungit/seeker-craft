@@ -18,14 +18,25 @@ first tagged **1.0 release** (DSH bridge mode is the only supported usage).
     `github.context.eventName`: scheduled runs call `reporter.reportIssues()`
     (`client.rest.issues.create`, one issue per new advisory), while push/PR
     runs call `reportCheck()`. `audit.yml` granted only `checks: write`, so the
-    nightly cron could never succeed and always ended with
+    nightly cron always ended with
     `Resource not accessible by integration - …/issues#create-an-issue`. The
     action's README documents the same requirement (`issues: write` + `checks:
-    write`). Because the failure happens at the very end, the audit itself had
-    already run — a red scheduled run does **not** by itself mean new
-    vulnerabilities were found. The in-file comment that claimed the action
-    "只上传 SARIF 检查，不会自动开 issue" was factually wrong and has been
-    replaced with the real branch behaviour.
+    write`).
+    How to read this signal (from `src/main.ts`/`src/reporter.ts`, not guessed):
+    the permission call sits **after** `if (!shouldReport) return`, and
+    `shouldReport` is only set when vulnerabilities or warnings were actually
+    found — so this error *does* mean real advisories were detected, not a false
+    alarm. The one exception is a run whose warnings are all `yanked`: the
+    reporter explicitly skips those and never touches the Issues API. The
+    in-file comment claiming the action "只上传 SARIF 检查，不会自动开 issue"
+    described behaviour the code never had and has been replaced. With the
+    permission granted, a nightly run that finds something now files an issue
+    and exits green (already-filed advisories are de-duplicated through a
+    title search), rather than going red with no explanation.
+  - **The job's `permissions` block also omitted `contents: read`.** Declaring
+    `permissions` sets every unlisted scope to `none`, so checkout was relying
+    on anonymous reads that happen to work because this repo is public; a switch
+    to private would have broken it in a confusing way. Now declared explicitly.
   - **Five real advisories in transitively-vendored `quinn-proto` 0.11.16**
     (RUSTSEC-2026-0338/0339/0340/0341/0342) plus a `chacha20` 0.10.1
     **yanked-crate** warning, reachable through
